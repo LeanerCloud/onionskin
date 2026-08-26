@@ -110,10 +110,15 @@ Onionskin as a drop-in replacement.
 - **Keyboard and mouse defaults are Acrobat's**, remappable via `keymap.json`
   exactly as in Schist.
 - **Out of scope, stated up front:** everything cloud-tethered - Adobe cloud
-  storage, AI Assistant, Liquid Mode, web-based review flows. Onionskin's
-  counter-pitch is local and private. Export-to-Office lands post-1.0 at best
-  and is marked partial forever (full-fidelity DOCX export is a product in
-  itself).
+  storage, AI Assistant, Liquid Mode, web-based review flows. Also: rich
+  media and 3D (no crate could own them), geospatial PDFs, and a virtual PDF
+  printer driver (the OS already prints to PDF). Onionskin's counter-pitch is
+  local and private. Export-to-Office, RTF and HTML land post-1.0 at best and
+  are marked partial forever (full-fidelity document export is a product in
+  itself). The print dialog's Advanced Print Setup is deliberately split:
+  Print as Image and Print to File are in scope; Output, Marks and Bleeds,
+  PostScript options and print color management stay with the out-of-scope
+  print-production surface.
 - **Legal line.** Layout geometry, workflows, shortcuts and tool naming are
   clonable; Adobe's icon artwork and trademarks are not. All icons are redrawn
   in-house - Schist's generated-logo discipline (`tools/logo.py`, constants in,
@@ -224,7 +229,8 @@ onionskin/
 │   │                       #   `render`, hand off to NSPrintOperation (macOS),
 │   │                       #   CUPS (Linux), the Windows print pipeline.
 │   │                       #   Acrobat print-dialog parity: page ranges,
-│   │                       #   scaling, N-up, booklet, print-as-image.
+│   │                       #   scaling, N-up, booklet, poster/tile,
+│   │                       #   print-as-image.
 │   │                       #   GPUI-free; `app` supplies only the dialog UI.
 │   ├── render              # The trait seam. CPU reference: hayro for base
 │   │                       #   pages + tiny-skia overlays, composited into
@@ -256,19 +262,24 @@ onionskin/
 │   ├── tools-edit          # Edit PDF: line-level text edit (backed by
 │   │                       #   text-engine font matching), image
 │   │                       #   replace/transform, links, header & footer,
-│   │                       #   watermark, Bates numbering, crop
+│   │                       #   watermark, background, Bates numbering, crop
+│   │                       #   (advanced page boxes in M5)
 │   ├── tools-organize      # Organize Pages: rotate, reorder, insert, delete,
-│   │                       #   extract, split
+│   │                       #   extract, split, replace pages, page labels
 │   ├── tools-fill-sign     # Fill & Sign
 │   ├── tools-form          # Prepare Form: AcroForm fields, appearances,
 │   │                       #   scripting-driven calculate/validate/format.
 │   │                       #   XFA: detect and show a read-only notice only
 │   │                       #   (Legal posture, rule 5)
 │   ├── redact              # Redact: content-stream rewriting, image region
-│   │                       #   scrub, metadata scrub - plus a VERIFIER that
-│   │                       #   re-extracts text/images from the output and
-│   │                       #   proves the target is absent. The verifier is
-│   │                       #   part of the feature, not the test suite.
+│   │                       #   scrub, metadata scrub, and the full sanitize
+│   │                       #   sweep (Acrobat's remove-hidden-information:
+│   │                       #   scripts, hidden layers, deleted/cropped
+│   │                       #   content, attachments, actions) - plus a
+│   │                       #   VERIFIER that re-extracts text/images from the
+│   │                       #   output and proves the target is absent. The
+│   │                       #   verifier is part of the feature, not the test
+│   │                       #   suite.
 │   ├── tools-protect       # Protect: passwords, permissions; signature UX
 │   │                       #   incl. platform keystores (Keychain / CNG /
 │   │                       #   PKCS#11) for signing identities
@@ -278,8 +289,9 @@ onionskin/
 │   │                       #   SAPI / speech-dispatcher)
 │   ├── tools-measure       # Measure: distance, perimeter, area with scale
 │   ├── commands-core       # menu commands: Combine files, compress/flatten
-│   │                       #   export, document properties, generation
-│   │                       #   rollback, print (via crates/print)
+│   │                       #   export, document properties, bookmark and
+│   │                       #   attachment authoring, generation rollback,
+│   │                       #   print (via crates/print)
 │   └── codecs-common       # Create PDF from images; PNG/SVG page export
 ├── corpus/                     # test PDFs incl. a malformed set and a
 │                               # JS-forms set (fetch script; not vendored)
@@ -307,7 +319,7 @@ product in itself); it gets a scoreboard row saying so.
 | 6 | Serialization is the semantic contract; rendering is display-only | The round-trip guarantee tests play the role Schist's `pixel-ops` plays. The renderer keeps Schist's trait-seam discipline (CPU reference, GPU parity-tested, per-call fallback) but only for display consistency (see "What does not transfer", item 2). |
 | 7 | Byte-span fidelity everywhere | Every model object knows its source bytes. Enables the round-trip guarantee tests, selection→source mapping, and redaction verification. |
 | 8 | Redaction is a flattening export with a built-in verifier | Redaction under incremental update is a lie (old bytes remain). It must be the one destructive path, and it must prove itself. |
-| 9 | PDF JavaScript ships, via Boa | Real AcroForms compute; ignoring JS fills them wrong, silently. Scope: the Acrobat forms API subset (calculate, validate, format), sandboxed with no I/O and a fuel budget. Document-level and interactive JS beyond forms: out of scope, surfaced as a visible notice. |
+| 9 | PDF JavaScript ships, via Boa | Real AcroForms compute; ignoring JS fills them wrong, silently. Scope: the Acrobat forms API subset (calculate, validate, format), sandboxed with no I/O and a fuel budget. Document-level and interactive JS beyond forms: out of scope, surfaced as a visible notice. A user-facing preference disables document JavaScript entirely, mirroring Acrobat's. |
 | 10 | Repair-on-open, Acrobat-grade | A large share of real PDFs are invalid; a drop-in replacement opens them. Recovery is a scan-and-rebuild path in `cos`; repaired structures are written into the first incremental section so the corrupt original survives byte-intact underneath. |
 | 11 | Lazy, xref-driven parsing with pinned budgets | Acrobat opens 2000-page files instantly because it never parses ahead of need. Budgets (enforced by benches, not aspiration): time-to-first-page under 200 ms on the 1000-page corpus file, memory proportional to viewed pages rather than file size, 60 fps scroll on the M2 viewer. |
 | 12 | Accessibility is first-class, both senses | App side: AccessKit wired into the GPUI fork so the shell exposes a real accessibility tree (Section 508 / European Accessibility Act buyers are exactly Acrobat's institutional base). Document side: `core` owns the tagged-PDF structure tree and every edit keeps it valid. |
@@ -354,8 +366,10 @@ Choices that are right for a raster editor and would be cargo-culting here:
 
 ## Guarantee tests (the spec, as executable checks)
 
-1. **Round-trip:** for every corpus file, open → save-unchanged produces
-   byte-identical output (no appended section for a no-op save).
+1. **Round-trip:** for every well-formed corpus file, open → save-unchanged
+   produces byte-identical output (no appended section for a no-op save). The
+   deliberately broken files (the malformed set, hayro's fuzzed crash
+   regressions) are excluded here; they exercise test 6 instead.
 2. **Onionskin:** open → edit → save produces `original bytes ++ one incremental
    section`; truncating the section yields the byte-exact original.
 3. **Redaction:** redact text T → verifier extracts all text and images from the
@@ -380,7 +394,10 @@ Choices that are right for a raster editor and would be cargo-culting here:
 Corpus: hayro's regression corpus, the PDF Association sample set, veraPDF
 test files, a malformed set (broken xref, junk header, truncation), a
 JS-forms set with Acrobat-verified expected values, and tagged-PDF
-accessibility samples. `cos` gets cargo-fuzz targets from M1 onward.
+accessibility samples. No public corpus of validly signed PDFs exists, so the
+test-4 set is generated in-repo: sign fixture documents with our own test CA
+(M6), which also gives the verifier known-good and known-tampered cases.
+`cos` gets cargo-fuzz targets from M1 onward.
 
 ## Testing strategy (Schist's practice, adopted)
 
@@ -438,8 +455,8 @@ what-does-not-transfer section demands:
   (adapt Schist's `ci.yml`, `packaging/` and tag-triggered release workflow),
   corpus fetch script, guarantee tests wired up as failing/ignored,
   `ACROBAT-PARITY.md` seeded with the full Acrobat tool/command inventory (all
-  rows "planned" or "out of scope"), first `parity/reference/` screenshots
-  captured from the installed Acrobat Reader 25.
+  rows "planned", "partial", or "out of scope"), first `parity/reference/`
+  screenshots captured from the installed Acrobat Reader 25.
 - **M1 - Spikes (de-risk the four bets).**
   (a) `cos` parse→incremental-save round-trip over the corpus, lazy via the
   xref from the first line, including the scan-and-rebuild repair path over
@@ -451,14 +468,16 @@ what-does-not-transfer section demands:
   element - proves the accessibility bet before the shell is built on it.
   Spikes are throwaway-permitted; what survives is the decision record.
 - **M2 - Viewer.** Open (including repaired files), render, navigate,
-  full-text search (Ctrl+F, highlight-all, next/previous), text selection via
-  `content` byte-span mapping, delivered as the first plugins (`tools-basic`,
-  `codecs-common` export) - already wearing the Acrobat shell: quick-action
-  top bar, left navigation panes (thumbnails, bookmarks, attachments,
-  signatures), tool rail, Acrobat shortcuts, AccessKit tree live from the
-  first release. Performance budgets (decision 11) enforced from here on.
-  Ships as a usable fast PDF viewer - first dogfoodable artifact, first
-  parity screenshots compared, and the registry's proof of shape.
+  full-text search (Ctrl+F with whole-word/case options, highlight-all,
+  next/previous), text selection via `content` byte-span mapping, delivered
+  as the first plugins (`tools-basic`, `codecs-common` export) - already
+  wearing the Acrobat shell: quick-action top bar, left navigation panes
+  (thumbnails with context-menu page commands, bookmarks, attachments,
+  layers with OCG visibility toggles, signatures), tool rail, Acrobat
+  shortcuts, Full Screen mode, line-weights view toggle, AccessKit tree live
+  from the first release. Performance budgets (decision 11) enforced from
+  here on. Ships as a usable fast PDF viewer - first dogfoodable artifact,
+  first parity screenshots compared, and the registry's proof of shape.
 - **M3 - First edits, first print.** `tools-comment`, `tools-organize`,
   `commands-core` (Combine files, split), incremental save, undo/redo, the
   skins panel. `crates/print` lands with the macOS backend and the Acrobat
@@ -468,18 +487,26 @@ what-does-not-transfer section demands:
   Everything M3 can do, agent-driven, plus `render` returning inline PNG.
   `print` gains the CUPS and Windows backends.
 - **M5 - Forms, text edit, redaction.** `tools-fill-sign` and `tools-form`
-  with `scripting` live (guarantee test 7: forms compute like Acrobat);
-  `tools-edit` with line-level text editing backed by system-font
-  matching/fallback and fsType enforcement (reflow is explicitly out of scope
-  pre-1.0), Bates numbering, and tagged-PDF maintenance on every edit
-  (guarantee test 8); `redact` with its verifier (guarantee test 3).
+  with `scripting` live (guarantee test 7: forms compute like Acrobat),
+  including form auto-complete and the JS-disable preference; `tools-edit`
+  with line-level text editing backed by system-font matching/fallback and
+  fsType enforcement (reflow is explicitly out of scope pre-1.0), spell
+  check, find-and-replace, Bates numbering, advanced page boxes, and
+  tagged-PDF maintenance on every edit (guarantee test 8); `redact` with
+  sanitize and its verifier (guarantee test 3).
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
-  encrypted-document open/save, PAdES signing. `tools-accessibility`: checker,
-  reading-order repair, Read Out Loud. `tools-measure`.
-- **Post-1.0.** `plugin-host-wasm` + `plugin-sdk`, OCR for scanned documents,
-  reflowing text edit, XFDF, Compare Files, scanner capture, portfolios,
-  localization/bidi/vertical text, auto-update.
+  signature appearance management, trusted-identity management, timestamping
+  and LTV, encrypted-document open/save, PAdES signing.
+  `tools-accessibility`: checker, reading-order repair, Read Out Loud.
+  `tools-measure`.
+- **Post-1.0.** `plugin-host-wasm` + `plugin-sdk`, OCR for scanned documents
+  plus scan enhancement (deskew, descreen, background removal), reflowing
+  text edit, XFDF, Compare Files, scanner capture, portfolios, guided
+  actions (Action Wizard - a natural fit over the registry and MCP), layer
+  editing (import/merge/flatten OCGs), articles, named destinations,
+  embedded search indexes, barcode form fields, Loupe and Pan & Zoom
+  windows, localization/bidi/vertical text, auto-update.
 
 ## Risks
 
