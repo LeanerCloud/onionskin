@@ -10,7 +10,8 @@ The product goal mirrors Schist's relationship to Photoshop, applied to
 Acrobat: a near pixel-level clone of Acrobat's interface and workflows, so an
 Acrobat user can switch without relearning anything - a drop-in replacement
 with as much of the functionality implemented as feasible (see "GUI: Acrobat
-parity").
+parity"). That phrasing is the INTERNAL engineering target; public-facing
+language follows the discipline in "Legal posture".
 
 A reference checkout of Schist lives at `/tmp/claude/schist-src` (re-clone from
 GitHub if gone). Its `docs/architecture.md` is the canonical statement of the
@@ -119,7 +120,58 @@ Onionskin as a drop-in replacement.
   SVGs out) applies to the whole icon set. The word "Acrobat" appears in
   comparisons, never in branding. Like Schist, Onionskin registers `.pdf` as
   openable, never as the default handler: it joins the "Open with" menu rather
-  than taking files off Acrobat.
+  than taking files off Acrobat. The full rules, including clean-room
+  discipline and public-language discipline, are in "Legal posture" below.
+
+## Legal posture
+
+Not legal advice; an hour with a German IP lawyer clears the mark and the
+posture before any domain, org, or commercial launch. Until then these are the
+working rules. Background: PDF is ISO 32000 (open since 2008, the 2.0 spec is
+free via the PDF Association) and Adobe's Public Patent License grants
+royalty-free rights to read, write, modify and process compliant files - the
+reason Poppler, MuPDF, PDFium, pdf.js and qpdf have existed for twenty years
+unsued. The realistic worst case is a trademark cease-and-desist, which the
+rules below are designed to make moot.
+
+1. **Spec-first clean room.** The reference for behavior is ISO 32000-2, never
+   Acrobat's internals. No decompiling or disassembling Acrobat, ever. Black-box
+   observation of the running product (how it fills a form, how it repairs a
+   broken file, what a dialog looks like) is fine and is EU-lawful (SAS v World
+   Programming; Software Directive 2009/24/EC Art. 5(3), with Art. 8 voiding
+   EULA terms to the contrary) - but every corpus artifact derived from
+   observing Acrobat (the JS-forms expected values, repair-behavior notes)
+   documents that black-box provenance where it lives.
+2. **Trademarks.** Off limits everywhere: Adobe, Acrobat, Reader, Distiller,
+   the red A, any Adobe logo, and any name or logo that evokes them. "Acrobat"
+   in prose as nominative comparison is fine. "PDF" as a descriptive word is
+   fine; not styled into a logo that resembles Adobe's PDF marks.
+3. **Public-language discipline.** README, website, release notes and app
+   store copy never say "clone", "identical to Acrobat", or "drop-in
+   replacement for Acrobat". Describe what Onionskin does (non-destructive
+   editing, familiar workflows, local and private); let reviewers draw the
+   comparison. The parity scoreboard is fine to publish - it's a factual
+   feature comparison - but its preamble follows this rule.
+4. **Reference screenshots stay private.** `parity/reference/` captures are
+   Adobe's copyrighted UI artwork. They are gitignored, local-only, and never
+   part of any public repo, issue, or marketing material. The scoreboard and
+   parity process are public; the reference images are not.
+5. **XFA is permanently out of scope.** Adobe-specified, deprecated in PDF
+   2.0, and outside the clean ISO patent story. Onionskin detects XFA and
+   shows a read-only notice, nothing more. Same rule for Adobe Supplement
+   extensions beyond ISO 32000: not implemented.
+6. **Fonts.** Adobe's font files are never shipped or embedded by us. The
+   Base 14 are handled via metric-compatible free substitutes (the
+   URW/Nimbus set, as Ghostscript and Poppler do); `text-engine`'s fsType
+   enforcement covers third-party fonts.
+7. **Patents, ours and theirs.** The Adobe patent grant has a defensive
+   termination clause: never assert patents against anyone's compliant PDF
+   implementation. Before adding any exotic codec, check its patent status
+   (JPEG 2000 and JBIG2 essentials have expired; anything newer gets checked
+   first).
+8. **Code provenance.** Adapting Schist is fine (MIT, with attribution in
+   LICENSE). Never copy code from Acrobat SDKs, Adobe plugins, or
+   decompilation dumps posted by others.
 
 ## Workspace layout
 
@@ -209,7 +261,9 @@ onionskin/
 │   │                       #   extract, split
 │   ├── tools-fill-sign     # Fill & Sign
 │   ├── tools-form          # Prepare Form: AcroForm fields, appearances,
-│   │                       #   scripting-driven calculate/validate/format
+│   │                       #   scripting-driven calculate/validate/format.
+│   │                       #   XFA: detect and show a read-only notice only
+│   │                       #   (Legal posture, rule 5)
 │   ├── redact              # Redact: content-stream rewriting, image region
 │   │                       #   scrub, metadata scrub - plus a VERIFIER that
 │   │                       #   re-extracts text/images from the output and
@@ -459,6 +513,11 @@ what-does-not-transfer section demands:
   drop-in replacement targets. Mitigation: print-to-PDF-file backend first
   (testable in CI against expected output), platform backends behind the same
   trait.
+- **Trademark letter.** The plausible legal worst case is a cease-and-desist
+  over a name or mark, cheap for Adobe to send. Mitigation: the name has zero
+  collision surface, no Adobe marks or lookalike iconography anywhere
+  (Legal posture rules 2-4), and IP counsel clears the mark before anything
+  commercial ships.
 - **Dropbox-synced repo.** The working copy lives under Dropbox/Maestral; git
   and sync can race. Consider a `~/devel` checkout with the Dropbox copy as a
   mirror, matching sibling projects.
