@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Onionskin</string>
+    <key>CFBundleDisplayName</key><string>Onionskin</string>
+    <!-- Placeholder until a domain is settled. It has to be final before the
+         first signed release: Launch Services and the signing identity both
+         key off it. -->
+    <key>CFBundleIdentifier</key><string>org.onionskin.Onionskin</string>
+    <!-- bundle.sh overwrites both from the workspace manifest. -->
+    <key>CFBundleVersion</key><string>0.0.0</string>
+    <key>CFBundleShortVersionString</key><string>0.0.0</string>
+    <key>CFBundleExecutable</key><string>onionskin</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>LSMinimumSystemVersion</key><string>11.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+
+    <!-- LSHandlerRank Alternate, never Owner: installing Onionskin joins the
+         "Open with" menu for PDFs and never takes them off Acrobat or
+         Preview. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>PDF Document</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array><string>com.adobe.pdf</string></array>
+        </dict>
+    </array>
+</dict>
+</plist>

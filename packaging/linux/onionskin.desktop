@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Onionskin
+GenericName=PDF Editor
+Comment=Non-destructive PDF editing that never rewrites the original
+Exec=onionskin %f
+Icon=onionskin
+Terminal=false
+Categories=Office;Viewer;Graphics;
+MimeType=application/pdf;

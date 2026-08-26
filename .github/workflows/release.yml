@@ -1,0 +1,107 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Only the publish job writes to the repository.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: onionskin-linux-x86_64
+          - os: ubuntu-24.04-arm
+            artifact: onionskin-linux-aarch64
+          # Apple Silicon only; an Intel or universal build is a stub, see
+          # packaging/README.md.
+          - os: macos-latest
+            artifact: onionskin-macos-arm64
+          - os: windows-latest
+            artifact: onionskin-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Work out the version
+        shell: bash
+        run: |
+          set -eo pipefail
+          # A tag build is named after its tag, and a tag that is not
+          # semver-shaped fails the job here rather than publishing assets
+          # stamped with the manifest version. A manual run has no tag to
+          # read, and version.sh falls back to the workspace manifest.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+            export VERSION_REQUIRED=1
+          fi
+          . packaging/version.sh
+          version="$(onionskin_version .)"
+          echo "packaging as $version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release -p onionskin-app
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: ./packaging/linux/package.sh
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./packaging/macos/bundle.sh
+          # Upload the zip alone: actions/upload-artifact preserves neither
+          # the bundle's permissions nor its symlinks.
+          rm -rf dist/Onionskin.app
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/onionskin.exe dist/
+          # NSIS is not on the runner image.
+          choco install nsis --no-progress -y
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) {
+            $found = Get-Command makensis -ErrorAction SilentlyContinue
+            if (-not $found) { throw 'makensis missing after installing NSIS' }
+            $makensis = $found.Source
+          }
+          # Quote the define: unquoted, PowerShell hands makensis the literal
+          # "VERSION=$env:VERSION", and the ':' in the resulting OutFile makes
+          # Windows write the installer into an NTFS alternate data stream,
+          # leaving a 0-byte file the release upload rejects.
+          & $makensis "-DVERSION=$env:VERSION" packaging/windows/installer.nsi
+
+          # That failure mode is silent, so confirm the installer is real.
+          $out = "dist/Onionskin-$env:VERSION-setup.exe"
+          if (-not (Test-Path $out)) { throw "installer not produced: $out" }
+          if ((Get-Item $out).Length -eq 0) { throw "installer is empty: $out" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
