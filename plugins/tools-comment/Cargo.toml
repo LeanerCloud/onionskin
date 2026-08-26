@@ -1,0 +1,8 @@
+[package]
+name = "onionskin-tools-comment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+onionskin-plugin-api.workspace = true

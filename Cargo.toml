@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/app",
+    "crates/cli",
+    "crates/content",
+    "crates/core",
+    "crates/cos",
+    "crates/crypto",
+    "crates/mcp",
+    "crates/plugin-api",
+    "crates/print",
+    "crates/render",
+    "crates/scripting",
+    "crates/text-engine",
+    "plugins/codecs-common",
+    "plugins/commands-core",
+    "plugins/redact",
+    "plugins/tools-accessibility",
+    "plugins/tools-basic",
+    "plugins/tools-comment",
+    "plugins/tools-edit",
+    "plugins/tools-fill-sign",
+    "plugins/tools-form",
+    "plugins/tools-measure",
+    "plugins/tools-organize",
+    "plugins/tools-protect",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# internal
+onionskin-content = { path = "crates/content" }
+onionskin-core = { path = "crates/core" }
+onionskin-cos = { path = "crates/cos" }
+onionskin-crypto = { path = "crates/crypto" }
+onionskin-mcp = { path = "crates/mcp" }
+onionskin-plugin-api = { path = "crates/plugin-api" }
+onionskin-print = { path = "crates/print" }
+onionskin-render = { path = "crates/render" }
+onionskin-scripting = { path = "crates/scripting" }
+onionskin-text-engine = { path = "crates/text-engine" }
+onionskin-codecs-common = { path = "plugins/codecs-common" }
+onionskin-commands-core = { path = "plugins/commands-core" }
+onionskin-redact = { path = "plugins/redact" }
+onionskin-tools-accessibility = { path = "plugins/tools-accessibility" }
+onionskin-tools-basic = { path = "plugins/tools-basic" }
+onionskin-tools-comment = { path = "plugins/tools-comment" }
+onionskin-tools-edit = { path = "plugins/tools-edit" }
+onionskin-tools-fill-sign = { path = "plugins/tools-fill-sign" }
+onionskin-tools-form = { path = "plugins/tools-form" }
+onionskin-tools-measure = { path = "plugins/tools-measure" }
+onionskin-tools-organize = { path = "plugins/tools-organize" }
+onionskin-tools-protect = { path = "plugins/tools-protect" }
+
+# external
+# Pinned here as each one gains its first consumer: hayro and tiny-skia
+# with the M1 render spike, the GPUI fork with the M1 shell spike, boa
+# with M5's forms.
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+debug = 1

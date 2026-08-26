@@ -1,0 +1,56 @@
+[package]
+name = "onionskin-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "onionskin"
+path = "src/main.rs"
+
+[dependencies]
+onionskin-plugin-api.workspace = true
+
+onionskin-codecs-common = { workspace = true, optional = true }
+onionskin-commands-core = { workspace = true, optional = true }
+onionskin-redact = { workspace = true, optional = true }
+onionskin-tools-accessibility = { workspace = true, optional = true }
+onionskin-tools-basic = { workspace = true, optional = true }
+onionskin-tools-comment = { workspace = true, optional = true }
+onionskin-tools-edit = { workspace = true, optional = true }
+onionskin-tools-fill-sign = { workspace = true, optional = true }
+onionskin-tools-form = { workspace = true, optional = true }
+onionskin-tools-measure = { workspace = true, optional = true }
+onionskin-tools-organize = { workspace = true, optional = true }
+onionskin-tools-protect = { workspace = true, optional = true }
+
+# One feature per first-party plugin, all on by default. Turning them all
+# off is guarantee test 5: the app still builds and boots, to a workspace
+# that can do nothing.
+[features]
+default = [
+    "codecs-common",
+    "commands-core",
+    "redact",
+    "tools-accessibility",
+    "tools-basic",
+    "tools-comment",
+    "tools-edit",
+    "tools-fill-sign",
+    "tools-form",
+    "tools-measure",
+    "tools-organize",
+    "tools-protect",
+]
+codecs-common = ["dep:onionskin-codecs-common"]
+commands-core = ["dep:onionskin-commands-core"]
+redact = ["dep:onionskin-redact"]
+tools-accessibility = ["dep:onionskin-tools-accessibility"]
+tools-basic = ["dep:onionskin-tools-basic"]
+tools-comment = ["dep:onionskin-tools-comment"]
+tools-edit = ["dep:onionskin-tools-edit"]
+tools-fill-sign = ["dep:onionskin-tools-fill-sign"]
+tools-form = ["dep:onionskin-tools-form"]
+tools-measure = ["dep:onionskin-tools-measure"]
+tools-organize = ["dep:onionskin-tools-organize"]
+tools-protect = ["dep:onionskin-tools-protect"]

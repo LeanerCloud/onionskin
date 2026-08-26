@@ -1,0 +1,8 @@
+[package]
+name = "onionskin-plugin-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+onionskin-core.workspace = true

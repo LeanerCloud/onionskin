@@ -1,0 +1,65 @@
+//! Guarantee test 5, Schist's honesty test: with every `plugins/` entry
+//! compiled out the app still builds and boots, to a workspace that can
+//! do nothing.
+//!
+//! The assertions hold for any feature combination, not just all-on and
+//! all-off, because the expected count is summed from the same cfgs
+//! Cargo.toml gates the dependencies on. A plugin whose feature is on but
+//! whose manifest never reached `first_party_manifests` fails here.
+
+use onionskin_app::{boot_summary, build_registry};
+
+/// How many first-party plugins this build compiled in.
+const COMPILED_IN_PLUGINS: usize = cfg!(feature = "codecs-common") as usize
+    + cfg!(feature = "commands-core") as usize
+    + cfg!(feature = "redact") as usize
+    + cfg!(feature = "tools-accessibility") as usize
+    + cfg!(feature = "tools-basic") as usize
+    + cfg!(feature = "tools-comment") as usize
+    + cfg!(feature = "tools-edit") as usize
+    + cfg!(feature = "tools-fill-sign") as usize
+    + cfg!(feature = "tools-form") as usize
+    + cfg!(feature = "tools-measure") as usize
+    + cfg!(feature = "tools-organize") as usize
+    + cfg!(feature = "tools-protect") as usize;
+
+#[test]
+fn the_registry_holds_exactly_the_plugins_compiled_in() {
+    let registry = build_registry();
+    assert_eq!(
+        registry.plugins().len(),
+        COMPILED_IN_PLUGINS,
+        "the registry disagrees with the enabled features; registered {:?}",
+        registry.plugins()
+    );
+}
+
+#[test]
+fn a_kernel_with_no_plugins_registers_nothing_at_all() {
+    if COMPILED_IN_PLUGINS > 0 {
+        return;
+    }
+    let registry = build_registry();
+    assert_eq!(registry.plugins().len(), 0);
+    assert_eq!(registry.tools().count(), 0);
+    assert_eq!(registry.commands().len(), 0);
+    assert_eq!(
+        boot_summary(&registry),
+        "onionskin: 0 plugins, 0 tools, 0 commands"
+    );
+}
+
+#[test]
+fn headless_boot_reports_the_registry_and_exits_zero() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_onionskin"))
+        .arg("--headless-boot")
+        .output()
+        .expect("run the onionskin binary");
+    assert!(
+        output.status.success(),
+        "--headless-boot exited with {}",
+        output.status
+    );
+    let stdout = String::from_utf8(output.stdout).expect("the summary is UTF-8");
+    assert_eq!(stdout.trim_end(), boot_summary(&build_registry()));
+}

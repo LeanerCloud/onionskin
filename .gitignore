@@ -1,0 +1,5 @@
+target/
+dist/
+corpus/external/
+corpus/malformed/
+.claude/

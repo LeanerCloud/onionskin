@@ -1,0 +1,19 @@
+//! Acrobat's Prepare Form toolset: AcroForm fields and their appearance
+//! streams, with calculation, validation and formatting driven by
+//! `scripting` so real-world forms compute the way Acrobat computes them.
+
+use onionskin_plugin_api::{PluginManifest, PluginRegistry};
+
+pub struct FormToolsPlugin;
+
+impl PluginManifest for FormToolsPlugin {
+    fn id(&self) -> &'static str {
+        "onionskin.tools-form"
+    }
+
+    fn name(&self) -> &'static str {
+        "Prepare Form"
+    }
+
+    fn register(&self, _registry: &mut PluginRegistry) {}
+}
