@@ -36,5 +36,5 @@ pub use tiny_skia;
 pub use hayro::hayro_interpret::InterpreterWarning;
 
 pub use base::{BaseRaster, Document, PageRender, RenderError};
-pub use overlay::{Overlay, Rgba};
+pub use overlay::{Overlay, OverlayError, Rgba};
 pub use tile::{DeviceRect, Tile, TileCache, TILE_SIZE};

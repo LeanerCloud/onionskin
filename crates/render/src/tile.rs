@@ -4,17 +4,18 @@
 //! draw list composited on top; damaging a rectangle drops exactly the tiles
 //! it intersects, so the next paint recomposites only those.
 
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use tiny_skia::{Pixmap, PixmapMut, Transform};
 
 use crate::base::BaseRaster;
-use crate::overlay::{self, Overlay};
+use crate::overlay::{self, Overlay, OverlayError};
 
 /// Schist's tile size, kept: 256 KiB of RGBA8 per tile.
 pub const TILE_SIZE: u32 = 256;
 
-const TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE * 4) as usize;
+pub(crate) const TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE * 4) as usize;
 
 /// An axis-aligned rectangle in device pixels, i.e. base-raster space at the
 /// cache's zoom.
@@ -40,26 +41,36 @@ impl Tile {
     }
 }
 
+/// The composited tiles of one page at one zoom, over one base raster.
+///
+/// Compositing happens behind `&self`: a paint pass walks the visible tiles of
+/// several pages and must not need a `&mut` on each of them. Nothing observable
+/// changes, only which tiles are cached.
 pub struct TileCache {
     base: BaseRaster,
     overlays: Vec<Overlay>,
+    /// For each tile, the overlays that paint into it, so a page carrying 500
+    /// annotations does not walk all 500 to composite one tile.
+    tile_overlays: Vec<Vec<usize>>,
     cols: u32,
     rows: u32,
-    tiles: Vec<Option<Arc<Tile>>>,
-    composites: u64,
+    tiles: RefCell<Vec<Option<Arc<Tile>>>>,
+    composites: Cell<u64>,
 }
 
 impl TileCache {
     pub fn new(base: BaseRaster) -> Self {
         let cols = base.width().div_ceil(TILE_SIZE);
         let rows = base.height().div_ceil(TILE_SIZE);
+        let count = (cols * rows) as usize;
         Self {
             base,
             overlays: Vec::new(),
+            tile_overlays: vec![Vec::new(); count],
             cols,
             rows,
-            tiles: vec![None; (cols * rows) as usize],
-            composites: 0,
+            tiles: RefCell::new(vec![None; count]),
+            composites: Cell::new(0),
         }
     }
 
@@ -75,27 +86,45 @@ impl TileCache {
     /// tracking is only worth anything if this stays small, so it is part of
     /// the public surface rather than a debug counter.
     pub fn composites(&self) -> u64 {
-        self.composites
+        self.composites.get()
     }
 
-    /// Add an overlay and damage exactly the tiles it paints into. Returns
-    /// the number of cached tiles dropped.
-    pub fn add_overlay(&mut self, overlay: Overlay) -> usize {
-        let damaged = match overlay.bounds() {
-            Some(b) => {
-                let zoom = self.base.zoom();
-                // One pixel of slack on each side for the antialiased edge.
-                self.damage(DeviceRect {
-                    x: b.min_x * zoom - 1.0,
-                    y: b.min_y * zoom - 1.0,
-                    width: (b.max_x - b.min_x) * zoom + 2.0,
-                    height: (b.max_y - b.min_y) * zoom + 2.0,
-                })
-            }
-            None => 0,
+    /// How many overlays paint into the tile at `(col, row)`. The per-tile
+    /// index is only worth anything if this stays far below the page's overlay
+    /// count, so it is public for the same reason [`Self::composites`] is.
+    pub fn overlays_in_tile(&self, col: u32, row: u32) -> usize {
+        self.tile_overlays[(row * self.cols + col) as usize].len()
+    }
+
+    /// Add an overlay, index it into the tiles it paints, and damage those
+    /// tiles. Returns the number of cached tiles dropped.
+    ///
+    /// An overlay that paints nothing is refused here rather than skipped on
+    /// every composite for the life of the page.
+    pub fn add_overlay(&mut self, overlay: Overlay) -> Result<usize, OverlayError> {
+        overlay.validate()?;
+
+        let b = overlay.bounds();
+        let zoom = self.base.zoom();
+        // One pixel of slack on each side for the antialiased edge.
+        let painted = DeviceRect {
+            x: b.min_x * zoom - 1.0,
+            y: b.min_y * zoom - 1.0,
+            width: (b.max_x - b.min_x) * zoom + 2.0,
+            height: (b.max_y - b.min_y) * zoom + 2.0,
         };
+
+        let index = self.overlays.len();
         self.overlays.push(overlay);
-        damaged
+        if let Some((col0, row0, col1, row1)) = self.tile_span(painted) {
+            for row in row0..=row1 {
+                for col in col0..=col1 {
+                    self.tile_overlays[(row * self.cols + col) as usize].push(index);
+                }
+            }
+        }
+
+        Ok(self.damage(painted))
     }
 
     /// Drop every cached tile intersecting `rect`. Returns how many were
@@ -105,13 +134,11 @@ impl TileCache {
             return 0;
         };
 
+        let tiles = self.tiles.get_mut();
         let mut dropped = 0;
         for row in row0..=row1 {
             for col in col0..=col1 {
-                if self.tiles[(row * self.cols + col) as usize]
-                    .take()
-                    .is_some()
-                {
+                if tiles[(row * self.cols + col) as usize].take().is_some() {
                     dropped += 1;
                 }
             }
@@ -123,7 +150,7 @@ impl TileCache {
     ///
     /// Panics when out of range: the caller derives the range from
     /// [`Self::cols`] and [`Self::rows`], so a miss is a bug, not input.
-    pub fn tile(&mut self, col: u32, row: u32) -> Arc<Tile> {
+    pub fn tile(&self, col: u32, row: u32) -> Arc<Tile> {
         assert!(
             col < self.cols && row < self.rows,
             "tile ({col}, {row}) is outside the {}x{} grid",
@@ -132,19 +159,26 @@ impl TileCache {
         );
 
         let index = (row * self.cols + col) as usize;
-        if let Some(tile) = &self.tiles[index] {
-            return tile.clone();
+        if let Some(tile) = self.cached(index) {
+            return tile;
         }
 
+        // Composited with no borrow of `tiles` outstanding: `page_image` calls
+        // this in a loop, and a borrow held across the composite would be a
+        // re-entrancy panic waiting for the first caller that nests them.
         let tile = Arc::new(self.composite(col, row));
-        self.composites += 1;
-        self.tiles[index] = Some(tile.clone());
+        self.composites.set(self.composites.get() + 1);
+        self.tiles.borrow_mut()[index] = Some(tile.clone());
         tile
+    }
+
+    fn cached(&self, index: usize) -> Option<Arc<Tile>> {
+        self.tiles.borrow()[index].clone()
     }
 
     /// Every tile composited and blitted back into one page-sized image.
     /// Evidence and tests only; the canvas paints tiles.
-    pub fn page_image(&mut self) -> Pixmap {
+    pub fn page_image(&self) -> Pixmap {
         let mut page = Pixmap::new(self.base.width(), self.base.height())
             .expect("a base raster always has a non-zero, in-range size");
         let stride = self.base.width() as usize * 4;
@@ -205,7 +239,10 @@ impl TileCache {
             .expect("a tile buffer is TILE_SIZE square by construction");
         let zoom = self.base.zoom();
         let transform = Transform::from_translate(-(ox as f32), -(oy as f32)).pre_scale(zoom, zoom);
-        overlay::draw(&self.overlays, &mut target, transform);
+        let painting = self.tile_overlays[(row * self.cols + col) as usize]
+            .iter()
+            .map(|&i| &self.overlays[i]);
+        overlay::draw(painting, &mut target, transform);
 
         Tile { rgba }
     }
@@ -238,12 +275,12 @@ mod tests {
         };
 
         let mut cache = TileCache::new(base.clone());
-        cache.add_overlay(ink.clone());
+        cache.add_overlay(ink.clone()).expect("a two-point stroke");
         let tiled = cache.page_image();
 
         let mut single = Pixmap::new(W, H).expect("600x400 is a valid pixmap size");
         single.data_mut().copy_from_slice(base.rgba());
-        overlay::draw(&[ink], &mut single.as_mut(), Transform::identity());
+        overlay::draw([&ink], &mut single.as_mut(), Transform::identity());
 
         let mut worst = 0u8;
         let mut worst_at = (0u32, 0u32);

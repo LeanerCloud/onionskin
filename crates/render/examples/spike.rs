@@ -110,7 +110,7 @@ fn compose(base: BaseRaster, png: PathBuf) -> Result<Composite, Box<dyn std::err
     let mut cache = TileCache::new(base);
     // Overlays are in page points, so the same coordinates serve every zoom.
     for overlay in overlays(width as f32 / zoom, height as f32 / zoom) {
-        cache.add_overlay(overlay);
+        cache.add_overlay(overlay)?;
     }
 
     let warm_start = Instant::now();

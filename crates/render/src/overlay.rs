@@ -1,5 +1,8 @@
 //! Overlay primitives and their tiny-skia rasterization.
 
+use std::error::Error;
+use std::fmt;
+
 use tiny_skia::{
     BlendMode, FillRule, LineCap, LineJoin, Paint, PathBuilder, PixmapMut, Stroke, Transform,
 };
@@ -47,19 +50,75 @@ pub(crate) struct Bounds {
     pub max_y: f32,
 }
 
-impl Overlay {
-    /// Bounding box in page render space, grown by half the stroke width so
-    /// it covers what actually gets painted. `None` when there is nothing to
-    /// paint, which for an ink stroke means fewer than two points.
-    pub(crate) fn bounds(&self) -> Option<Bounds> {
-        let (points, pad): (&[(f32, f32)], f32) = match self {
-            Self::Highlight { corners, .. } => (corners, 0.0),
-            Self::Ink { points, width, .. } => {
-                if points.len() < 2 {
-                    return None;
-                }
-                (points, width / 2.0)
+/// Why an overlay was refused. Rejected at
+/// [`TileCache::add_overlay`](crate::TileCache::add_overlay) rather than
+/// dropped later: an overlay that paints nothing is a bug in whatever built
+/// it, and a cache that silently kept one would re-filter it on every
+/// composite for the life of the page.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverlayError {
+    /// An ink stroke needs two points to be a line.
+    TooFewPoints { points: usize },
+    /// A coordinate is NaN or infinite, so the overlay has no position.
+    NotFinite { x: f32, y: f32 },
+    /// A stroke width is NaN, infinite, or not positive.
+    InvalidWidth { width: f32 },
+}
+
+impl fmt::Display for OverlayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooFewPoints { points } => {
+                write!(f, "an ink stroke needs at least 2 points, got {points}")
             }
+            Self::NotFinite { x, y } => write!(f, "overlay coordinate ({x}, {y}) is not finite"),
+            Self::InvalidWidth { width } => {
+                write!(f, "stroke width {width} is not a positive finite number")
+            }
+        }
+    }
+}
+
+impl Error for OverlayError {}
+
+impl Overlay {
+    /// The points that make up the overlay, in page render space.
+    fn points(&self) -> &[(f32, f32)] {
+        match self {
+            Self::Highlight { corners, .. } => corners,
+            Self::Ink { points, .. } => points,
+        }
+    }
+
+    /// Refuse anything that cannot be painted, so [`Self::bounds`] and
+    /// [`draw`] can both assume a real shape.
+    pub(crate) fn validate(&self) -> Result<(), OverlayError> {
+        if let Self::Ink { points, width, .. } = self {
+            if points.len() < 2 {
+                return Err(OverlayError::TooFewPoints {
+                    points: points.len(),
+                });
+            }
+            if !width.is_finite() || *width <= 0.0 {
+                return Err(OverlayError::InvalidWidth { width: *width });
+            }
+        }
+
+        for &(x, y) in self.points() {
+            if !x.is_finite() || !y.is_finite() {
+                return Err(OverlayError::NotFinite { x, y });
+            }
+        }
+        Ok(())
+    }
+
+    /// Bounding box in page render space, grown by half the stroke width so
+    /// it covers what actually gets painted. Call [`Self::validate`] first:
+    /// on an overlay that never passed it, this is meaningless.
+    pub(crate) fn bounds(&self) -> Bounds {
+        let pad = match self {
+            Self::Highlight { .. } => 0.0,
+            Self::Ink { width, .. } => width / 2.0,
         };
 
         let mut b = Bounds {
@@ -68,27 +127,31 @@ impl Overlay {
             max_x: f32::NEG_INFINITY,
             max_y: f32::NEG_INFINITY,
         };
-        for &(x, y) in points {
+        for &(x, y) in self.points() {
             b.min_x = b.min_x.min(x);
             b.min_y = b.min_y.min(y);
             b.max_x = b.max_x.max(x);
             b.max_y = b.max_y.max(y);
-        }
-        if !b.min_x.is_finite() || !b.min_y.is_finite() {
-            return None;
         }
 
         b.min_x -= pad;
         b.min_y -= pad;
         b.max_x += pad;
         b.max_y += pad;
-        Some(b)
+        b
     }
 }
 
-/// Paint every overlay onto `target`. `transform` maps page render space to
-/// `target`'s pixels; for a tile that is zoom then the tile's origin.
-pub(crate) fn draw(overlays: &[Overlay], target: &mut PixmapMut<'_>, transform: Transform) {
+/// Paint the given overlays onto `target`. `transform` maps page render space
+/// to `target`'s pixels; for a tile that is zoom then the tile's origin.
+///
+/// Takes an iterator because a tile paints only the overlays its index lists,
+/// which are not contiguous in the cache's overlay vector.
+pub(crate) fn draw<'a>(
+    overlays: impl IntoIterator<Item = &'a Overlay>,
+    target: &mut PixmapMut<'_>,
+    transform: Transform,
+) {
     for overlay in overlays {
         match overlay {
             Overlay::Highlight { corners, color } => {
@@ -113,9 +176,6 @@ pub(crate) fn draw(overlays: &[Overlay], target: &mut PixmapMut<'_>, transform: 
                 color,
                 width,
             } => {
-                if points.len() < 2 {
-                    continue;
-                }
                 let mut pb = PathBuilder::new();
                 pb.move_to(points[0].0, points[0].1);
                 for &(x, y) in &points[1..] {
