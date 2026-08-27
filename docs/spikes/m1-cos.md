@@ -113,6 +113,10 @@ that stopped short of `endobj` when the object was exactly one window long.
 
 ## Carry-forward to the real build
 
+All five landed in `crates/cos` after the spike merged; the list below is
+kept as the record of what the spike decided to defer, not as open work.
+What is still open is in `known-issues.md`.
+
 1. **Mid-session scan escalation.** Repair-on-open is decided once, at open. An
    object whose xref offset is wrong after a clean open is
    `Err(MissingObject)` rather than a lazy re-scan. Right fail-loud default and

@@ -17,13 +17,20 @@ referenced.
 
 ## Ours - accepted debt with a deadline
 
-- cos (see docs/spikes/m1-cos.md): silent endstream recovery records no
-  RepairReason - must be plumbed before M5 so redaction knows a stream
-  boundary was recovered, not authoritative; save materializes the whole
-  file (stream it in the M1 build); no delete API / free-list handling yet
-  (M2); mid-session escalation from clean open to full scan is designed but
-  not built; the fuzz target builds on stable but needs a nightly toolchain
-  to actually run - install one when wiring fuzz into CI.
+- cos: the fuzz target builds on stable but needs a nightly toolchain to
+  actually run - install one when wiring fuzz into CI. Until then the
+  robustness suite drives the same paths on stable. The four other
+  carry-forwards in docs/spikes/m1-cos.md are built: streaming save,
+  per-object recovered stream boundaries, object deletion with a chained
+  free list, and caller-driven mid-session escalation to a scan.
+- cos: Document::recovered_boundaries reports what has been parsed, because
+  parsing is lazy. M5 redaction reads every stream it rewrites, so it sees
+  the note for everything it touches, but a caller that wants a whole-file
+  answer has to walk the xref itself.
+- cos: deleting the object a trailer names as /Root or /Pages is not
+  refused, and produces a file that will not open. M2's tools-organize
+  deletes page objects, so nothing reaches it yet; guard it if a caller ever
+  deletes objects it did not choose by hand.
 
 - One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
   proven by direct view messaging only. Role::Document currently surfaces as
