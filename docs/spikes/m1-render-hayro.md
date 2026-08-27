@@ -50,8 +50,16 @@ in background). The corpus has no real 1000-page document (largest real file:
    draws. Every checkbox and radio button in the wild is invisible.
    Fallback we control: resolve /AS ourselves and hand hayro the selected
    stream, or draw widget appearances as overlays.
+   UPDATE 2026-08-27: accurate for the 0.7.1 release we tested, but already
+   fixed on upstream main (commit 6af63be9, merged 2026-07-08, unreleased,
+   with annotation_checkbox.pdf as their own regression fixture). We now pin
+   the cristim/hayro fork of current main; the fallback is unnecessary.
 2. InterpreterWarning has two variants and cannot express "annotation
    appearance skipped"; the gap above is silent. Second upstream report.
+   UPDATE 2026-08-27: resolved by fork commit 33d9caf8, which adds
+   UnresolvedAnnotationAppearance (verified to fire on an unresolvable /AS
+   and stay quiet on annotation_checkbox.pdf). Also learned: the enum's
+   UnsupportedFont variant has zero emit sites upstream.
 3. No sub-rectangle rendering (origin request, above).
 4. RenderCache<'a> borrows the Pdf: self-referential storage; a viewer needs
    an owned cache upstream or yoke/ouroboros.

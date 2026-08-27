@@ -5,11 +5,15 @@ referenced.
 
 ## Upstream (hayro) - blocking or shaping our work
 
-- Appearance-state dictionaries (/AP dict + /AS) render blank, silently.
-  Blocks M5 forms rendering; we hold a fallback (resolve /AS ourselves).
-  File upstream at LaurenzV/hayro. See docs/spikes/m1-render-hayro.md.
-- InterpreterWarning cannot express skipped annotation appearances (the gap
-  above is invisible to warning_sink). Second upstream report.
+- Appearance-state rendering (/AP dict + /AS): FIXED on hayro's unreleased
+  main (upstream commit 6af63be9, 2026-07-08); crates.io 0.7.1 predates it.
+  We pin the cristim/hayro fork (upstream main + one commit) until a release
+  ships; then return to the registry version. No M5 blocker remains.
+- InterpreterWarning silent-skip gap: resolved by our fork commit 33d9caf8
+  (UnresolvedAnnotationAppearance variant). Candidate for a small upstream
+  PR; note in any PR body that the enum is not #[non_exhaustive], so the
+  variant breaks exhaustive matchers (it broke our own example), and that
+  onionskin-render re-exports the enum, forwarding the same hazard.
 - RenderSettings has no origin, so no sub-rectangle base rendering; ratified
   workaround: tiles cache composites. Upstream feature request.
 - RenderCache borrows the Pdf (self-referential storage); viewer-lifetime
@@ -42,7 +46,13 @@ referenced.
 
 ## Environment
 
-- gpui fork fetch needs CARGO_NET_GIT_FETCH_WITH_CLI=true (libgit2 ssh
-  fallback fails); Xcode 26 needs `xcodebuild -downloadComponent
-  MetalToolchain` before gpui shaders compile. Belongs in CI docs when the
-  shell feature reaches CI.
+- ANY git dependency fetch needs CARGO_NET_GIT_FETCH_WITH_CLI=true: the
+  user's gitconfig rewrites https to ssh, which libgit2 cannot authenticate
+  (verified with a cold CARGO_HOME). Since crates/render now pins the hayro
+  fork by git rev, every cold default build needs it, not just the shell
+  feature. Xcode 26 needs `xcodebuild -downloadComponent MetalToolchain`
+  before gpui shaders compile. Both belong in CI configuration.
+- The hayro git pin drags vello_cpu/vello_common to 0.0.9 at the git rev
+  hayro main itself pins (registry had 0.0.8). Rev-locked so reproducible;
+  if M2's vello backend picks its own vello version cargo will carry two
+  copies (bloat, not breakage). Revisit when hayro cuts a release.
