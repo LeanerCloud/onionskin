@@ -3,3 +3,4 @@ dist/
 corpus/external/
 corpus/malformed/
 .claude/
+graphify-out/
