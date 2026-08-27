@@ -8,8 +8,21 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
+# M1 spike (c). Behind `shell` so default builds and the headless tests
+# never pull GPUI.
+[[bin]]
+name = "shell_spike"
+path = "src/bin/shell_spike.rs"
+required-features = ["shell"]
+
 [dependencies]
 onionskin-plugin-api.workspace = true
+
+# Fork of gpui 0.2.2 adding PinchEvent/on_pinch and stylus pressure, pinned
+# by rev exactly as Schist pins it (PLAN.md key decision 5).
+gpui = { git = "https://github.com/IAmJSD/gpui", rev = "84bdb01b29887ca09b6c437dad9a0ae838fe48e8", optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+smallvec = { version = "1.13", optional = true }
 
 onionskin-codecs-common = { workspace = true, optional = true }
 onionskin-commands-core = { workspace = true, optional = true }
@@ -54,3 +67,6 @@ tools-form = ["dep:onionskin-tools-form"]
 tools-measure = ["dep:onionskin-tools-measure"]
 tools-organize = ["dep:onionskin-tools-organize"]
 tools-protect = ["dep:onionskin-tools-protect"]
+
+# GPUI shell. Off by default: the kernel and its tests stay GPUI-free.
+shell = ["dep:gpui", "dep:image", "dep:smallvec"]
