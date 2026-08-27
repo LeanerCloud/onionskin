@@ -16,7 +16,7 @@ use crate::parse::Lexer;
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
 use crate::source::{FileSource, Source};
-use crate::writer::{self, XrefRow};
+use crate::writer::{self, RowEntry, XrefRow};
 use crate::xref::{self, Xref, XrefEntry};
 
 /// How far back from the end of the file `startxref` is looked for.
@@ -26,6 +26,20 @@ const MAX_INDIRECTION: usize = 64;
 /// How much of the original a save copies at a time. This is the whole of the
 /// save path's memory: a 4 GB document costs the same as a 4 KB one.
 const COPY_CHUNK: u64 = 64 * 1024;
+
+/// A pending change to one object number. Both variants carry the generation
+/// the appended section will record for it.
+enum Edit {
+    Set {
+        generation: u16,
+        object: Object,
+    },
+    /// The object is to be marked free. `generation` is already the bumped
+    /// one, which is what a free entry records (ISO 32000-1 7.5.4).
+    Delete {
+        generation: u16,
+    },
+}
 
 struct ObjectStream {
     data: Vec<u8>,
@@ -54,7 +68,7 @@ pub struct Document {
     /// is a fact about the file and does not stop being true.
     recovered_boundaries: RefCell<BTreeMap<u32, RecoveredBoundary>>,
     in_flight: RefCell<BTreeSet<u32>>,
-    edits: BTreeMap<u32, (u16, Object)>,
+    edits: BTreeMap<u32, Edit>,
     trailer_edits: Dict,
     next_number: u32,
 }
@@ -220,13 +234,22 @@ impl Document {
         if let Some(hit) = self.cache.borrow().get(&number) {
             return Ok(hit.clone());
         }
-        if let Some((generation, object)) = self.edits.get(&number) {
-            return Ok(Parsed {
-                objref: ObjRef::new(number, *generation),
-                object: object.clone(),
-                origin: Origin::Pending,
-                recovered_boundary: None,
-            });
+        match self.edits.get(&number) {
+            Some(Edit::Set { generation, object }) => {
+                return Ok(Parsed {
+                    objref: ObjRef::new(number, *generation),
+                    object: object.clone(),
+                    origin: Origin::Pending,
+                    recovered_boundary: None,
+                })
+            }
+            // The object still has bytes in the file, and a caller that has
+            // not saved yet could read them. Reporting it as present would
+            // make the deletion invisible until the save.
+            Some(Edit::Delete { generation }) => {
+                return Err(Error::MissingObject(ObjRef::new(number, *generation)))
+            }
+            None => {}
         }
 
         // A crafted file can name itself as its own object-stream container, or
@@ -282,7 +305,9 @@ impl Document {
             Some(XrefEntry::InObjectStream { container, index }) => {
                 self.get_compressed(number, container, index)
             }
-            Some(XrefEntry::Free) | None => Err(Error::MissingObject(ObjRef::new(number, 0))),
+            Some(XrefEntry::Free { .. }) | None => {
+                Err(Error::MissingObject(ObjRef::new(number, 0)))
+            }
         }
     }
 
@@ -467,14 +492,11 @@ impl Document {
 
     // ---- edits --------------------------------------------------------------
 
-    /// Replaces object `number`. Both caches are dropped rather than pruned:
-    /// the edited object may be an object stream, and the objects decoded out
-    /// of it would otherwise keep serving the bytes it no longer has.
+    /// Replaces object `number`, superseding a pending deletion of it.
     pub fn set_object(&mut self, number: u32, generation: u16, object: Object) {
-        self.cache.borrow_mut().clear();
-        self.object_streams.borrow_mut().clear();
+        self.forget_parsed_objects();
         self.next_number = self.next_number.max(number.saturating_add(1));
-        self.edits.insert(number, (generation, object));
+        self.edits.insert(number, Edit::Set { generation, object });
     }
 
     /// Appends a new object. Fails when the document already uses the whole
@@ -484,8 +506,64 @@ impl Document {
         self.next_number = number.checked_add(1).ok_or_else(|| Error::Unrecoverable {
             detail: "the document has no free object numbers left".into(),
         })?;
-        self.edits.insert(number, (0, object));
+        self.edits.insert(
+            number,
+            Edit::Set {
+                generation: 0,
+                object,
+            },
+        );
         Ok(ObjRef::new(number, 0))
+    }
+
+    /// Marks an object free. The appended section records it as a free entry
+    /// spliced into the file's free list (ISO 32000-1 7.5.4) with its
+    /// generation bumped, so the number cannot be reused at the generation the
+    /// deleted object had. The object's bytes stay where they are, under the
+    /// section, as the core invariant requires.
+    ///
+    /// Consumer: M2 `tools-organize`, whose page deletion has to remove the
+    /// page object and its content streams.
+    ///
+    /// Deleting a number the document does not have, or one already deleted in
+    /// this session, is an error rather than a quiet no-op: a caller working
+    /// from a stale object number has to hear about it.
+    pub fn delete_object(&mut self, number: u32) -> Result<()> {
+        if number == 0 {
+            return Err(Error::Unrecoverable {
+                detail: "object 0 is the head of the free list, not a document object".into(),
+            });
+        }
+        let live = match self.edits.get(&number) {
+            Some(Edit::Delete { generation }) => {
+                return Err(Error::MissingObject(ObjRef::new(number, *generation)))
+            }
+            Some(Edit::Set { generation, .. }) => *generation,
+            None => match self.xref.get(number) {
+                Some(XrefEntry::InFile { generation, .. }) => generation,
+                // A compressed object carries no generation of its own; the
+                // spec gives it 0.
+                Some(XrefEntry::InObjectStream { .. }) => 0,
+                Some(XrefEntry::Free { .. }) | None => {
+                    return Err(Error::MissingObject(ObjRef::new(number, 0)))
+                }
+            },
+        };
+
+        // 65535 is the spec's "never reuse this number" and is where the bump
+        // stops, rather than wrapping back to a generation that is in use.
+        let generation = live.saturating_add(1);
+        self.forget_parsed_objects();
+        self.edits.insert(number, Edit::Delete { generation });
+        Ok(())
+    }
+
+    /// Drops both object caches. An edited or deleted object may be an object
+    /// stream, and the objects decoded out of it would otherwise keep serving
+    /// bytes from a container the document no longer has.
+    fn forget_parsed_objects(&self) {
+        self.cache.borrow_mut().clear();
+        self.object_streams.borrow_mut().clear();
     }
 
     pub fn set_trailer_entry(&mut self, key: &str, value: Object) {
@@ -541,6 +619,51 @@ impl Document {
         }
     }
 
+    /// The free entries the appended section writes: object 0, the head of the
+    /// list, followed by everything deleted in this session.
+    ///
+    /// ISO 32000-1 7.5.4 makes the free entries a linked list, each one naming
+    /// the next and the last naming 0. New entries go in at the head, so
+    /// whatever was already on the list stays on it: the tail of the new run
+    /// points at whatever object 0 used to point at. A rebuilt full table is
+    /// the exception, because it does not carry the older free entries and a
+    /// link into them would lead nowhere.
+    ///
+    /// Returns an empty vector when there is nothing to say: a delta section
+    /// with no deletions has no business rewriting the head of the list.
+    fn free_list_rows(&self, full_table: bool) -> Vec<XrefRow> {
+        let deleted: Vec<(u32, u16)> = self
+            .edits
+            .iter()
+            .filter_map(|(number, edit)| match edit {
+                Edit::Delete { generation } => Some((*number, *generation)),
+                Edit::Set { .. } => None,
+            })
+            .collect();
+        if deleted.is_empty() && !full_table {
+            return Vec::new();
+        }
+
+        let tail = match (full_table, self.xref.get(0)) {
+            (false, Some(XrefEntry::Free { next })) => next,
+            _ => 0,
+        };
+        let mut rows = vec![XrefRow {
+            number: 0,
+            generation: 65535,
+            entry: RowEntry::Free(deleted.first().map_or(tail, |(number, _)| *number)),
+        }];
+        for (index, (number, generation)) in deleted.iter().enumerate() {
+            let next = deleted.get(index + 1).map_or(tail, |(next, _)| *next);
+            rows.push(XrefRow {
+                number: *number,
+                generation: *generation,
+                entry: RowEntry::Free(next),
+            });
+        }
+        rows
+    }
+
     /// The bytes a save would append, or `None` when there is nothing to say.
     pub fn incremental_section(&self) -> Result<Option<Vec<u8>>> {
         if !self.has_pending_changes() {
@@ -558,25 +681,26 @@ impl Document {
         let mut objects: Vec<(ObjRef, Object)> = self
             .edits
             .iter()
-            .map(|(number, (generation, object))| {
-                (ObjRef::new(*number, *generation), object.clone())
+            .filter_map(|(number, edit)| match edit {
+                Edit::Set { generation, object } => {
+                    Some((ObjRef::new(*number, *generation), object.clone()))
+                }
+                Edit::Delete { .. } => None,
             })
             .collect();
 
         let full_table = self.needs_full_table();
-        let mut rows = Vec::new();
+        let mut rows = self.free_list_rows(full_table);
         if full_table {
-            rows.push(XrefRow {
-                number: 0,
-                generation: 65535,
-                offset: 0,
-            });
             for (number, entry) in self.xref.iter() {
                 if number == 0 || self.edits.contains_key(&number) {
                     continue;
                 }
                 match entry {
-                    XrefEntry::Free => {}
+                    // Objects that were already free are not carried into a
+                    // rebuilt table: no subsection covers them, which is how a
+                    // classic table says a number is not in use.
+                    XrefEntry::Free { .. } => {}
                     XrefEntry::InFile { generation, .. } => {
                         // Dropping a row here would delete the object from the
                         // only table the saved file can be read through.
@@ -586,7 +710,7 @@ impl Document {
                         rows.push(XrefRow {
                             number,
                             generation,
-                            offset,
+                            entry: RowEntry::InUse(offset),
                         });
                     }
                     // A compressed object has no offset of its own to point
@@ -785,6 +909,6 @@ fn reachable(
             }
             _ => Err(format!("object stream {container} has no xref entry")),
         },
-        Some(XrefEntry::Free) | None => Err(missing()),
+        Some(XrefEntry::Free { .. }) | None => Err(missing()),
     }
 }

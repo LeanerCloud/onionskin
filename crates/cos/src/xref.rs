@@ -19,17 +19,16 @@ const XREF_INITIAL_WINDOW: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum XrefEntry {
-    Free,
+    /// The object number is not in use. Free entries form a linked list
+    /// (ISO 32000-1 7.5.4) whose head is object 0 and whose tail links back to
+    /// it, so the entry carries the number of the next free object. A new
+    /// section splices its own free entries into that list rather than
+    /// replacing it.
+    Free { next: u32 },
     /// The object body lives at `offset` in the file.
-    InFile {
-        offset: u64,
-        generation: u16,
-    },
+    InFile { offset: u64, generation: u16 },
     /// The object body lives inside object stream `container`.
-    InObjectStream {
-        container: u32,
-        index: u32,
-    },
+    InObjectStream { container: u32, index: u32 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -346,7 +345,12 @@ fn read_entry(lex: &mut Lexer) -> Option<XrefEntry> {
                 generation: generation as u16,
             })
         }
-        (Some(_), Some(_), b"f") => Some(XrefEntry::Free),
+        // The first field of a free entry is the next free object number. One
+        // too big to be an object number cannot be followed, so the list ends
+        // here rather than pointing somewhere invented.
+        (Some(next), Some(_), b"f") => Some(XrefEntry::Free {
+            next: u32::try_from(next).unwrap_or(0),
+        }),
         _ => {
             lex.seek(save);
             None
@@ -427,7 +431,9 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
                 continue;
             };
             let entry = match fields[0] {
-                0 => XrefEntry::Free,
+                0 => XrefEntry::Free {
+                    next: fields[1].min(u64::from(u32::MAX)) as u32,
+                },
                 1 => XrefEntry::InFile {
                     offset: fields[1],
                     generation: fields[2].min(u64::from(u16::MAX)) as u16,
@@ -436,8 +442,9 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
                     container: fields[1].min(u64::from(u32::MAX)) as u32,
                     index: fields[2].min(u64::from(u32::MAX)) as u32,
                 },
-                // Types beyond 2 are reserved; the spec says treat as null.
-                _ => XrefEntry::Free,
+                // Types beyond 2 are reserved; the spec says treat as null,
+                // which is a free entry that leads nowhere.
+                _ => XrefEntry::Free { next: 0 },
             };
             entries.push((number, entry));
         }

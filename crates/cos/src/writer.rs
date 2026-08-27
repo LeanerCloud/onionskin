@@ -113,10 +113,21 @@ fn format_real(value: f64) -> Result<String> {
 }
 
 /// One entry of the cross-reference table an incremental section writes.
+#[derive(Clone, Copy)]
 pub(crate) struct XrefRow {
     pub number: u32,
     pub generation: u16,
-    pub offset: u64,
+    pub entry: RowEntry,
+}
+
+/// The two kinds of cross-reference entry. The ten-digit field they share
+/// means different things, which is exactly why it is not one number here.
+#[derive(Clone, Copy)]
+pub(crate) enum RowEntry {
+    /// Byte offset of the object's `N G obj` header.
+    InUse(u64),
+    /// Number of the next free object; the list ends by linking back to 0.
+    Free(u32),
 }
 
 /// A byte offset an `xref` table's fixed ten-digit field cannot hold.
@@ -163,19 +174,7 @@ pub(crate) fn incremental_section(
     let mut body = Vec::new();
     // Keyed by object number, so a rewritten object supersedes the row that
     // pointed at its old bytes instead of both landing in the table.
-    let mut rows: BTreeMap<u32, XrefRow> = extra_rows
-        .iter()
-        .map(|r| {
-            (
-                r.number,
-                XrefRow {
-                    number: r.number,
-                    generation: r.generation,
-                    offset: r.offset,
-                },
-            )
-        })
-        .collect();
+    let mut rows: BTreeMap<u32, XrefRow> = extra_rows.iter().map(|r| (r.number, *r)).collect();
 
     for (objref, object) in objects {
         let offset = section_start + body.len() as u64;
@@ -187,19 +186,23 @@ pub(crate) fn incremental_section(
             XrefRow {
                 number: objref.number,
                 generation: objref.generation,
-                offset,
+                entry: RowEntry::InUse(offset),
             },
         );
     }
 
     let rows: Vec<XrefRow> = rows.into_values().collect();
-    if let Some(row) = rows.iter().find(|r| r.offset > MAX_TABLE_OFFSET) {
-        return Err(Error::Unrecoverable {
-            detail: format!(
-                "object {} lives at byte {}, past what an xref table can address",
-                row.number, row.offset
-            ),
-        });
+    for row in &rows {
+        if let RowEntry::InUse(offset) = row.entry {
+            if offset > MAX_TABLE_OFFSET {
+                return Err(Error::Unrecoverable {
+                    detail: format!(
+                        "object {} lives at byte {offset}, past what an xref table can address",
+                        row.number
+                    ),
+                });
+            }
+        }
     }
 
     let xref_offset = section_start + body.len() as u64;
@@ -212,13 +215,13 @@ pub(crate) fn incremental_section(
     for group in contiguous_groups(&rows) {
         body.extend_from_slice(format!("{} {}\n", group[0].number, group.len()).as_bytes());
         for row in group {
-            if row.number == 0 {
-                body.extend_from_slice(b"0000000000 65535 f \n");
-            } else {
-                body.extend_from_slice(
-                    format!("{:010} {:05} n \n", row.offset, row.generation).as_bytes(),
-                );
-            }
+            let (field, kind) = match row.entry {
+                RowEntry::InUse(offset) => (offset, 'n'),
+                RowEntry::Free(next) => (u64::from(next), 'f'),
+            };
+            body.extend_from_slice(
+                format!("{field:010} {:05} {kind} \n", row.generation).as_bytes(),
+            );
         }
     }
 

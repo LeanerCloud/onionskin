@@ -247,7 +247,7 @@ pub(crate) fn scan(reader: &Reader) -> Result<Scanned> {
     // A /Root the scan did not find an object for is as useless as no /Root at
     // all, and files that name a catalog they do not contain are real.
     let root_is_present = match trailer.get(b"Root") {
-        Some(Object::Ref(r)) => !matches!(xref.get(r.number), None | Some(XrefEntry::Free)),
+        Some(Object::Ref(r)) => !matches!(xref.get(r.number), None | Some(XrefEntry::Free { .. })),
         _ => false,
     };
     if !root_is_present {

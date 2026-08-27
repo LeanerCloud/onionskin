@@ -206,7 +206,7 @@ pub fn skeleton() -> Vec<&'static [u8]> {
 
 /// One row of a classic cross-reference table, as read back out of bytes this
 /// crate wrote.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct XrefRow {
     pub number: u32,
     /// A byte offset for an in-use entry, the next free object number for a
@@ -216,11 +216,40 @@ pub struct XrefRow {
     pub free: bool,
 }
 
-/// Parses the classic table of the last cross-reference section in `bytes`,
-/// so a test can check the section this crate wrote rather than trust it.
+/// The classic table of the last cross-reference section in `bytes`: what the
+/// save just appended, checked rather than taken on trust.
 pub fn last_xref_table(bytes: &[u8]) -> Vec<XrefRow> {
-    let at = rfind(bytes, b"\nxref\n").expect("the section has a classic xref table") + 1;
-    let text = String::from_utf8_lossy(&bytes[at..]);
+    let at = *table_offsets(bytes)
+        .last()
+        .expect("the file has a classic cross-reference table");
+    parse_xref_table(&bytes[at..])
+}
+
+/// The table a reader ends up with after following the whole chain: later
+/// sections override earlier ones, entry by entry.
+pub fn effective_xref(bytes: &[u8]) -> BTreeMap<u32, XrefRow> {
+    let mut merged = BTreeMap::new();
+    for at in table_offsets(bytes) {
+        for row in parse_xref_table(&bytes[at..]) {
+            merged.insert(row.number, row);
+        }
+    }
+    merged
+}
+
+/// Where each `xref` keyword in the file starts, oldest section first.
+fn table_offsets(bytes: &[u8]) -> Vec<usize> {
+    let needle = b"\nxref\n";
+    bytes
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, window)| *window == needle)
+        .map(|(at, _)| at + 1)
+        .collect()
+}
+
+fn parse_xref_table(from: &[u8]) -> Vec<XrefRow> {
+    let text = String::from_utf8_lossy(from);
     let mut words = text.split_ascii_whitespace();
     assert_eq!(words.next(), Some("xref"));
 
@@ -256,10 +285,4 @@ pub fn last_xref_table(bytes: &[u8]) -> Vec<XrefRow> {
         }
     }
     rows
-}
-
-fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .rposition(|window| window == needle)
 }
