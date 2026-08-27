@@ -40,6 +40,11 @@ referenced.
   deleting a /Pages node or a page still referenced by one leaves a dangling
   reference. M2's tools-organize has to fix up the page tree itself.
 
+- content residual nits from review: the UTF-8 BOM path in pdf_text_string
+  uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
+  string (a hair against no-invented-characters; tighten when touched);
+  the oracle's ERROR_CATEGORIES list tracks Error::category slugs by hand
+  and would silently narrow the error ceiling if they drift.
 - Search must normalize bidi text: content extraction yields Arabic as
   visual-order presentation forms (a faithful per-glyph transcript), but a
   user's search query arrives in logical order, so M2's find bar cannot
