@@ -34,7 +34,7 @@ fn assert_invariants(file: &Path, page: &PageText, raw_len: u64) {
             );
         }
 
-        let mut previous_end = 0usize;
+        let mut previous_start = 0usize;
         for glyph in &run.glyphs {
             for (x, y) in glyph.quad.corners {
                 assert!(
@@ -57,11 +57,14 @@ fn assert_invariants(file: &Path, page: &PageText, raw_len: u64) {
                     );
                     // Glyph ranges walk forward through the run's text; a
                     // caller mapping a selection back to glyphs relies on it.
+                    // They may repeat rather than strictly advance: every
+                    // glyph of an /ActualText span points at the whole
+                    // replacement string.
                     assert!(
-                        range.start >= previous_end,
+                        range.start >= previous_start,
                         "{where_}: glyph text ranges are out of order"
                     );
-                    previous_end = range.end;
+                    previous_start = range.start;
                 }
                 Mapping::Unmapped => {}
             }

@@ -640,6 +640,23 @@ fn strip_subset_prefix(name: &str) -> String {
     name.to_string()
 }
 
+/// A PDF text string (ISO 32000-2 7.9.2.2): UTF-16 behind a byte order mark,
+/// PDFDocEncoding otherwise. A PDFDocEncoding byte with no glyph name is taken
+/// as Latin-1, which the encoding already agrees with over most of its range.
+pub fn pdf_text_string(bytes: &[u8]) -> String {
+    match bytes {
+        [0xFE, 0xFF, rest @ ..] => cmap::utf16be(rest),
+        _ => bytes
+            .iter()
+            .map(|b| {
+                tables::PDF_DOC_ENCODING[usize::from(*b)]
+                    .and_then(tables::glyph_name_to_unicode)
+                    .unwrap_or(char::from(*b))
+            })
+            .collect(),
+    }
+}
+
 /// Glyph name to text, covering the Adobe Glyph List plus the algorithmic
 /// names of the AGL specification.
 ///
@@ -731,6 +748,16 @@ mod tests {
         assert_eq!(glyph_name_to_string("u1F600").as_deref(), Some("\u{1F600}"));
         assert_eq!(glyph_name_to_string("f_f_i").as_deref(), Some("ffi"));
         assert_eq!(glyph_name_to_string("a.sc").as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn pdf_text_strings_follow_their_byte_order_mark() {
+        assert_eq!(pdf_text_string(&[0xFE, 0xFF, 0x00, 0x41, 0x00, 0x42]), "AB");
+        assert_eq!(pdf_text_string(b"AB"), "AB");
+        // Without a mark the bytes are PDFDocEncoding, which is neither
+        // Latin-1 (0x92 is a C1 control there) nor WinAnsi (a right single
+        // quote there).
+        assert_eq!(pdf_text_string(&[0x92]), "\u{2122}");
     }
 
     #[test]

@@ -30,6 +30,10 @@ const MAX_GSTACK: usize = 1024;
 /// orders of magnitude of headroom and it bounds a hostile stream's memory.
 const MAX_GLYPHS: usize = 1_000_000;
 
+/// Open marked-content sequences tracked at once. Tagged documents nest a
+/// handful; a stream with more than this is not describing a structure.
+const MAX_MARKED: usize = 256;
+
 /// A `TJ` adjustment moving the pen forward by at least this much of an em is
 /// a word gap rather than a kern.
 ///
@@ -173,6 +177,9 @@ impl Interpreter<'_> {
         // matching `Q` pops nothing instead of popping somebody else's state.
         let mut unsaved = 0usize;
         let mut text: Option<TextObject> = None;
+        // One entry per open marked-content sequence, holding its
+        // `/ActualText` until a showing operator inside it consumes it.
+        let mut marked: Vec<Option<String>> = Vec::new();
 
         while let Some(op) = lexer.next_operation() {
             match op.operator.as_bytes() {
@@ -256,7 +263,7 @@ impl Interpreter<'_> {
                     let object = op.operands.last().cloned();
                     if let Some(Object::String(s)) = object {
                         let text = text.get_or_insert_with(TextObject::new);
-                        self.show(content, &op, &[Show::Text(s)], &state, text);
+                        self.show(content, &op, &[Show::Text(s)], &state, text, &mut marked);
                     }
                 }
                 b"TJ" => {
@@ -271,7 +278,7 @@ impl Interpreter<'_> {
                         })
                         .collect();
                     let text = text.get_or_insert_with(TextObject::new);
-                    self.show(content, &op, &parts, &state, text);
+                    self.show(content, &op, &parts, &state, text, &mut marked);
                 }
                 b"'" => {
                     let Some(Object::String(s)) = op.operands.last().cloned() else {
@@ -280,7 +287,7 @@ impl Interpreter<'_> {
                     let leading = state.leading;
                     let text = text.get_or_insert_with(TextObject::new);
                     text.next_line(0.0, -leading);
-                    self.show(content, &op, &[Show::Text(s)], &state, text);
+                    self.show(content, &op, &[Show::Text(s)], &state, text, &mut marked);
                 }
                 b"\"" => {
                     let Some(Object::String(s)) = op.operands.last().cloned() else {
@@ -295,7 +302,7 @@ impl Interpreter<'_> {
                     let leading = state.leading;
                     let text = text.get_or_insert_with(TextObject::new);
                     text.next_line(0.0, -leading);
-                    self.show(content, &op, &[Show::Text(s)], &state, text);
+                    self.show(content, &op, &[Show::Text(s)], &state, text, &mut marked);
                 }
 
                 b"Do" => {
@@ -306,9 +313,17 @@ impl Interpreter<'_> {
                     self.form_xobject(&name, resources, &state, depth);
                 }
 
-                // Everything else is a painting, colour, clipping or marked
-                // content operator. Extraction has no use for it and skipping
-                // it is not an error.
+                b"BDC" | b"BMC" => {
+                    if marked.len() < MAX_MARKED {
+                        marked.push(self.actual_text(&op, resources));
+                    }
+                }
+                b"EMC" => {
+                    marked.pop();
+                }
+
+                // Everything else is a painting, colour or clipping operator.
+                // Extraction has no use for it and skipping it is not an error.
                 _ => {}
             }
         }
@@ -434,6 +449,7 @@ impl Interpreter<'_> {
 
     // ---- text showing -------------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn show(
         &mut self,
         content: &Content,
@@ -441,6 +457,7 @@ impl Interpreter<'_> {
         parts: &[Show],
         state: &GState,
         text: &mut TextObject,
+        marked: &mut [Option<String>],
     ) {
         let Some(font) = state.font.clone() else {
             return;
@@ -461,7 +478,11 @@ impl Interpreter<'_> {
                         (shift * state.horizontal_scale, 0.0)
                     };
                     text.tm = Matrix::translate(tx, ty).then(&text.tm);
-                    if ems >= WORD_GAP_EM && !out.is_empty() && !out.ends_with(char::is_whitespace)
+                    // Vertical text advances down the page, so there a gap is
+                    // the adjustment pushing further negative, not further
+                    // positive.
+                    let gap = if vertical { -ems } else { ems };
+                    if gap >= WORD_GAP_EM && !out.is_empty() && !out.ends_with(char::is_whitespace)
                     {
                         out.push(' ');
                     }
@@ -521,6 +542,21 @@ impl Interpreter<'_> {
         if glyphs.is_empty() {
             return;
         }
+        // ISO 32000-2 14.9.4: an /ActualText span says what its content really
+        // spells, whatever its glyphs are addressed by. Accessible documents
+        // use it exactly where the glyph codes are meaningless, so honouring it
+        // is the difference between extracting the text and extracting nothing.
+        // The span's text belongs to the span, so the first run inside it takes
+        // it and the rest of the span contributes no text of its own.
+        if let Some(actual) = marked.iter_mut().rev().find_map(Option::take) {
+            for glyph in &mut glyphs {
+                // Every glyph in the span stands for the whole replacement, so
+                // selecting any part of it highlights all of them.
+                glyph.mapping = Mapping::Text(0..actual.len());
+            }
+            out = actual;
+        }
+
         let Some(provenance) = provenance(content, op.span) else {
             return;
         };
@@ -567,6 +603,24 @@ impl Interpreter<'_> {
                 trm.apply(x1, y0),
             ],
         }
+    }
+
+    /// The `/ActualText` of a `BDC` property list, whether written inline or
+    /// named through the resource dictionary's `/Properties`.
+    fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<String> {
+        let properties = match op.operands.last()? {
+            Object::Dict(d) => d.clone(),
+            Object::Name(n) => self
+                .lookup(resources, b"Properties", n.as_bytes())?
+                .as_dict()
+                .cloned()?,
+            _ => return None,
+        };
+        let Object::String(bytes) = self.doc.resolve(properties.get(b"ActualText")?).ok()? else {
+            return None;
+        };
+        let text = font::pdf_text_string(&bytes);
+        (!text.is_empty()).then_some(text)
     }
 
     // ---- resources ----------------------------------------------------------
