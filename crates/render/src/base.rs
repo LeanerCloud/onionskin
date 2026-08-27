@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning};
-use hayro::hayro_syntax::{LoadPdfError, Pdf};
+use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
 use hayro::{RenderCache, RenderSettings};
 
 /// hayro sizes its pixmaps with `u16`, so a page is unrenderable once either
@@ -177,8 +177,20 @@ pub enum RenderError {
 impl fmt::Display for RenderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // hayro's `DecryptionError` carries no `Display`, and `{e:?}` in a
+            // message a user reads is a leak, not a diagnosis. Matched
+            // exhaustively so a new upstream variant fails the build instead
+            // of falling into a vague catch-all.
             Self::Load(LoadPdfError::Decryption(e)) => {
-                write!(f, "the document is encrypted and could not be decrypted: {e:?}")
+                let reason = match e {
+                    DecryptionError::MissingIDEntry => "its /ID entry is missing",
+                    DecryptionError::PasswordProtected => "it needs a password",
+                    DecryptionError::InvalidEncryption => "its encryption dictionary is invalid",
+                    DecryptionError::UnsupportedAlgorithm => {
+                        "it uses an encryption algorithm we do not support"
+                    }
+                };
+                write!(f, "the document is encrypted and {reason}")
             }
             Self::Load(LoadPdfError::Invalid) => write!(f, "the document could not be parsed"),
             Self::NoSuchPage { index, count } => {
@@ -193,3 +205,16 @@ impl fmt::Display for RenderError {
 }
 
 impl Error for RenderError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_decryption_message_stays_prose() {
+        let message =
+            RenderError::Load(LoadPdfError::Decryption(DecryptionError::PasswordProtected))
+                .to_string();
+        assert_eq!(message, "the document is encrypted and it needs a password");
+    }
+}
