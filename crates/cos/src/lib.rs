@@ -29,6 +29,13 @@
 //! Encryption is detected and refused with [`Error::Encrypted`] rather than
 //! half-parsed, and only the filters the structural layer needs are
 //! implemented (Flate with predictors, ASCIIHex, ASCII85).
+//!
+//! # Running the guarantee tests
+//!
+//! `corpus/external/` and `corpus/malformed/` are gitignored, so the tests
+//! find their inputs through `$ONIONSKIN_CORPUS` (defaulting to
+//! `<workspace>/corpus`) and skip loudly when it is absent. Set
+//! `ONIONSKIN_CORPUS_REQUIRED=1` in CI to turn that skip into a failure.
 
 mod document;
 mod error;
