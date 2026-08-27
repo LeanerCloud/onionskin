@@ -40,6 +40,17 @@ referenced.
   deleting a /Pages node or a page still referenced by one leaves a dangling
   reference. M2's tools-organize has to fix up the page tree itself.
 
+- Search must normalize bidi text: content extraction yields Arabic as
+  visual-order presentation forms (a faithful per-glyph transcript), but a
+  user's search query arrives in logical order, so M2's find bar cannot
+  match user-typed Arabic until search folds presentation forms and
+  reorders. Surfaced by the content review's poppler comparison.
+- cos API work items confirmed by the content review: a public
+  decode_stream on Document (content currently duplicates ~474 lines of
+  filter code cos has privately; one decoder should own Flate, predictors,
+  LZW, RunLength) and an indexed page accessor with inheritable-attribute
+  resolution (content built its own walk; viewer and annotations will want
+  the same). Schedule with the next cos change.
 - One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
   proven by direct view messaging only. Role::Document currently surfaces as
   AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
