@@ -5,3 +5,36 @@
 //! is display-only - what a save writes is operators and bytes, never
 //! pixels - so render parity is a display-consistency concern, not the
 //! semantic contract.
+//!
+//! # M1 spike state
+//!
+//! There is no trait yet, on purpose. [`Document::render_page`] is the CPU
+//! reference and [`TileCache`] is its consumer; the seam will cut between
+//! them, at "produce the base raster for page P at zoom Z". Everything above
+//! that line (the tile grid, damage tracking, overlay compositing) is backend
+//! independent and stays where it is when vello arrives underneath.
+//!
+//! Base rendering is whole-page, not per-tile, because hayro 0.7 has no way
+//! to rasterize a sub-rectangle: `RenderSettings` carries a scale and an
+//! optional viewport size, but no origin, and the `Device` implementation
+//! that would accept an arbitrary transform is private to the crate. Tiles
+//! therefore cache the *composite*, which is what the interactive path
+//! actually needs - drawing an ink stroke recomposites the two tiles under
+//! the pointer and never re-runs the interpreter.
+
+mod base;
+mod overlay;
+mod tile;
+
+/// Re-exported because [`TileCache::page_image`] hands back a
+/// `tiny_skia::Pixmap`. That leak is deliberate for the spike: PNG encoding
+/// is evidence plumbing, not part of the seam being proven.
+pub use tiny_skia;
+
+/// hayro's own warning enum, surfaced rather than restated: it names exactly
+/// the gaps the CPU reference has today, and a copy would drift.
+pub use hayro::hayro_interpret::InterpreterWarning;
+
+pub use base::{BaseRaster, Document, PageRender, RenderError};
+pub use overlay::{Overlay, Rgba};
+pub use tile::{DeviceRect, Tile, TileCache, TILE_SIZE};
