@@ -39,7 +39,8 @@ referenced.
   costs on a file that is already damaged; revisit if M2 meets a large one.
 - cos: deleting the object the trailer names as /Root is refused, but
   deleting a /Pages node or a page still referenced by one leaves a dangling
-  reference. M2's tools-organize has to fix up the page tree itself.
+  reference. M3's tools-organize (per PLAN.md's milestone map) has to fix up
+  the page tree itself.
 
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
