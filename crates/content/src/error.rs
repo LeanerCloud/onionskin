@@ -1,8 +1,8 @@
 //! Errors that stop extraction, and the warnings that do not.
 //!
 //! The split is deliberate. An `Error` means the page could not be read at
-//! all: the object is missing, the filter chain is one this crate cannot
-//! decode, the page tree does not lead anywhere. A [`Warning`] means the page
+//! all: the object is missing, the filter chain is one this build does not
+//! implement, the page tree does not lead anywhere. A [`Warning`] means the page
 //! was read but something in it could not be interpreted faithfully - a glyph
 //! with no Unicode mapping, a font whose widths are absent, a CMap this
 //! milestone does not carry. Warnings ride along on the extraction result so a
@@ -17,14 +17,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    /// Everything the structural layer refuses: a page the tree does not
-    /// reach, an object graph with the wrong shape. `cos` owns the page walk,
-    /// so it owns its errors too, and restating them here would only be a
-    /// second taxonomy to keep in step.
+    /// Everything the structural layer refuses: a filter it does not
+    /// implement, a payload that does not decode, a page the tree does not
+    /// reach, an object graph with the wrong shape. `cos` owns the page walk
+    /// and the filter chain, so it owns their errors too, and restating them
+    /// here would only be a second taxonomy to keep in step.
     Cos(onionskin_cos::Error),
-    /// A stream filter this crate does not implement, or a stream whose data
-    /// does not decode through the filter it declares.
-    Filter { filter: String, detail: String },
     /// The content stream is not lexable at this offset.
     Syntax { offset: u64, detail: String },
 }
@@ -34,7 +32,6 @@ impl Error {
     pub fn category(&self) -> &'static str {
         match self {
             Error::Cos(e) => e.category(),
-            Error::Filter { .. } => "filter",
             Error::Syntax { .. } => "syntax",
         }
     }
@@ -44,7 +41,6 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Cos(e) => write!(f, "{e}"),
-            Error::Filter { filter, detail } => write!(f, "filter {filter}: {detail}"),
             Error::Syntax { offset, detail } => {
                 write!(f, "content syntax at {offset}: {detail}")
             }

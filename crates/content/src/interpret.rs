@@ -411,17 +411,16 @@ impl Interpreter<'_> {
         if subtype(&stream.dict).as_deref() != Some(b"Form".as_slice()) {
             return;
         }
-        let decoded =
-            match crate::filter::decode(&stream.dict, &stream.raw, &|o| self.doc.resolve(o)) {
-                Ok(d) => d,
-                Err(e) => {
-                    self.warnings.push(Warning::ContentPartFailed {
-                        stream: objref,
-                        detail: e.to_string(),
-                    });
-                    return;
-                }
-            };
+        let decoded = match self.doc.decode_stream(stream) {
+            Ok(d) => d,
+            Err(e) => {
+                self.warnings.push(Warning::ContentPartFailed {
+                    stream: objref,
+                    detail: e.to_string(),
+                });
+                return;
+            }
+        };
 
         let mut inner = state.clone();
         if let Some(m) = stream

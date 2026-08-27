@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::{Error, Result};
 use crate::filters;
 use crate::object::{
-    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span,
+    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };
 use crate::parse::Lexer;
 use crate::reader::Reader;
@@ -415,7 +415,12 @@ impl Document {
             .ok_or_else(|| Error::Unrecoverable {
                 detail: format!("object stream {container} has no bytes in the file"),
             })?;
-        let data = filters::decode(&stream.dict, &stream.raw, &|o| self.resolve(o))?;
+        let data = filters::decode(
+            &stream.dict,
+            &stream.raw,
+            &|o| self.resolve(o),
+            filters::Damaged::Refuse,
+        )?;
         let integer = |key: &[u8]| -> Result<usize> {
             Ok(self
                 .resolve_key(&stream.dict, key)?
@@ -464,6 +469,27 @@ impl Document {
             Some(value) => Ok(Some(self.resolve(value)?)),
             None => Ok(None),
         }
+    }
+
+    /// Decodes a stream's `/Filter` chain: Flate and LZW with the PNG and TIFF
+    /// predictors, RunLength, and the two ASCII armours. An image codec is
+    /// [`Error::UnsupportedFilter`], never a silently empty result.
+    ///
+    /// Consumers: `onionskin-content`, for page descriptions, embedded font
+    /// programs and CMaps, and `codecs-common`'s exports.
+    ///
+    /// A payload the filter cannot finish decoding yields whatever did decode.
+    /// A page description cut short by a wrong `/Length` is common and its
+    /// first operators are still the page's real text. The structural layer's
+    /// own decoding is stricter, because half a cross-reference stream is a
+    /// fabricated cross-reference entry rather than a shorter page.
+    pub fn decode_stream(&self, stream: &Stream) -> Result<Vec<u8>> {
+        filters::decode(
+            &stream.dict,
+            &stream.raw,
+            &|o| self.resolve(o),
+            filters::Damaged::Salvage,
+        )
     }
 
     pub fn catalog(&self) -> Result<Dict> {

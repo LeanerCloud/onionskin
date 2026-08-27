@@ -10,12 +10,6 @@ license.workspace = true
 onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
 
-# cos keeps its filter decoder private (`pub(crate) fn decode`), so content
-# carries its own for the filters content streams actually use. Both codecs are
-# already in the workspace lock tree, so neither adds a new dependency.
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-weezl = "0.1"
-
 # Embedded font programs: widths, ascent/descent, and the cmap that turns a
 # CID-keyed font with no /ToUnicode into readable text.
 ttf-parser = { version = "0.25", default-features = false, features = [

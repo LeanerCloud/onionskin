@@ -9,7 +9,6 @@ use onionskin_cos::{Dict, Document, ObjRef, Object, Origin, PageNode, Span};
 use onionskin_plugin_api::PageIndex;
 
 use crate::error::{Result, Warning};
-use crate::filter;
 
 /// A page, with the four attributes ISO 32000-2 7.7.3.4 says are inheritable
 /// resolved against its ancestors and normalised.
@@ -191,7 +190,7 @@ pub fn content(doc: &Document, page: &Page, warnings: &mut Vec<Warning>) -> Resu
             });
             continue;
         };
-        let decoded = match filter::decode(&raw.dict, &raw.raw, &|o| doc.resolve(o)) {
+        let decoded = match doc.decode_stream(raw) {
             Ok(d) => d,
             Err(e) => {
                 warnings.push(Warning::ContentPartFailed {

@@ -394,8 +394,12 @@ fn register_object_stream(
     let Some(stream) = indirect.object.as_stream() else {
         return lost(reasons);
     };
-    let Ok(data) = crate::filters::decode(&stream.dict, &stream.raw, &|o: &Object| Ok(o.clone()))
-    else {
+    let Ok(data) = crate::filters::decode(
+        &stream.dict,
+        &stream.raw,
+        &|o: &Object| Ok(o.clone()),
+        crate::filters::Damaged::Refuse,
+    ) else {
         return lost(reasons);
     };
     let integer = |key: &[u8]| {

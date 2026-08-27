@@ -43,7 +43,6 @@
 //! ```
 
 mod error;
-mod filter;
 mod font;
 mod interpret;
 mod matrix;

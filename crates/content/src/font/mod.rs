@@ -20,7 +20,6 @@ use std::collections::BTreeMap;
 use onionskin_cos::{Dict, Document, ObjRef, Object};
 
 use crate::error::Warning;
-use crate::filter;
 use crate::matrix::Matrix;
 
 pub use cmap::CMap;
@@ -599,7 +598,7 @@ fn font_program(doc: &Document, descriptor: &Dict) -> Option<Vec<u8>> {
 fn stream_data(doc: &Document, dict: &Dict, key: &[u8]) -> Option<Vec<u8>> {
     let object = doc.resolve(dict.get(key)?).ok()?;
     let stream = object.as_stream()?;
-    filter::decode(&stream.dict, &stream.raw, &|o| doc.resolve(o)).ok()
+    doc.decode_stream(stream).ok()
 }
 
 fn resolve(doc: &Document, dict: &Dict, key: &[u8]) -> Option<Object> {

@@ -35,8 +35,11 @@
 //! in silence.
 //!
 //! Encryption is detected and refused with [`Error::Encrypted`] rather than
-//! half-parsed, and only the filters the structural layer needs are
-//! implemented (Flate with predictors, ASCIIHex, ASCII85).
+//! half-parsed. One decoder serves the whole workspace: the structural layer
+//! uses it for cross-reference and object streams, and [`Document::decode_stream`]
+//! exposes it for page descriptions, font programs and CMaps. It implements
+//! Flate and LZW with the PNG and TIFF predictors, RunLength and the two ASCII
+//! armours; image codecs fail loud as [`Error::UnsupportedFilter`].
 //!
 //! [`Document::page`] reaches page `n` in document order with the four
 //! inheritable attributes resolved, parsing only the tree nodes on the path to

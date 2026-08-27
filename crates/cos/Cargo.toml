@@ -8,3 +8,7 @@ license.workspace = true
 # collide on the root manifest.
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+# LZW, for the older producers whose content streams and CMaps use it. It moved
+# here with the rest of the filter set when `decode_stream` became public.
+weezl = "0.1"

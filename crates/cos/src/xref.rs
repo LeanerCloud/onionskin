@@ -397,7 +397,12 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
         });
     };
     let dict = stream.dict.clone();
-    let data = filters::decode(&dict, &stream.raw, &|o: &Object| Ok(o.clone()))?;
+    let data = filters::decode(
+        &dict,
+        &stream.raw,
+        &|o: &Object| Ok(o.clone()),
+        filters::Damaged::Refuse,
+    )?;
 
     let bad = |detail: String| Error::Syntax { offset, detail };
     let Some(items) = dict.get(b"W").and_then(Object::as_array) else {

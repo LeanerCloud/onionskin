@@ -3907,11 +3907,9 @@ dependencies = [
 name = "onionskin-content"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "onionskin-cos",
  "onionskin-plugin-api",
  "ttf-parser 0.25.1",
- "weezl",
 ]
 
 [[package]]
@@ -3923,6 +3921,7 @@ name = "onionskin-cos"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "weezl",
 ]
 
 [[package]]

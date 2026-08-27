@@ -180,11 +180,15 @@ fn error_rate(oracle: &Oracle) -> f64 {
 
 /// The `Error::category` slugs, as opposed to the mismatch buckets.
 ///
-/// `cos` owns the page walk, so a page the tree does not reach arrives here
-/// under its slug rather than content's: what used to be content's `structure`
-/// is `cos`'s `unrecoverable`.
+/// Most of them are `cos`'s: it owns the page walk and the filter chain, so a
+/// page that cannot be reached or a stream that cannot be decoded arrives here
+/// under its slug. What used to be content's own `structure` slug is `cos`'s
+/// `unrecoverable`, and its `filter` slug is `filter-failed` for a payload
+/// that would not decode and `unsupported-filter` for a codec this build does
+/// not carry.
 const ERROR_CATEGORIES: &[&str] = &[
-    "filter",
+    "filter-failed",
+    "unsupported-filter",
     "syntax",
     "no-such-page",
     "missing-object",
