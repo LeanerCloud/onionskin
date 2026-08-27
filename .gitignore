@@ -1,5 +1,6 @@
 target/
 dist/
+corpus/bench/
 corpus/external/
 corpus/malformed/
 .claude/
