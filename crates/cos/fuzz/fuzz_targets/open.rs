@@ -78,12 +78,24 @@ fn mutate(mut document: Document) {
         }
     }
 
-    if document.escalate_to_scan(victim.unwrap_or(0)).is_ok() {
-        assert!(
-            !document.provenance().is_clean(),
-            "escalating to a scan left the document reporting itself clean"
-        );
+    // Escalating may refuse, and may find nothing to do. What it may not do is
+    // report a repair it did not perform, or change anything when it fails.
+    let number = victim.unwrap_or(0);
+    let was_clean = document.provenance().is_clean();
+    if document.escalate_to_scan(number).is_ok() {
+        if was_clean && !document.provenance().is_clean() {
+            assert!(
+                document.get(number).is_ok(),
+                "escalating reported a repair without recovering object {number}"
+            );
+        }
         exercise(&document);
+    } else {
+        assert_eq!(
+            document.provenance().is_clean(),
+            was_clean,
+            "a failed escalation changed the provenance"
+        );
     }
 }
 

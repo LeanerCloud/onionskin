@@ -40,6 +40,10 @@ pub enum Error {
         filter: String,
         detail: String,
     },
+    /// A write to an object number the file has already marked free. Taking
+    /// one back needs the free list re-linked in a section that is already
+    /// written, which an append-only save cannot do.
+    FreedObject(ObjRef),
     /// A reference cycle, or nesting past the depth limit.
     DepthExceeded {
         detail: String,
@@ -61,6 +65,13 @@ impl fmt::Display for Error {
             }
             Error::MissingObject(r) => {
                 write!(f, "object {} {} not found", r.number, r.generation)
+            }
+            Error::FreedObject(r) => {
+                write!(
+                    f,
+                    "object {} is marked free and cannot be rewritten",
+                    r.number
+                )
             }
             Error::UnsupportedFilter(name) => write!(f, "unsupported filter /{name}"),
             Error::Filter { filter, detail } => write!(f, "filter /{filter} failed: {detail}"),
@@ -95,6 +106,7 @@ impl Error {
             Error::Unrecoverable { .. } => "unrecoverable",
             Error::RepairRequired(_) => "repair-required",
             Error::MissingObject(_) => "missing-object",
+            Error::FreedObject(_) => "freed-object",
             Error::UnsupportedFilter(_) => "unsupported-filter",
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",

@@ -7,8 +7,10 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton, Tally};
-use onionskin_cos::{BytesSource, Document, Error, Provenance, RepairReason};
+use common::{
+    classic_pdf, classic_pdf_covering, corpus_dir, corpus_root, pdfs_in, skeleton, Tally,
+};
+use onionskin_cos::{BytesSource, Document, Error, Object, Provenance, RepairReason};
 
 /// The damage each malformed variant carries, keyed by filename suffix.
 fn expected_reason(name: &str) -> fn(&RepairReason) -> bool {
@@ -307,11 +309,182 @@ fn escalating_does_not_resurrect_a_deleted_object() {
     let saved = document.save_to_vec().expect("save");
 
     let mut reopened = Document::open(Box::new(BytesSource::new(saved))).expect("reopens clean");
-    reopened.escalate_to_scan(4).expect("the scan runs");
-    match reopened.get(4) {
-        Err(Error::MissingObject(_)) => {}
+    match reopened.escalate_to_scan(4) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 4),
         other => panic!("a scan must not undo a deletion, got {other:?}"),
     }
+    match reopened.get(4) {
+        Err(Error::MissingObject(_)) => {}
+        other => panic!("the deleted object must stay gone, got {other:?}"),
+    }
+    assert!(
+        reopened.provenance().is_clean(),
+        "an escalation that recovered nothing must not report a repair"
+    );
+    assert!(!reopened.has_pending_changes());
+}
+
+/// The scan recovers objects the table never knew about, which raises the
+/// document's high-water mark. A caller that adds an object afterwards must
+/// not be handed one of those numbers back.
+#[test]
+fn escalating_does_not_hand_out_the_numbers_the_scan_recovered() {
+    let mut bodies = skeleton();
+    bodies.push(b"<</Type/Spare/Which 4>>");
+    // The table covers objects 1 to 3. Object 4 is in the file and out of the
+    // cross-reference, so the document believes 4 is the next free number.
+    let bytes = classic_pdf_covering(&bodies, &[], 3);
+
+    let mut document =
+        Document::open(Box::new(BytesSource::new(bytes.clone()))).expect("opens clean");
+    assert!(document.get(4).is_err(), "object 4 is not in the table yet");
+    document
+        .escalate_to_scan(4)
+        .expect("the scan finds object 4");
+    assert!(document.get(4).is_ok(), "the escalation recovered it");
+
+    let added = document
+        .add_object(Object::Integer(11))
+        .expect("the document has numbers left");
+    assert!(
+        added.number > 4,
+        "add_object handed out object {}, which the scan had just recovered",
+        added.number
+    );
+
+    let saved = document.save_to_vec().expect("save");
+    let (reopened, _) =
+        Document::open_repairing(Box::new(BytesSource::new(saved))).expect("the save reopens");
+    let four = reopened
+        .get(4)
+        .expect("object 4 is still in the saved file");
+    assert_eq!(
+        four.object
+            .as_dict()
+            .and_then(|d| d.get(b"Which"))
+            .and_then(Object::as_integer),
+        Some(4),
+        "the recovered object was overwritten by the one add_object handed out"
+    );
+}
+
+/// The escalation must answer for the object it was asked about. A scan that
+/// corrects nothing leaves a clean document clean, rather than inventing a
+/// repair and a section to record it in.
+#[test]
+fn escalating_for_an_object_that_is_not_there_does_not_fabricate_a_repair() {
+    let bytes = classic_pdf(&skeleton(), &[]);
+    let mut document =
+        Document::open(Box::new(BytesSource::new(bytes.clone()))).expect("opens clean");
+
+    match document.escalate_to_scan(999) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 999),
+        other => panic!("escalating for an object no scan can find must fail, got {other:?}"),
+    }
+    assert!(
+        document.provenance().is_clean(),
+        "a failed escalation must leave the provenance alone"
+    );
+    assert!(
+        !document.has_pending_changes(),
+        "a failed escalation must not turn a save into an append"
+    );
+    assert_eq!(
+        document.save_to_vec().expect("save"),
+        bytes,
+        "save-unchanged must still be byte-identical"
+    );
+}
+
+/// A cross-reference that sends a compressed object to the wrong slot inside
+/// its own container. The container is where the table says it is, so a check
+/// that only asks whether the container can be found calls the entry usable
+/// and the escalation does nothing at all.
+fn wrong_object_stream_slot() -> Vec<u8> {
+    let five: &[u8] = b"<</Type/Spare/Which 5>>";
+    let six: &[u8] = b"<</Type/Spare/Which 6>>";
+    let header = format!("5 0 6 {} ", five.len() + 1);
+    let first = header.len();
+    let mut data = header.into_bytes();
+    data.extend_from_slice(five);
+    data.push(b' ');
+    data.extend_from_slice(six);
+
+    let mut bytes = Vec::from(&b"%PDF-1.5\n"[..]);
+    let mut offsets = [0u64; 8];
+    for (index, body) in skeleton().iter().enumerate() {
+        offsets[index + 1] = bytes.len() as u64;
+        bytes.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        bytes.extend_from_slice(body);
+        bytes.extend_from_slice(b"\nendobj\n");
+    }
+
+    offsets[4] = bytes.len() as u64;
+    bytes.extend_from_slice(
+        format!(
+            "4 0 obj\n<</Type/ObjStm/N 2/First {first}/Length {}>>\nstream\n",
+            data.len()
+        )
+        .as_bytes(),
+    );
+    bytes.extend_from_slice(&data);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+
+    offsets[7] = bytes.len() as u64;
+    // /W [1 2 1]: type, a two-byte field, then one byte.
+    let row = |kind: u8, field: u64, last: u8| [kind, (field >> 8) as u8, field as u8, last];
+    let mut rows = Vec::new();
+    rows.extend_from_slice(&row(0, 0, 255));
+    for offset in &offsets[1..=4] {
+        rows.extend_from_slice(&row(1, *offset, 0));
+    }
+    // Object 5 really sits in slot 0. The table says slot 1, which holds 6.
+    rows.extend_from_slice(&row(2, 4, 1));
+    rows.extend_from_slice(&row(2, 4, 1));
+    rows.extend_from_slice(&row(1, offsets[7], 0));
+
+    bytes.extend_from_slice(
+        format!(
+            "7 0 obj\n<</Type/XRef/Size 8/W[1 2 1]/Index[0 8]/Root 1 0 R/Length {}>>\nstream\n",
+            rows.len()
+        )
+        .as_bytes(),
+    );
+    bytes.extend_from_slice(&rows);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    bytes.extend_from_slice(format!("startxref\n{}\n%%EOF\n", offsets[7]).as_bytes());
+    bytes
+}
+
+/// The M2 viewer's case on any PDF 1.5+ file: the object it cannot reach is a
+/// compressed one. An escalation that cannot correct a compressed entry cannot
+/// help there at all.
+#[test]
+fn escalating_repairs_an_object_the_table_puts_in_the_wrong_object_stream_slot() {
+    let bytes = wrong_object_stream_slot();
+    let mut document = Document::open(Box::new(BytesSource::new(bytes))).expect("opens clean");
+    assert!(
+        document.get(6).is_ok(),
+        "object 6 is in the slot the table names, so the fixture must resolve it"
+    );
+    assert!(
+        document.get(5).is_err(),
+        "object 5 is not in the slot the table names, or this tests nothing"
+    );
+
+    document
+        .escalate_to_scan(5)
+        .expect("the scan knows what the container really holds");
+    let five = document
+        .get(5)
+        .expect("the escalation must reach the compressed object");
+    assert_eq!(
+        five.object
+            .as_dict()
+            .and_then(|d| d.get(b"Which"))
+            .and_then(Object::as_integer),
+        Some(5)
+    );
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

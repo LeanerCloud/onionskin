@@ -170,6 +170,14 @@ fn short(path: &Path) -> String {
 /// object is not at, which is how a test produces a file whose xref is wrong
 /// about exactly one object while still opening clean.
 pub fn classic_pdf(bodies: &[&[u8]], offset_lies: &[(u32, u64)]) -> Vec<u8> {
+    classic_pdf_covering(bodies, offset_lies, bodies.len() as u32)
+}
+
+/// As `classic_pdf`, but the table covers only objects 1 through `covers`.
+/// Bodies above that are in the file and absent from the cross-reference, the
+/// way objects left out of a section that was never written would be: a scan
+/// finds them, the table does not know them.
+pub fn classic_pdf_covering(bodies: &[&[u8]], offset_lies: &[(u32, u64)], covers: u32) -> Vec<u8> {
     let mut bytes = Vec::from(&b"%PDF-1.7\n"[..]);
     let mut offsets = Vec::new();
     for (index, body) in bodies.iter().enumerate() {
@@ -181,9 +189,10 @@ pub fn classic_pdf(bodies: &[&[u8]], offset_lies: &[(u32, u64)]) -> Vec<u8> {
     for (number, offset) in offset_lies {
         offsets[*number as usize - 1] = *offset;
     }
+    offsets.truncate(covers as usize);
 
     let xref_at = bytes.len();
-    let size = bodies.len() + 1;
+    let size = offsets.len() + 1;
     bytes.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
     for offset in &offsets {
         bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
@@ -191,6 +200,49 @@ pub fn classic_pdf(bodies: &[&[u8]], offset_lies: &[(u32, u64)]) -> Vec<u8> {
     bytes.extend_from_slice(
         format!("trailer\n<</Size {size}/Root 1 0 R>>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes(),
     );
+    bytes
+}
+
+/// A PDF 1.5 file whose cross-reference is a stream, object 4, rather than a
+/// table. `declared_length` overrides the `/Length` that stream writes about
+/// its own data, which is how a test produces a document whose entire table
+/// rests on a boundary the parser had to guess.
+pub fn xref_stream_pdf(declared_length: Option<i64>) -> Vec<u8> {
+    let header = b"%PDF-1.5\n";
+    let catalog = b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n";
+    let pages = b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n";
+    let page =
+        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<<>>>>\nendobj\n";
+
+    let catalog_at = header.len();
+    let pages_at = catalog_at + catalog.len();
+    let page_at = pages_at + pages.len();
+    let xref_at = page_at + page.len();
+
+    // /W [1 2 1]: type, a two-byte offset, then the generation.
+    let row = |kind: u8, field: usize, last: u8| [kind, (field >> 8) as u8, field as u8, last];
+    let mut rows = Vec::new();
+    rows.extend_from_slice(&row(0, 0, 255));
+    rows.extend_from_slice(&row(1, catalog_at, 0));
+    rows.extend_from_slice(&row(1, pages_at, 0));
+    rows.extend_from_slice(&row(1, page_at, 0));
+    rows.extend_from_slice(&row(1, xref_at, 0));
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(header);
+    bytes.extend_from_slice(catalog);
+    bytes.extend_from_slice(pages);
+    bytes.extend_from_slice(page);
+    bytes.extend_from_slice(
+        format!(
+            "4 0 obj\n<</Type/XRef/Size 5/W[1 2 1]/Index[0 5]/Root 1 0 R/Length {}>>\nstream\n",
+            declared_length.unwrap_or(rows.len() as i64)
+        )
+        .as_bytes(),
+    );
+    bytes.extend_from_slice(&rows);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    bytes.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
     bytes
 }
 

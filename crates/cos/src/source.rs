@@ -80,9 +80,12 @@ impl Source for FileSource {
     }
 }
 
-/// What a `CountingSource` observed. `total` measures the laziness budget
-/// (decision 11); `largest_read` measures the streaming save, whose promise is
-/// that no single read is proportional to the file.
+/// What a `CountingSource` observed.
+///
+/// This exists to be asserted on. `cos` itself never reads it: the laziness
+/// budget (decision 11) and the streaming save are claims about how much of a
+/// file gets read, and the guarantee tests are the consumer that turns them
+/// into numbers instead of prose.
 #[derive(Default)]
 pub struct ReadStats {
     total: AtomicU64,
@@ -95,15 +98,15 @@ impl ReadStats {
         self.total.load(Ordering::Relaxed)
     }
 
-    /// The biggest single read, which bounds how much of the source a caller
-    /// held in memory at once.
+    /// The biggest single read. What a caller held in memory at once is at
+    /// least this, so a bound on it is a bound on the caller's buffering.
     pub fn largest_read(&self) -> u64 {
         self.largest.load(Ordering::Relaxed)
     }
 
     /// Clears both counters so one phase of a session can be measured without
-    /// the previous phase's reads in the numbers. The streaming-save guarantee
-    /// test uses it to separate what the save reads from what the open read.
+    /// the previous phase's reads in the numbers: the streaming-save test
+    /// separates what the save reads from what the open read.
     pub fn reset(&self) {
         self.total.store(0, Ordering::Relaxed);
         self.largest.store(0, Ordering::Relaxed);

@@ -104,8 +104,12 @@ impl fmt::Display for RepairReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepairReport {
     pub reasons: Vec<RepairReason>,
-    /// True when the xref was thrown away and rebuilt by scanning.
+    /// True when the cross-reference was rebuilt by scanning, at open or by a
+    /// later escalation.
     pub rebuilt_by_scan: bool,
+    /// How many objects the rebuild at open recovered. A mid-session
+    /// escalation does not touch it: what that corrected is in its own reason,
+    /// and moving this to mean two things would make neither checkable.
     pub recovered_objects: usize,
 }
 

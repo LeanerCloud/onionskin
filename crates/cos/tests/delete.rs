@@ -168,6 +168,16 @@ fn deleting_what_is_not_there_is_an_error_rather_than_a_no_op() {
         Err(Error::Unrecoverable { .. }) => {}
         other => panic!("object 0 is the free-list head, not a document object, got {other:?}"),
     }
+    match document.set_object(0, 0, Object::Integer(1)) {
+        Err(Error::Unrecoverable { .. }) => {}
+        other => panic!("writing object 0 would destroy the free-list head, got {other:?}"),
+    }
+    // The catalog is the one object whose deletion cannot be recovered from:
+    // the file it produces will not open at all.
+    match document.delete_object(1) {
+        Err(Error::Unrecoverable { .. }) => {}
+        other => panic!("deleting the document catalog must be refused, got {other:?}"),
+    }
 
     document.delete_object(4).expect("the first deletion works");
     match document.delete_object(4) {
@@ -181,6 +191,39 @@ fn deleting_what_is_not_there_is_an_error_rather_than_a_no_op() {
     assert_eq!(numbers, vec![0, 4]);
 }
 
+/// Reusing a number the file has already marked free is the case the
+/// in-session undo below does not cover: the free entry is in a section that
+/// is already written, so an in-use entry for the same number in the new
+/// section leaves the chain pointing at an object that is not free.
+#[test]
+fn rewriting_a_freed_object_does_not_corrupt_the_free_list() {
+    let mut first = open(&fixture());
+    first.delete_object(4).expect("deletable");
+    let once = first.save_to_vec().expect("save");
+
+    let mut second =
+        Document::open(Box::new(BytesSource::new(once.clone()))).expect("reopens clean");
+    match second.set_object(4, 1, Object::Integer(7)) {
+        Err(Error::FreedObject(objref)) => assert_eq!(objref.number, 4),
+        other => panic!("rewriting a freed number must be refused, got {other:?}"),
+    }
+
+    // The refusal left nothing pending, and a number with no history takes the
+    // object instead.
+    assert!(!second.has_pending_changes());
+    let fresh = second
+        .add_object(Object::Integer(7))
+        .expect("a fresh number is available");
+    assert_ne!(fresh.number, 4);
+    let twice = second.save_to_vec().expect("save");
+    assert_eq!(&twice[..once.len()], &once[..], "the second save appends");
+    assert_eq!(
+        free_list(&effective_xref(&twice)),
+        vec![4],
+        "object 4 stays free, and the chain stays one a reader can follow"
+    );
+}
+
 /// The two edit verbs work on one map, so the last one called wins. Writing an
 /// object back after deleting it has to bring it back, or a caller undoing a
 /// deletion would silently save a free entry over the object it just wrote.
@@ -188,7 +231,9 @@ fn deleting_what_is_not_there_is_an_error_rather_than_a_no_op() {
 fn writing_an_object_back_supersedes_its_deletion() {
     let mut document = open(&fixture());
     document.delete_object(4).expect("deletable");
-    document.set_object(4, 0, Object::Integer(7));
+    document
+        .set_object(4, 0, Object::Integer(7))
+        .expect("an in-session deletion is not a free entry in the file yet");
     assert_eq!(
         document.get(4).expect("object 4 is back").object,
         Object::Integer(7)

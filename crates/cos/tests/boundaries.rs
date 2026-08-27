@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton};
+use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton, xref_stream_pdf};
 use onionskin_cos::{BytesSource, Document, Object, Origin, Provenance, RecoveredBoundary};
 
 /// The stream's real content. The fixture's `/Length` claims otherwise.
@@ -97,6 +97,49 @@ fn a_stream_with_the_right_length_reports_nothing() {
     assert!(document.recovered_boundaries().is_empty());
 }
 
+/// The one recovery no amount of fetching objects would reveal: the
+/// cross-reference stream's own boundary. Every object in the document is
+/// found through the table that stream carries, so if its end was guessed,
+/// so was everything.
+#[test]
+fn a_cross_reference_stream_with_a_wrong_length_reports_its_own_recovery() {
+    let bytes = xref_stream_pdf(Some(999));
+    let (document, provenance) =
+        Document::open_repairing(Box::new(BytesSource::new(bytes))).expect("the file opens");
+    assert_eq!(
+        provenance,
+        Provenance::Clean,
+        "a wrong /Length on the xref stream is still not a repair case"
+    );
+    assert_eq!(document.page_count().ok(), Some(1), "the table still works");
+
+    let boundaries = document.recovered_boundaries();
+    let recovered = boundaries
+        .get(&4)
+        .expect("the cross-reference stream is object 4, and its boundary was guessed");
+    assert!(
+        matches!(
+            recovered,
+            RecoveredBoundary::LengthWrong { declared: 999, .. }
+        ),
+        "expected the declared length to be reported, got {recovered}"
+    );
+
+    // Nothing was fetched through the table before the note existed: opening is
+    // what parsed the stream, so the note is there from the start.
+    let untouched = Document::open(Box::new(BytesSource::new(xref_stream_pdf(Some(999)))))
+        .expect("opens clean");
+    assert!(untouched.recovered_boundaries().contains_key(&4));
+}
+
+#[test]
+fn a_cross_reference_stream_with_the_right_length_reports_nothing() {
+    let document =
+        Document::open(Box::new(BytesSource::new(xref_stream_pdf(None)))).expect("opens clean");
+    assert_eq!(document.page_count().ok(), Some(1));
+    assert!(document.recovered_boundaries().is_empty());
+}
+
 /// What the wild actually contains, and the invariant that has to hold for
 /// every one of them: the length the recovery reports is the length of the
 /// bytes the object came back with. A note that disagreed with its own stream
@@ -109,7 +152,13 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
     };
     let mut files_with_recoveries = 0usize;
     let mut recoveries = 0usize;
-    for path in pdfs_in(&root).into_iter().take(600) {
+    // `pdfs_in` sorts by path, so taking a prefix would only ever walk the
+    // first corpus. A stride crosses all of them and still bounds the run.
+    let all = pdfs_in(&root);
+    let stride = (all.len() / 600).max(1);
+    let sampled: Vec<_> = all.into_iter().step_by(stride).collect();
+    println!("sampling {} corpus files, every {stride}", sampled.len());
+    for path in sampled {
         let Ok((document, _)) = Document::open_path_repairing(&path) else {
             continue;
         };

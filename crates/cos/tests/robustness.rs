@@ -34,12 +34,21 @@ fn survives(bytes: Vec<u8>) -> Result<bool, Error> {
         );
         let _ = document.incremental_section();
     }
+    let was_clean = document.provenance().is_clean();
     if document.escalate_to_scan(number).is_ok() {
-        assert!(
-            !document.provenance().is_clean(),
-            "escalating to a scan left the document reporting itself clean"
-        );
+        if was_clean && !document.provenance().is_clean() {
+            assert!(
+                document.get(number).is_ok(),
+                "escalating reported a repair without recovering object {number}"
+            );
+        }
         let _ = document.incremental_section();
+    } else {
+        assert_eq!(
+            document.provenance().is_clean(),
+            was_clean,
+            "a failed escalation changed the provenance"
+        );
     }
     Ok(true)
 }

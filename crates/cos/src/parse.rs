@@ -523,6 +523,16 @@ pub(crate) fn parse_number(token: &[u8]) -> Option<Object> {
     }
 }
 
+/// What the dictionary said about a stream's length, kept apart from what the
+/// parser did about it.
+#[derive(Clone, Copy)]
+enum Declared {
+    Given(i64),
+    /// An indirect `/Length` that did not resolve.
+    Unresolved(ObjRef),
+    Missing,
+}
+
 /// One indirect object as parsed out of a window.
 pub(crate) struct Indirect {
     pub objref: ObjRef,
@@ -604,11 +614,19 @@ pub(crate) fn parse_indirect(
 
     let data_start = lex.position();
     let declared = match dict.get(b"Length") {
-        Some(Object::Integer(n)) => Some(*n),
-        Some(Object::Ref(r)) => length_of(*r),
+        Some(Object::Integer(n)) => Declared::Given(*n),
+        Some(Object::Ref(r)) => match length_of(*r) {
+            Some(n) => Declared::Given(n),
+            None => Declared::Unresolved(*r),
+        },
+        _ => Declared::Missing,
+    };
+    // A negative length describes no range at all, so it is not something to
+    // measure the buffer against; it is recovered from like any other wrong one.
+    let declared_end = match declared {
+        Declared::Given(n) if n >= 0 => Some(data_start.saturating_add(n as usize)),
         _ => None,
-    }
-    .filter(|n| *n >= 0);
+    };
 
     let need_more = || LexError {
         offset: base + buf.len() as u64,
@@ -626,38 +644,26 @@ pub(crate) fn parse_indirect(
     // a wrong /Length is not a reason to refuse a file every other reader
     // opens - but it is recorded, because the boundary is then the parser's
     // guess rather than the file's statement.
-    let (data_end, recovered) = match declared {
-        Some(len) => {
-            let end = data_start.saturating_add(len as usize);
-            if end <= buf.len() && endstream_follows(buf, end) {
-                (end, None)
-            } else if !can_search(end.min(buf.len())) {
-                return Err(need_more());
-            } else {
-                // Either the declared length overruns the file or `endstream`
-                // is not where it claims: recover by finding the keyword.
-                let found = scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?;
-                (
-                    found,
-                    Some(RecoveredBoundary::LengthWrong {
-                        declared: len,
-                        actual: (found - data_start) as u64,
-                    }),
-                )
-            }
-        }
+    let (data_end, recovered) = match declared_end {
+        // The declared length lands on `endstream`, so the file was right.
+        Some(end) if end <= buf.len() && endstream_follows(buf, end) => (end, None),
+        Some(end) if !can_search(end.min(buf.len())) => return Err(need_more()),
         None if !can_search(data_start) => return Err(need_more()),
-        // A stream with no `endstream` anywhere is truncated. Taking the rest
-        // of the file as its data would hand back a plausible wrong stream on
-        // a document that otherwise looks clean.
-        None => {
+        // Either the declared length is wrong or there is none. A stream with
+        // no `endstream` anywhere is truncated: taking the rest of the file as
+        // its data would hand back a plausible wrong stream on a document that
+        // otherwise looks clean.
+        _ => {
             let found = scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?;
-            (
-                found,
-                Some(RecoveredBoundary::LengthUnusable {
-                    actual: (found - data_start) as u64,
-                }),
-            )
+            let actual = (found - data_start) as u64;
+            let note = match declared {
+                Declared::Given(declared) => RecoveredBoundary::LengthWrong { declared, actual },
+                Declared::Unresolved(reference) => {
+                    RecoveredBoundary::LengthUnresolved { reference, actual }
+                }
+                Declared::Missing => RecoveredBoundary::LengthMissing { actual },
+            };
+            (found, Some(note))
         }
     };
 
