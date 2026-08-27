@@ -36,7 +36,13 @@ pub use tiny_skia;
 /// the gaps the CPU reference has today, and a copy would drift.
 pub use hayro::hayro_interpret::InterpreterWarning;
 
-pub use base::{BaseRaster, Document, PageRender, RenderError};
+/// How an optional content group is named in
+/// [`RenderOptions::layer_visibility`]: by the object its dictionary lives in.
+/// hayro's own type, for the same reason [`InterpreterWarning`] is - restating
+/// it would only add a conversion.
+pub use hayro::hayro_syntax::object::ObjectIdentifier;
+
+pub use base::{BaseRaster, Document, PageRender, RenderError, RenderOptions};
 pub use overlay::{Overlay, OverlayError, Rgba};
 pub use store::TileStore;
 pub use tile::{DeviceRect, Tile, TileCache, TILE_SIZE};

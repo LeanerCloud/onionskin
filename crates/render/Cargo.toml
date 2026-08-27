@@ -11,9 +11,11 @@ license.workspace = true
 # Published 0.7.1 draws an annotation's /AP /N only when it is a direct
 # stream, so the state dictionaries selected by /AS that every checkbox and
 # radio button uses render blank, with no warning. Upstream fixed that on
-# main (LaurenzV/hayro 6af63be9) but has not released it; our rev adds one
-# upstreamable commit on top, InterpreterWarning::UnresolvedAnnotationAppearance,
-# so an annotation we fail to draw reaches warning_sink. Back to a released
-# version once both ship.
-hayro = { git = "https://github.com/cristim/hayro", rev = "33d9caf8b6cafe05ec7593c8073b642b118ccd69" }
+# main (LaurenzV/hayro 6af63be9) but has not released it; our rev adds two
+# upstreamable commits on top: InterpreterWarning::UnresolvedAnnotationAppearance,
+# so an annotation we fail to draw reaches warning_sink, and
+# InterpreterSettings::ocg_overrides, without which a layers pane cannot
+# toggle anything because OcgState is built from the file's own /OCProperties
+# /D inside Context::new_with. Back to a released version once all three ship.
+hayro = { git = "https://github.com/cristim/hayro", rev = "59a7adf4214911fdc69a44d47aaab38eaaf512da" }
 tiny-skia = "0.12.0"

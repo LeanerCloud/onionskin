@@ -1,10 +1,12 @@
 //! Base-page rasterization: the CPU reference, delegated to hayro.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning};
+use hayro::hayro_syntax::object::ObjectIdentifier;
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
 use hayro::{RenderCache, RenderSettings};
 
@@ -19,8 +21,39 @@ pub struct Document {
     pdf: Pdf,
 }
 
+/// What a render includes beyond the page's own marks.
+#[derive(Debug, Clone)]
+pub struct RenderOptions {
+    /// Draw annotation appearance streams over the page content. On, as a
+    /// viewer needs; M3's edit mode turns it off to draw its own.
+    pub render_annotations: bool,
+    /// Optional content groups to show or hide against the document's own
+    /// default configuration, keyed by the object the group lives in. Empty
+    /// means the file decides, which is what a viewer without a layers pane
+    /// wants.
+    pub layer_visibility: HashMap<ObjectIdentifier, bool>,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            render_annotations: true,
+            layer_visibility: HashMap::new(),
+        }
+    }
+}
+
 impl Document {
     pub fn open(bytes: Vec<u8>) -> Result<Self, RenderError> {
+        Ok(Self {
+            pdf: Pdf::new(bytes).map_err(RenderError::Load)?,
+        })
+    }
+
+    /// Open the bytes the rest of the session already holds. hayro stores them
+    /// as an `Arc` internally, so this shares the buffer rather than copying
+    /// it: one allocation serves `cos` and the render thread both.
+    pub fn from_shared(bytes: Arc<Vec<u8>>) -> Result<Self, RenderError> {
         Ok(Self {
             pdf: Pdf::new(bytes).map_err(RenderError::Load)?,
         })
@@ -36,7 +69,12 @@ impl Document {
     /// outline caching between pages: `RenderCache<'a>` borrows the `Pdf`, so
     /// storing one beside the document it caches for is self-referential. A
     /// viewer that pages through a document needs that fixed.
-    pub fn render_page(&self, index: usize, zoom: f32) -> Result<PageRender, RenderError> {
+    pub fn render_page(
+        &self,
+        index: usize,
+        zoom: f32,
+        options: &RenderOptions,
+    ) -> Result<PageRender, RenderError> {
         let pages = self.pdf.pages();
         let page = pages.get(index).ok_or(RenderError::NoSuchPage {
             index,
@@ -72,6 +110,8 @@ impl Document {
                 warning_sink: Arc::new(move |warning| {
                     sink.lock().expect("sink is never poisoned").push(warning)
                 }),
+                render_annotations: options.render_annotations,
+                ocg_overrides: options.layer_visibility.clone(),
                 ..Default::default()
             },
             &RenderSettings {
@@ -209,6 +249,17 @@ impl Error for RenderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The render worker builds its `Document` inside the spawned closure from
+    /// the session's shared bytes, so nothing but the bytes crosses a thread
+    /// boundary. That design holds only if what it builds can live there;
+    /// asserted rather than assumed.
+    #[test]
+    fn a_document_can_live_on_the_render_thread() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Pdf>();
+        assert_send_sync::<Document>();
+    }
 
     #[test]
     fn the_decryption_message_stays_prose() {

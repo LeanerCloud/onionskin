@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use onionskin_render::{
-    BaseRaster, DeviceRect, Document, InterpreterWarning, Overlay, RenderError, Rgba, TileCache,
+    BaseRaster, DeviceRect, Document, InterpreterWarning, Overlay, RenderError, RenderOptions,
+    Rgba, TileCache,
 };
 
 /// Acrobat's highlighter yellow, at the alpha a multiply blend needs to keep
@@ -57,8 +58,9 @@ fn run(input: &Path, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let open = open_start.elapsed();
     let pages = doc.page_count();
 
-    let (page_1x, render_1x) = time(|| doc.render_page(0, 1.0))?;
-    let (page_2x, render_2x) = time(|| doc.render_page(0, 2.0))?;
+    let options = RenderOptions::default();
+    let (page_1x, render_1x) = time(|| doc.render_page(0, 1.0, &options))?;
+    let (page_2x, render_2x) = time(|| doc.render_page(0, 2.0, &options))?;
 
     let at_1x = compose(page_1x.raster, out_dir.join(format!("{}.png", name(input))))?;
     let at_2x = compose(
