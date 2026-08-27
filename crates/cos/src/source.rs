@@ -23,10 +23,19 @@ pub trait Source: Send {
     fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>>;
 }
 
-pub struct BytesSource(Vec<u8>);
+pub struct BytesSource(Arc<Vec<u8>>);
 
 impl BytesSource {
     pub fn new(bytes: Vec<u8>) -> Self {
+        BytesSource(Arc::new(bytes))
+    }
+
+    /// Reads from a buffer somebody else also holds.
+    ///
+    /// Consumer: the viewer session, which reads a file once and hands the same
+    /// bytes to `cos` and to hayro (whose `PdfData` is `From<Arc<T>>`). Without
+    /// this the two parsers would each own a copy of the file.
+    pub fn from_shared(bytes: Arc<Vec<u8>>) -> Self {
         BytesSource(bytes)
     }
 }
