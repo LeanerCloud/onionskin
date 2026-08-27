@@ -24,6 +24,7 @@
 
 mod base;
 mod overlay;
+mod store;
 mod tile;
 
 /// Re-exported because [`TileCache::page_image`] hands back a
@@ -37,4 +38,5 @@ pub use hayro::hayro_interpret::InterpreterWarning;
 
 pub use base::{BaseRaster, Document, PageRender, RenderError};
 pub use overlay::{Overlay, OverlayError, Rgba};
+pub use store::TileStore;
 pub use tile::{DeviceRect, Tile, TileCache, TILE_SIZE};
