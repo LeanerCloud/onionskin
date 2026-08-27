@@ -32,11 +32,12 @@
 //! # Example
 //!
 //! ```no_run
+//! use onionskin_content::{extract_page, search, SearchOptions};
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let doc = onionskin_cos::Document::open_path(std::path::Path::new("in.pdf"))?;
-//! let page = onionskin_content::extract_page(&doc, 0)?;
-//! for run in &page.runs {
-//!     println!("{:?} at {:?}", run.text, run.glyphs.first().map(|g| g.quad));
+//! let page = extract_page(&doc, 0)?;
+//! for hit in search(&page, "invoice", SearchOptions::default()) {
+//!     println!("{:?} at {:?}", hit.text, hit.quads.first());
 //! }
 //! # Ok(()) }
 //! ```
@@ -48,6 +49,7 @@ mod interpret;
 mod matrix;
 mod page;
 mod run;
+mod search;
 mod tokenizer;
 
 pub use error::{Error, Result, Warning};
@@ -55,6 +57,7 @@ pub use font::{Code, Font, FontId};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
 pub use run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
+pub use search::{flatten, search, search_flattened, Flattened, Match, SearchOptions};
 pub use tokenizer::{Operation, Operator, Tokenizer};
 
 use onionskin_cos::Document;
