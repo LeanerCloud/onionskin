@@ -470,22 +470,31 @@ what-does-not-transfer section demands:
   (d) AccessKit attached to a GPUI window with VoiceOver reading a focused
   element - proves the accessibility bet before the shell is built on it.
   Spikes are throwaway-permitted; what survives is the decision record.
-- **M2 - Viewer.** Open (including repaired files), render, navigate,
-  full-text search (Ctrl+F with whole-word/case options, highlight-all,
-  next/previous), text selection via `content` byte-span mapping, delivered
-  as the first plugins (`tools-basic`, `codecs-common` export) - already
-  wearing the Acrobat shell: quick-action top bar, left navigation panes
+- **M2 - Viewer.** Authoritative decomposition: docs/plans/m2-viewer.md
+  (14 packages, reviewed). Scope, matching the 67 M2 scoreboard rows: open
+  including repaired files; the full Acrobat shell chrome (global bar,
+  document tabs, quick actions, tool rail, side panel, theme, Full Screen
+  and Read Mode, preferences, recents/Home view); navigation panes
   (thumbnails with context-menu page commands, bookmarks, attachments,
-  layers with OCG visibility toggles, signatures), tool rail, Acrobat
-  shortcuts, Full Screen mode, line-weights view toggle, AccessKit tree live
-  from the first release. Performance budgets (decision 11, both) enforced
-  from here on: background render thread with progressive first paint, and
-  the tile eviction policy. Accessibility acceptance: one real VoiceOver
-  session (the spike proved the adapter, not the session; see
-  docs/spikes/m1-shell-accesskit.md) and correct role mapping so a page
-  reads as a document, not a group. Ships as a usable fast PDF viewer -
-  first dogfoodable artifact, first parity screenshots compared, and the
-  registry's proof of shape.
+  layers with OCG visibility toggles via a fork patch, signatures
+  read-only); the canvas with Acrobat's scroll and zoom modes and a
+  dedicated coordinate-mapping layer (rotation and crop boxes - the
+  milestone's biggest correctness risk); `tools-basic` through the
+  registry; find bar with document-level incremental search (Unicode
+  presentation-form folding ships; visual-order-to-logical reordering is
+  deferred); text/PNG/SVG export via `codecs-common`; AccessKit tree live
+  from the first release with correct document role mapping, and one real
+  VoiceOver session as a user-gated acceptance item. Performance budgets
+  (decision 11, both) enforced by benches: first paint is a placeholder or
+  rescaled cached raster with the full render completing on the worker
+  (coarse-then-fine buys nothing; per-page cost is interpretation), plus
+  the tile eviction policy. Encrypted documents stay closed with a typed,
+  fail-loud message naming the milestone; every "usable viewer" claim
+  carries that caveat; reassess pulling empty-user-password decryption into
+  `cos` at M3 planning. Line-weights view toggle moved to M3 (its fork
+  patch was cut in plan review; correct semantics are constant hairline
+  width, not a width floor). Ships as the first dogfoodable artifact, with
+  the first parity screenshot comparison and the registry's proof of shape.
 - **M3 - First edits, first print.** `tools-comment`, `tools-organize`,
   `commands-core` (Combine files, split), incremental save, undo/redo, the
   skins panel. `crates/print` lands with the macOS backend and the Acrobat

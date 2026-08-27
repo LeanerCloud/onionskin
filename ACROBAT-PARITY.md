@@ -60,7 +60,7 @@ they say "Onionskin implements N of M rows".
 **403 rows: 311 planned / 12 partial / 80 out-of-scope. 0 implemented.**
 
 323 rows (planned plus partial) are the parity target. The other 80 are the
-deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
+deliberate no. By milestone: M2 66, M3 100, M4 2, M5 52, M6 46, post-1.0 57.
 M4 carries only two rows because its deliverables (the MCP server, the CUPS and
 Windows print backends) are mostly not Acrobat surface. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
@@ -174,7 +174,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Show/Hide > Navigation Panes | planned | M2 | Individual panes have their own rows. |
 | View > Show/Hide > Toolbar Items / Page Controls | planned | M2 | |
 | View > Show/Hide > Rulers, Grid, Guides, Snap to Grid | planned | M6 | Grouped with `tools-measure`, as Acrobat groups grids/guides with measuring. |
-| View > Show/Hide > Line Weights | planned | M2 | Named in the plan's M2 shell list as the line-weights view toggle. |
+| View > Show/Hide > Line Weights | planned | M3 | Moved from M2 in plan review: the hayro patch it needed was cut, and the correct semantics are constant hairline width when off, not a width floor. Ships disabled with a reason at M2. |
 | View > Page Navigation (First/Previous/Next/Last, Page..., Previous/Next View) | planned | M2 | |
 | View > Display Theme (System Theme, Light grey, Dark grey) | planned | M2 | Acrobat extends the theme to menus, context menus, scroll bars and the comments pane. |
 | View > Read Mode | planned | M2 | |
