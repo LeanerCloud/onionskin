@@ -171,16 +171,21 @@ fn overlays(w: f32, h: f32) -> Vec<Overlay> {
 fn summarize(one_x: &[InterpreterWarning], two_x: &[InterpreterWarning]) -> String {
     let mut fonts = 0;
     let mut images = 0;
+    let mut appearances = 0;
     for warning in one_x.iter().chain(two_x) {
         match warning {
             InterpreterWarning::UnsupportedFont => fonts += 1,
             InterpreterWarning::ImageDecodeFailure => images += 1,
+            InterpreterWarning::UnresolvedAnnotationAppearance => appearances += 1,
         }
     }
-    if fonts == 0 && images == 0 {
+    if fonts == 0 && images == 0 && appearances == 0 {
         return "none".into();
     }
-    format!("{fonts} unsupported fonts, {images} image decode failures (1x and 2x combined)")
+    format!(
+        "{fonts} unsupported fonts, {images} image decode failures, \
+         {appearances} unresolved annotation appearances (1x and 2x combined)"
+    )
 }
 
 fn time<T>(f: impl FnOnce() -> Result<T, RenderError>) -> Result<(T, Duration), RenderError> {

@@ -7,5 +7,13 @@ license.workspace = true
 # Pinned here rather than in the workspace root while the M1 spikes run in
 # parallel; they move to `[workspace.dependencies]` once the seam is real.
 [dependencies]
-hayro = "0.7.1"
+# Fork of hayro pinned by rev, exactly as crates/app pins the gpui fork.
+# Published 0.7.1 draws an annotation's /AP /N only when it is a direct
+# stream, so the state dictionaries selected by /AS that every checkbox and
+# radio button uses render blank, with no warning. Upstream fixed that on
+# main (LaurenzV/hayro 6af63be9) but has not released it; our rev adds one
+# upstreamable commit on top, InterpreterWarning::UnresolvedAnnotationAppearance,
+# so an annotation we fail to draw reaches warning_sink. Back to a released
+# version once both ship.
+hayro = { git = "https://github.com/cristim/hayro", rev = "33d9caf8b6cafe05ec7593c8073b642b118ccd69" }
 tiny-skia = "0.12.0"
