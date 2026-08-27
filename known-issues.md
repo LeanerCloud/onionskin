@@ -24,13 +24,17 @@ referenced.
   per-object recovered stream boundaries, object deletion with a chained
   free list, and caller-driven mid-session escalation to a scan.
 - cos: Document::recovered_boundaries reports what has been parsed, because
-  parsing is lazy. M5 redaction reads every stream it rewrites, so it sees
-  the note for everything it touches, but a caller that wants a whole-file
-  answer has to walk the xref itself.
-- cos: deleting the object a trailer names as /Root or /Pages is not
-  refused, and produces a file that will not open. M2's tools-organize
-  deletes page objects, so nothing reaches it yet; guard it if a caller ever
-  deletes objects it did not choose by hand.
+  parsing is lazy. A cross-reference stream is always covered (opening parses
+  it) and M5 redaction reads every stream it rewrites, so both see what they
+  touch; a caller wanting a whole-file answer has to walk the xref itself.
+- cos: only the copy loop of a save is bounded memory. A repaired or
+  escalated document assembles a section carrying a full table, which
+  materializes every compressed object it has to copy forward, and
+  escalate_to_scan reads the whole file to scan it. Both are repair-path
+  costs on a file that is already damaged; revisit if M2 meets a large one.
+- cos: deleting the object the trailer names as /Root is refused, but
+  deleting a /Pages node or a page still referenced by one leaves a dangling
+  reference. M2's tools-organize has to fix up the page tree itself.
 
 - One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
   proven by direct view messaging only. Role::Document currently surfaces as
