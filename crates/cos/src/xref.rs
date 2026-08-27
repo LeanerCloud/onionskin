@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, Result};
 use crate::filters;
-use crate::object::{Dict, Object};
+use crate::object::{Dict, Object, RecoveredBoundary};
 use crate::parse::{self, Lexer};
 use crate::reader::Reader;
 use crate::repair::RepairReason;
@@ -19,17 +19,16 @@ const XREF_INITIAL_WINDOW: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum XrefEntry {
-    Free,
+    /// The object number is not in use. Free entries form a linked list
+    /// (ISO 32000-1 7.5.4) whose head is object 0 and whose tail links back to
+    /// it, so the entry carries the number of the next free object. A new
+    /// section splices its own free entries into that list rather than
+    /// replacing it.
+    Free { next: u32 },
     /// The object body lives at `offset` in the file.
-    InFile {
-        offset: u64,
-        generation: u16,
-    },
+    InFile { offset: u64, generation: u16 },
     /// The object body lives inside object stream `container`.
-    InObjectStream {
-        container: u32,
-        index: u32,
-    },
+    InObjectStream { container: u32, index: u32 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -74,6 +73,11 @@ pub(crate) struct Loaded {
     /// Absolute offset of the newest section, which a new incremental section
     /// records as its `/Prev`.
     pub startxref: u64,
+    /// Cross-reference streams whose own data boundary the parser had to
+    /// recover. The document's map of objects then rests on a guessed
+    /// boundary, which is exactly the kind of thing a caller must be able to
+    /// find out about.
+    pub recovered: Vec<(u32, RecoveredBoundary)>,
 }
 
 /// Reads `startxref` out of the file's tail.
@@ -100,9 +104,15 @@ pub(crate) fn load_chain(
         xref: Xref::default(),
         trailer: Dict::new(),
         visited: BTreeSet::new(),
+        recovered: Vec::new(),
     };
     walk.section(first, reasons)?;
-    let Walk { xref, trailer, .. } = walk;
+    let Walk {
+        xref,
+        trailer,
+        recovered,
+        ..
+    } = walk;
 
     if xref.is_empty() {
         return Err(Error::Unrecoverable {
@@ -113,6 +123,7 @@ pub(crate) fn load_chain(
         xref,
         trailer,
         startxref: first,
+        recovered,
     })
 }
 
@@ -126,6 +137,7 @@ struct Walk<'a> {
     xref: Xref,
     trailer: Dict,
     visited: BTreeSet<u64>,
+    recovered: Vec<(u32, RecoveredBoundary)>,
 }
 
 impl Walk<'_> {
@@ -146,6 +158,7 @@ impl Walk<'_> {
         // chain that `structure_ok` might still accept, whereas failing here
         // sends the document down the scan, which finds them.
         let section = read_section(self.reader, offset, reasons)?;
+        self.recovered.extend(section.recovered);
         for (number, entry) in section.entries {
             self.xref.insert_if_absent(number, entry);
         }
@@ -206,6 +219,9 @@ fn looks_like_section(reader: &Reader, offset: u64) -> bool {
 struct Section {
     entries: Vec<(u32, XrefEntry)>,
     trailer: Dict,
+    /// Set when this section is a cross-reference stream whose data boundary
+    /// the parser recovered rather than read from `/Length`.
+    recovered: Option<(u32, RecoveredBoundary)>,
 }
 
 fn read_section(reader: &Reader, offset: u64, reasons: &mut Vec<RepairReason>) -> Result<Section> {
@@ -330,7 +346,14 @@ fn parse_table(buf: &[u8], base: u64, at_eof: bool) -> TableParse {
         Err(e) => return TableParse::Failed(e.detail()),
     };
 
-    TableParse::Done(Section { entries, trailer }, reasons)
+    TableParse::Done(
+        Section {
+            entries,
+            trailer,
+            recovered: None,
+        },
+        reasons,
+    )
 }
 
 fn read_entry(lex: &mut Lexer) -> Option<XrefEntry> {
@@ -346,7 +369,12 @@ fn read_entry(lex: &mut Lexer) -> Option<XrefEntry> {
                 generation: generation as u16,
             })
         }
-        (Some(_), Some(_), b"f") => Some(XrefEntry::Free),
+        // The first field of a free entry is the next free object number. One
+        // too big to be an object number cannot be followed, so the list ends
+        // here rather than pointing somewhere invented.
+        (Some(next), Some(_), b"f") => Some(XrefEntry::Free {
+            next: u32::try_from(next).unwrap_or(0),
+        }),
         _ => {
             lex.seek(save);
             None
@@ -359,6 +387,9 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
     // indirect length resolution is available here; the parser falls back to
     // scanning for `endstream`.
     let indirect = reader.parse_indirect_at(offset, &|_| None)?;
+    let recovered = indirect
+        .recovered
+        .map(|boundary| (indirect.objref.number, boundary));
     let Object::Stream(stream) = indirect.object else {
         return Err(Error::Syntax {
             offset,
@@ -427,7 +458,9 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
                 continue;
             };
             let entry = match fields[0] {
-                0 => XrefEntry::Free,
+                0 => XrefEntry::Free {
+                    next: fields[1].min(u64::from(u32::MAX)) as u32,
+                },
                 1 => XrefEntry::InFile {
                     offset: fields[1],
                     generation: fields[2].min(u64::from(u16::MAX)) as u16,
@@ -436,8 +469,9 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
                     container: fields[1].min(u64::from(u32::MAX)) as u32,
                     index: fields[2].min(u64::from(u32::MAX)) as u32,
                 },
-                // Types beyond 2 are reserved; the spec says treat as null.
-                _ => XrefEntry::Free,
+                // Types beyond 2 are reserved; the spec says treat as null,
+                // which is a free entry that leads nowhere.
+                _ => XrefEntry::Free { next: 0 },
             };
             entries.push((number, entry));
         }
@@ -446,6 +480,7 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
     Ok(Section {
         entries,
         trailer: dict,
+        recovered,
     })
 }
 

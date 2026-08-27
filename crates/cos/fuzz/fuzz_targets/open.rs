@@ -6,6 +6,10 @@
 //! overflow that review finding F1 caught is exactly the shape of bug this
 //! target exists to find.
 //!
+//! Deleting an object and escalating to a scan are driven too: both rewrite
+//! structures the file itself supplied, which is where a hostile file gets its
+//! chance.
+//!
 //! Run with nightly:
 //!
 //! ```text
@@ -45,7 +49,55 @@ fuzz_target!(|data: &[u8]| {
         );
         exercise(&document);
     }
+
+    if let Ok((document, _)) = Document::open_repairing(Box::new(BytesSource::new(data.to_vec()))) {
+        mutate(document);
+    }
 });
+
+/// The two verbs that change a document's structure rather than its objects.
+/// Deleting rewrites the free list, and escalating replaces cross-reference
+/// entries mid-session; both then have to produce a section that assembles.
+fn mutate(mut document: Document) {
+    let victim = document
+        .xref()
+        .iter()
+        .map(|(number, _)| number)
+        .find(|n| *n != 0);
+    if let Some(number) = victim {
+        if document.delete_object(number).is_ok() {
+            assert!(
+                document.get(number).is_err(),
+                "object {number} resolved after being deleted"
+            );
+            assert!(
+                document.delete_object(number).is_err(),
+                "object {number} was deletable twice"
+            );
+            let _ = document.incremental_section();
+        }
+    }
+
+    // Escalating may refuse, and may find nothing to do. What it may not do is
+    // report a repair it did not perform, or change anything when it fails.
+    let number = victim.unwrap_or(0);
+    let was_clean = document.provenance().is_clean();
+    if document.escalate_to_scan(number).is_ok() {
+        if was_clean && !document.provenance().is_clean() {
+            assert!(
+                document.get(number).is_ok(),
+                "escalating reported a repair without recovering object {number}"
+            );
+        }
+        exercise(&document);
+    } else {
+        assert_eq!(
+            document.provenance().is_clean(),
+            was_clean,
+            "a failed escalation changed the provenance"
+        );
+    }
+}
 
 /// Walks everything an ordinary caller would touch, so a bad parse surfaces
 /// here rather than in a later milestone.

@@ -58,6 +58,68 @@ impl Origin {
     }
 }
 
+/// A stream whose data boundary the parser had to find for itself, because
+/// `/Length` did not say where it was.
+///
+/// Recovering is the right behaviour: a wrong `/Length` is common, every real
+/// reader scans for `endstream` instead, and refusing would reject files that
+/// open everywhere else. But the boundary that comes out is a guess, and a
+/// caller that has to be able to prove where a stream ended has to be able to
+/// see that it is one. `Parsed::recovered_boundary` is where it sees that.
+/// The three ways it fails are kept apart, because they are not equally bad:
+/// a value that disagrees with the bytes is a producer bug, an unresolvable
+/// reference means the recovery also depended on the cross-reference being
+/// wrong, and no value at all is a stream nobody described.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RecoveredBoundary {
+    /// `/Length` gave a number and it was wrong: negative, or `endstream` was
+    /// not at the offset it pointed to. The keyword was searched for instead.
+    LengthWrong {
+        declared: i64,
+        /// The length the search found.
+        actual: u64,
+    },
+    /// `/Length` was an indirect reference that did not resolve, so there was
+    /// no declared value to check against.
+    LengthUnresolved { reference: ObjRef, actual: u64 },
+    /// The dictionary had no `/Length`, or one that was neither an integer nor
+    /// a reference.
+    LengthMissing { actual: u64 },
+}
+
+impl RecoveredBoundary {
+    /// How many bytes of stream data the parser settled on. For an object
+    /// inside an object stream this is the container's data, not the object's:
+    /// the note describes whose boundary was guessed, and `Origin` says who
+    /// that is.
+    pub fn actual(&self) -> u64 {
+        match self {
+            RecoveredBoundary::LengthWrong { actual, .. } => *actual,
+            RecoveredBoundary::LengthUnresolved { actual, .. } => *actual,
+            RecoveredBoundary::LengthMissing { actual } => *actual,
+        }
+    }
+}
+
+impl fmt::Display for RecoveredBoundary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RecoveredBoundary::LengthWrong { declared, actual } => write!(
+                f,
+                "/Length said {declared} bytes; endstream was {actual} bytes in"
+            ),
+            RecoveredBoundary::LengthUnresolved { reference, actual } => write!(
+                f,
+                "/Length {} {} R did not resolve; endstream was {actual} bytes in",
+                reference.number, reference.generation
+            ),
+            RecoveredBoundary::LengthMissing { actual } => {
+                write!(f, "no /Length; endstream was {actual} bytes in")
+            }
+        }
+    }
+}
+
 /// A PDF name with `#xx` escapes already decoded.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Name(pub Vec<u8>);
@@ -209,4 +271,9 @@ pub struct Parsed {
     pub objref: ObjRef,
     pub object: Object,
     pub origin: Origin,
+    /// Set when this object is a stream whose data boundary was recovered
+    /// rather than read from `/Length`, and for an object inside an object
+    /// stream, when its container's was. `None` means the boundary is the
+    /// file's own word, not the parser's.
+    pub recovered_boundary: Option<RecoveredBoundary>,
 }

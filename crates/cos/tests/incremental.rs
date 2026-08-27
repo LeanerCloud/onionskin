@@ -4,8 +4,10 @@
 
 mod common;
 
-use common::{corpus_dir, pdfs_in};
-use onionskin_cos::{BytesSource, Document, FileSource, Object, Provenance};
+use std::io::{self, Write};
+
+use common::{corpus_dir, corpus_root, pdfs_in, xref_stream_pdf};
+use onionskin_cos::{BytesSource, CountingSource, Document, FileSource, Object, Provenance};
 
 fn count(haystack: &[u8], needle: &[u8]) -> usize {
     if haystack.len() < needle.len() {
@@ -146,54 +148,9 @@ fn a_second_edit_appends_a_second_section() {
     assert_eq!(producer_of(&rolled_back).as_deref(), Some("generation one"));
 }
 
-/// A PDF 1.5+ file has no `trailer` keyword: its cross-reference stream's own
-/// dictionary plays that role, carrying `/Type /XRef`, `/W`, `/Index`,
-/// `/Filter` and a `/Length` describing the stream's bytes. Repeating those in
-/// the classic trailer a new section writes produces a dictionary that
-/// describes bytes the section does not have.
-fn xref_stream_fixture() -> Vec<u8> {
-    let header = b"%PDF-1.5\n";
-    let catalog = b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n";
-    let pages = b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n";
-    let page =
-        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<<>>>>\nendobj\n";
-
-    let catalog_at = header.len();
-    let pages_at = catalog_at + catalog.len();
-    let page_at = pages_at + pages.len();
-    let xref_at = page_at + page.len();
-
-    // /W [1 2 1]: type, a two-byte offset, then the generation.
-    let be = |v: usize| [(v >> 8) as u8, v as u8];
-    let row = |kind: u8, field: usize, last: u8| vec![kind, be(field)[0], be(field)[1], last];
-    let mut rows = Vec::new();
-    rows.extend(row(0, 0, 255));
-    rows.extend(row(1, catalog_at, 0));
-    rows.extend(row(1, pages_at, 0));
-    rows.extend(row(1, page_at, 0));
-    rows.extend(row(1, xref_at, 0));
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(header);
-    bytes.extend_from_slice(catalog);
-    bytes.extend_from_slice(pages);
-    bytes.extend_from_slice(page);
-    bytes.extend_from_slice(
-        format!(
-            "4 0 obj\n<</Type/XRef/Size 5/W[1 2 1]/Index[0 5]/Root 1 0 R/Length {}>>\nstream\n",
-            rows.len()
-        )
-        .as_bytes(),
-    );
-    bytes.extend_from_slice(&rows);
-    bytes.extend_from_slice(b"\nendstream\nendobj\n");
-    bytes.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
-    bytes
-}
-
 #[test]
 fn editing_an_xref_stream_file_writes_a_clean_classic_trailer() {
-    let original = xref_stream_fixture();
+    let original = xref_stream_pdf(None);
     let (document, provenance) =
         Document::open_repairing(Box::new(BytesSource::new(original.clone())))
             .expect("the fixture opens");
@@ -244,6 +201,259 @@ fn editing_an_xref_stream_file_writes_a_clean_classic_trailer() {
         Some("Onionskin M1 spike")
     );
     assert_eq!(reopened.page_count().ok(), Some(1));
+}
+
+/// A save must not hold the document. `cos` copies the original through in
+/// 64 KiB pieces, so no single read or write may be bigger than that however
+/// large the file is.
+const COPY_BUDGET: u64 = 64 * 1024;
+
+/// Records the largest single write. The copy loop's writes are what this
+/// bounds; the appended section is one write of its own, sized by the edits
+/// rather than by the file.
+#[derive(Default)]
+struct MeasuringSink {
+    written: u64,
+    largest: u64,
+}
+
+impl Write for MeasuringSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.written += buf.len() as u64;
+        self.largest = self.largest.max(buf.len() as u64);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Carry-forward 3 from the spike: `save_to_vec` read the whole source into
+/// memory. Saving the biggest file in the corpus must now cost one chunk,
+/// measured on both sides at once - the source, through a counting source, and
+/// the sink, through the writer the save is handed.
+///
+/// One file is enough and the biggest is the one worth having, so the loop
+/// walks the candidates only until one of them opens cleanly.
+#[test]
+fn saving_a_large_file_streams_it_in_bounded_chunks() {
+    let Some(root) = corpus_root() else {
+        common::missing("no corpus found; set ONIONSKIN_CORPUS");
+        return;
+    };
+    let mut candidates: Vec<_> = pdfs_in(&root)
+        .into_iter()
+        .filter_map(|path| Some((std::fs::metadata(&path).ok()?.len(), path)))
+        .filter(|(len, _)| *len > 4 * COPY_BUDGET)
+        .collect();
+    if candidates.is_empty() {
+        eprintln!(
+            "SKIPPED: the corpus holds no PDF bigger than {} bytes",
+            4 * COPY_BUDGET
+        );
+        return;
+    }
+    candidates.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
+
+    let mut measured = 0usize;
+    for (len, path) in candidates.into_iter().take(8) {
+        let file = FileSource::open(&path).expect("corpus file opens");
+        let (counting, stats) = CountingSource::new(Box::new(file));
+        // A repaired save writes a full table, which walks every object and
+        // reads whatever those objects cost. That is repair's budget, not the
+        // copy loop's, so this test measures a clean file.
+        let Ok(mut document) = Document::open(Box::new(counting)) else {
+            continue;
+        };
+        if document
+            .set_info_field("Producer", Object::String(b"Onionskin".to_vec()))
+            .is_err()
+        {
+            continue;
+        }
+
+        // Opening reads the xref, whose own window is legitimately large on a
+        // big file. The budget is about the save, so the save is measured on
+        // its own.
+        stats.reset();
+        let mut sink = MeasuringSink::default();
+        document.save_to_writer(&mut sink).expect("save streams");
+
+        println!(
+            "{}: {len} bytes, largest read {}, largest write {}, {} read for {} written",
+            path.display(),
+            stats.largest_read(),
+            sink.largest,
+            stats.total(),
+            sink.written
+        );
+        assert!(
+            sink.written > len,
+            "the save wrote {} bytes of a {len} byte file plus a section",
+            sink.written
+        );
+        assert!(
+            stats.total() >= len,
+            "the save read {} bytes of a {len} byte file, so it did not stream all of it",
+            stats.total()
+        );
+        assert!(
+            stats.largest_read() <= COPY_BUDGET,
+            "the save read {} bytes at once, over the {COPY_BUDGET} byte budget",
+            stats.largest_read()
+        );
+        assert!(
+            sink.largest <= COPY_BUDGET,
+            "the save wrote {} bytes at once, over the {COPY_BUDGET} byte budget",
+            sink.largest
+        );
+        measured += 1;
+        break;
+    }
+
+    assert!(
+        measured > 0,
+        "no large corpus file opened cleanly, so the save budget went unmeasured"
+    );
+}
+
+#[test]
+fn save_to_path_writes_what_save_to_vec_returns() {
+    let Some(dir) = corpus_dir("seeds") else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("onionskin-cos-save-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("scratch directory");
+
+    for path in pdfs_in(&dir) {
+        let mut document =
+            Document::open(Box::new(FileSource::open(&path).expect("seed opens"))).expect("clean");
+        document
+            .set_info_field("Producer", Object::String(b"Onionskin".to_vec()))
+            .expect("settable");
+
+        let target = scratch.join(path.file_name().expect("seed has a name"));
+        document.save_to_path(&target).expect("save to path");
+        assert_eq!(
+            std::fs::read(&target).expect("the saved file is readable"),
+            document.save_to_vec().expect("save to vec"),
+            "{}: the two sinks must produce the same bytes",
+            path.display()
+        );
+        assert!(
+            !std::fs::read_dir(&scratch)
+                .expect("scratch is readable")
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("onionskin-save")),
+            "the temporary file a save writes through must not survive it"
+        );
+    }
+    std::fs::remove_dir_all(&scratch).expect("scratch cleans up");
+}
+
+/// Saving over the file the document was open on is the ordinary case for an
+/// editor, and the one where a save that truncated first would destroy the
+/// bytes it is still reading.
+#[test]
+fn saving_over_the_open_file_keeps_the_original_bytes_underneath() {
+    let Some(dir) = corpus_dir("seeds") else {
+        return;
+    };
+    let source = dir.join("hello.pdf");
+    let original = std::fs::read(&source).expect("seed is readable");
+
+    let scratch =
+        std::env::temp_dir().join(format!("onionskin-cos-inplace-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("scratch directory");
+    let path = scratch.join("hello.pdf");
+    std::fs::write(&path, &original).expect("the copy is writable");
+
+    let mut document = Document::open_path(&path).expect("the copy opens clean");
+    document
+        .set_info_field("Producer", Object::String(b"saved in place".to_vec()))
+        .expect("settable");
+    document.save_to_path(&path).expect("save in place");
+
+    let saved = std::fs::read(&path).expect("the saved file is readable");
+    assert_eq!(
+        &saved[..original.len()],
+        &original[..],
+        "an in-place save must leave the original bytes byte-exact"
+    );
+    assert_eq!(
+        producer_of(&Document::open_path(&path).expect("reopens clean")).as_deref(),
+        Some("saved in place")
+    );
+    std::fs::remove_dir_all(&scratch).expect("scratch cleans up");
+}
+
+/// A save writes the original first and the section after it, so a section
+/// that cannot be assembled must be found out about before a byte is written.
+/// Otherwise a writer that is not a file - a socket, a pipe, an upload - ends
+/// up holding a PDF-shaped prefix with no update on the end of it.
+#[test]
+fn a_section_that_cannot_be_assembled_leaves_the_writer_untouched() {
+    let Some(dir) = corpus_dir("seeds") else {
+        return;
+    };
+    let path = dir.join("hello.pdf");
+    let mut document = Document::open_path(&path).expect("the seed opens clean");
+    // PDF has no notation for infinity, so the writer refuses it rather than
+    // inventing a number: an edit that cannot be serialized at all.
+    document
+        .set_object(1, 0, Object::Real(f64::INFINITY))
+        .expect("the edit is accepted; it is the save that must refuse it");
+
+    let mut sink = MeasuringSink::default();
+    assert!(
+        document.save_to_writer(&mut sink).is_err(),
+        "an unwritable object must fail the save"
+    );
+    assert_eq!(
+        sink.written, 0,
+        "the save wrote {} bytes of a document it could not finish",
+        sink.written
+    );
+}
+
+/// Replacing a file must not hand out the bytes more widely than the file it
+/// replaces did. The temporary a save writes through starts with the process
+/// default, so the mode has to be carried across before the rename.
+#[cfg(unix)]
+#[test]
+fn saving_over_a_file_keeps_its_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(dir) = corpus_dir("seeds") else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("onionskin-cos-mode-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("scratch directory");
+    let path = scratch.join("hello.pdf");
+    std::fs::copy(dir.join("hello.pdf"), &path).expect("the copy is writable");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .expect("the mode is settable");
+
+    let mut document = Document::open_path(&path).expect("the copy opens clean");
+    document
+        .set_info_field("Producer", Object::String(b"private".to_vec()))
+        .expect("settable");
+    document.save_to_path(&path).expect("save in place");
+
+    let mode = std::fs::metadata(&path)
+        .expect("the saved file is there")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "saving turned a file only its owner could read into mode {mode:o}"
+    );
+    std::fs::remove_dir_all(&scratch).expect("scratch cleans up");
 }
 
 #[test]

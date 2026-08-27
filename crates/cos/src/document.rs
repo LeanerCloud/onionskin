@@ -3,29 +3,55 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::filters;
-use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, Span};
+use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, RecoveredBoundary, Span};
 use crate::parse::Lexer;
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
 use crate::source::{FileSource, Source};
-use crate::writer::{self, XrefRow};
+use crate::writer::{self, RowEntry, XrefRow};
 use crate::xref::{self, Xref, XrefEntry};
 
 /// How far back from the end of the file `startxref` is looked for.
 const TAIL_WINDOW: usize = 2048;
 /// Depth limit for `/Length` chains and page-tree descent.
 const MAX_INDIRECTION: usize = 64;
+/// How much of the original a save copies at a time. The copy loop is what
+/// this bounds, and it is the part that scales with the file: a 4 GB document
+/// copies through in the same memory a 4 KB one does. The section a save
+/// appends is assembled whole, and for a repaired document that section can
+/// carry a table over every object.
+const COPY_CHUNK: u64 = 64 * 1024;
+
+/// A pending change to one object number. Both variants carry the generation
+/// the appended section will record for it.
+enum Edit {
+    Set {
+        generation: u16,
+        object: Object,
+    },
+    /// The object is to be marked free. `generation` is already the bumped
+    /// one, which is what a free entry records (ISO 32000-1 7.5.4).
+    Delete {
+        generation: u16,
+    },
+}
 
 struct ObjectStream {
     data: Vec<u8>,
     /// `(object number, offset of its data within `data`)`, in stream order.
     entries: Vec<(u32, usize)>,
     container_span: Span,
+    /// The container's own boundary recovery, if it had one. Every object
+    /// decoded out of it inherits the doubt.
+    recovered_boundary: Option<RecoveredBoundary>,
 }
 
 pub struct Document {
@@ -40,8 +66,12 @@ pub struct Document {
     original_len: u64,
     cache: RefCell<BTreeMap<u32, Parsed>>,
     object_streams: RefCell<BTreeMap<u32, Rc<ObjectStream>>>,
+    /// Every recovered stream boundary seen since the document opened. Kept
+    /// apart from `cache`, which an edit clears: a boundary the parser guessed
+    /// is a fact about the file and does not stop being true.
+    recovered_boundaries: RefCell<BTreeMap<u32, RecoveredBoundary>>,
     in_flight: RefCell<BTreeSet<u32>>,
-    edits: BTreeMap<u32, (u16, Object)>,
+    edits: BTreeMap<u32, Edit>,
     trailer_edits: Dict,
     next_number: u32,
 }
@@ -101,6 +131,14 @@ impl Document {
         }
 
         let mut rebuilt_by_scan = false;
+        // A cross-reference stream whose own boundary was guessed is recorded
+        // before anything is read through the table it produced, and stays
+        // recorded whether or not that table survives validation: what the
+        // parser had to guess is a fact about the file either way.
+        let recovered_boundaries: BTreeMap<u32, RecoveredBoundary> = loaded
+            .as_ref()
+            .map(|l| l.recovered.iter().copied().collect())
+            .unwrap_or_default();
         let (xref_table, trailer, prev_startxref) = match loaded {
             Some(l) => match structure_ok(&reader, &l.xref, &l.trailer) {
                 Ok(()) => (l.xref, l.trailer, Some(l.startxref)),
@@ -151,6 +189,7 @@ impl Document {
             original_len,
             cache: RefCell::new(BTreeMap::new()),
             object_streams: RefCell::new(BTreeMap::new()),
+            recovered_boundaries: RefCell::new(recovered_boundaries),
             in_flight: RefCell::new(BTreeSet::new()),
             edits: BTreeMap::new(),
             trailer_edits: Dict::new(),
@@ -181,6 +220,29 @@ impl Document {
         self.original_len
     }
 
+    /// Every stream whose data boundary the parser recovered, keyed by object
+    /// number, with the container's entry standing for the objects inside it.
+    ///
+    /// Consumer: M5 redaction, which has to prove a byte range is gone and
+    /// therefore may not certify one whose extent the parser guessed. This is
+    /// not a `Provenance`: a wrong `/Length` is common enough that refusing
+    /// the file would reject documents every reader opens, so the document
+    /// stays `Clean` and the doubt is recorded per object instead.
+    ///
+    /// Parsing is lazy, so what is reported is what has been read: an object
+    /// nobody fetched has no boundary to report yet. That is the same contract
+    /// as [`Document::get`], which is where a caller learns about the one
+    /// object it is holding, and redaction reads every stream it rewrites. A
+    /// cross-reference stream is the exception that is always here, because
+    /// opening the document is what parsed it.
+    ///
+    /// An entry for an object stored inside an object stream carries its
+    /// container's byte counts, not its own: what was guessed is where the
+    /// container ended. [`Parsed::origin`] says which case a note belongs to.
+    pub fn recovered_boundaries(&self) -> BTreeMap<u32, RecoveredBoundary> {
+        self.recovered_boundaries.borrow().clone()
+    }
+
     // ---- lazy object access -------------------------------------------------
 
     /// Parses object `number` on demand, caching the result. Nothing outside
@@ -189,12 +251,22 @@ impl Document {
         if let Some(hit) = self.cache.borrow().get(&number) {
             return Ok(hit.clone());
         }
-        if let Some((generation, object)) = self.edits.get(&number) {
-            return Ok(Parsed {
-                objref: ObjRef::new(number, *generation),
-                object: object.clone(),
-                origin: Origin::Pending,
-            });
+        match self.edits.get(&number) {
+            Some(Edit::Set { generation, object }) => {
+                return Ok(Parsed {
+                    objref: ObjRef::new(number, *generation),
+                    object: object.clone(),
+                    origin: Origin::Pending,
+                    recovered_boundary: None,
+                })
+            }
+            // The object still has bytes in the file, and a caller that has
+            // not saved yet could read them. Reporting it as present would
+            // make the deletion invisible until the save.
+            Some(Edit::Delete { generation }) => {
+                return Err(Error::MissingObject(ObjRef::new(number, *generation)))
+            }
+            None => {}
         }
 
         // A crafted file can name itself as its own object-stream container, or
@@ -222,6 +294,11 @@ impl Document {
         self.in_flight.borrow_mut().remove(&number);
 
         let parsed = parsed?;
+        if let Some(boundary) = parsed.recovered_boundary {
+            self.recovered_boundaries
+                .borrow_mut()
+                .insert(number, boundary);
+        }
         self.cache.borrow_mut().insert(number, parsed.clone());
         Ok(parsed)
     }
@@ -239,12 +316,15 @@ impl Document {
                     objref: indirect.objref,
                     object: indirect.object,
                     origin: Origin::File(indirect.span),
+                    recovered_boundary: indirect.recovered,
                 })
             }
             Some(XrefEntry::InObjectStream { container, index }) => {
                 self.get_compressed(number, container, index)
             }
-            Some(XrefEntry::Free) | None => Err(Error::MissingObject(ObjRef::new(number, 0))),
+            Some(XrefEntry::Free { .. }) | None => {
+                Err(Error::MissingObject(ObjRef::new(number, 0)))
+            }
         }
     }
 
@@ -287,6 +367,10 @@ impl Document {
                 container_span: stream.container_span,
                 within: Span::new(start as u64, (start + lex.position()) as u64),
             },
+            // An object decoded out of a container whose own end was guessed
+            // is only as trustworthy as that guess. `origin` says whose
+            // boundary this is.
+            recovered_boundary: stream.recovered_boundary,
         })
     }
 
@@ -323,6 +407,7 @@ impl Document {
             data,
             entries,
             container_span,
+            recovered_boundary: parsed.recovered_boundary,
         });
         self.object_streams
             .borrow_mut()
@@ -422,16 +507,125 @@ impl Document {
         })
     }
 
+    // ---- escalation ---------------------------------------------------------
+
+    /// Rebuilds what the cross-reference cannot serve by scanning the file,
+    /// merges the result, and records the escalation in the provenance. The
+    /// document that comes back is `Repaired`, never `Clean`.
+    ///
+    /// Repair is otherwise decided once, at open, and an object whose recorded
+    /// offset is wrong stays `Error::MissingObject` for the session. That is
+    /// the right default: a scan that fired by itself would turn a file that
+    /// lies about one object into a document reporting itself clean. So the
+    /// escalation is the caller's call, and it costs what it costs, a full
+    /// pass over the file.
+    ///
+    /// Consumer: the M2 viewer, which meets a page it cannot resolve and can
+    /// then offer to go looking for it rather than only saying no.
+    ///
+    /// `unreachable` is the object whose absence prompted the escalation. It
+    /// is checked, not taken on trust: an escalation for an object that
+    /// resolves changes nothing and reports nothing, and one that cannot be
+    /// made to resolve is `Err(MissingObject)` with the document exactly as it
+    /// was. Only an escalation that actually recovers the object leaves a
+    /// `Repaired` provenance behind, so a repair section is never written for
+    /// a repair that did not happen.
+    ///
+    /// Entries the current table can still reach are kept, and a free entry is
+    /// kept free however plainly its bytes are still in the file: a deliberate
+    /// deletion is not damage.
+    pub fn escalate_to_scan(&mut self, unreachable: u32) -> Result<&Provenance> {
+        // Whether the object can be reached is a question the document can
+        // answer exactly, by trying. Nothing structural is as reliable: the
+        // container of a compressed object can be exactly where the table says
+        // while the slot it names holds something else.
+        if self.get(unreachable).is_ok() {
+            return Ok(&self.provenance);
+        }
+
+        let scanned = repair::scan(&self.reader)?;
+        refuse_encrypted(&scanned.trailer)?;
+
+        let mut merged = self.xref.clone();
+        let mut entries_corrected = 0usize;
+        for (number, entry) in scanned.xref.iter() {
+            if matches!(self.xref.get(number), Some(XrefEntry::Free { .. })) {
+                continue;
+            }
+            // The object the caller could not reach takes the scan's entry
+            // whatever the table says about it, because the table saying
+            // something reachable is precisely what has already proved wrong.
+            if number != unreachable && reaches(&self.reader, &self.xref, number) {
+                continue;
+            }
+            if merged.get(number) == Some(entry) {
+                continue;
+            }
+            merged.insert(number, entry);
+            entries_corrected += 1;
+        }
+        if entries_corrected == 0 {
+            return Err(Error::MissingObject(ObjRef::new(unreachable, 0)));
+        }
+
+        let previous = std::mem::replace(&mut self.xref, merged);
+        self.forget_parsed_objects();
+        if self.get(unreachable).is_err() {
+            self.xref = previous;
+            self.forget_parsed_objects();
+            return Err(Error::MissingObject(ObjRef::new(unreachable, 0)));
+        }
+
+        // The scan reaches objects the table never named, so the next number
+        // to hand out has to move past them or `add_object` would write over
+        // one of them.
+        self.next_number = self
+            .next_number
+            .max(self.xref.max_number().saturating_add(1));
+
+        let mut report = match std::mem::replace(&mut self.provenance, Provenance::Clean) {
+            Provenance::Clean => RepairReport {
+                reasons: Vec::new(),
+                rebuilt_by_scan: false,
+                recovered_objects: 0,
+            },
+            Provenance::Repaired(report) => report,
+        };
+        report.reasons.push(RepairReason::MidSessionScan {
+            unreachable,
+            entries_corrected,
+        });
+        report.rebuilt_by_scan = true;
+        self.provenance = Provenance::Repaired(report);
+        Ok(&self.provenance)
+    }
+
     // ---- edits --------------------------------------------------------------
 
-    /// Replaces object `number`. Both caches are dropped rather than pruned:
-    /// the edited object may be an object stream, and the objects decoded out
-    /// of it would otherwise keep serving the bytes it no longer has.
-    pub fn set_object(&mut self, number: u32, generation: u16, object: Object) {
-        self.cache.borrow_mut().clear();
-        self.object_streams.borrow_mut().clear();
+    /// Replaces object `number`, superseding a deletion of it that has not
+    /// been saved yet.
+    ///
+    /// Refuses a number the file itself has already marked free. Taking one
+    /// back means re-linking a free list that lives in a section already
+    /// written, which an append-only save cannot do: the result is a chain
+    /// pointing at an object that is in use. `add_object` hands out a number
+    /// with no such history.
+    ///
+    /// Refuses object 0 for the same reason `delete_object` does: it is the
+    /// head of that list, not a document object.
+    pub fn set_object(&mut self, number: u32, generation: u16, object: Object) -> Result<()> {
+        if number == 0 {
+            return Err(Error::Unrecoverable {
+                detail: "object 0 is the head of the free list, not a document object".into(),
+            });
+        }
+        if matches!(self.xref.get(number), Some(XrefEntry::Free { .. })) {
+            return Err(Error::FreedObject(ObjRef::new(number, generation)));
+        }
+        self.forget_parsed_objects();
         self.next_number = self.next_number.max(number.saturating_add(1));
-        self.edits.insert(number, (generation, object));
+        self.edits.insert(number, Edit::Set { generation, object });
+        Ok(())
     }
 
     /// Appends a new object. Fails when the document already uses the whole
@@ -441,8 +635,82 @@ impl Document {
         self.next_number = number.checked_add(1).ok_or_else(|| Error::Unrecoverable {
             detail: "the document has no free object numbers left".into(),
         })?;
-        self.edits.insert(number, (0, object));
+        self.edits.insert(
+            number,
+            Edit::Set {
+                generation: 0,
+                object,
+            },
+        );
         Ok(ObjRef::new(number, 0))
+    }
+
+    /// Marks an object free. The appended section records it as a free entry
+    /// spliced into the file's free list (ISO 32000-1 7.5.4) with its
+    /// generation bumped, so the number cannot be reused at the generation the
+    /// deleted object had. The object's bytes stay where they are, under the
+    /// section, as the core invariant requires.
+    ///
+    /// Consumer: M2 `tools-organize`, whose page deletion has to remove the
+    /// page object and its content streams.
+    ///
+    /// Deleting a number the document does not have, or one already deleted in
+    /// this session, is an error rather than a quiet no-op: a caller working
+    /// from a stale object number has to hear about it.
+    pub fn delete_object(&mut self, number: u32) -> Result<()> {
+        if number == 0 {
+            return Err(Error::Unrecoverable {
+                detail: "object 0 is the head of the free list, not a document object".into(),
+            });
+        }
+        // Deleting the catalog produces a file that will not open. Nothing a
+        // caller can do afterwards recovers from it, so it is refused here
+        // rather than discovered later.
+        if self.root_number() == Some(number) {
+            return Err(Error::Unrecoverable {
+                detail: format!("object {number} is the document catalog"),
+            });
+        }
+        let live = match self.edits.get(&number) {
+            Some(Edit::Delete { generation }) => {
+                return Err(Error::MissingObject(ObjRef::new(number, *generation)))
+            }
+            Some(Edit::Set { generation, .. }) => *generation,
+            None => match self.xref.get(number) {
+                Some(XrefEntry::InFile { generation, .. }) => generation,
+                // A compressed object carries no generation of its own; the
+                // spec gives it 0.
+                Some(XrefEntry::InObjectStream { .. }) => 0,
+                Some(XrefEntry::Free { .. }) | None => {
+                    return Err(Error::MissingObject(ObjRef::new(number, 0)))
+                }
+            },
+        };
+
+        // 65535 is the spec's "never reuse this number" and is where the bump
+        // stops, rather than wrapping back to a generation that is in use.
+        let generation = live.saturating_add(1);
+        self.forget_parsed_objects();
+        self.edits.insert(number, Edit::Delete { generation });
+        Ok(())
+    }
+
+    /// The object the trailer names as `/Root`, an unsaved change to that
+    /// entry included.
+    fn root_number(&self) -> Option<u32> {
+        self.trailer_edits
+            .get(b"Root")
+            .or_else(|| self.trailer.get(b"Root"))
+            .and_then(Object::as_reference)
+            .map(|r| r.number)
+    }
+
+    /// Drops both object caches. An edited or deleted object may be an object
+    /// stream, and the objects decoded out of it would otherwise keep serving
+    /// bytes from a container the document no longer has.
+    fn forget_parsed_objects(&self) {
+        self.cache.borrow_mut().clear();
+        self.object_streams.borrow_mut().clear();
     }
 
     pub fn set_trailer_entry(&mut self, key: &str, value: Object) {
@@ -461,7 +729,7 @@ impl Document {
                     .cloned()
                     .unwrap_or_default();
                 dict.set(Name::new(key), value);
-                self.set_object(r.number, r.generation, Object::Dict(dict));
+                self.set_object(r.number, r.generation, Object::Dict(dict))?;
                 Ok(r)
             }
             None => {
@@ -498,6 +766,51 @@ impl Document {
         }
     }
 
+    /// The free entries the appended section writes: object 0, the head of the
+    /// list, followed by everything deleted in this session.
+    ///
+    /// ISO 32000-1 7.5.4 makes the free entries a linked list, each one naming
+    /// the next and the last naming 0. New entries go in at the head, so
+    /// whatever was already on the list stays on it: the tail of the new run
+    /// points at whatever object 0 used to point at. A rebuilt full table is
+    /// the exception, because it does not carry the older free entries and a
+    /// link into them would lead nowhere.
+    ///
+    /// Returns an empty vector when there is nothing to say: a delta section
+    /// with no deletions has no business rewriting the head of the list.
+    fn free_list_rows(&self, full_table: bool) -> Vec<XrefRow> {
+        let deleted: Vec<(u32, u16)> = self
+            .edits
+            .iter()
+            .filter_map(|(number, edit)| match edit {
+                Edit::Delete { generation } => Some((*number, *generation)),
+                Edit::Set { .. } => None,
+            })
+            .collect();
+        if deleted.is_empty() && !full_table {
+            return Vec::new();
+        }
+
+        let tail = match (full_table, self.xref.get(0)) {
+            (false, Some(XrefEntry::Free { next })) => next,
+            _ => 0,
+        };
+        let mut rows = vec![XrefRow {
+            number: 0,
+            generation: 65535,
+            entry: RowEntry::Free(deleted.first().map_or(tail, |(number, _)| *number)),
+        }];
+        for (index, (number, generation)) in deleted.iter().enumerate() {
+            let next = deleted.get(index + 1).map_or(tail, |(next, _)| *next);
+            rows.push(XrefRow {
+                number: *number,
+                generation: *generation,
+                entry: RowEntry::Free(next),
+            });
+        }
+        rows
+    }
+
     /// The bytes a save would append, or `None` when there is nothing to say.
     pub fn incremental_section(&self) -> Result<Option<Vec<u8>>> {
         if !self.has_pending_changes() {
@@ -515,25 +828,26 @@ impl Document {
         let mut objects: Vec<(ObjRef, Object)> = self
             .edits
             .iter()
-            .map(|(number, (generation, object))| {
-                (ObjRef::new(*number, *generation), object.clone())
+            .filter_map(|(number, edit)| match edit {
+                Edit::Set { generation, object } => {
+                    Some((ObjRef::new(*number, *generation), object.clone()))
+                }
+                Edit::Delete { .. } => None,
             })
             .collect();
 
         let full_table = self.needs_full_table();
-        let mut rows = Vec::new();
+        let mut rows = self.free_list_rows(full_table);
         if full_table {
-            rows.push(XrefRow {
-                number: 0,
-                generation: 65535,
-                offset: 0,
-            });
             for (number, entry) in self.xref.iter() {
                 if number == 0 || self.edits.contains_key(&number) {
                     continue;
                 }
                 match entry {
-                    XrefEntry::Free => {}
+                    // Objects that were already free are not carried into a
+                    // rebuilt table: no subsection covers them, which is how a
+                    // classic table says a number is not in use.
+                    XrefEntry::Free { .. } => {}
                     XrefEntry::InFile { generation, .. } => {
                         // Dropping a row here would delete the object from the
                         // only table the saved file can be read through.
@@ -543,7 +857,7 @@ impl Document {
                         rows.push(XrefRow {
                             number,
                             generation,
-                            offset,
+                            entry: RowEntry::InUse(offset),
                         });
                     }
                     // A compressed object has no offset of its own to point
@@ -588,15 +902,103 @@ impl Document {
         Ok(Some(section))
     }
 
+    /// Writes the original bytes followed by the incremental section, copying
+    /// the original through in `COPY_CHUNK` pieces rather than materializing
+    /// it. The bytes that come out are the same bytes that went in; only the
+    /// memory to produce them changes.
+    ///
+    /// `save_to_path` is the consumer that matters; this is the seam it and
+    /// the guarantee tests share, and what a later milestone will hand a
+    /// non-file sink.
+    pub fn save_to_writer(&self, out: &mut dyn Write) -> Result<()> {
+        // Assembled before a byte is written, so a section that cannot be
+        // built leaves the writer untouched rather than holding a document
+        // that is all original and no update.
+        let section = self.incremental_section()?;
+
+        let mut offset = 0u64;
+        while offset < self.original_len {
+            let want = (self.original_len - offset).min(COPY_CHUNK);
+            let chunk = self.reader.read(offset, want as usize)?;
+            // A source may hand back less than the whole request, but nothing
+            // and more-than-asked are both it failing its contract. Writing
+            // what came back would produce a plausible, wrong document.
+            if chunk.is_empty() || chunk.len() as u64 > want {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "the source returned {} bytes for a {want} byte read at {offset}",
+                        chunk.len()
+                    ),
+                )));
+            }
+            out.write_all(&chunk)?;
+            offset += chunk.len() as u64;
+        }
+
+        if let Some(section) = section {
+            out.write_all(&section)?;
+        }
+        Ok(())
+    }
+
+    /// Saves to `path` through a temporary file in the same directory, renamed
+    /// into place once every byte is on disk.
+    ///
+    /// Saving over the file the document was opened from is the ordinary case,
+    /// and opening that path for writing would truncate the bytes this save is
+    /// still reading. The rename also means a crash mid-save leaves the
+    /// previous file whole rather than a half-written one.
+    pub fn save_to_path(&self, path: &Path) -> Result<()> {
+        let Some(directory) = path.parent() else {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} names no file to save to", path.display()),
+            )));
+        };
+        let temporary = directory.join(temporary_name(path));
+        let written = self.write_through(&temporary, path);
+        if written.is_err() {
+            // The save already failed; a failure to clean up after it is not
+            // the error worth reporting in its place.
+            let _ = std::fs::remove_file(&temporary);
+        }
+        written
+    }
+
+    fn write_through(&self, temporary: &Path, path: &Path) -> Result<()> {
+        let mut out = BufWriter::new(File::create(temporary)?);
+        self.save_to_writer(&mut out)?;
+        let file = out.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+        file.sync_all()?;
+        // A file created here gets the process's default mode, so replacing a
+        // document that only its owner could read with one the world can read
+        // is the default outcome unless the mode is carried across.
+        match std::fs::metadata(path) {
+            Ok(existing) => std::fs::set_permissions(temporary, existing.permissions())?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::Io(e)),
+        }
+        std::fs::rename(temporary, path)?;
+        Ok(())
+    }
+
     /// The original bytes, plus one incremental section when there is anything
     /// to append. A no-op save on a clean document appends nothing.
     pub fn save_to_vec(&self) -> Result<Vec<u8>> {
-        let mut out = self.reader.read_all()?;
-        if let Some(section) = self.incremental_section()? {
-            out.extend_from_slice(&section);
-        }
+        let mut out = Vec::new();
+        self.save_to_writer(&mut out)?;
         Ok(out)
     }
+}
+
+/// Names the temporary file a `save_to_path` writes through. Two saves of the
+/// same document, from one process or several, must not pick the same name.
+fn temporary_name(path: &Path) -> String {
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let serial = SAVES.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    format!(".{name}.onionskin-save.{}.{serial}", std::process::id())
 }
 
 fn refuse_encrypted(trailer: &Dict) -> Result<()> {
@@ -622,6 +1024,26 @@ fn locate_at(reader: &Reader, number: u32, offset: u64) -> Option<u64> {
         return Some(biased);
     }
     None
+}
+
+/// Whether `table` leads to object `number` in the file: the bytes at the
+/// offset it records really are that object, or, for a compressed one, its
+/// container's are.
+///
+/// Structural and cheap. It says the table is consistent with the bytes, not
+/// that the object parses, so it is a reason to leave an entry alone rather
+/// than proof that the entry works.
+fn reaches(reader: &Reader, table: &Xref, number: u32) -> bool {
+    match table.get(number) {
+        Some(XrefEntry::InFile { offset, .. }) => locate_at(reader, number, offset).is_some(),
+        Some(XrefEntry::InObjectStream { container, .. }) => match table.get(container) {
+            Some(XrefEntry::InFile { offset, .. }) => {
+                locate_at(reader, container, offset).is_some()
+            }
+            _ => false,
+        },
+        Some(XrefEntry::Free { .. }) | None => false,
+    }
 }
 
 /// Bounded check that a loaded xref is worth trusting: the trailer names a
@@ -675,6 +1097,6 @@ fn reachable(
             }
             _ => Err(format!("object stream {container} has no xref entry")),
         },
-        Some(XrefEntry::Free) | None => Err(missing()),
+        Some(XrefEntry::Free { .. }) | None => Err(missing()),
     }
 }

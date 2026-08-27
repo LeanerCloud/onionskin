@@ -3,7 +3,6 @@
 
 mod common;
 
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use common::{corpus_dir, corpus_root, pdfs_in};
@@ -38,7 +37,7 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
     let mut measured = 0usize;
     for (len, path) in candidates.iter().take(8) {
         let file = FileSource::open(path).expect("corpus file opens");
-        let (counting, bytes_read) = CountingSource::new(Box::new(file));
+        let (counting, stats) = CountingSource::new(Box::new(file));
 
         let started = Instant::now();
         let Ok((document, provenance)) = Document::open_repairing(Box::new(counting)) else {
@@ -54,7 +53,7 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         }
         let elapsed = started.elapsed();
 
-        let read = bytes_read.load(Ordering::Relaxed);
+        let read = stats.total();
         let percent = read * 100 / len;
         println!(
             "{}: {} bytes read of {} ({percent}%), {} pages, first page in {:?}",
@@ -191,12 +190,12 @@ fn an_object_is_parsed_only_when_it_is_asked_for() {
     }
 
     let file = FileSource::open(&path).expect("seed opens");
-    let (counting, bytes_read) = CountingSource::new(Box::new(file));
+    let (counting, stats) = CountingSource::new(Box::new(file));
     let document = Document::open(Box::new(counting)).expect("seed opens clean");
-    let after_open = bytes_read.load(Ordering::Relaxed);
+    let after_open = stats.total();
 
     let catalog = document.catalog().expect("catalog resolves");
-    let after_catalog = bytes_read.load(Ordering::Relaxed);
+    let after_catalog = stats.total();
     assert!(
         after_catalog > after_open,
         "resolving the catalog must be what reads the catalog"
@@ -204,10 +203,10 @@ fn an_object_is_parsed_only_when_it_is_asked_for() {
     assert!(catalog.contains(b"Pages"));
 
     // The same object again comes from the cache, not from the source.
-    let before_repeat = bytes_read.load(Ordering::Relaxed);
+    let before_repeat = stats.total();
     document.catalog().expect("catalog resolves again");
     assert_eq!(
-        bytes_read.load(Ordering::Relaxed),
+        stats.total(),
         before_repeat,
         "a cached object must not be re-read"
     );

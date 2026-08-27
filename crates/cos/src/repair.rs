@@ -46,6 +46,14 @@ pub enum RepairReason {
     TruncatedTail {
         last_complete_object_end: u64,
     },
+    /// A caller met an object the cross-reference could not produce and asked
+    /// for a scan, after the document had already opened clean.
+    MidSessionScan {
+        /// The object whose absence prompted the escalation.
+        unreachable: u32,
+        /// How many cross-reference entries the scan replaced.
+        entries_corrected: usize,
+    },
 }
 
 impl fmt::Display for RepairReason {
@@ -80,6 +88,14 @@ impl fmt::Display for RepairReason {
                 f,
                 "file ends mid-object; last complete object ends at {last_complete_object_end}"
             ),
+            RepairReason::MidSessionScan {
+                unreachable,
+                entries_corrected,
+            } => write!(
+                f,
+                "object {unreachable} was unreachable mid-session; a scan corrected \
+                 {entries_corrected} cross-reference entries"
+            ),
         }
     }
 }
@@ -88,8 +104,12 @@ impl fmt::Display for RepairReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepairReport {
     pub reasons: Vec<RepairReason>,
-    /// True when the xref was thrown away and rebuilt by scanning.
+    /// True when the cross-reference was rebuilt by scanning, at open or by a
+    /// later escalation.
     pub rebuilt_by_scan: bool,
+    /// How many objects the rebuild at open recovered. A mid-session
+    /// escalation does not touch it: what that corrected is in its own reason,
+    /// and moving this to mean two things would make neither checkable.
     pub recovered_objects: usize,
 }
 
@@ -247,7 +267,7 @@ pub(crate) fn scan(reader: &Reader) -> Result<Scanned> {
     // A /Root the scan did not find an object for is as useless as no /Root at
     // all, and files that name a catalog they do not contain are real.
     let root_is_present = match trailer.get(b"Root") {
-        Some(Object::Ref(r)) => !matches!(xref.get(r.number), None | Some(XrefEntry::Free)),
+        Some(Object::Ref(r)) => !matches!(xref.get(r.number), None | Some(XrefEntry::Free { .. })),
         _ => false,
     };
     if !root_is_present {
