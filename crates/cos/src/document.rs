@@ -1,0 +1,677 @@
+//! The document: an xref, a trailer, a byte source, and objects that parse
+//! only when someone asks for them.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::rc::Rc;
+
+use crate::error::{Error, Result};
+use crate::filters;
+use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, Span};
+use crate::parse::Lexer;
+use crate::reader::Reader;
+use crate::repair::{self, Provenance, RepairReason, RepairReport};
+use crate::source::{FileSource, Source};
+use crate::writer::{self, XrefRow};
+use crate::xref::{self, Xref, XrefEntry};
+
+/// How far back from the end of the file `startxref` is looked for.
+const TAIL_WINDOW: usize = 2048;
+/// Depth limit for `/Length` chains and page-tree descent.
+const MAX_INDIRECTION: usize = 64;
+
+struct ObjectStream {
+    data: Vec<u8>,
+    /// `(object number, offset of its data within `data`)`, in stream order.
+    entries: Vec<(u32, usize)>,
+    container_span: Span,
+}
+
+pub struct Document {
+    reader: Reader,
+    xref: Xref,
+    trailer: Dict,
+    provenance: Provenance,
+    /// Offset of the newest cross-reference section in the original bytes,
+    /// recorded as `/Prev` by the next section. `None` when the xref was
+    /// rebuilt and there is nothing trustworthy to chain to.
+    prev_startxref: Option<u64>,
+    original_len: u64,
+    cache: RefCell<BTreeMap<u32, Parsed>>,
+    object_streams: RefCell<BTreeMap<u32, Rc<ObjectStream>>>,
+    in_flight: RefCell<BTreeSet<u32>>,
+    edits: BTreeMap<u32, (u16, Object)>,
+    trailer_edits: Dict,
+    next_number: u32,
+}
+
+impl Document {
+    /// Opens a file that is structurally sound. A file needing repair is
+    /// refused with `Error::RepairRequired` rather than opened quietly.
+    pub fn open(source: Box<dyn Source>) -> Result<Document> {
+        let (document, provenance) = Document::open_repairing(source)?;
+        match provenance {
+            Provenance::Clean => Ok(document),
+            Provenance::Repaired(report) => Err(Error::RepairRequired(Box::new(report))),
+        }
+    }
+
+    pub fn open_path(path: &Path) -> Result<Document> {
+        Document::open(Box::new(FileSource::open(path)?))
+    }
+
+    /// Opens a file, repairing it if it needs repair, and hands back what
+    /// happened. The caller cannot receive a repaired document without also
+    /// receiving its `Provenance`.
+    pub fn open_repairing(source: Box<dyn Source>) -> Result<(Document, Provenance)> {
+        let mut reader = Reader::new(source);
+        if reader.len() == 0 {
+            return Err(Error::NotAPdf);
+        }
+        let header_offset = reader.find_header()?;
+        reader.header_offset = header_offset;
+
+        let mut reasons = Vec::new();
+        if header_offset != 0 {
+            reasons.push(RepairReason::JunkBeforeHeader {
+                offset: header_offset,
+            });
+        }
+
+        let (tail_base, tail) = reader.tail(TAIL_WINDOW)?;
+        if crate::parse::rfind(&tail, b"%%EOF").is_none() {
+            reasons.push(RepairReason::MissingEof);
+        }
+
+        let mut loaded = None;
+        match xref::find_startxref(&tail, tail_base) {
+            None => reasons.push(RepairReason::MissingStartxref),
+            Some(value) => match xref::load_chain(&reader, value, &mut reasons) {
+                Ok(l) => loaded = Some(l),
+                Err(e) => reasons.push(RepairReason::BrokenXrefSection {
+                    offset: value,
+                    detail: e.to_string(),
+                }),
+            },
+        }
+
+        if let Some(l) = &loaded {
+            refuse_encrypted(&l.trailer)?;
+        }
+
+        let mut rebuilt_by_scan = false;
+        let (xref_table, trailer, prev_startxref) = match loaded {
+            Some(l) => match structure_ok(&reader, &l.xref, &l.trailer) {
+                Ok(()) => (l.xref, l.trailer, Some(l.startxref)),
+                Err(detail) => {
+                    reasons.push(RepairReason::XrefOffsetsWrong { detail });
+                    rebuilt_by_scan = true;
+                    let scanned = repair::scan(&reader)?;
+                    refuse_encrypted(&scanned.trailer)?;
+                    reasons.extend(scanned.reasons);
+                    (scanned.xref, scanned.trailer, None)
+                }
+            },
+            None => {
+                rebuilt_by_scan = true;
+                let scanned = repair::scan(&reader)?;
+                refuse_encrypted(&scanned.trailer)?;
+                reasons.extend(scanned.reasons);
+                (scanned.xref, scanned.trailer, None)
+            }
+        };
+
+        let declared_size = trailer
+            .get(b"Size")
+            .and_then(Object::as_integer)
+            .and_then(|size| u32::try_from(size).ok())
+            .unwrap_or(0);
+        let next_number = declared_size
+            .max(xref_table.max_number().saturating_add(1))
+            .max(1);
+        let original_len = reader.len();
+
+        let provenance = if reasons.is_empty() {
+            Provenance::Clean
+        } else {
+            Provenance::Repaired(RepairReport {
+                reasons,
+                rebuilt_by_scan,
+                recovered_objects: xref_table.len(),
+            })
+        };
+
+        let document = Document {
+            reader,
+            xref: xref_table,
+            trailer,
+            provenance: provenance.clone(),
+            prev_startxref,
+            original_len,
+            cache: RefCell::new(BTreeMap::new()),
+            object_streams: RefCell::new(BTreeMap::new()),
+            in_flight: RefCell::new(BTreeSet::new()),
+            edits: BTreeMap::new(),
+            trailer_edits: Dict::new(),
+            next_number,
+        };
+        Ok((document, provenance))
+    }
+
+    pub fn open_path_repairing(path: &Path) -> Result<(Document, Provenance)> {
+        Document::open_repairing(Box::new(FileSource::open(path)?))
+    }
+
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    pub fn trailer(&self) -> &Dict {
+        &self.trailer
+    }
+
+    pub fn xref(&self) -> &Xref {
+        &self.xref
+    }
+
+    /// Length of the original bytes. Everything a save appends starts here, so
+    /// truncating to this length recovers the file as it was opened.
+    pub fn original_len(&self) -> u64 {
+        self.original_len
+    }
+
+    // ---- lazy object access -------------------------------------------------
+
+    /// Parses object `number` on demand, caching the result. Nothing outside
+    /// the object's own byte span is read.
+    pub fn get(&self, number: u32) -> Result<Parsed> {
+        if let Some(hit) = self.cache.borrow().get(&number) {
+            return Ok(hit.clone());
+        }
+        if let Some((generation, object)) = self.edits.get(&number) {
+            return Ok(Parsed {
+                objref: ObjRef::new(number, *generation),
+                object: object.clone(),
+                origin: Origin::Pending,
+            });
+        }
+
+        // A crafted file can name itself as its own object-stream container, or
+        // as its own /Length. Refusing re-entry is what keeps that a typed
+        // error instead of a stack overflow.
+        {
+            let mut in_flight = self.in_flight.borrow_mut();
+            if !in_flight.insert(number) {
+                return Err(Error::DepthExceeded {
+                    detail: format!("object {number} is needed to parse itself"),
+                });
+            }
+            // A chain of objects each needing the next (an indirect /Length
+            // pointing at an object with an indirect /Length, and so on) would
+            // otherwise recurse once per link until the stack ran out.
+            if in_flight.len() > MAX_INDIRECTION {
+                drop(in_flight);
+                self.in_flight.borrow_mut().remove(&number);
+                return Err(Error::DepthExceeded {
+                    detail: format!("more than {MAX_INDIRECTION} objects are mid-parse"),
+                });
+            }
+        }
+        let parsed = self.parse_from_source(number);
+        self.in_flight.borrow_mut().remove(&number);
+
+        let parsed = parsed?;
+        self.cache.borrow_mut().insert(number, parsed.clone());
+        Ok(parsed)
+    }
+
+    fn parse_from_source(&self, number: u32) -> Result<Parsed> {
+        match self.xref.get(number) {
+            Some(XrefEntry::InFile { generation, .. }) => {
+                let offset = self
+                    .locate(number)
+                    .ok_or(Error::MissingObject(ObjRef::new(number, generation)))?;
+                let indirect = self
+                    .reader
+                    .parse_indirect_at(offset, &|r| self.length_of(r))?;
+                Ok(Parsed {
+                    objref: indirect.objref,
+                    object: indirect.object,
+                    origin: Origin::File(indirect.span),
+                })
+            }
+            Some(XrefEntry::InObjectStream { container, index }) => {
+                self.get_compressed(number, container, index)
+            }
+            Some(XrefEntry::Free) | None => Err(Error::MissingObject(ObjRef::new(number, 0))),
+        }
+    }
+
+    /// The true file offset of object `number`, accepting an offset biased by
+    /// the header position when junk precedes `%PDF-`.
+    fn locate(&self, number: u32) -> Option<u64> {
+        let Some(XrefEntry::InFile { offset, .. }) = self.xref.get(number) else {
+            return None;
+        };
+        locate_at(&self.reader, number, offset)
+    }
+
+    fn get_compressed(&self, number: u32, container: u32, index: u32) -> Result<Parsed> {
+        let stream = self.object_stream(container)?;
+        // The xref names the slot, so the slot has to hold the object it named.
+        // Searching the stream by number instead would paper over an xref that
+        // disagrees with its own object streams on a document reported clean.
+        let start = stream
+            .entries
+            .get(index as usize)
+            .filter(|(n, _)| *n == number)
+            .ok_or(Error::MissingObject(ObjRef::new(number, 0)))?
+            .1;
+        if start >= stream.data.len() {
+            return Err(Error::Syntax {
+                offset: start as u64,
+                detail: format!("object stream {container} offset is past its data"),
+            });
+        }
+        let mut lex = Lexer::new(&stream.data[start..], start as u64);
+        let object = lex.parse_object().map_err(|e| Error::Syntax {
+            offset: e.offset,
+            detail: format!("in object stream {container}: {}", e.detail()),
+        })?;
+        Ok(Parsed {
+            objref: ObjRef::new(number, 0),
+            object,
+            origin: Origin::ObjectStream {
+                container,
+                container_span: stream.container_span,
+                within: Span::new(start as u64, (start + lex.position()) as u64),
+            },
+        })
+    }
+
+    fn object_stream(&self, container: u32) -> Result<Rc<ObjectStream>> {
+        if let Some(hit) = self.object_streams.borrow().get(&container) {
+            return Ok(Rc::clone(hit));
+        }
+        let parsed = self.get(container)?;
+        let Some(stream) = parsed.object.as_stream() else {
+            return Err(Error::Unrecoverable {
+                detail: format!(
+                    "object {container} is referenced as an object stream but is not a stream"
+                ),
+            });
+        };
+        let container_span = parsed
+            .origin
+            .file_span()
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: format!("object stream {container} has no bytes in the file"),
+            })?;
+        let data = filters::decode(&stream.dict, &stream.raw, &|o| self.resolve(o))?;
+        let integer = |key: &[u8]| -> Result<usize> {
+            Ok(self
+                .resolve_key(&stream.dict, key)?
+                .and_then(|o| o.as_integer())
+                .unwrap_or(0)
+                .max(0) as usize)
+        };
+        let entries =
+            crate::parse::object_stream_entries(&data, integer(b"N")?, integer(b"First")?);
+
+        let loaded = Rc::new(ObjectStream {
+            data,
+            entries,
+            container_span,
+        });
+        self.object_streams
+            .borrow_mut()
+            .insert(container, Rc::clone(&loaded));
+        Ok(loaded)
+    }
+
+    /// Resolves an indirect `/Length` while its own object is being parsed.
+    /// A self-reference or a cycle yields `None` through the re-entry guard in
+    /// `get`, which sends the parser down the `endstream`-scanning path.
+    fn length_of(&self, r: ObjRef) -> Option<i64> {
+        self.get(r.number).ok().and_then(|p| p.object.as_integer())
+    }
+
+    /// Follows indirect references until a direct object appears.
+    pub fn resolve(&self, object: &Object) -> Result<Object> {
+        let mut current = object.clone();
+        for _ in 0..MAX_INDIRECTION {
+            match current {
+                Object::Ref(r) => current = self.get(r.number)?.object,
+                other => return Ok(other),
+            }
+        }
+        Err(Error::DepthExceeded {
+            detail: "indirect reference chain".into(),
+        })
+    }
+
+    fn resolve_key(&self, dict: &Dict, key: &[u8]) -> Result<Option<Object>> {
+        match dict.get(key) {
+            Some(value) => Ok(Some(self.resolve(value)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn catalog(&self) -> Result<Dict> {
+        let root = self
+            .trailer
+            .get(b"Root")
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "trailer has no /Root".into(),
+            })?;
+        self.resolve(root)?
+            .as_dict()
+            .cloned()
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "/Root does not resolve to a dictionary".into(),
+            })
+    }
+
+    /// `/Count` from the page tree root, without walking the tree.
+    pub fn page_count(&self) -> Result<i64> {
+        let catalog = self.catalog()?;
+        let pages = self
+            .resolve_key(&catalog, b"Pages")?
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "catalog has no /Pages".into(),
+            })?;
+        let pages = pages.as_dict().ok_or_else(|| Error::Unrecoverable {
+            detail: "/Pages does not resolve to a dictionary".into(),
+        })?;
+        self.resolve_key(pages, b"Count")?
+            .and_then(|o| o.as_integer())
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "page tree root has no /Count".into(),
+            })
+    }
+
+    /// Descends to the first page, touching only the nodes on that path. This
+    /// is the shape the time-to-first-page budget (decision 11) measures.
+    pub fn first_page(&self) -> Result<Parsed> {
+        let catalog = self.catalog()?;
+        let mut current = catalog
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "catalog has no indirect /Pages".into(),
+            })?;
+        for _ in 0..MAX_INDIRECTION {
+            let parsed = self.get(current.number)?;
+            let dict = parsed
+                .object
+                .as_dict()
+                .ok_or_else(|| Error::Unrecoverable {
+                    detail: format!("page tree node {} is not a dictionary", current.number),
+                })?;
+            let kids = match self.resolve_key(dict, b"Kids")? {
+                Some(Object::Array(kids)) if !kids.is_empty() => kids,
+                _ => return Ok(parsed),
+            };
+            current = kids[0].as_reference().ok_or_else(|| Error::Unrecoverable {
+                detail: "page tree /Kids holds a direct object".into(),
+            })?;
+        }
+        Err(Error::DepthExceeded {
+            detail: "page tree descent".into(),
+        })
+    }
+
+    // ---- edits --------------------------------------------------------------
+
+    /// Replaces object `number`. Both caches are dropped rather than pruned:
+    /// the edited object may be an object stream, and the objects decoded out
+    /// of it would otherwise keep serving the bytes it no longer has.
+    pub fn set_object(&mut self, number: u32, generation: u16, object: Object) {
+        self.cache.borrow_mut().clear();
+        self.object_streams.borrow_mut().clear();
+        self.next_number = self.next_number.max(number.saturating_add(1));
+        self.edits.insert(number, (generation, object));
+    }
+
+    /// Appends a new object. Fails when the document already uses the whole
+    /// object-number space rather than colliding with an existing object.
+    pub fn add_object(&mut self, object: Object) -> Result<ObjRef> {
+        let number = self.next_number;
+        self.next_number = number.checked_add(1).ok_or_else(|| Error::Unrecoverable {
+            detail: "the document has no free object numbers left".into(),
+        })?;
+        self.edits.insert(number, (0, object));
+        Ok(ObjRef::new(number, 0))
+    }
+
+    pub fn set_trailer_entry(&mut self, key: &str, value: Object) {
+        self.trailer_edits.set(Name::new(key), value);
+    }
+
+    /// Sets one field of the document information dictionary, creating the
+    /// dictionary when the file has none.
+    pub fn set_info_field(&mut self, key: &str, value: Object) -> Result<ObjRef> {
+        match self.trailer.get(b"Info").and_then(Object::as_reference) {
+            Some(r) => {
+                let mut dict = self
+                    .get(r.number)?
+                    .object
+                    .as_dict()
+                    .cloned()
+                    .unwrap_or_default();
+                dict.set(Name::new(key), value);
+                self.set_object(r.number, r.generation, Object::Dict(dict));
+                Ok(r)
+            }
+            None => {
+                let mut dict = Dict::new();
+                dict.set(Name::new(key), value);
+                let r = self.add_object(Object::Dict(dict))?;
+                self.set_trailer_entry("Info", Object::Ref(r));
+                Ok(r)
+            }
+        }
+    }
+
+    /// True when a save would append anything: a pending edit, or repaired
+    /// structures that are not yet recorded in the file.
+    pub fn has_pending_changes(&self) -> bool {
+        !self.edits.is_empty() || !self.trailer_edits.is_empty() || !self.provenance.is_clean()
+    }
+
+    // ---- save ---------------------------------------------------------------
+
+    /// Whether the appended section must carry a table covering every object,
+    /// rather than a delta chained to the file's own xref with `/Prev`.
+    ///
+    /// A missing `%%EOF` is the one kind of damage that leaves the existing
+    /// chain worth pointing at, so it alone keeps the cheap delta. Everything
+    /// else means a reader following `/Prev` would land back in the damage.
+    fn needs_full_table(&self) -> bool {
+        match &self.provenance {
+            Provenance::Clean => false,
+            Provenance::Repaired(report) => !report
+                .reasons
+                .iter()
+                .all(|r| matches!(r, RepairReason::MissingEof)),
+        }
+    }
+
+    /// The bytes a save would append, or `None` when there is nothing to say.
+    pub fn incremental_section(&self) -> Result<Option<Vec<u8>>> {
+        if !self.has_pending_changes() {
+            return Ok(None);
+        }
+
+        // The section must start on its own line.
+        let last = self.reader.read(self.original_len.saturating_sub(1), 1)?;
+        let lead: &[u8] = match last.first() {
+            Some(b'\n') | Some(b'\r') | None => b"",
+            Some(_) => b"\n",
+        };
+        let section_start = self.original_len + lead.len() as u64;
+
+        let mut objects: Vec<(ObjRef, Object)> = self
+            .edits
+            .iter()
+            .map(|(number, (generation, object))| {
+                (ObjRef::new(*number, *generation), object.clone())
+            })
+            .collect();
+
+        let full_table = self.needs_full_table();
+        let mut rows = Vec::new();
+        if full_table {
+            rows.push(XrefRow {
+                number: 0,
+                generation: 65535,
+                offset: 0,
+            });
+            for (number, entry) in self.xref.iter() {
+                if number == 0 || self.edits.contains_key(&number) {
+                    continue;
+                }
+                match entry {
+                    XrefEntry::Free => {}
+                    XrefEntry::InFile { generation, .. } => {
+                        // Dropping a row here would delete the object from the
+                        // only table the saved file can be read through.
+                        let offset = self
+                            .locate(number)
+                            .ok_or(Error::MissingObject(ObjRef::new(number, generation)))?;
+                        rows.push(XrefRow {
+                            number,
+                            generation,
+                            offset,
+                        });
+                    }
+                    // A compressed object has no offset of its own to point
+                    // at, so the repaired section carries a copy. The original
+                    // container is left untouched underneath.
+                    XrefEntry::InObjectStream { .. } => {
+                        let parsed = self.get(number)?;
+                        objects.push((parsed.objref, parsed.object));
+                    }
+                }
+            }
+        }
+        objects.sort_by_key(|(r, _)| r.number);
+
+        let mut trailer = self.trailer.clone();
+        trailer.remove(b"Prev");
+        trailer.remove(b"XRefStm");
+        // A rebuilt table is self-sufficient and the chain it would point at is
+        // the damaged one, so /Prev is written only for a delta section.
+        if !full_table {
+            if let Some(prev) = self.prev_startxref {
+                trailer.set("Prev", Object::Integer(prev as i64));
+            }
+        }
+        for (key, value) in self.trailer_edits.iter() {
+            trailer.set(key.clone(), value.clone());
+        }
+        let highest = objects
+            .iter()
+            .map(|(r, _)| r.number)
+            .chain(rows.iter().map(|r| r.number))
+            .max()
+            .unwrap_or(0)
+            .max(self.xref.max_number());
+        trailer.set("Size", Object::Integer(i64::from(highest) + 1));
+
+        let mut section = lead.to_vec();
+        section.extend_from_slice(&writer::incremental_section(
+            section_start,
+            &objects,
+            &rows,
+            trailer,
+        )?);
+        Ok(Some(section))
+    }
+
+    /// The original bytes, plus one incremental section when there is anything
+    /// to append. A no-op save on a clean document appends nothing.
+    pub fn save_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = self.reader.read_all()?;
+        if let Some(section) = self.incremental_section()? {
+            out.extend_from_slice(&section);
+        }
+        Ok(out)
+    }
+}
+
+fn refuse_encrypted(trailer: &Dict) -> Result<()> {
+    if trailer.contains(b"Encrypt") {
+        return Err(Error::Encrypted);
+    }
+    Ok(())
+}
+
+fn locate_at(reader: &Reader, number: u32, offset: u64) -> Option<u64> {
+    if reader.object_header_at(offset).map(|(n, _)| n) == Some(number) {
+        return Some(offset);
+    }
+    // Both operands come out of the file, so the biased offset is a checked
+    // add rather than a wrap.
+    let biased = offset.checked_add(reader.header_offset)?;
+    if reader.object_header_at(biased).map(|(n, _)| n) == Some(number) {
+        return Some(biased);
+    }
+    None
+}
+
+/// Bounded check that a loaded xref is worth trusting: the trailer names a
+/// `/Root`, the bytes at its offset really are that object, and it parses to a
+/// dictionary. Three objects, not the whole file - this is the gate that keeps
+/// open lazy while still catching a globally wrong xref.
+fn structure_ok(reader: &Reader, table: &Xref, trailer: &Dict) -> std::result::Result<(), String> {
+    let Some(Object::Ref(root)) = trailer.get(b"Root") else {
+        return Err("trailer has no indirect /Root".to_string());
+    };
+    match reachable(reader, table, root.number)? {
+        // A catalog stored in the file itself is cheap to check properly.
+        Some(object) => {
+            let dict = object
+                .as_dict()
+                .ok_or_else(|| format!("/Root object {} is not a dictionary", root.number))?;
+            if let Some(Object::Ref(pages)) = dict.get(b"Pages") {
+                reachable(reader, table, pages.number)?;
+            }
+            Ok(())
+        }
+        // A catalog inside an object stream: reaching the container is the
+        // check. Decoding it here would cost a whole object stream at open.
+        None => Ok(()),
+    }
+}
+
+/// `Ok(Some(object))` for an object read from the file, `Ok(None)` for one
+/// whose container was reached inside an object stream, `Err` when the xref
+/// does not lead to it at all.
+fn reachable(
+    reader: &Reader,
+    table: &Xref,
+    number: u32,
+) -> std::result::Result<Option<Object>, String> {
+    let missing = || format!("object {number} is not readable through the xref");
+    match table.get(number) {
+        Some(XrefEntry::InFile { offset, .. }) => {
+            let real = locate_at(reader, number, offset).ok_or_else(missing)?;
+            let indirect = reader
+                .parse_indirect_at(real, &|_| None)
+                .map_err(|e| format!("object {number}: {e}"))?;
+            Ok(Some(indirect.object))
+        }
+        Some(XrefEntry::InObjectStream { container, .. }) => match table.get(container) {
+            Some(XrefEntry::InFile { offset, .. }) => {
+                locate_at(reader, container, offset).ok_or_else(|| {
+                    format!("object stream {container} is not readable through the xref")
+                })?;
+                Ok(None)
+            }
+            _ => Err(format!("object stream {container} has no xref entry")),
+        },
+        Some(XrefEntry::Free) | None => Err(missing()),
+    }
+}
