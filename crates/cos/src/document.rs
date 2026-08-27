@@ -3,8 +3,11 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::filters;
@@ -20,6 +23,9 @@ use crate::xref::{self, Xref, XrefEntry};
 const TAIL_WINDOW: usize = 2048;
 /// Depth limit for `/Length` chains and page-tree descent.
 const MAX_INDIRECTION: usize = 64;
+/// How much of the original a save copies at a time. This is the whole of the
+/// save path's memory: a 4 GB document costs the same as a 4 KB one.
+const COPY_CHUNK: u64 = 64 * 1024;
 
 struct ObjectStream {
     data: Vec<u8>,
@@ -588,15 +594,82 @@ impl Document {
         Ok(Some(section))
     }
 
+    /// Writes the original bytes followed by the incremental section, copying
+    /// the original through in `COPY_CHUNK` pieces rather than materializing
+    /// it. The bytes that come out are the same bytes that went in; only the
+    /// memory to produce them changes.
+    ///
+    /// Consumer: every save in M2 and later, through `save_to_path`.
+    pub fn save_to_writer(&self, out: &mut dyn Write) -> Result<()> {
+        let mut offset = 0u64;
+        while offset < self.original_len {
+            let want = (self.original_len - offset).min(COPY_CHUNK) as usize;
+            let chunk = self.reader.read(offset, want)?;
+            // The source shrank under us. Writing what is left would produce a
+            // plausible, truncated document, which is the one outcome the core
+            // invariant cannot survive.
+            if chunk.is_empty() {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "the source ended at byte {offset} of the {} it reported",
+                        self.original_len
+                    ),
+                )));
+            }
+            out.write_all(&chunk)?;
+            offset += chunk.len() as u64;
+        }
+        if let Some(section) = self.incremental_section()? {
+            out.write_all(&section)?;
+        }
+        Ok(())
+    }
+
+    /// Saves to `path` through a temporary file in the same directory, renamed
+    /// into place once every byte is on disk.
+    ///
+    /// Saving over the file the document was opened from is the ordinary case,
+    /// and opening that path for writing would truncate the bytes this save is
+    /// still reading. The rename also means a crash mid-save leaves the
+    /// previous file whole rather than a half-written one.
+    pub fn save_to_path(&self, path: &Path) -> Result<()> {
+        let directory = path.parent().unwrap_or_else(|| Path::new("."));
+        let temporary = directory.join(temporary_name(path));
+
+        let written = (|| -> Result<()> {
+            let mut out = BufWriter::new(File::create(&temporary)?);
+            self.save_to_writer(&mut out)?;
+            let file = out.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = written {
+            // The save already failed; a failure to clean up after it is not
+            // the error worth reporting.
+            let _ = std::fs::remove_file(&temporary);
+            return Err(e);
+        }
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    }
+
     /// The original bytes, plus one incremental section when there is anything
     /// to append. A no-op save on a clean document appends nothing.
     pub fn save_to_vec(&self) -> Result<Vec<u8>> {
-        let mut out = self.reader.read_all()?;
-        if let Some(section) = self.incremental_section()? {
-            out.extend_from_slice(&section);
-        }
+        let mut out = Vec::new();
+        self.save_to_writer(&mut out)?;
         Ok(out)
     }
+}
+
+/// Names the temporary file a `save_to_path` writes through. Two saves of the
+/// same document, from one process or several, must not pick the same name.
+fn temporary_name(path: &Path) -> String {
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let serial = SAVES.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    format!(".{name}.onionskin-save.{}.{serial}", std::process::id())
 }
 
 fn refuse_encrypted(trailer: &Dict) -> Result<()> {

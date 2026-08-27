@@ -161,3 +161,105 @@ fn short(path: &Path) -> String {
         None => path.display().to_string(),
     }
 }
+
+/// Builds a small, valid, classic-cross-reference PDF out of the given object
+/// bodies: `bodies[0]` becomes object 1, and so on. Object 1 must be the
+/// catalog, because the trailer names it as `/Root`.
+///
+/// `offset_lies` replaces the offset recorded for an object with one the
+/// object is not at, which is how a test produces a file whose xref is wrong
+/// about exactly one object while still opening clean.
+pub fn classic_pdf(bodies: &[&[u8]], offset_lies: &[(u32, u64)]) -> Vec<u8> {
+    let mut bytes = Vec::from(&b"%PDF-1.7\n"[..]);
+    let mut offsets = Vec::new();
+    for (index, body) in bodies.iter().enumerate() {
+        offsets.push(bytes.len() as u64);
+        bytes.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        bytes.extend_from_slice(body);
+        bytes.extend_from_slice(b"\nendobj\n");
+    }
+    for (number, offset) in offset_lies {
+        offsets[*number as usize - 1] = *offset;
+    }
+
+    let xref_at = bytes.len();
+    let size = bodies.len() + 1;
+    bytes.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+    for offset in &offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!("trailer\n<</Size {size}/Root 1 0 R>>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes(),
+    );
+    bytes
+}
+
+/// The three-object skeleton every fixture here needs: a catalog, a page tree
+/// and one page. Further bodies become objects 4 and up.
+pub fn skeleton() -> Vec<&'static [u8]> {
+    vec![
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<<>>>>",
+    ]
+}
+
+/// One row of a classic cross-reference table, as read back out of bytes this
+/// crate wrote.
+#[derive(Debug, PartialEq, Eq)]
+pub struct XrefRow {
+    pub number: u32,
+    /// A byte offset for an in-use entry, the next free object number for a
+    /// free one (ISO 32000-1 7.5.4).
+    pub field: u64,
+    pub generation: u16,
+    pub free: bool,
+}
+
+/// Parses the classic table of the last cross-reference section in `bytes`,
+/// so a test can check the section this crate wrote rather than trust it.
+pub fn last_xref_table(bytes: &[u8]) -> Vec<XrefRow> {
+    let at = rfind(bytes, b"\nxref\n").expect("the section has a classic xref table") + 1;
+    let text = String::from_utf8_lossy(&bytes[at..]);
+    let mut words = text.split_ascii_whitespace();
+    assert_eq!(words.next(), Some("xref"));
+
+    let mut rows = Vec::new();
+    while let Some(first) = words.next() {
+        if first == "trailer" {
+            break;
+        }
+        let start: u32 = first.parse().expect("subsection start");
+        let count: u32 = words
+            .next()
+            .expect("subsection count")
+            .parse()
+            .expect("count");
+        for i in 0..count {
+            let field: u64 = words.next().expect("entry field").parse().expect("field");
+            let generation: u16 = words
+                .next()
+                .expect("entry generation")
+                .parse()
+                .expect("gen");
+            let kind = words.next().expect("entry kind");
+            rows.push(XrefRow {
+                number: start + i,
+                field,
+                generation,
+                free: match kind {
+                    "n" => false,
+                    "f" => true,
+                    other => panic!("unknown cross-reference entry kind {other}"),
+                },
+            });
+        }
+    }
+    rows
+}
+
+fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
+}

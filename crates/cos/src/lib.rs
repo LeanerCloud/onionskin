@@ -22,8 +22,9 @@
 //!   subsection counts, and reports every one of them. [`Document::open`]
 //!   refuses such a file outright, so a repaired open cannot pass for a clean
 //!   one.
-//! - **Incremental save**: [`Document::save_to_vec`] returns the original bytes
-//!   plus at most one appended section. A no-op save on a clean document
+//! - **Incremental save**: [`Document::save_to_path`] writes the original bytes
+//!   plus at most one appended section, streaming the original through in
+//!   bounded chunks rather than holding it. A no-op save on a clean document
 //!   appends nothing at all.
 //!
 //! Encryption is detected and refused with [`Error::Encrypted`] rather than
@@ -53,5 +54,5 @@ pub use document::Document;
 pub use error::{Error, Result};
 pub use object::{Dict, Name, ObjRef, Object, Origin, Parsed, Span, Stream};
 pub use repair::{Provenance, RepairReason, RepairReport};
-pub use source::{BytesSource, CountingSource, FileSource, Source};
+pub use source::{BytesSource, CountingSource, FileSource, ReadStats, Source};
 pub use xref::{Xref, XrefEntry};
