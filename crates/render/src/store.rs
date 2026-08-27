@@ -15,11 +15,14 @@
 use crate::base::BaseRaster;
 use crate::tile::{TileCache, TILE_BYTES};
 
-/// A 3840x2160 viewport spans 15x9 tiles, and the base rasters under them cost
-/// about as much again. Three of those: the visible screen plus a screen of
-/// scroll slack above and below, so a continuous scroll evicts pages it has
-/// left rather than pages it is still painting.
+/// A 3840x2160 viewport spans 15x9 tiles.
 const VIEWPORT_TILES: usize = 15 * 9;
+/// What one screenful costs: its composited tiles, plus the base rasters under
+/// them, which the M1 spike measured at about the same again.
+const VIEWPORT_BYTES: usize = 2 * VIEWPORT_TILES * TILE_BYTES;
+/// The visible screen plus a screen of scroll slack above and below, so a
+/// continuous scroll evicts pages it has left rather than pages it is still
+/// painting.
 const VIEWPORTS_RESIDENT: usize = 3;
 
 /// One page at one zoom. Zoom is keyed by its bits because a cache is only
@@ -45,6 +48,10 @@ struct Entry {
 }
 
 /// Tile caches under a byte budget, least recently used evicted first.
+///
+/// `Send`, not `Sync`: a [`TileCache`] composites behind `&self` through a
+/// `RefCell`. One thread owns the store, which is what the viewer does - the
+/// render worker produces base rasters and the canvas caches and paints them.
 pub struct TileStore {
     budget: usize,
     /// Least recently used first, most recently used last.
@@ -53,7 +60,7 @@ pub struct TileStore {
 
 impl TileStore {
     /// Base rasters and tiles for three 4K viewports.
-    pub const DEFAULT_BUDGET_BYTES: usize = VIEWPORTS_RESIDENT * 2 * VIEWPORT_TILES * TILE_BYTES;
+    pub const DEFAULT_BUDGET_BYTES: usize = VIEWPORTS_RESIDENT * VIEWPORT_BYTES;
 
     pub fn new() -> Self {
         Self::with_budget(Self::DEFAULT_BUDGET_BYTES)
@@ -76,10 +83,10 @@ impl TileStore {
 
     /// Bytes held by every cache in the store.
     ///
-    /// This is at or below the budget after any of the store's own methods
-    /// returns. It goes over in between, because compositing a tile grows the
-    /// cache the caller is holding; the peak is the budget plus the tiles of
-    /// the one page being painted, and the next access brings it back down.
+    /// Above the budget only in the two cases [`Self::evict_to_budget`]
+    /// documents: between accesses, while the page the caller is holding
+    /// composites its tiles, and for as long as a single page is larger than
+    /// the whole budget.
     pub fn resident_bytes(&self) -> usize {
         self.entries
             .iter()
@@ -106,6 +113,10 @@ impl TileStore {
 
     /// Cache `base` as the render of `page` at its own zoom, replacing any
     /// cache already held for that pair, and evict back to the budget.
+    ///
+    /// A replaced cache is dropped whole, overlays included: the caller that
+    /// re-rendered the page owns re-adding them, because only it knows which
+    /// of them the new raster already contains.
     pub fn insert(&mut self, page: usize, base: BaseRaster) -> &mut TileCache {
         let key = Key::new(page, base.zoom());
         if let Some(at) = self.position(key) {
@@ -120,6 +131,16 @@ impl TileStore {
         &mut self.entries.last_mut().expect("just pushed").cache
     }
 
+    /// Drop every cache.
+    ///
+    /// The key is `(page, zoom)`, not the [`RenderOptions`](crate::RenderOptions)
+    /// the raster was produced with, so a caller that changes those - toggling
+    /// a layer, turning annotations off - has to say so: every cached raster
+    /// predates the change and none of them would be rebuilt otherwise.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     fn position(&self, key: Key) -> Option<usize> {
         self.entries.iter().position(|entry| entry.key == key)
     }
@@ -129,28 +150,30 @@ impl TileStore {
         self.entries.push(entry);
     }
 
-    /// Evict until the store fits its budget, cheapest to rebuild first:
-    /// composited tiles cost ~0.1 ms each, a base raster costs an interpreter
-    /// run, which the M1 spike measured at 1 to 738 ms. So every other page's
-    /// tiles go before any page's base raster does.
+    /// Evict until the store fits its budget, oldest page first and, within
+    /// that page, its composited tiles before its base raster.
     ///
-    /// The most recently used entry is never touched. A single page can
-    /// therefore exceed the budget on its own, at the zoom the caller asked
-    /// for; the budget bounds what the store keeps around, not what a caller
+    /// Recency outranks rebuild cost. Ranking the other way round - every
+    /// other page's tiles before any page's base raster, because a tile costs
+    /// ~0.1 ms and a base raster an interpreter run - makes a page one frame
+    /// old pay for a page the user scrolled past minutes ago, and at a zoom
+    /// where two pages do not fit it recomposites a visible page's whole grid
+    /// on every frame.
+    ///
+    /// The most recently used entry is never evicted: it is the page the
+    /// caller just asked for and is about to paint. A single page can
+    /// therefore exceed the budget on its own at the zoom that was requested;
+    /// the budget bounds what the store keeps around, not what a caller
     /// demands right now.
     fn evict_to_budget(&mut self) {
-        let evictable = self.entries.len().saturating_sub(1);
-
-        for at in 0..evictable {
+        loop {
             let over = self.over_budget();
-            if over == 0 {
+            if over == 0 || self.entries.len() < 2 {
                 return;
             }
-            self.entries[at].cache.evict_tiles(over);
-        }
-
-        while self.over_budget() > 0 && self.entries.len() > 1 {
-            self.entries.remove(0);
+            if self.entries[0].cache.evict_tiles(over) < over {
+                self.entries.remove(0);
+            }
         }
     }
 
@@ -163,5 +186,18 @@ impl TileStore {
 impl Default for TileStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The store has to be able to move to the thread that owns the canvas,
+    /// and it deliberately cannot be shared with another one.
+    #[test]
+    fn a_store_moves_to_one_thread_and_stays_there() {
+        fn assert_send<T: Send>() {}
+        assert_send::<TileStore>();
     }
 }

@@ -63,6 +63,8 @@ pub enum OverlayError {
     NotFinite { x: f32, y: f32 },
     /// A stroke width is NaN, infinite, or not positive.
     InvalidWidth { width: f32 },
+    /// A highlight quad has no extent in x or in y, so it paints nothing.
+    EmptyQuad,
 }
 
 impl fmt::Display for OverlayError {
@@ -75,6 +77,7 @@ impl fmt::Display for OverlayError {
             Self::InvalidWidth { width } => {
                 write!(f, "stroke width {width} is not a positive finite number")
             }
+            Self::EmptyQuad => write!(f, "a highlight quad with no width or height paints nothing"),
         }
     }
 }
@@ -107,6 +110,16 @@ impl Overlay {
         for &(x, y) in self.points() {
             if !x.is_finite() || !y.is_finite() {
                 return Err(OverlayError::NotFinite { x, y });
+            }
+        }
+
+        // Checked after finiteness, so the bounds it reads are real. A
+        // collapsed quad is what a selection of zero characters produces, and
+        // keeping it would re-draw an empty path on every composite.
+        if let Self::Highlight { .. } = self {
+            let b = self.bounds();
+            if b.min_x == b.max_x || b.min_y == b.max_y {
+                return Err(OverlayError::EmptyQuad);
             }
         }
         Ok(())
@@ -163,9 +176,7 @@ pub(crate) fn draw<'a>(
                 pb.line_to(corners[3].0, corners[3].1);
                 pb.line_to(corners[2].0, corners[2].1);
                 pb.close();
-                let Some(path) = pb.finish() else {
-                    continue;
-                };
+                let path = pb.finish().expect("a validated quad is a real path");
 
                 let mut paint = paint(*color);
                 paint.blend_mode = BlendMode::Multiply;
@@ -181,9 +192,7 @@ pub(crate) fn draw<'a>(
                 for &(x, y) in &points[1..] {
                     pb.line_to(x, y);
                 }
-                let Some(path) = pb.finish() else {
-                    continue;
-                };
+                let path = pb.finish().expect("a validated stroke is a real path");
 
                 let stroke = Stroke {
                     width: *width,

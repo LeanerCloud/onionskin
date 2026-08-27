@@ -45,9 +45,7 @@ impl Default for RenderOptions {
 
 impl Document {
     pub fn open(bytes: Vec<u8>) -> Result<Self, RenderError> {
-        Ok(Self {
-            pdf: Pdf::new(bytes).map_err(RenderError::Load)?,
-        })
+        Self::from_shared(Arc::new(bytes))
     }
 
     /// Open the bytes the rest of the session already holds. hayro stores them
@@ -111,7 +109,7 @@ impl Document {
                     sink.lock().expect("sink is never poisoned").push(warning)
                 }),
                 render_annotations: options.render_annotations,
-                ocg_overrides: options.layer_visibility.clone(),
+                ocg_overrides: Arc::new(options.layer_visibility.clone()),
                 ..Default::default()
             },
             &RenderSettings {
@@ -155,13 +153,21 @@ pub struct BaseRaster {
 }
 
 impl BaseRaster {
-    /// Panics on an empty raster, or if `rgba` is not exactly
-    /// `width * height * 4` bytes: a caller that gets either wrong has a bug,
-    /// and a silently resized buffer would shear every row below the mistake.
+    /// Panics on an empty raster, a zoom that is not a positive finite scale,
+    /// or an `rgba` that is not exactly `width * height * 4` bytes: a caller
+    /// that gets any of them wrong has a bug, and a silently resized buffer
+    /// would shear every row below the mistake.
     pub fn new(width: u32, height: u32, zoom: f32, rgba: Vec<u8>) -> Self {
         assert!(
             width > 0 && height > 0,
             "a base raster needs at least one pixel, got {width}x{height}"
+        );
+        // Overlay coordinates are in page points, so a zoom of zero, NaN or a
+        // negative places every overlay somewhere meaningless instead of
+        // failing, and the tile store keys its caches on this value.
+        assert!(
+            zoom.is_finite() && zoom > 0.0,
+            "a base raster's zoom must be a positive finite scale, got {zoom}"
         );
         let expected = width as usize * height as usize * 4;
         assert_eq!(
@@ -262,10 +268,33 @@ mod tests {
     }
 
     #[test]
-    fn the_decryption_message_stays_prose() {
-        let message =
-            RenderError::Load(LoadPdfError::Decryption(DecryptionError::PasswordProtected))
-                .to_string();
-        assert_eq!(message, "the document is encrypted and it needs a password");
+    fn every_decryption_message_stays_prose() {
+        for (error, expected) in [
+            (
+                DecryptionError::MissingIDEntry,
+                "the document is encrypted and its /ID entry is missing",
+            ),
+            (
+                DecryptionError::PasswordProtected,
+                "the document is encrypted and it needs a password",
+            ),
+            (
+                DecryptionError::InvalidEncryption,
+                "the document is encrypted and its encryption dictionary is invalid",
+            ),
+            (
+                DecryptionError::UnsupportedAlgorithm,
+                "the document is encrypted and it uses an encryption algorithm we do not support",
+            ),
+        ] {
+            let message = RenderError::Load(LoadPdfError::Decryption(error)).to_string();
+            assert_eq!(message, expected);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "positive finite scale")]
+    fn a_base_raster_refuses_a_zoom_that_places_nothing() {
+        BaseRaster::new(2, 2, 0.0, vec![255; 16]);
     }
 }

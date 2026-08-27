@@ -33,16 +33,15 @@ fn paint(store: &mut TileStore, page: usize) {
 #[test]
 fn scrolling_a_200_page_document_stays_under_the_budget() {
     let mut store = TileStore::new();
-    assert_eq!(store.budget(), TileStore::DEFAULT_BUDGET_BYTES);
 
     let mut peak = 0;
     for index in 0..200 {
         store.insert(index, page());
         assert!(
-            store.resident_bytes() <= store.budget(),
+            store.resident_bytes() <= TileStore::DEFAULT_BUDGET_BYTES,
             "page {index}: {} bytes resident against a {} byte budget",
             store.resident_bytes(),
-            store.budget()
+            TileStore::DEFAULT_BUDGET_BYTES
         );
 
         paint(&mut store, index);
@@ -53,7 +52,7 @@ fn scrolling_a_200_page_document_stays_under_the_budget() {
     // check, so the peak is the budget plus the tiles of the one page being
     // painted. Every access brings it back down.
     assert!(
-        peak <= store.budget() + TILES_PER_PAGE * TILE_BYTES,
+        peak <= TileStore::DEFAULT_BUDGET_BYTES + TILES_PER_PAGE * TILE_BYTES,
         "peaked at {peak} bytes"
     );
     assert!(
@@ -62,6 +61,55 @@ fn scrolling_a_200_page_document_stays_under_the_budget() {
         store.len()
     );
     assert!(store.get(0, ZOOM).is_none(), "page 0 is long out of view");
+}
+
+#[test]
+fn a_page_that_stays_in_view_is_never_recomposited() {
+    // Three pages visible, scrolled one page at a time under the real budget:
+    // a page in view for three frames must composite its tiles once, not once
+    // per frame, or eviction is dropping what the next frame paints.
+    let mut store = TileStore::new();
+
+    for top in 0..20 {
+        for index in top..top + 3 {
+            if store.get(index, ZOOM).is_none() {
+                store.insert(index, page());
+            }
+            paint(&mut store, index);
+        }
+
+        for index in top..top + 3 {
+            let cache = store.get(index, ZOOM).expect("still in view");
+            assert_eq!(
+                cache.composites(),
+                TILES_PER_PAGE as u64,
+                "page {index} recomposited during frame {top}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_oldest_page_goes_whole_before_a_newer_one_loses_a_tile() {
+    // Room for two pages: page 0 has to go entirely, rather than page 0 and
+    // page 1 each being stripped of the tiles they would need again next
+    // frame.
+    let budget = 2 * (BASE_BYTES + TILES_PER_PAGE * TILE_BYTES);
+    let mut store = TileStore::with_budget(budget);
+
+    for index in 0..3 {
+        store.insert(index, page());
+        paint(&mut store, index);
+    }
+    store.get(2, ZOOM).expect("the page just painted");
+
+    assert!(store.get(0, ZOOM).is_none(), "the oldest page went first");
+    let newer = store.get(1, ZOOM).expect("a page one frame old");
+    assert_eq!(
+        newer.resident_bytes(),
+        BASE_BYTES + TILES_PER_PAGE * TILE_BYTES,
+        "and it kept every tile"
+    );
 }
 
 #[test]
@@ -133,4 +181,20 @@ fn a_cache_serves_only_the_zoom_it_was_rasterized_at() {
     assert!(store.get(3, ZOOM).is_some());
     assert!(store.get(3, ZOOM * 2.0).is_none(), "a different raster");
     assert!(store.get(4, ZOOM).is_none(), "a different page");
+}
+
+#[test]
+fn clearing_drops_rasters_a_changed_render_option_has_invalidated() {
+    // The key is (page, zoom), so nothing about a layer toggle or an
+    // annotations switch reaches the store on its own.
+    let mut store = TileStore::new();
+    for index in 0..3 {
+        store.insert(index, page());
+        paint(&mut store, index);
+    }
+
+    store.clear();
+    assert!(store.is_empty());
+    assert_eq!(store.resident_bytes(), 0);
+    assert!(store.get(1, ZOOM).is_none());
 }

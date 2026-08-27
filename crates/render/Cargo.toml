@@ -17,5 +17,5 @@ license.workspace = true
 # InterpreterSettings::ocg_overrides, without which a layers pane cannot
 # toggle anything because OcgState is built from the file's own /OCProperties
 # /D inside Context::new_with. Back to a released version once all three ship.
-hayro = { git = "https://github.com/cristim/hayro", rev = "59a7adf4214911fdc69a44d47aaab38eaaf512da" }
+hayro = { git = "https://github.com/cristim/hayro", rev = "67763e2ebe5d21e1df40f5e43a8f284b9fcc9368" }
 tiny-skia = "0.12.0"

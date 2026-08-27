@@ -2512,7 +2512,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "bytemuck",
  "fearless_simd 0.6.0",
@@ -2527,12 +2527,12 @@ dependencies = [
 [[package]]
 name = "hayro-ccitt"
 version = "0.3.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 
 [[package]]
 name = "hayro-cmap"
 version = "0.1.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "brotli",
  "hayro-postscript",
@@ -2541,7 +2541,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "bitflags 2.13.1",
  "hayro-cmap",
@@ -2559,7 +2559,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "fearless_simd 0.6.0",
  "hayro-ccitt",
@@ -2568,7 +2568,7 @@ dependencies = [
 [[package]]
 name = "hayro-jpeg2000"
 version = "0.4.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "fearless_simd 0.6.0",
 ]
@@ -2576,12 +2576,12 @@ dependencies = [
 [[package]]
 name = "hayro-postscript"
 version = "0.1.0"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/cristim/hayro?rev=59a7adf4214911fdc69a44d47aaab38eaaf512da#59a7adf4214911fdc69a44d47aaab38eaaf512da"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 dependencies = [
  "flate2",
  "hayro-ccitt",

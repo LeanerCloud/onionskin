@@ -213,6 +213,11 @@ fn a_degenerate_overlay_is_refused_and_never_reaches_a_composite() {
                 y: 300.0,
             },
         ),
+        (
+            // What a selection of no characters produces.
+            highlight(300.0, 300.0, 100.0, 0.0),
+            OverlayError::EmptyQuad,
+        ),
     ];
 
     for (overlay, expected) in refused {
@@ -279,8 +284,16 @@ fn overlay_coordinates_scale_with_zoom() {
         .add_overlay(highlight(300.0, 300.0, 100.0, 40.0))
         .expect("a finite quad");
 
+    // The quad covers page points 300..400 by 300..340, so at 2x its device
+    // edges are exactly 600 and 800, 600 and 680. Checked on both sides of an
+    // edge, because a placement a few pixels out still lands inside.
     let page = cache.page_image();
-    assert_eq!(pixel(&page, 700, 640), [255, 235, 0, 255]);
+    assert_eq!(pixel(&page, 700, 640), [255, 235, 0, 255], "inside");
+    assert_eq!(pixel(&page, 599, 640), [255, 255, 255, 255], "left of it");
+    assert_eq!(pixel(&page, 601, 640), [255, 235, 0, 255], "just inside");
+    assert_eq!(pixel(&page, 700, 599), [255, 255, 255, 255], "above it");
+    assert_eq!(pixel(&page, 700, 679), [255, 235, 0, 255], "just inside");
+    assert_eq!(pixel(&page, 700, 681), [255, 255, 255, 255], "below it");
     assert_eq!(pixel(&page, 350, 320), [255, 255, 255, 255], "1x position");
 }
 
