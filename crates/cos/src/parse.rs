@@ -6,7 +6,7 @@
 //! is what lets the reader grow its window instead of guessing how long an
 //! object is.
 
-use crate::object::{Dict, Name, ObjRef, Object, Span, Stream};
+use crate::object::{Dict, Name, ObjRef, Object, RecoveredBoundary, Span, Stream};
 
 const MAX_DEPTH: u32 = 96;
 /// Room for `endstream` plus the whitespace that may precede it. A search
@@ -528,6 +528,9 @@ pub(crate) struct Indirect {
     pub objref: ObjRef,
     pub object: Object,
     pub span: Span,
+    /// `Some` when the object is a stream whose end the parser had to find by
+    /// searching, rather than being told where it was.
+    pub recovered: Option<RecoveredBoundary>,
 }
 
 /// Parses `N G obj ... endobj` starting at the front of `buf`.
@@ -574,6 +577,7 @@ pub(crate) fn parse_indirect(
             objref,
             object,
             span,
+            recovered: None,
         });
     }
 
@@ -618,24 +622,43 @@ pub(crate) fn parse_indirect(
         kind: LexErrorKind::Syntax("stream has no endstream".into()),
     };
 
-    let data_end = match declared {
+    // Recovering the boundary is deliberately quiet as far as opening goes -
+    // a wrong /Length is not a reason to refuse a file every other reader
+    // opens - but it is recorded, because the boundary is then the parser's
+    // guess rather than the file's statement.
+    let (data_end, recovered) = match declared {
         Some(len) => {
             let end = data_start.saturating_add(len as usize);
             if end <= buf.len() && endstream_follows(buf, end) {
-                end
+                (end, None)
             } else if !can_search(end.min(buf.len())) {
                 return Err(need_more());
             } else {
                 // Either the declared length overruns the file or `endstream`
                 // is not where it claims: recover by finding the keyword.
-                scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?
+                let found = scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?;
+                (
+                    found,
+                    Some(RecoveredBoundary::LengthWrong {
+                        declared: len,
+                        actual: (found - data_start) as u64,
+                    }),
+                )
             }
         }
         None if !can_search(data_start) => return Err(need_more()),
         // A stream with no `endstream` anywhere is truncated. Taking the rest
         // of the file as its data would hand back a plausible wrong stream on
         // a document that otherwise looks clean.
-        None => scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?,
+        None => {
+            let found = scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?;
+            (
+                found,
+                Some(RecoveredBoundary::LengthUnusable {
+                    actual: (found - data_start) as u64,
+                }),
+            )
+        }
     };
 
     let raw = buf[data_start..data_end].to_vec();
@@ -649,6 +672,7 @@ pub(crate) fn parse_indirect(
         objref,
         object: Object::Stream(Stream { dict, raw }),
         span,
+        recovered,
     })
 }
 
@@ -766,5 +790,22 @@ mod tests {
         let src = b"7 0 obj\n<< /Length 999 >>\nstream\nabcdef\nendstream\nendobj\n";
         let parsed = parse_indirect(src, 0, true, &|_| None).expect("parses");
         assert_eq!(parsed.object.as_stream().unwrap().raw, b"abcdef");
+        // Recovering quietly is what the spike did, and what redaction cannot
+        // work against: the guess has to come back labelled.
+        assert_eq!(
+            parsed.recovered,
+            Some(RecoveredBoundary::LengthWrong {
+                declared: 999,
+                actual: 6
+            })
+        );
+    }
+
+    #[test]
+    fn a_stream_whose_length_is_right_reports_no_recovery() {
+        let src = b"7 0 obj\n<< /Length 6 >>\nstream\nabcdef\nendstream\nendobj\n";
+        let parsed = parse_indirect(src, 0, true, &|_| None).expect("parses");
+        assert_eq!(parsed.object.as_stream().unwrap().raw, b"abcdef");
+        assert_eq!(parsed.recovered, None);
     }
 }

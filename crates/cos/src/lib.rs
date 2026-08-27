@@ -27,6 +27,11 @@
 //!   bounded chunks rather than holding it. A no-op save on a clean document
 //!   appends nothing at all.
 //!
+//! A stream whose `/Length` is wrong is recovered the way every real reader
+//! recovers it, by finding `endstream`, and the recovery is recorded per
+//! object as a [`RecoveredBoundary`] rather than being refused or passed over
+//! in silence.
+//!
 //! Encryption is detected and refused with [`Error::Encrypted`] rather than
 //! half-parsed, and only the filters the structural layer needs are
 //! implemented (Flate with predictors, ASCIIHex, ASCII85).
@@ -52,7 +57,7 @@ pub mod source;
 
 pub use document::Document;
 pub use error::{Error, Result};
-pub use object::{Dict, Name, ObjRef, Object, Origin, Parsed, Span, Stream};
+pub use object::{Dict, Name, ObjRef, Object, Origin, Parsed, RecoveredBoundary, Span, Stream};
 pub use repair::{Provenance, RepairReason, RepairReport};
 pub use source::{BytesSource, CountingSource, FileSource, ReadStats, Source};
 pub use xref::{Xref, XrefEntry};

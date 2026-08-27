@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::filters;
-use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, Span};
+use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, RecoveredBoundary, Span};
 use crate::parse::Lexer;
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
@@ -32,6 +32,9 @@ struct ObjectStream {
     /// `(object number, offset of its data within `data`)`, in stream order.
     entries: Vec<(u32, usize)>,
     container_span: Span,
+    /// The container's own boundary recovery, if it had one. Every object
+    /// decoded out of it inherits the doubt.
+    recovered_boundary: Option<RecoveredBoundary>,
 }
 
 pub struct Document {
@@ -46,6 +49,10 @@ pub struct Document {
     original_len: u64,
     cache: RefCell<BTreeMap<u32, Parsed>>,
     object_streams: RefCell<BTreeMap<u32, Rc<ObjectStream>>>,
+    /// Every recovered stream boundary seen since the document opened. Kept
+    /// apart from `cache`, which an edit clears: a boundary the parser guessed
+    /// is a fact about the file and does not stop being true.
+    recovered_boundaries: RefCell<BTreeMap<u32, RecoveredBoundary>>,
     in_flight: RefCell<BTreeSet<u32>>,
     edits: BTreeMap<u32, (u16, Object)>,
     trailer_edits: Dict,
@@ -157,6 +164,7 @@ impl Document {
             original_len,
             cache: RefCell::new(BTreeMap::new()),
             object_streams: RefCell::new(BTreeMap::new()),
+            recovered_boundaries: RefCell::new(BTreeMap::new()),
             in_flight: RefCell::new(BTreeSet::new()),
             edits: BTreeMap::new(),
             trailer_edits: Dict::new(),
@@ -187,6 +195,23 @@ impl Document {
         self.original_len
     }
 
+    /// Every stream whose data boundary the parser recovered, keyed by object
+    /// number, with the container's entry standing for the objects inside it.
+    ///
+    /// Consumer: M5 redaction, which has to prove a byte range is gone and
+    /// therefore may not certify one whose extent the parser guessed. This is
+    /// not a `Provenance`: a wrong `/Length` is common enough that refusing
+    /// the file would reject documents every reader opens, so the document
+    /// stays `Clean` and the doubt is recorded per object instead.
+    ///
+    /// Parsing is lazy, so what is reported is what has been read: an object
+    /// nobody fetched has no boundary to report yet. That is the same contract
+    /// as [`Document::get`], which is where a caller learns about the one
+    /// object it is holding, and redaction reads every stream it rewrites.
+    pub fn recovered_boundaries(&self) -> BTreeMap<u32, RecoveredBoundary> {
+        self.recovered_boundaries.borrow().clone()
+    }
+
     // ---- lazy object access -------------------------------------------------
 
     /// Parses object `number` on demand, caching the result. Nothing outside
@@ -200,6 +225,7 @@ impl Document {
                 objref: ObjRef::new(number, *generation),
                 object: object.clone(),
                 origin: Origin::Pending,
+                recovered_boundary: None,
             });
         }
 
@@ -228,6 +254,11 @@ impl Document {
         self.in_flight.borrow_mut().remove(&number);
 
         let parsed = parsed?;
+        if let Some(boundary) = parsed.recovered_boundary {
+            self.recovered_boundaries
+                .borrow_mut()
+                .insert(number, boundary);
+        }
         self.cache.borrow_mut().insert(number, parsed.clone());
         Ok(parsed)
     }
@@ -245,6 +276,7 @@ impl Document {
                     objref: indirect.objref,
                     object: indirect.object,
                     origin: Origin::File(indirect.span),
+                    recovered_boundary: indirect.recovered,
                 })
             }
             Some(XrefEntry::InObjectStream { container, index }) => {
@@ -293,6 +325,10 @@ impl Document {
                 container_span: stream.container_span,
                 within: Span::new(start as u64, (start + lex.position()) as u64),
             },
+            // An object decoded out of a container whose own end was guessed
+            // is only as trustworthy as that guess. `origin` says whose
+            // boundary this is.
+            recovered_boundary: stream.recovered_boundary,
         })
     }
 
@@ -329,6 +365,7 @@ impl Document {
             data,
             entries,
             container_span,
+            recovered_boundary: parsed.recovered_boundary,
         });
         self.object_streams
             .borrow_mut()

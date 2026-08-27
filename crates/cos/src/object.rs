@@ -58,6 +58,52 @@ impl Origin {
     }
 }
 
+/// A stream whose data boundary the parser had to find for itself, because
+/// `/Length` did not say where it was.
+///
+/// Recovering is the right behaviour: a wrong `/Length` is common, every real
+/// reader scans for `endstream` instead, and refusing would reject files that
+/// open everywhere else. But the boundary that comes out is a guess, and a
+/// caller that has to be able to prove where a stream ended has to be able to
+/// see that it is one. `Parsed::recovered_boundary` is where it sees that.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RecoveredBoundary {
+    /// `/Length` was there and wrong: `endstream` was not at the offset it
+    /// pointed to, so the keyword was searched for instead.
+    LengthWrong {
+        declared: i64,
+        /// The length the search found.
+        actual: u64,
+    },
+    /// `/Length` was absent, not an integer, or an indirect reference that did
+    /// not resolve. The same search, with no declared value to compare against.
+    LengthUnusable { actual: u64 },
+}
+
+impl RecoveredBoundary {
+    /// The stream length the parser settled on.
+    pub fn actual(&self) -> u64 {
+        match self {
+            RecoveredBoundary::LengthWrong { actual, .. } => *actual,
+            RecoveredBoundary::LengthUnusable { actual } => *actual,
+        }
+    }
+}
+
+impl fmt::Display for RecoveredBoundary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RecoveredBoundary::LengthWrong { declared, actual } => write!(
+                f,
+                "/Length said {declared} bytes; endstream was {actual} bytes in"
+            ),
+            RecoveredBoundary::LengthUnusable { actual } => {
+                write!(f, "no usable /Length; endstream was {actual} bytes in")
+            }
+        }
+    }
+}
+
 /// A PDF name with `#xx` escapes already decoded.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Name(pub Vec<u8>);
@@ -209,4 +255,9 @@ pub struct Parsed {
     pub objref: ObjRef,
     pub object: Object,
     pub origin: Origin,
+    /// Set when this object is a stream whose data boundary was recovered
+    /// rather than read from `/Length`, and for an object inside an object
+    /// stream, when its container's was. `None` means the boundary is the
+    /// file's own word, not the parser's.
+    pub recovered_boundary: Option<RecoveredBoundary>,
 }
