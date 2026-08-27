@@ -17,6 +17,14 @@ referenced.
 
 ## Ours - accepted debt with a deadline
 
+- cos (see docs/spikes/m1-cos.md): silent endstream recovery records no
+  RepairReason - must be plumbed before M5 so redaction knows a stream
+  boundary was recovered, not authoritative; save materializes the whole
+  file (stream it in the M1 build); no delete API / free-list handling yet
+  (M2); mid-session escalation from clean open to full scan is designed but
+  not built; the fuzz target builds on stable but needs a nightly toolchain
+  to actually run - install one when wiring fuzz into CI.
+
 - One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
   proven by direct view messaging only. Role::Document currently surfaces as
   AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
