@@ -7,7 +7,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use common::{corpus_dir, corpus_root, pdfs_in, Tally};
+use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton, Tally};
 use onionskin_cos::{BytesSource, Document, Error, Provenance, RepairReason};
 
 /// The damage each malformed variant carries, keyed by filename suffix.
@@ -209,6 +209,117 @@ fn repaired_save_survives(path: &Path, document: &Document) -> Result<(), String
     Ok(())
 }
 
+/// Carry-forward 1 from the spike: repair is decided at open, so an object
+/// whose recorded offset is wrong is a `MissingObject` for the rest of the
+/// session. The escalation is the deliberate way out, and it is the caller's
+/// to call: a scan that fired by itself would leave a document that lies about
+/// one object reporting itself clean.
+///
+/// The fixture is a file whose cross-reference is wrong about object 4 only.
+/// Open-time validation checks that `/Root` and `/Pages` are reachable and
+/// nothing else, by design, so the file opens clean and the lie surfaces on
+/// first access.
+#[test]
+fn a_clean_document_can_escalate_to_a_scan_when_an_object_turns_out_to_be_missing() {
+    let mut bodies = skeleton();
+    bodies.push(b"<</Type/Spare/Which 4>>");
+    // Object 4's entry points at object 3's header, so the offset resolves to
+    // some other object rather than to nothing.
+    let honest = classic_pdf(&bodies, &[]);
+    let object_3_at = find(&honest, b"3 0 obj").expect("object 3 is in the fixture") as u64;
+    let bytes = classic_pdf(&bodies, &[(4, object_3_at)]);
+
+    let mut document = Document::open(Box::new(BytesSource::new(bytes.clone())))
+        .expect("a file whose /Root and /Pages resolve opens clean");
+    assert!(document.provenance().is_clean());
+    assert_eq!(document.page_count().ok(), Some(1));
+    match document.get(4) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 4),
+        other => panic!("a wrong offset must be MissingObject, not a silent rescan: {other:?}"),
+    }
+
+    let provenance = document
+        .escalate_to_scan(4)
+        .expect("the scan finds the objects the table lost")
+        .clone();
+    let Provenance::Repaired(report) = &provenance else {
+        panic!("escalating must leave the document repaired, not clean");
+    };
+    assert!(
+        report.rebuilt_by_scan,
+        "the report must say the table was rebuilt"
+    );
+    match report.reasons.last() {
+        Some(RepairReason::MidSessionScan {
+            unreachable,
+            entries_corrected,
+        }) => {
+            assert_eq!(
+                *unreachable, 4,
+                "the report must name the object that failed"
+            );
+            assert_eq!(
+                *entries_corrected, 1,
+                "only the one wrong entry needed correcting"
+            );
+        }
+        other => panic!("expected a MidSessionScan reason, got {other:?}"),
+    }
+    assert_eq!(
+        document.provenance(),
+        &provenance,
+        "the document must keep the provenance it handed back"
+    );
+
+    let parsed = document.get(4).expect("the escalation recovered object 4");
+    assert_eq!(parsed.objref.number, 4);
+    assert_eq!(document.page_count().ok(), Some(1), "and lost nothing else");
+
+    // The corrected table is written into the appended section, so the next
+    // reader does not have to escalate again.
+    assert!(document.has_pending_changes());
+    let saved = document.save_to_vec().expect("save");
+    assert_eq!(
+        &saved[..bytes.len()],
+        &bytes[..],
+        "the damaged original bytes survive the escalation"
+    );
+    let (reopened, reopened_provenance) =
+        Document::open_repairing(Box::new(BytesSource::new(saved)))
+            .expect("the saved file reopens");
+    assert!(
+        reopened_provenance.is_clean(),
+        "the repaired file must open clean: {:?}",
+        reopened_provenance.report().map(|r| &r.reasons)
+    );
+    assert!(reopened.get(4).is_ok());
+}
+
+/// Escalation is not a way of ignoring a deliberate deletion: an object marked
+/// free stays free, however plainly its bytes are still in the file.
+#[test]
+fn escalating_does_not_resurrect_a_deleted_object() {
+    let mut bodies = skeleton();
+    bodies.push(b"<</Type/Spare/Which 4>>");
+    let mut document = Document::open(Box::new(BytesSource::new(classic_pdf(&bodies, &[]))))
+        .expect("the fixture opens clean");
+    document.delete_object(4).expect("deletable");
+    let saved = document.save_to_vec().expect("save");
+
+    let mut reopened = Document::open(Box::new(BytesSource::new(saved))).expect("reopens clean");
+    reopened.escalate_to_scan(4).expect("the scan runs");
+    match reopened.get(4) {
+        Err(Error::MissingObject(_)) => {}
+        other => panic!("a scan must not undo a deletion, got {other:?}"),
+    }
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 fn reason_name(reason: &RepairReason) -> &'static str {
     match reason {
         RepairReason::JunkBeforeHeader { .. } => "junk-before-header",
@@ -220,6 +331,7 @@ fn reason_name(reason: &RepairReason) -> &'static str {
         RepairReason::TrailerRootRecovered => "root-recovered-by-scan",
         RepairReason::ObjectStreamLost { .. } => "object-stream-lost",
         RepairReason::TruncatedTail { .. } => "truncated-tail",
+        RepairReason::MidSessionScan { .. } => "escalated-mid-session",
     }
 }
 

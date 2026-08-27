@@ -11,7 +11,7 @@ use onionskin_cos::{BytesSource, Document, Error};
 /// Opens whatever comes back and exercises it a little, so a bad parse shows
 /// up as a panic here rather than in a later milestone.
 fn survives(bytes: Vec<u8>) -> Result<bool, Error> {
-    let (document, _provenance) = Document::open_repairing(Box::new(BytesSource::new(bytes)))?;
+    let (mut document, _provenance) = Document::open_repairing(Box::new(BytesSource::new(bytes)))?;
     let _ = document.catalog();
     let _ = document.page_count();
     let _ = document.first_page();
@@ -19,6 +19,28 @@ fn survives(bytes: Vec<u8>) -> Result<bool, Error> {
         let _ = document.get(number);
     }
     document.incremental_section()?;
+
+    // The two verbs that rewrite structures the file itself supplied: the free
+    // list, and the cross-reference entries a mid-session scan replaces. The
+    // fuzz target drives both as well, but that one needs a nightly toolchain
+    // and this runs everywhere. Neither may panic; either may refuse.
+    let Some(number) = document.xref().iter().map(|(n, _)| n).find(|n| *n != 0) else {
+        return Ok(true);
+    };
+    if document.delete_object(number).is_ok() {
+        assert!(
+            document.get(number).is_err(),
+            "object {number} resolved after being deleted"
+        );
+        let _ = document.incremental_section();
+    }
+    if document.escalate_to_scan(number).is_ok() {
+        assert!(
+            !document.provenance().is_clean(),
+            "escalating to a scan left the document reporting itself clean"
+        );
+        let _ = document.incremental_section();
+    }
     Ok(true)
 }
 

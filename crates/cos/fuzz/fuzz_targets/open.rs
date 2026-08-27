@@ -6,6 +6,10 @@
 //! overflow that review finding F1 caught is exactly the shape of bug this
 //! target exists to find.
 //!
+//! Deleting an object and escalating to a scan are driven too: both rewrite
+//! structures the file itself supplied, which is where a hostile file gets its
+//! chance.
+//!
 //! Run with nightly:
 //!
 //! ```text
@@ -45,7 +49,43 @@ fuzz_target!(|data: &[u8]| {
         );
         exercise(&document);
     }
+
+    if let Ok((document, _)) = Document::open_repairing(Box::new(BytesSource::new(data.to_vec()))) {
+        mutate(document);
+    }
 });
+
+/// The two verbs that change a document's structure rather than its objects.
+/// Deleting rewrites the free list, and escalating replaces cross-reference
+/// entries mid-session; both then have to produce a section that assembles.
+fn mutate(mut document: Document) {
+    let victim = document
+        .xref()
+        .iter()
+        .map(|(number, _)| number)
+        .find(|n| *n != 0);
+    if let Some(number) = victim {
+        if document.delete_object(number).is_ok() {
+            assert!(
+                document.get(number).is_err(),
+                "object {number} resolved after being deleted"
+            );
+            assert!(
+                document.delete_object(number).is_err(),
+                "object {number} was deletable twice"
+            );
+            let _ = document.incremental_section();
+        }
+    }
+
+    if document.escalate_to_scan(victim.unwrap_or(0)).is_ok() {
+        assert!(
+            !document.provenance().is_clean(),
+            "escalating to a scan left the document reporting itself clean"
+        );
+        exercise(&document);
+    }
+}
 
 /// Walks everything an ordinary caller would touch, so a bad parse surfaces
 /// here rather than in a later milestone.

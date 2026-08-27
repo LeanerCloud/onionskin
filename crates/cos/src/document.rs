@@ -490,6 +490,73 @@ impl Document {
         })
     }
 
+    // ---- escalation ---------------------------------------------------------
+
+    /// Rebuilds what the cross-reference cannot serve by scanning the file,
+    /// merges the result, and records the escalation in the provenance. The
+    /// document that comes back is `Repaired`, never `Clean`.
+    ///
+    /// Repair is otherwise decided once, at open, and an object whose recorded
+    /// offset is wrong stays `Error::MissingObject` for the session. That is
+    /// the right default: a scan that fired by itself would turn a file that
+    /// lies about one object into a document reporting itself clean. So the
+    /// escalation is the caller's call, and it costs what it costs, a full
+    /// pass over the file.
+    ///
+    /// Consumer: the M2 viewer, which meets a page it cannot resolve and can
+    /// then offer to go looking for it rather than only saying no.
+    ///
+    /// `unreachable` is the object whose absence prompted the escalation and
+    /// is recorded in the report.
+    ///
+    /// Entries the current table can still serve are kept, including free
+    /// ones: a deliberate deletion is not damage, and the scan must not
+    /// resurrect it.
+    pub fn escalate_to_scan(&mut self, unreachable: u32) -> Result<&Provenance> {
+        let scanned = repair::scan(&self.reader)?;
+        refuse_encrypted(&scanned.trailer)?;
+
+        let mut entries_corrected = 0usize;
+        for (number, entry) in scanned.xref.iter() {
+            if self.entry_is_usable(number) {
+                continue;
+            }
+            self.xref.insert(number, entry);
+            entries_corrected += 1;
+        }
+
+        let mut report = match std::mem::replace(&mut self.provenance, Provenance::Clean) {
+            Provenance::Clean => RepairReport {
+                reasons: Vec::new(),
+                rebuilt_by_scan: false,
+                recovered_objects: 0,
+            },
+            Provenance::Repaired(report) => report,
+        };
+        report.reasons.push(RepairReason::MidSessionScan {
+            unreachable,
+            entries_corrected,
+        });
+        report.rebuilt_by_scan = true;
+        report.recovered_objects = self.xref.len();
+        self.provenance = Provenance::Repaired(report);
+        Ok(&self.provenance)
+    }
+
+    /// Whether the loaded cross-reference can serve `number` as it stands: the
+    /// bytes at its recorded offset really are that object. A compressed entry
+    /// is taken at its word, because checking it means decoding a whole object
+    /// stream, and a free entry is a deletion rather than damage.
+    fn entry_is_usable(&self, number: u32) -> bool {
+        match self.xref.get(number) {
+            Some(XrefEntry::InFile { offset, .. }) => {
+                locate_at(&self.reader, number, offset).is_some()
+            }
+            Some(XrefEntry::InObjectStream { .. }) | Some(XrefEntry::Free { .. }) => true,
+            None => false,
+        }
+    }
+
     // ---- edits --------------------------------------------------------------
 
     /// Replaces object `number`, superseding a pending deletion of it.

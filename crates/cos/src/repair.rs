@@ -46,6 +46,14 @@ pub enum RepairReason {
     TruncatedTail {
         last_complete_object_end: u64,
     },
+    /// A caller met an object the cross-reference could not produce and asked
+    /// for a scan, after the document had already opened clean.
+    MidSessionScan {
+        /// The object whose absence prompted the escalation.
+        unreachable: u32,
+        /// How many cross-reference entries the scan replaced.
+        entries_corrected: usize,
+    },
 }
 
 impl fmt::Display for RepairReason {
@@ -79,6 +87,14 @@ impl fmt::Display for RepairReason {
             } => write!(
                 f,
                 "file ends mid-object; last complete object ends at {last_complete_object_end}"
+            ),
+            RepairReason::MidSessionScan {
+                unreachable,
+                entries_corrected,
+            } => write!(
+                f,
+                "object {unreachable} was unreachable mid-session; a scan corrected \
+                 {entries_corrected} cross-reference entries"
             ),
         }
     }

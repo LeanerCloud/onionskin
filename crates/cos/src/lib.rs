@@ -21,7 +21,9 @@
 //!   `%%EOF`, absent or wrong `startxref`, wrong xref offsets and overstated
 //!   subsection counts, and reports every one of them. [`Document::open`]
 //!   refuses such a file outright, so a repaired open cannot pass for a clean
-//!   one.
+//!   one. A document that opened clean and then meets an object its
+//!   cross-reference cannot produce can be escalated to the same scan by the
+//!   caller ([`Document::escalate_to_scan`]), never by itself.
 //! - **Incremental save**: [`Document::save_to_path`] writes the original bytes
 //!   plus at most one appended section, streaming the original through in
 //!   bounded chunks rather than holding it. A no-op save on a clean document
