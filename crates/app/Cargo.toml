@@ -8,11 +8,16 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
-# M1 spike (c). Behind `shell` so default builds and the headless tests
+# M1 spike (c)/(d). Behind `shell` so default builds and the headless tests
 # never pull GPUI.
 [[bin]]
 name = "shell_spike"
 path = "src/bin/shell_spike.rs"
+required-features = ["shell"]
+
+[[bin]]
+name = "a11y_spike"
+path = "src/bin/a11y_spike.rs"
 required-features = ["shell"]
 
 [dependencies]
@@ -23,6 +28,8 @@ onionskin-plugin-api.workspace = true
 gpui = { git = "https://github.com/IAmJSD/gpui", rev = "84bdb01b29887ca09b6c437dad9a0ae838fe48e8", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 smallvec = { version = "1.13", optional = true }
+accesskit = { version = "0.24", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 
 onionskin-codecs-common = { workspace = true, optional = true }
 onionskin-commands-core = { workspace = true, optional = true }
@@ -36,6 +43,12 @@ onionskin-tools-form = { workspace = true, optional = true }
 onionskin-tools-measure = { workspace = true, optional = true }
 onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+accesskit_macos = { version = "0.26", optional = true }
+# Spike (d) reads the NSAccessibility surface back off the view directly, so
+# it can prove the tree without an accessibility-permission grant.
+objc2 = { version = "0.5", optional = true }
 
 # One feature per first-party plugin, all on by default. Turning them all
 # off is guarantee test 5: the app still builds and boots, to a workspace
@@ -69,4 +82,12 @@ tools-organize = ["dep:onionskin-tools-organize"]
 tools-protect = ["dep:onionskin-tools-protect"]
 
 # GPUI shell. Off by default: the kernel and its tests stay GPUI-free.
-shell = ["dep:gpui", "dep:image", "dep:smallvec"]
+shell = [
+    "dep:gpui",
+    "dep:image",
+    "dep:smallvec",
+    "dep:accesskit",
+    "dep:accesskit_macos",
+    "dep:raw-window-handle",
+    "dep:objc2",
+]
