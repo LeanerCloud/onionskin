@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::filters;
-use crate::object::{Dict, Name, ObjRef, Object, Origin, Parsed, RecoveredBoundary, Span};
+use crate::object::{
+    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span,
+};
 use crate::parse::Lexer;
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
@@ -52,6 +54,27 @@ struct ObjectStream {
     /// The container's own boundary recovery, if it had one. Every object
     /// decoded out of it inherits the doubt.
     recovered_boundary: Option<RecoveredBoundary>,
+}
+
+/// The inheritable page attributes carried down a page-tree descent, each
+/// holding the nearest ancestor's value seen so far.
+#[derive(Clone, Default)]
+struct Inherited {
+    resources: Option<Dict>,
+    media_box: Option<[f64; 4]>,
+    crop_box: Option<[f64; 4]>,
+    rotate: Option<i64>,
+}
+
+/// The mutable state of one page-tree descent: which page is wanted, how many
+/// leaves have gone by, and the nodes on the current path. `seen` is a path
+/// set rather than a visited set - a node is removed on the way back out - so
+/// a tree that legitimately shares a node between two branches still walks,
+/// while a cycle terminates.
+struct PageWalk {
+    target: usize,
+    found: usize,
+    seen: BTreeSet<u32>,
 }
 
 pub struct Document {
@@ -505,6 +528,159 @@ impl Document {
         Err(Error::DepthExceeded {
             detail: "page tree descent".into(),
         })
+    }
+
+    /// Loads page `index` in document order, parsing only the page-tree nodes
+    /// on the path to it.
+    ///
+    /// Consumers: `onionskin-content`'s page loader, the viewer's page model,
+    /// and the navigation-pane readers above it.
+    ///
+    /// `/Count` lets whole subtrees be skipped without parsing them, so a
+    /// thousand-page document costs a handful of nodes rather than a thousand.
+    /// It is trusted only when it is a plausible non-negative number on a node
+    /// that has `/Kids`: a lie there would silently renumber every later page,
+    /// so the walk falls through to a real descent whenever `/Count` is absent
+    /// or nonsensical.
+    pub fn page(&self, index: usize) -> Result<PageNode> {
+        let catalog = self.catalog()?;
+        let root = catalog
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .ok_or_else(|| Error::Unrecoverable {
+                detail: "catalog has no indirect /Pages".into(),
+            })?;
+
+        let mut walk = PageWalk {
+            target: index,
+            found: 0,
+            seen: BTreeSet::new(),
+        };
+        match self.descend_pages(root, &Inherited::default(), &mut walk, 0)? {
+            Some(page) => Ok(page),
+            None => Err(Error::NoSuchPage {
+                index,
+                count: walk.found,
+            }),
+        }
+    }
+
+    fn descend_pages(
+        &self,
+        node: ObjRef,
+        inherited: &Inherited,
+        walk: &mut PageWalk,
+        depth: usize,
+    ) -> Result<Option<PageNode>> {
+        if depth >= MAX_INDIRECTION || !walk.seen.insert(node.number) {
+            return Ok(None);
+        }
+        let parsed = self.get(node.number)?;
+        let Some(dict) = parsed.object.as_dict().cloned() else {
+            return Ok(None);
+        };
+
+        let mut inherited = inherited.clone();
+        if let Some(Object::Dict(d)) = self.resolved(&dict, b"Resources") {
+            inherited.resources = Some(d);
+        }
+        if let Some(rect) = self.rectangle(&dict, b"MediaBox") {
+            inherited.media_box = Some(rect);
+        }
+        if let Some(rect) = self.rectangle(&dict, b"CropBox") {
+            inherited.crop_box = Some(rect);
+        }
+        if let Some(Object::Integer(r)) = self.resolved(&dict, b"Rotate") {
+            inherited.rotate = Some(r);
+        }
+
+        // A node with /Kids is internal even when it also claims /Type /Page,
+        // which some producers do. A node without them is a leaf whatever it
+        // claims.
+        let kids = match self.resolved(&dict, b"Kids") {
+            Some(Object::Array(kids)) => kids,
+            _ => {
+                let index = walk.found;
+                walk.found += 1;
+                if index != walk.target {
+                    walk.seen.remove(&node.number);
+                    return Ok(None);
+                }
+                return Ok(Some(PageNode {
+                    index,
+                    objref: parsed.objref,
+                    dict,
+                    resources: inherited.resources,
+                    media_box: inherited.media_box,
+                    crop_box: inherited.crop_box,
+                    rotate: inherited.rotate,
+                }));
+            }
+        };
+
+        for kid in kids {
+            let Some(kid) = kid.as_reference() else {
+                continue;
+            };
+            if let Some(count) = self.subtree_count(kid) {
+                if walk.found + count <= walk.target {
+                    walk.found += count;
+                    continue;
+                }
+            }
+            if let Some(page) = self.descend_pages(kid, &inherited, walk, depth + 1)? {
+                return Ok(Some(page));
+            }
+        }
+        walk.seen.remove(&node.number);
+        Ok(None)
+    }
+
+    /// How many pages a subtree claims, when the claim is usable at all.
+    fn subtree_count(&self, node: ObjRef) -> Option<usize> {
+        let parsed = self.get(node.number).ok()?;
+        let dict = parsed.object.as_dict()?;
+        if !dict.contains(b"Kids") {
+            return None;
+        }
+        match self.resolved(dict, b"Count") {
+            Some(Object::Integer(c)) if c >= 0 => usize::try_from(c).ok(),
+            _ => None,
+        }
+    }
+
+    fn resolved(&self, dict: &Dict, key: &[u8]) -> Option<Object> {
+        self.resolve_key(dict, key).ok().flatten()
+    }
+
+    /// A rectangle entry, if it is four finite numbers enclosing a positive
+    /// area. Returned in the file's own coordinate order; the test is done on
+    /// the ordered copy. A box that fails the test is not a box, and must not
+    /// shadow the one an ancestor gave.
+    fn rectangle(&self, dict: &Dict, key: &[u8]) -> Option<[f64; 4]> {
+        let Some(Object::Array(items)) = self.resolved(dict, key) else {
+            return None;
+        };
+        if items.len() < 4 {
+            return None;
+        }
+        let mut v = [0.0f64; 4];
+        for (slot, item) in v.iter_mut().zip(items.iter()) {
+            *slot = as_number(&self.resolve(item).ok()?)?;
+        }
+        let ordered = [
+            v[0].min(v[2]),
+            v[1].min(v[3]),
+            v[0].max(v[2]),
+            v[1].max(v[3]),
+        ];
+        if !ordered.iter().all(|n| n.is_finite())
+            || ordered[2] <= ordered[0]
+            || ordered[3] <= ordered[1]
+        {
+            return None;
+        }
+        Some(v)
     }
 
     // ---- escalation ---------------------------------------------------------
@@ -999,6 +1175,16 @@ fn temporary_name(path: &Path) -> String {
     let serial = SAVES.fetch_add(1, Ordering::Relaxed);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     format!(".{name}.onionskin-save.{}.{serial}", std::process::id())
+}
+
+/// A numeric object as an `f64`. Rectangles are the only place `cos` needs
+/// one, and integers and reals are equally legal there.
+fn as_number(object: &Object) -> Option<f64> {
+    match object {
+        Object::Integer(i) => Some(*i as f64),
+        Object::Real(r) => Some(*r),
+        _ => None,
+    }
 }
 
 fn refuse_encrypted(trailer: &Dict) -> Result<()> {

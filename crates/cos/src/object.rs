@@ -265,6 +265,33 @@ impl Object {
     }
 }
 
+/// A page reached through [`crate::Document::page`], with the four attributes
+/// ISO 32000-2 7.7.3.4 makes inheritable already resolved against the page's
+/// ancestors.
+///
+/// Structural only. Nothing here is normalised or defaulted: an attribute the
+/// page and its ancestors never gave is `None` rather than a substituted
+/// value, so a caller can tell "the file says nothing" from "the file says
+/// US Letter". The rectangles keep the coordinate order the file wrote, which
+/// is not necessarily lower-left first; they are present only when the entry
+/// resolved to four finite numbers enclosing a positive area, because a
+/// rectangle that fails that test is not a rectangle and must not shadow an
+/// ancestor's. Turning any of this into a page's geometry is
+/// `onionskin-content`'s job.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageNode {
+    /// The page's zero-based position in document order.
+    pub index: usize,
+    pub objref: ObjRef,
+    pub dict: Dict,
+    pub resources: Option<Dict>,
+    pub media_box: Option<[f64; 4]>,
+    pub crop_box: Option<[f64; 4]>,
+    /// `/Rotate` exactly as the file gave it, in degrees. Not reduced to the
+    /// four right angles, and not clamped.
+    pub rotate: Option<i64>,
+}
+
 /// A parsed indirect object with its provenance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parsed {

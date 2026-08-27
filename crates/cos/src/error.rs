@@ -48,6 +48,13 @@ pub enum Error {
     DepthExceeded {
         detail: String,
     },
+    /// A page index the page tree does not reach. `count` is how many pages the
+    /// walk actually found, which is the page tree's own answer rather than the
+    /// `/Count` the root claims.
+    NoSuchPage {
+        index: usize,
+        count: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -76,6 +83,9 @@ impl fmt::Display for Error {
             Error::UnsupportedFilter(name) => write!(f, "unsupported filter /{name}"),
             Error::Filter { filter, detail } => write!(f, "filter /{filter} failed: {detail}"),
             Error::DepthExceeded { detail } => write!(f, "depth limit exceeded: {detail}"),
+            Error::NoSuchPage { index, count } => {
+                write!(f, "page {index} requested, the page tree reaches {count}")
+            }
         }
     }
 }
@@ -110,6 +120,7 @@ impl Error {
             Error::UnsupportedFilter(_) => "unsupported-filter",
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",
+            Error::NoSuchPage { .. } => "no-such-page",
         }
     }
 }

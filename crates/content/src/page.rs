@@ -1,24 +1,18 @@
 //! Page lookup and content assembly.
 //!
-//! `cos` descends to the first page but has no indexed page accessor, so the
-//! tree walk lives here. It is the same shape: only the nodes on the path to
-//! the requested page are parsed, and `/Count` is used to skip whole subtrees
-//! when it is consistent with what the walk finds.
+//! The page-tree walk lives in `cos`, which reaches a page by index with the
+//! inheritable attributes already resolved. What is left here is the layer
+//! above it: turning those raw attributes into the geometry the interpreter
+//! and the viewer use, and concatenating the page's content streams.
 
-use std::collections::BTreeSet;
-
-use onionskin_cos::{Dict, Document, ObjRef, Object, Origin, Span};
+use onionskin_cos::{Dict, Document, ObjRef, Object, Origin, PageNode, Span};
 use onionskin_plugin_api::PageIndex;
 
-use crate::error::{Error, Result, Warning};
+use crate::error::{Result, Warning};
 use crate::filter;
 
-/// Depth cap for the page tree, matching the one `cos` applies to its own
-/// descent. Deeper than this and the tree is either hostile or broken.
-const MAX_DEPTH: usize = 64;
-
 /// A page, with the four attributes ISO 32000-2 7.7.3.4 says are inheritable
-/// already resolved against its ancestors.
+/// resolved against its ancestors and normalised.
 #[derive(Clone, Debug)]
 pub struct Page {
     pub index: PageIndex,
@@ -27,6 +21,10 @@ pub struct Page {
     pub resources: Dict,
     /// `[llx lly urx ury]`, normalised so the first pair is the lower left.
     pub media_box: [f64; 4],
+    /// `/CropBox`, normalised the same way. `None` when neither the page nor
+    /// an ancestor gave one, which is not the same as one equal to the media
+    /// box: intersecting and defaulting is the renderer's job.
+    pub crop_box: Option<[f64; 4]>,
     /// `/Rotate`, normalised to 0, 90, 180 or 270. Quads are in default user
     /// space, which is before rotation, so this is carried for the renderer
     /// rather than applied here.
@@ -52,22 +50,7 @@ impl Page {
 
 /// Loads page `index`, parsing only the tree nodes on the path to it.
 pub fn page(doc: &Document, index: PageIndex) -> Result<Page> {
-    let catalog = doc.catalog()?;
-    let root = catalog
-        .get(b"Pages")
-        .and_then(Object::as_reference)
-        .ok_or_else(|| Error::Structure("catalog has no indirect /Pages".into()))?;
-
-    let mut seen = BTreeSet::new();
-    let mut found = 0usize;
-    let inherited = Inherited::default();
-    match descend(doc, root, &inherited, index, &mut found, &mut seen, 0)? {
-        Some(page) => Ok(page),
-        None => Err(Error::NoSuchPage {
-            index,
-            count: found,
-        }),
-    }
+    Ok(from_node(doc.page(index)?))
 }
 
 /// Number of pages, taken from the page tree root's `/Count`.
@@ -76,127 +59,31 @@ pub fn page_count(doc: &Document) -> Result<usize> {
     Ok(count.max(0) as usize)
 }
 
-#[derive(Clone, Default)]
-struct Inherited {
-    resources: Option<Dict>,
-    media_box: Option<[f64; 4]>,
-    rotate: Option<i32>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn descend(
-    doc: &Document,
-    node: ObjRef,
-    inherited: &Inherited,
-    target: PageIndex,
-    found: &mut usize,
-    seen: &mut BTreeSet<u32>,
-    depth: usize,
-) -> Result<Option<Page>> {
-    if depth >= MAX_DEPTH || !seen.insert(node.number) {
-        return Ok(None);
-    }
-    let parsed = doc.get(node.number)?;
-    let Some(dict) = parsed.object.as_dict().cloned() else {
-        return Ok(None);
-    };
-
-    let mut inherited = inherited.clone();
-    if let Some(Object::Dict(d)) = resolved(doc, &dict, b"Resources") {
-        inherited.resources = Some(d);
-    }
-    if let Some(rect) = rectangle(doc, &dict, b"MediaBox") {
-        inherited.media_box = Some(rect);
-    }
-    if let Some(Object::Integer(r)) = resolved(doc, &dict, b"Rotate") {
-        inherited.rotate = Some(r as i32);
-    }
-
-    let kids = match resolved(doc, &dict, b"Kids") {
-        Some(Object::Array(kids)) => Some(kids),
-        _ => None,
-    };
-    // A node with /Kids is internal even when it also claims /Type /Page, which
-    // some producers do. A node without them is a leaf whatever it claims.
-    let Some(kids) = kids else {
-        let index = *found;
-        *found += 1;
-        if index != target {
-            seen.remove(&node.number);
-            return Ok(None);
-        }
-        return Ok(Some(Page {
-            index,
-            objref: parsed.objref,
-            resources: inherited.resources.unwrap_or_default(),
-            media_box: inherited.media_box.unwrap_or(US_LETTER),
-            rotate: normalise_rotation(inherited.rotate.unwrap_or(0)),
-            dict,
-        }));
-    };
-
-    for kid in kids {
-        let Some(kid) = kid.as_reference() else {
-            continue;
-        };
-        // /Count lets a whole subtree be skipped without parsing it. Trusted
-        // only when it is a plausible non-negative number; a lie here would
-        // silently renumber every later page, so the walk falls through to a
-        // real descent whenever it is absent or nonsensical.
-        if let Some(count) = subtree_count(doc, kid) {
-            if *found + count <= target {
-                *found += count;
-                continue;
-            }
-        }
-        if let Some(page) = descend(doc, kid, &inherited, target, found, seen, depth + 1)? {
-            return Ok(Some(page));
-        }
-    }
-    seen.remove(&node.number);
-    Ok(None)
-}
-
-fn subtree_count(doc: &Document, node: ObjRef) -> Option<usize> {
-    let parsed = doc.get(node.number).ok()?;
-    let dict = parsed.object.as_dict()?;
-    if !dict.contains(b"Kids") {
-        return None;
-    }
-    match resolved(doc, dict, b"Count") {
-        Some(Object::Integer(c)) if c >= 0 => usize::try_from(c).ok(),
-        _ => None,
-    }
-}
-
+/// A page with no `/MediaBox` anywhere above it. ISO 32000-2 leaves the size
+/// undefined; every reader picks a default and this is the one they pick.
 const US_LETTER: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
 
-fn resolved(doc: &Document, dict: &Dict, key: &[u8]) -> Option<Object> {
-    doc.resolve(dict.get(key)?).ok()
+fn from_node(node: PageNode) -> Page {
+    Page {
+        index: node.index,
+        objref: node.objref,
+        resources: node.resources.unwrap_or_default(),
+        media_box: node.media_box.map_or(US_LETTER, lower_left_first),
+        crop_box: node.crop_box.map(lower_left_first),
+        rotate: normalise_rotation(node.rotate.unwrap_or(0) as i32),
+        dict: node.dict,
+    }
 }
 
-fn rectangle(doc: &Document, dict: &Dict, key: &[u8]) -> Option<[f64; 4]> {
-    let Some(Object::Array(items)) = resolved(doc, dict, key) else {
-        return None;
-    };
-    if items.len() < 4 {
-        return None;
-    }
-    let mut v = [0.0f64; 4];
-    for (slot, item) in v.iter_mut().zip(items.iter()) {
-        *slot = crate::tokenizer::number(&doc.resolve(item).ok()?)?;
-    }
-    let rect = [
+/// `cos` hands rectangles back in the file's own coordinate order, which
+/// producers write either way round.
+fn lower_left_first(v: [f64; 4]) -> [f64; 4] {
+    [
         v[0].min(v[2]),
         v[1].min(v[3]),
         v[0].max(v[2]),
         v[1].max(v[3]),
-    ];
-    // A zero-area box would put every glyph at the same point.
-    if !rect.iter().all(|n| n.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {
-        return None;
-    }
-    Some(rect)
+    ]
 }
 
 fn normalise_rotation(degrees: i32) -> i32 {

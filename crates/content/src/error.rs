@@ -17,25 +17,16 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
+    /// Everything the structural layer refuses: a page the tree does not
+    /// reach, an object graph with the wrong shape. `cos` owns the page walk,
+    /// so it owns its errors too, and restating them here would only be a
+    /// second taxonomy to keep in step.
     Cos(onionskin_cos::Error),
     /// A stream filter this crate does not implement, or a stream whose data
     /// does not decode through the filter it declares.
-    Filter {
-        filter: String,
-        detail: String,
-    },
+    Filter { filter: String, detail: String },
     /// The content stream is not lexable at this offset.
-    Syntax {
-        offset: u64,
-        detail: String,
-    },
-    /// The document's object graph does not have the shape a page needs.
-    Structure(String),
-    /// A page index past the end of the page tree.
-    NoSuchPage {
-        index: usize,
-        count: usize,
-    },
+    Syntax { offset: u64, detail: String },
 }
 
 impl Error {
@@ -45,8 +36,6 @@ impl Error {
             Error::Cos(e) => e.category(),
             Error::Filter { .. } => "filter",
             Error::Syntax { .. } => "syntax",
-            Error::Structure(_) => "structure",
-            Error::NoSuchPage { .. } => "no-such-page",
         }
     }
 }
@@ -58,10 +47,6 @@ impl fmt::Display for Error {
             Error::Filter { filter, detail } => write!(f, "filter {filter}: {detail}"),
             Error::Syntax { offset, detail } => {
                 write!(f, "content syntax at {offset}: {detail}")
-            }
-            Error::Structure(detail) => write!(f, "{detail}"),
-            Error::NoSuchPage { index, count } => {
-                write!(f, "page {index} requested, the document has {count}")
             }
         }
     }

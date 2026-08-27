@@ -105,6 +105,11 @@ fn exercise(document: &Document) {
     let _ = document.catalog();
     let _ = document.page_count();
     let _ = document.first_page();
+    // The indexed accessor descends recursively with its own cycle guard and
+    // depth cap, which a crafted page tree is exactly what tests.
+    for index in [0, 1, 7] {
+        let _ = document.page(index);
+    }
     for (number, _) in document.xref().iter().take(512) {
         if let Ok(parsed) = document.get(number) {
             // A span the document reports must be one the source can hold.

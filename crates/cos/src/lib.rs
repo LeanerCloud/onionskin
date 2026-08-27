@@ -38,6 +38,10 @@
 //! half-parsed, and only the filters the structural layer needs are
 //! implemented (Flate with predictors, ASCIIHex, ASCII85).
 //!
+//! [`Document::page`] reaches page `n` in document order with the four
+//! inheritable attributes resolved, parsing only the tree nodes on the path to
+//! it and skipping whole subtrees by their `/Count`.
+//!
 //! # Running the guarantee tests
 //!
 //! `corpus/external/` and `corpus/malformed/` are gitignored, so the tests
@@ -59,7 +63,9 @@ pub mod source;
 
 pub use document::Document;
 pub use error::{Error, Result};
-pub use object::{Dict, Name, ObjRef, Object, Origin, Parsed, RecoveredBoundary, Span, Stream};
+pub use object::{
+    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
+};
 pub use repair::{Provenance, RepairReason, RepairReport};
 pub use source::{BytesSource, CountingSource, FileSource, ReadStats, Source};
 pub use xref::{Xref, XrefEntry};

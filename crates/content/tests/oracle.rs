@@ -179,10 +179,13 @@ fn error_rate(oracle: &Oracle) -> f64 {
 }
 
 /// The `Error::category` slugs, as opposed to the mismatch buckets.
+///
+/// `cos` owns the page walk, so a page the tree does not reach arrives here
+/// under its slug rather than content's: what used to be content's `structure`
+/// is `cos`'s `unrecoverable`.
 const ERROR_CATEGORIES: &[&str] = &[
     "filter",
     "syntax",
-    "structure",
     "no-such-page",
     "missing-object",
     "unrecoverable",
