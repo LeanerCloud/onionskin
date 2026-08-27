@@ -58,6 +58,14 @@ pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
 pub use run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
 pub use search::{flatten, search, search_flattened, Flattened, Match, SearchOptions};
+
+/// The lexer, exposed for M5's redaction plugin.
+///
+/// Removing text means rewriting the operators that drew it, which means
+/// re-lexing the stream a [`TextRun`]'s [`ByteProvenance`] points into and
+/// editing operations in place. Extraction itself has no need of these types;
+/// they are public because that consumer is the reason the lexer records byte
+/// ranges at all.
 pub use tokenizer::{Operation, Operator, Tokenizer};
 
 use onionskin_cos::Document;

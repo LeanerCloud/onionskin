@@ -13,6 +13,69 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+// ---- synthetic documents ----------------------------------------------------
+
+/// Assembles numbered object bodies into a one-page PDF with a correct classic
+/// xref table, the same shape `corpus/make-seeds.py` writes.
+///
+/// This is how the regression tests get a document that exhibits one specific
+/// malformation. The corpus proves extraction works on real files; these prove
+/// it behaves on the file that broke it, which no corpus file may contain.
+pub fn build_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
+    let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let xref = out.len();
+    let size = objects.len() + 1;
+    out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+    out.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in &offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
+    out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
+    out
+}
+
+/// A stream object body with a correct `/Length`.
+pub fn stream(dict_body: &str, data: &[u8]) -> Vec<u8> {
+    let mut out = format!("<< {dict_body} /Length {} >>\nstream\n", data.len()).into_bytes();
+    out.extend_from_slice(data);
+    out.extend_from_slice(b"\nendstream");
+    out
+}
+
+/// One page, 200x200, with `content` as its only content stream.
+///
+/// Objects 1 to 4 are the catalog, page tree, page and content stream, so
+/// `extra` starts at object 5 and `resources` refers to it by number.
+pub fn one_page(content: &str, resources: &str, extra: &[Vec<u8>]) -> Vec<u8> {
+    let mut objects = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+             /Resources {resources} /Contents 4 0 R >>"
+        )
+        .into_bytes(),
+        stream("", content.as_bytes()),
+    ];
+    objects.extend_from_slice(extra);
+    build_pdf(&objects)
+}
+
+/// Opens synthetic bytes, refusing anything that needs repair so a malformed
+/// fixture cannot pass for a well-formed one.
+pub fn open_bytes(bytes: Vec<u8>) -> onionskin_cos::Document {
+    onionskin_cos::Document::open(Box::new(onionskin_cos::BytesSource::new(bytes)))
+        .expect("synthetic fixture is well formed")
+}
+
 /// Root of the shared corpus: `$ONIONSKIN_CORPUS`, else `<workspace>/corpus`.
 pub fn corpus_root() -> Option<PathBuf> {
     if let Some(from_env) = std::env::var_os("ONIONSKIN_CORPUS") {

@@ -254,7 +254,23 @@ pub fn content(doc: &Document, page: &Page, warnings: &mut Vec<Warning>) -> Resu
     let refs: Vec<ObjRef> = match page.dict.get(b"Contents") {
         None => Vec::new(),
         Some(entry) => match doc.resolve(entry)? {
-            Object::Array(items) => items.iter().filter_map(Object::as_reference).collect(),
+            Object::Array(items) => items
+                .iter()
+                .filter_map(|item| match item {
+                    Object::Ref(r) => Some(*r),
+                    // A null is padding a producer left behind. Anything else
+                    // is a part of the page description that will not be
+                    // interpreted, which the caller has to be told about.
+                    Object::Null => None,
+                    _ => {
+                        warnings.push(Warning::ContentPartFailed {
+                            stream: page.objref,
+                            detail: "/Contents array holds something that is not a stream".into(),
+                        });
+                        None
+                    }
+                })
+                .collect(),
             Object::Null => Vec::new(),
             _ => match entry.as_reference() {
                 Some(r) => vec![r],

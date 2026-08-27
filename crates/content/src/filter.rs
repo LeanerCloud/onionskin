@@ -185,6 +185,30 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>> {
     Ok(best)
 }
 
+/// A sink that refuses to grow past `limit`. LZW expands without bound - a few
+/// kilobytes of codes reach gigabytes - so the decoder needs the ceiling that
+/// `inflate` gets from `Read::take`.
+struct Bounded<'a> {
+    out: &'a mut Vec<u8>,
+    limit: usize,
+}
+
+impl std::io::Write for Bounded<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let room = self.limit.saturating_sub(self.out.len());
+        if room == 0 {
+            return Err(std::io::Error::other("output ceiling reached"));
+        }
+        let take = room.min(buf.len());
+        self.out.extend_from_slice(&buf[..take]);
+        Ok(take)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>> {
     // PDF's LZW is the TIFF variant: MSB-first, 8-bit symbols, and by default
     // it grows the code width one code early.
@@ -194,8 +218,13 @@ fn lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>> {
         weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8)
     };
     let mut out = Vec::new();
-    let result = decoder.into_stream(&mut out).decode_all(data);
-    // Same rule as inflate: a truncated stream keeps what decoded.
+    let mut sink = Bounded {
+        out: &mut out,
+        limit: MAX_DECODED as usize,
+    };
+    let result = decoder.into_stream(&mut sink).decode_all(data);
+    // Same rule as inflate: a truncated stream, or one stopped at the ceiling,
+    // keeps what decoded. Only a stream that produced nothing is an error.
     if let Err(e) = result.status {
         if out.is_empty() {
             return Err(Error::Filter {
@@ -454,6 +483,27 @@ mod tests {
     fn ascii_armours_decode() {
         assert_eq!(ascii_hex(b"48 65 6C 6C 6F>").unwrap(), b"Hello");
         assert_eq!(ascii85(b"87cURD]i,\"Ebo80~>").unwrap(), b"Hello World!");
+    }
+
+    #[test]
+    fn an_lzw_bomb_stops_at_the_ceiling() {
+        // A few kilobytes of LZW expanding past the ceiling. The source is a
+        // reader rather than a buffer, so only the output is ever allocated.
+        let mut compressed = Vec::new();
+        let source = std::io::BufReader::new(std::io::repeat(b'A').take(MAX_DECODED + 4096));
+        weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+            .into_stream(&mut compressed)
+            .encode_all(source)
+            .status
+            .expect("the fixture encodes");
+        assert!(compressed.len() < 1_000_000, "the bomb is small on disk");
+
+        let out = lzw(&compressed, true).unwrap();
+        assert!(
+            out.len() as u64 <= MAX_DECODED,
+            "LZW expanded to {} bytes, past the {MAX_DECODED} byte ceiling",
+            out.len()
+        );
     }
 
     #[test]

@@ -82,11 +82,34 @@ pub struct Operation {
 }
 
 impl Operation {
-    /// Operand `i` as a number, for the many operators whose operands are all
-    /// numeric. A missing or non-numeric operand is `None` rather than zero:
-    /// `Tf` with no size is not a 0pt font.
-    pub fn number(&self, i: usize) -> Option<f64> {
-        self.operands.get(i).and_then(number)
+    /// The last `n` operands, in order, or `None` when there are fewer.
+    ///
+    /// ISO 32000-2 7.8.2 gives an operator the operands immediately preceding
+    /// it, which is not the same as the first `n` on the stack: a malformed
+    /// stream that leaves a stray operand underneath would otherwise shift
+    /// every operand by one and make `Tf` read a number as its font name.
+    pub fn tail(&self, n: usize) -> Option<&[Object]> {
+        self.operands
+            .len()
+            .checked_sub(n)
+            .map(|from| &self.operands[from..])
+    }
+
+    /// The last `n` operands as numbers. `None` unless all of them are
+    /// present and numeric, so a truncated `Td` moves nothing rather than
+    /// moving to an invented origin.
+    pub fn numbers<const N: usize>(&self) -> Option<[f64; N]> {
+        let tail = self.tail(N)?;
+        let mut out = [0.0; N];
+        for (slot, operand) in out.iter_mut().zip(tail) {
+            *slot = number(operand)?;
+        }
+        Some(out)
+    }
+
+    /// The single operand an operator takes, as a number.
+    pub fn number(&self) -> Option<f64> {
+        number(self.operands.last()?)
     }
 }
 
@@ -102,8 +125,10 @@ pub struct Tokenizer<'a> {
     data: &'a [u8],
     pos: usize,
     operands: Vec<Object>,
-    /// Offset of the first operand currently on the stack.
-    operands_start: usize,
+    /// Where each operand on the stack began, so an operator's span reaches
+    /// back to the oldest operand still on the stack rather than to one that
+    /// fell off it.
+    operand_starts: Vec<usize>,
     max_operands: usize,
     pub warnings: Vec<Warning>,
 }
@@ -121,7 +146,7 @@ impl<'a> Tokenizer<'a> {
             data,
             pos: 0,
             operands: Vec::new(),
-            operands_start: 0,
+            operand_starts: Vec::new(),
             max_operands: max_operands.max(1),
             warnings: Vec::new(),
         }
@@ -189,18 +214,12 @@ impl<'a> Tokenizer<'a> {
                         b"BI" => return Some(self.inline_image(start)),
                         _ => {
                             let operator = Operator::new(token);
-                            let span = Span::new(
-                                if self.operands.is_empty() {
-                                    start as u64
-                                } else {
-                                    self.operands_start as u64
-                                },
-                                self.pos as u64,
-                            );
+                            let from = self.operand_starts.first().copied().unwrap_or(start);
+                            self.operand_starts.clear();
                             return Some(Operation {
                                 operator,
                                 operands: std::mem::take(&mut self.operands),
-                                span,
+                                span: Span::new(from as u64, self.pos as u64),
                             });
                         }
                     }
@@ -210,13 +229,12 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn push(&mut self, object: Object, start: usize) {
-        if self.operands.is_empty() {
-            self.operands_start = start;
-        }
         if self.operands.len() >= self.max_operands {
             self.operands.remove(0);
+            self.operand_starts.remove(0);
         }
         self.operands.push(object);
+        self.operand_starts.push(start);
     }
 
     fn push_parsed(&mut self, object: Option<Object>, start: usize) {
@@ -519,6 +537,7 @@ impl<'a> Tokenizer<'a> {
         }
 
         self.operands.clear();
+        self.operand_starts.clear();
         Operation {
             operator: Operator::new(b"BI"),
             operands: vec![Object::Dict(dict)],
@@ -716,6 +735,22 @@ mod tests {
         assert_eq!(parse_number(b"12"), Some(Object::Integer(12)));
         assert_eq!(parse_number(b"."), None);
         assert_eq!(parse_number(b"Tj"), None);
+    }
+
+    #[test]
+    fn an_overflowing_operand_stack_spans_only_the_operands_it_kept() {
+        // Every token here is two bytes wide, so the expected span start is
+        // arithmetic rather than a guess.
+        const EXTRA: usize = 6;
+        let data = "1 ".repeat(MAX_OPERANDS + EXTRA) + "Tj";
+        let out = ops(data.as_bytes());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].operands.len(), MAX_OPERANDS);
+        assert_eq!(
+            out[0].span.start,
+            (EXTRA * 2) as u64,
+            "the span reaches back to operands that fell off the stack"
+        );
     }
 
     #[test]

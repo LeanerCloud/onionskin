@@ -90,8 +90,9 @@ pub enum Warning {
     /// split on a two-byte codespace, which is right for the CJK CMaps and a
     /// guess for anything else.
     UnsupportedCMap { name: String },
-    /// A font resource that could not be loaded at all. Its showing operators
-    /// still produce runs, with no glyphs.
+    /// A font resource that could not be loaded at all. `Tf` then selects no
+    /// font, so the showing operators that follow it draw nothing and are
+    /// counted in [`Warning::TextWithoutFont`] as well.
     FontLoadFailed { resource: String, detail: String },
     /// A `Do` naming a form XObject already on the stack.
     XObjectCycle { object: ObjRef },
@@ -106,6 +107,15 @@ pub enum Warning {
     /// The page drew more glyphs than one page is allowed to keep, and the
     /// rest were dropped. The page is incomplete; nothing else says so.
     GlyphLimit { limit: usize },
+    /// Showing operators ran with no font selected. They drew nothing, so
+    /// there is no text to extract, and a caller must be able to tell that
+    /// from a page that simply has no text.
+    TextWithoutFont { count: usize },
+    /// An operation's operands and its operator landed in different
+    /// `/Contents` parts, which ISO 32000-2 7.8.2 permits. The run's byte
+    /// range is clamped to the part it starts in and does not reach its
+    /// operator.
+    ProvenanceClamped { stream: ObjRef },
 }
 
 impl fmt::Display for Warning {
@@ -138,6 +148,14 @@ impl fmt::Display for Warning {
             Warning::GlyphLimit { limit } => {
                 write!(f, "the page was cut off at {limit} glyphs")
             }
+            Warning::TextWithoutFont { count } => {
+                write!(f, "{count} showing operators ran with no font selected")
+            }
+            Warning::ProvenanceClamped { stream } => write!(
+                f,
+                "an operation in stream {} runs past the end of its content part",
+                stream.number
+            ),
         }
     }
 }

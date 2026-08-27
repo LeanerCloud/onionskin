@@ -11,6 +11,15 @@
 //! ligature spelling and Unicode punctuation choices, and erases nothing else.
 //! The floors asserted at the bottom of each test are set below the measured
 //! rate so they catch a regression rather than pin today's exact number.
+//!
+//! The floors are lower than a first reading suggests they should be, and the
+//! reason is worth stating: poppler answers where this crate declines. Given
+//! `/Differences [97 /square /triangle]`, a Type 3 glyph name with no Unicode
+//! meaning, poppler emits `ab` from the character codes and this crate emits
+//! `Mapping::Unmapped`. Every such file scores 0.0 here while being the more
+//! honest extraction, so the similarity mean is a regression detector and not
+//! a quality score. `error_rate` and the mismatch categories carry the part of
+//! the signal that a guessing oracle cannot.
 
 mod common;
 
@@ -148,6 +157,39 @@ fn category(ours: &str, theirs: &str, warnings: &[Warning]) -> &'static str {
     }
 }
 
+/// Files whose extraction threw rather than scoring badly, as a fraction of
+/// the files that opened.
+///
+/// Scored separately from similarity because they are a different failure: a
+/// page that errors produces no text at all, so it never reaches the mean and
+/// cannot drag it down. Without this, extraction could start throwing on a
+/// tenth of a corpus and every similarity assertion would still pass.
+fn error_rate(oracle: &Oracle) -> f64 {
+    let errors: usize = oracle
+        .failed
+        .iter()
+        .filter(|(category, _)| ERROR_CATEGORIES.contains(&category.as_str()))
+        .map(|(_, files)| files.len())
+        .sum();
+    let attempted = oracle.scores.len() + errors;
+    if attempted == 0 {
+        return 0.0;
+    }
+    errors as f64 / attempted as f64
+}
+
+/// The `Error::category` slugs, as opposed to the mismatch buckets.
+const ERROR_CATEGORIES: &[&str] = &[
+    "filter",
+    "syntax",
+    "structure",
+    "no-such-page",
+    "missing-object",
+    "unrecoverable",
+    "depth-exceeded",
+    "pdftotext",
+];
+
 fn run_corpus(name: &str, relative: &str, limit: Option<usize>) -> Option<Oracle> {
     if !common::have_pdftotext() {
         eprintln!("SKIPPED: {name} needs pdftotext on PATH");
@@ -186,9 +228,14 @@ fn pdf_association_corpus() {
         return;
     };
     assert!(
-        oracle.mean() >= 0.80,
+        oracle.mean() >= 0.72,
         "mean similarity fell to {:.4}",
         oracle.mean()
+    );
+    assert!(
+        error_rate(&oracle) <= 0.06,
+        "{:.1}% of files errored outright",
+        error_rate(&oracle) * 100.0
     );
 }
 
@@ -198,9 +245,14 @@ fn verapdf_slice() {
         return;
     };
     assert!(
-        oracle.mean() >= 0.85,
+        oracle.mean() >= 0.84,
         "mean similarity fell to {:.4}",
         oracle.mean()
+    );
+    assert!(
+        error_rate(&oracle) <= 0.03,
+        "{:.1}% of files errored outright",
+        error_rate(&oracle) * 100.0
     );
 }
 
@@ -210,9 +262,14 @@ fn hayro_custom_text_files() {
         return;
     };
     assert!(
-        oracle.mean() >= 0.75,
+        oracle.mean() >= 0.72,
         "mean similarity fell to {:.4}",
         oracle.mean()
+    );
+    assert!(
+        error_rate(&oracle) <= 0.05,
+        "{:.1}% of files errored outright",
+        error_rate(&oracle) * 100.0
     );
 }
 

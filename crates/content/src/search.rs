@@ -181,14 +181,25 @@ pub fn search_flattened(
         // clamp up to the next boundary.
         from = next_boundary(&haystack, start + 1);
 
+        // Case folding is not length preserving and not even character
+        // preserving: the Turkish dotted capital I folds to two code points, so
+        // a needle can match a strict prefix of one source character's folded
+        // form. The hit is that whole character - mapping the folded end
+        // straight back would name an empty range inside it, which is a match
+        // with no text and no quads.
         let range = match &offsets {
-            Some(map) => match (map.get(start), map.get(end)) {
-                (Some(s), Some(e)) => *s..*e,
-                (Some(s), None) => *s..flat.text.len(),
-                _ => continue,
-            },
+            Some(map) => {
+                let (Some(first), Some(last)) = (map.get(start), map.get(end - 1)) else {
+                    continue;
+                };
+                let width = flat.text[*last..].chars().next().map_or(0, char::len_utf8);
+                *first..(last + width).min(flat.text.len())
+            }
             None => start..end,
         };
+        if range.start >= range.end {
+            continue;
+        }
         if options.whole_word && !is_whole_word(&flat.text, &range) {
             continue;
         }
@@ -370,6 +381,20 @@ mod tests {
         assert!(folded.len() > "A\u{0130}B".len() - 1);
         assert_eq!(map[0], 0);
         assert_eq!(*map.last().unwrap(), "A\u{0130}B".len());
+    }
+
+    #[test]
+    fn a_needle_matching_part_of_a_folded_character_returns_that_character() {
+        // The Turkish dotted capital I lowercases to two code points, so the
+        // needle "i" matches a strict prefix of one source character's folded
+        // form. The hit is that character, not an empty range between two of
+        // its own bytes.
+        let p = page(vec![run("\u{0130}stanbul", 0.0, 0.0)]);
+        let hits = search(&p, "i", SearchOptions::default());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "\u{0130}");
+        assert_eq!(hits[0].range, 0.."\u{0130}".len());
+        assert_eq!(hits[0].quads.len(), 1);
     }
 
     #[test]

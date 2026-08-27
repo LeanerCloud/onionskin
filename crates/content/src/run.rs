@@ -20,6 +20,13 @@ use crate::font::FontId;
 /// actually is; `origin` is the same stream's place in the file, which for an
 /// unfiltered stream contains those bytes verbatim and for a filtered one is
 /// the object that must be rewritten to change them.
+///
+/// One limitation, and it is reported rather than hidden: ISO 32000-2 7.8.2
+/// lets a page divide its content between streams at any token boundary, so an
+/// operator can sit in a later `/Contents` part than its operands. This names
+/// one stream, so a run split that way reaches the end of the part it starts
+/// in and does not include its own operator. The page carries
+/// [`crate::Warning::ProvenanceClamped`] when it happens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ByteProvenance {
     pub stream: ObjRef,

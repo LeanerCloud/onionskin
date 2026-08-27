@@ -130,6 +130,7 @@ pub fn page_text(doc: &Document, page: &Page) -> Result<PageText> {
         unmapped: BTreeMap::new(),
         missing_widths: BTreeMap::new(),
         glyphs: 0,
+        fontless: 0,
         stack: Vec::new(),
     };
     let state = GState::new(page.base_ctm());
@@ -146,6 +147,8 @@ struct Interpreter<'a> {
     unmapped: BTreeMap<String, usize>,
     missing_widths: BTreeMap<String, usize>,
     glyphs: usize,
+    /// Showing operators that ran with no font selected.
+    fontless: usize,
     /// Form XObjects currently being executed, for cycle detection.
     stack: Vec<ObjRef>,
 }
@@ -155,6 +158,11 @@ impl Interpreter<'_> {
         if self.glyphs >= MAX_GLYPHS {
             self.warnings
                 .push(Warning::GlyphLimit { limit: MAX_GLYPHS });
+        }
+        if self.fontless > 0 {
+            self.warnings.push(Warning::TextWithoutFont {
+                count: self.fontless,
+            });
         }
         for (font, count) in std::mem::take(&mut self.unmapped) {
             self.warnings.push(Warning::UnmappedGlyphs { font, count });
@@ -179,7 +187,7 @@ impl Interpreter<'_> {
         let mut text: Option<TextObject> = None;
         // One entry per open marked-content sequence, holding its
         // `/ActualText` until a showing operator inside it consumes it.
-        let mut marked: Vec<Option<String>> = Vec::new();
+        let mut marked: Vec<Sequence> = Vec::new();
 
         while let Some(op) = lexer.next_operation() {
             match op.operator.as_bytes() {
@@ -212,36 +220,40 @@ impl Interpreter<'_> {
                 b"BT" => text = Some(TextObject::new()),
                 b"ET" => text = None,
 
-                b"Tc" => state.char_spacing = op.number(0).unwrap_or(state.char_spacing),
-                b"Tw" => state.word_spacing = op.number(0).unwrap_or(state.word_spacing),
+                b"Tc" => state.char_spacing = op.number().unwrap_or(state.char_spacing),
+                b"Tw" => state.word_spacing = op.number().unwrap_or(state.word_spacing),
                 b"Tz" => {
-                    if let Some(percent) = op.number(0) {
+                    if let Some(percent) = op.number() {
                         state.horizontal_scale = percent / 100.0;
                     }
                 }
-                b"TL" => state.leading = op.number(0).unwrap_or(state.leading),
-                b"Ts" => state.rise = op.number(0).unwrap_or(state.rise),
+                b"TL" => state.leading = op.number().unwrap_or(state.leading),
+                b"Ts" => state.rise = op.number().unwrap_or(state.rise),
                 b"Tr" => {
-                    if let Some(mode) = op.operands.first().and_then(Object::as_integer) {
+                    if let Some(mode) = op.operands.last().and_then(Object::as_integer) {
                         state.render_mode = mode;
                     }
                 }
                 b"Tf" => {
-                    // The size can be absent or negative; a negative size is
-                    // legal and mirrors the glyph.
-                    state.size = op.number(1).unwrap_or(state.size);
-                    if let Some(Object::Name(name)) = op.operands.first() {
-                        state.font = self.font(resources, name.as_bytes());
+                    if let Some([name, size]) = op.tail(2) {
+                        // A negative size is legal and mirrors the glyph; an
+                        // absent one leaves the size alone.
+                        if let Some(size) = crate::tokenizer::number(size) {
+                            state.size = size;
+                        }
+                        if let Object::Name(name) = name {
+                            state.font = self.font(resources, name.as_bytes());
+                        }
                     }
                 }
 
                 b"Td" => {
-                    if let (Some(tx), Some(ty)) = (op.number(0), op.number(1)) {
+                    if let Some([tx, ty]) = op.numbers::<2>() {
                         text.get_or_insert_with(TextObject::new).next_line(tx, ty);
                     }
                 }
                 b"TD" => {
-                    if let (Some(tx), Some(ty)) = (op.number(0), op.number(1)) {
+                    if let Some([tx, ty]) = op.numbers::<2>() {
                         state.leading = -ty;
                         text.get_or_insert_with(TextObject::new).next_line(tx, ty);
                     }
@@ -294,10 +306,11 @@ impl Interpreter<'_> {
                         continue;
                     };
                     // aw ac string "
-                    if op.operands.len() >= 3 {
-                        let base = op.operands.len() - 3;
-                        state.word_spacing = op.number(base).unwrap_or(state.word_spacing);
-                        state.char_spacing = op.number(base + 1).unwrap_or(state.char_spacing);
+                    if let Some([word, char_, _]) = op.tail(3) {
+                        state.word_spacing =
+                            crate::tokenizer::number(word).unwrap_or(state.word_spacing);
+                        state.char_spacing =
+                            crate::tokenizer::number(char_).unwrap_or(state.char_spacing);
                     }
                     let leading = state.leading;
                     let text = text.get_or_insert_with(TextObject::new);
@@ -315,7 +328,7 @@ impl Interpreter<'_> {
 
                 b"BDC" | b"BMC" => {
                     if marked.len() < MAX_MARKED {
-                        marked.push(self.actual_text(&op, resources));
+                        marked.push(self.sequence(&op, resources));
                     }
                 }
                 b"EMC" => {
@@ -457,9 +470,13 @@ impl Interpreter<'_> {
         parts: &[Show],
         state: &GState,
         text: &mut TextObject,
-        marked: &mut [Option<String>],
+        marked: &mut [Sequence],
     ) {
         let Some(font) = state.font.clone() else {
+            // Nothing was drawn, so there is no text to extract. Saying so is
+            // the point: a verifier reporting "no text here" has to be able to
+            // tell an empty page from one it could not read.
+            self.fontless += 1;
             return;
         };
         let vertical = font.vertical;
@@ -546,20 +563,42 @@ impl Interpreter<'_> {
         // spells, whatever its glyphs are addressed by. Accessible documents
         // use it exactly where the glyph codes are meaningless, so honouring it
         // is the difference between extracting the text and extracting nothing.
-        // The span's text belongs to the span, so the first run inside it takes
-        // it and the rest of the span contributes no text of its own.
-        if let Some(actual) = marked.iter_mut().rev().find_map(Option::take) {
-            for glyph in &mut glyphs {
-                // Every glyph in the span stands for the whole replacement, so
-                // selecting any part of it highlights all of them.
-                glyph.mapping = Mapping::Text(0..actual.len());
+        //
+        // The replacement belongs to the whole sequence, not to one operator
+        // in it. The first showing operator inside the span carries it; every
+        // later one keeps its glyphs positioned and contributes no text, which
+        // is what stops a two-operator span from spelling the replacement and
+        // then the tail it replaced.
+        if let Some(span) = marked.iter_mut().rev().find_map(Sequence::actual_text) {
+            match span.take() {
+                Some(actual) => {
+                    for glyph in &mut glyphs {
+                        // Every glyph stands for the whole replacement, so
+                        // selecting any part of it highlights all of them.
+                        glyph.mapping = Mapping::Text(0..actual.len());
+                    }
+                    out = actual;
+                }
+                None => {
+                    for glyph in &mut glyphs {
+                        glyph.mapping = Mapping::Text(0..0);
+                    }
+                    out.clear();
+                }
             }
-            out = actual;
         }
 
-        let Some(provenance) = provenance(content, op.span) else {
+        let Some((provenance, clamped)) = provenance(content, op.span) else {
             return;
         };
+        if clamped {
+            let warning = Warning::ProvenanceClamped {
+                stream: provenance.stream,
+            };
+            if !self.warnings.contains(&warning) {
+                self.warnings.push(warning);
+            }
+        }
         self.runs.push(TextRun {
             page: self.page,
             text: out,
@@ -605,8 +644,16 @@ impl Interpreter<'_> {
         }
     }
 
-    /// The `/ActualText` of a `BDC` property list, whether written inline or
-    /// named through the resource dictionary's `/Properties`.
+    /// Classifies a `BMC` or `BDC` by whether it carries an `/ActualText`,
+    /// whether that property list is written inline or named through the
+    /// resource dictionary's `/Properties`.
+    fn sequence(&self, op: &Operation, resources: &Dict) -> Sequence {
+        match self.actual_text(op, resources) {
+            Some(text) => Sequence::Actual(Some(text)),
+            None => Sequence::Plain,
+        }
+    }
+
     fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<String> {
         let properties = match op.operands.last()? {
             Object::Dict(d) => d.clone(),
@@ -706,6 +753,26 @@ enum Show {
     Adjust(f64),
 }
 
+/// One open marked-content sequence.
+#[derive(Debug, PartialEq, Eq)]
+enum Sequence {
+    Plain,
+    /// An `/ActualText` sequence. The `Option` is the replacement until a
+    /// showing operator inside the sequence takes it; afterwards the sequence
+    /// is still open and still suppresses text, which is what distinguishes
+    /// "not this sequence" from "this sequence, already spelled".
+    Actual(Option<String>),
+}
+
+impl Sequence {
+    fn actual_text(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Sequence::Plain => None,
+            Sequence::Actual(text) => Some(text),
+        }
+    }
+}
+
 /// ISO 32000-2 9.4.4: the displacement after showing one glyph.
 fn advance_text(text: &mut TextObject, state: &GState, code: Code, advance: f64, vertical: bool) {
     let word = if code.is_word_space() {
@@ -724,17 +791,23 @@ fn advance_text(text: &mut TextObject, state: &GState, code: Code, advance: f64,
 
 /// Turns an operator's span in the concatenated buffer into a span in the one
 /// stream that holds it.
-fn provenance(content: &Content, span: Span) -> Option<ByteProvenance> {
+/// A span that runs past its part is clamped, and `true` is returned so the
+/// caller can say so. ISO 32000-2 7.8.2 lets a page divide its content between
+/// streams at any token boundary, so an operator can legally sit in a later
+/// part than its operands; `ByteProvenance` names one stream, so such a run's
+/// range reaches the end of the part it starts in and no further.
+fn provenance(content: &Content, span: Span) -> Option<(ByteProvenance, bool)> {
     let (part, start) = content.locate(span.start as usize)?;
-    // A span cannot cross a part boundary: parts are joined with whitespace,
-    // which ends any token, so clamping is a defensive floor rather than a
-    // case that arises.
+    let clamped = span.end > part.range.end;
     let end = span.end.min(part.range.end) - part.range.start;
-    Some(ByteProvenance {
-        stream: part.stream,
-        origin: part.origin,
-        decoded: Span::new(start, end.max(start)),
-    })
+    Some((
+        ByteProvenance {
+            stream: part.stream,
+            origin: part.origin,
+            decoded: Span::new(start, end.max(start)),
+        },
+        clamped,
+    ))
 }
 
 fn subtype(dict: &Dict) -> Option<Vec<u8>> {

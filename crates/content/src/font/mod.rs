@@ -189,6 +189,13 @@ impl Font {
     }
 
     /// The Unicode a code stands for, or `None` when the font does not say.
+    ///
+    /// In order: `/ToUnicode`; for a composite font the embedded program's
+    /// reverse cmap or `post` names; the glyph name the encoding gives; the
+    /// embedded program's symbol cmap. There is no step after those. Falling
+    /// back to what the code would mean in Latin text would answer "A" for a
+    /// glyph the font said was its fifth, and a caller cannot tell an invented
+    /// character from a read one.
     pub fn unicode(&self, code: Code) -> Option<String> {
         if let Some(map) = &self.to_unicode {
             if let Some(text) = map.text(code.value) {
@@ -206,18 +213,9 @@ impl Font {
                 return Some(text);
             }
         }
-        if let Some(embedded) = &self.embedded {
-            if let Some(gid) = embedded.gid_for_symbol_code(code.value) {
-                if let Some(text) = embedded.unicode(gid) {
-                    return Some(text.to_owned());
-                }
-            }
-        }
-        // Last resort for a font with no encoding at all: the standard Latin
-        // meaning of the code. Wrong for a symbol font, right far more often
-        // than it is wrong, and only ever reached when nothing else answered.
-        let name = tables::STANDARD_ENCODING[usize::from(code.value.min(255) as u8)]?;
-        glyph_name_to_string_in(name, self.dingbats)
+        let embedded = self.embedded.as_ref()?;
+        let gid = embedded.gid_for_symbol_code(code.value)?;
+        embedded.unicode(gid).map(str::to_owned)
     }
 
     fn glyph_name(&self, code: u32) -> Option<&str> {
@@ -449,10 +447,6 @@ fn simple_encoding(
         Some(Object::Dict(d)) => {
             let base = match d.get(b"BaseEncoding").and_then(|o| doc.resolve(o).ok()) {
                 Some(Object::Name(n)) => named(n.as_bytes()).unwrap_or(builtin),
-                // A symbolic font with an embedded program addresses its own
-                // glyphs; imposing StandardEncoding on it would rename every
-                // one of them. /Differences still applies on top.
-                _ if symbolic && has_embedded => builtin,
                 _ => builtin,
             };
             (
@@ -640,12 +634,24 @@ fn strip_subset_prefix(name: &str) -> String {
     name.to_string()
 }
 
-/// A PDF text string (ISO 32000-2 7.9.2.2): UTF-16 behind a byte order mark,
-/// PDFDocEncoding otherwise. A PDFDocEncoding byte with no glyph name is taken
-/// as Latin-1, which the encoding already agrees with over most of its range.
+/// A PDF text string (ISO 32000-2 7.9.2.2): UTF-8 or UTF-16 behind a byte
+/// order mark, PDFDocEncoding otherwise. A PDFDocEncoding byte with no glyph
+/// name is taken as Latin-1, which the encoding already agrees with over most
+/// of its range.
 pub fn pdf_text_string(bytes: &[u8]) -> String {
     match bytes {
         [0xFE, 0xFF, rest @ ..] => cmap::utf16be(rest),
+        // PDF 2.0 added UTF-8, and the little-endian mark is not legal but is
+        // written; both are unambiguous, so reading them costs nothing.
+        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
+        [0xFF, 0xFE, rest @ ..] => char::decode_utf16(
+            rest.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair)),
+        )
+        .flatten()
+        .collect(),
         _ => bytes
             .iter()
             .map(|b| {
@@ -754,6 +760,8 @@ mod tests {
     fn pdf_text_strings_follow_their_byte_order_mark() {
         assert_eq!(pdf_text_string(&[0xFE, 0xFF, 0x00, 0x41, 0x00, 0x42]), "AB");
         assert_eq!(pdf_text_string(b"AB"), "AB");
+        assert_eq!(pdf_text_string(&[0xEF, 0xBB, 0xBF, b'A', b'B']), "AB");
+        assert_eq!(pdf_text_string(&[0xFF, 0xFE, 0x41, 0x00, 0x42, 0x00]), "AB");
         // Without a mark the bytes are PDFDocEncoding, which is neither
         // Latin-1 (0x92 is a C1 control there) nor WinAnsi (a right single
         // quote there).
