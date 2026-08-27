@@ -91,6 +91,38 @@ fn an_object_that_contains_itself_is_refused_rather_than_recursed() {
     }
 }
 
+/// `/Index` is a pair of arbitrary integers from the file. A start near
+/// `i64::MAX` makes the object number of the second row overflow, which is a
+/// debug panic and a silent wrap in release.
+#[test]
+fn an_xref_stream_index_near_the_integer_limit_does_not_overflow() {
+    let header = b"%PDF-1.5\n";
+    let catalog = b"2 0 obj\n<</Type/Catalog>>\nendobj\n";
+    let xref_at = header.len() + catalog.len();
+
+    // Eight /W [1 2 1] rows, so the loop runs past the point where
+    // `start + i` leaves i64.
+    let rows = [1u8, 0, 0, 0].repeat(8);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(header);
+    bytes.extend_from_slice(catalog);
+    bytes.extend_from_slice(
+        format!(
+            "1 0 obj\n<</Type/XRef/Size 4/W[1 2 1]/Index[{} 8]/Root 2 0 R/Length {}>>\nstream\n",
+            i64::MAX - 2,
+            rows.len()
+        )
+        .as_bytes(),
+    );
+    bytes.extend_from_slice(&rows);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    bytes.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
+
+    // The contract is a typed outcome, not a particular one: this file names
+    // no reachable objects, so repair is the expected route.
+    let _ = survives(bytes);
+}
+
 #[test]
 fn truncating_a_seed_at_every_length_never_panics() {
     let Some(dir) = corpus_dir("seeds") else {

@@ -410,7 +410,7 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
             [start, count] => (start, count),
             _ => break,
         };
-        if start < 0 || count < 0 {
+        if count <= 0 {
             continue;
         }
         for i in 0..count {
@@ -419,9 +419,12 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
             }
             let fields = read_fields(&data[cursor..cursor + row], &widths);
             cursor += row;
-            let number = match u32::try_from(start + i) {
-                Ok(n) => n,
-                Err(_) => continue,
+            // `start` is an arbitrary integer from /Index, so the object
+            // number is computed rather than assumed. The row is consumed
+            // either way: skipping one without advancing the cursor would
+            // misalign every subsection after it.
+            let Some(number) = start.checked_add(i).and_then(|n| u32::try_from(n).ok()) else {
+                continue;
             };
             let entry = match fields[0] {
                 0 => XrefEntry::Free,
