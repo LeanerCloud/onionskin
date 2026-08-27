@@ -10,10 +10,11 @@ referenced.
   We pin the cristim/hayro fork (upstream main + one commit) until a release
   ships; then return to the registry version. No M5 blocker remains.
 - InterpreterWarning silent-skip gap: resolved by our fork commit 33d9caf8
-  (UnresolvedAnnotationAppearance variant). Candidate for a small upstream
-  PR; note in any PR body that the enum is not #[non_exhaustive], so the
-  variant breaks exhaustive matchers (it broke our own example), and that
-  onionskin-render re-exports the enum, forwarding the same hazard.
+  (UnresolvedAnnotationAppearance variant); filed upstream as
+  LaurenzV/hayro#1359 (2026-08-27, with reproducer, screenshots and the
+  #[non_exhaustive] semver note). Track the PR: if upstream takes it or the
+  #[non_exhaustive] alternative, re-pin accordingly; onionskin-render
+  re-exports the enum, forwarding the exhaustive-match hazard either way.
 - RenderSettings has no origin, so no sub-rectangle base rendering; ratified
   workaround: tiles cache composites. Upstream feature request.
 - RenderCache borrows the Pdf (self-referential storage); viewer-lifetime
