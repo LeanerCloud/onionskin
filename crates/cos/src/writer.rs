@@ -122,6 +122,35 @@ pub(crate) struct XrefRow {
 /// A byte offset an `xref` table's fixed ten-digit field cannot hold.
 const MAX_TABLE_OFFSET: u64 = 9_999_999_999;
 
+/// Keys that belong to a cross-reference stream's dictionary and are
+/// meaningless, or actively wrong, in the classic `trailer` dictionary a new
+/// section writes. `/Length`, `/W` and `/Index` in particular describe the old
+/// stream's bytes, which the new section does not have.
+const XREF_STREAM_ONLY_KEYS: [&[u8]; 8] = [
+    b"Type",
+    b"W",
+    b"Index",
+    b"Filter",
+    b"DecodeParms",
+    b"Length",
+    b"Prev",
+    b"XRefStm",
+];
+
+/// Strips a source trailer down to what a freshly written section may repeat.
+///
+/// The source of a trailer is either a `trailer` dictionary or, in a PDF 1.5+
+/// file, the cross-reference stream's own dictionary. In the second case it
+/// arrives carrying the stream's plumbing, and copying that into a classic
+/// trailer produces a dictionary no conforming reader should accept.
+pub(crate) fn trailer_for_new_section(source: &Dict) -> Dict {
+    let mut trailer = source.clone();
+    for key in XREF_STREAM_ONLY_KEYS {
+        trailer.remove(key);
+    }
+    trailer
+}
+
 /// Serializes `objects` at `section_start`, then a cross-reference table and
 /// trailer covering them plus any `extra_rows` that point back into bytes that
 /// are already in the file (the repair case).

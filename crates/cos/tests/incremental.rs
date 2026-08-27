@@ -146,6 +146,106 @@ fn a_second_edit_appends_a_second_section() {
     assert_eq!(producer_of(&rolled_back).as_deref(), Some("generation one"));
 }
 
+/// A PDF 1.5+ file has no `trailer` keyword: its cross-reference stream's own
+/// dictionary plays that role, carrying `/Type /XRef`, `/W`, `/Index`,
+/// `/Filter` and a `/Length` describing the stream's bytes. Repeating those in
+/// the classic trailer a new section writes produces a dictionary that
+/// describes bytes the section does not have.
+fn xref_stream_fixture() -> Vec<u8> {
+    let header = b"%PDF-1.5\n";
+    let catalog = b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n";
+    let pages = b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n";
+    let page =
+        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<<>>>>\nendobj\n";
+
+    let catalog_at = header.len();
+    let pages_at = catalog_at + catalog.len();
+    let page_at = pages_at + pages.len();
+    let xref_at = page_at + page.len();
+
+    // /W [1 2 1]: type, a two-byte offset, then the generation.
+    let be = |v: usize| [(v >> 8) as u8, v as u8];
+    let row = |kind: u8, field: usize, last: u8| vec![kind, be(field)[0], be(field)[1], last];
+    let mut rows = Vec::new();
+    rows.extend(row(0, 0, 255));
+    rows.extend(row(1, catalog_at, 0));
+    rows.extend(row(1, pages_at, 0));
+    rows.extend(row(1, page_at, 0));
+    rows.extend(row(1, xref_at, 0));
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(header);
+    bytes.extend_from_slice(catalog);
+    bytes.extend_from_slice(pages);
+    bytes.extend_from_slice(page);
+    bytes.extend_from_slice(
+        format!(
+            "4 0 obj\n<</Type/XRef/Size 5/W[1 2 1]/Index[0 5]/Root 1 0 R/Length {}>>\nstream\n",
+            rows.len()
+        )
+        .as_bytes(),
+    );
+    bytes.extend_from_slice(&rows);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    bytes.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
+    bytes
+}
+
+#[test]
+fn editing_an_xref_stream_file_writes_a_clean_classic_trailer() {
+    let original = xref_stream_fixture();
+    let (document, provenance) =
+        Document::open_repairing(Box::new(BytesSource::new(original.clone())))
+            .expect("the fixture opens");
+    assert_eq!(
+        provenance,
+        Provenance::Clean,
+        "the fixture must be a valid xref-stream file, or this tests nothing"
+    );
+    assert_eq!(document.page_count().ok(), Some(1));
+
+    let mut document = document;
+    document
+        .set_info_field("Producer", Object::String(b"Onionskin M1 spike".to_vec()))
+        .expect("info field is settable");
+    let saved = document.save_to_vec().expect("save");
+    assert_eq!(&saved[..original.len()], &original[..]);
+
+    let section = &saved[original.len()..];
+    let trailer_at = section
+        .windows(7)
+        .position(|w| w == b"trailer")
+        .expect("the appended section has a trailer");
+    let trailer = &section[trailer_at..];
+    for key in [
+        &b"/Type"[..],
+        b"/W",
+        b"/Index",
+        b"/Filter",
+        b"/DecodeParms",
+        b"/Length",
+    ] {
+        assert!(
+            !trailer.windows(key.len()).any(|w| w == key),
+            "the appended trailer carries {}, which belongs to the xref stream",
+            String::from_utf8_lossy(key)
+        );
+    }
+
+    let (reopened, provenance) = Document::open_repairing(Box::new(BytesSource::new(saved)))
+        .expect("the saved file reopens");
+    assert_eq!(
+        provenance,
+        Provenance::Clean,
+        "a file we wrote must open clean"
+    );
+    assert_eq!(
+        producer_of(&reopened).as_deref(),
+        Some("Onionskin M1 spike")
+    );
+    assert_eq!(reopened.page_count().ok(), Some(1));
+}
+
 #[test]
 fn a_document_with_no_info_dictionary_gains_one() {
     // corpus/seeds/minimal.pdf has no /Info, so the edit has to create the

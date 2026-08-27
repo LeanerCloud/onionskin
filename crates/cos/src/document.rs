@@ -558,9 +558,7 @@ impl Document {
         }
         objects.sort_by_key(|(r, _)| r.number);
 
-        let mut trailer = self.trailer.clone();
-        trailer.remove(b"Prev");
-        trailer.remove(b"XRefStm");
+        let mut trailer = writer::trailer_for_new_section(&self.trailer);
         // A rebuilt table is self-sufficient and the chain it would point at is
         // the damaged one, so /Prev is written only for a delta section.
         if !full_table {
@@ -608,6 +606,11 @@ fn refuse_encrypted(trailer: &Dict) -> Result<()> {
     Ok(())
 }
 
+/// Matches on the object number only. The generation an xref entry records is
+/// advisory: producers get it wrong, every reader ignores it, and refusing here
+/// would reject files that open everywhere else. Nothing is fabricated by the
+/// leniency, because `Parsed.objref` carries the generation the object's own
+/// bytes declare rather than the one the xref claimed.
 fn locate_at(reader: &Reader, number: u32, offset: u64) -> Option<u64> {
     if reader.object_header_at(offset).map(|(n, _)| n) == Some(number) {
         return Some(offset);

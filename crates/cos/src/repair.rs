@@ -238,19 +238,12 @@ pub(crate) fn scan(reader: &Reader) -> Result<Scanned> {
         }
     }
 
-    let mut trailer = last_trailer_dict(&bytes)
+    let source = last_trailer_dict(&bytes)
         .filter(|d| d.contains(b"Root"))
         .or(xref_stream_trailer)
         .or_else(|| last_trailer_dict(&bytes))
         .unwrap_or_default();
-    trailer.remove(b"Prev");
-    trailer.remove(b"XRefStm");
-    trailer.remove(b"Type");
-    trailer.remove(b"W");
-    trailer.remove(b"Index");
-    trailer.remove(b"Filter");
-    trailer.remove(b"DecodeParms");
-    trailer.remove(b"Length");
+    let mut trailer = crate::writer::trailer_for_new_section(&source);
     // A /Root the scan did not find an object for is as useless as no /Root at
     // all, and files that name a catalog they do not contain are real.
     let root_is_present = match trailer.get(b"Root") {
