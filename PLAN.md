@@ -232,11 +232,14 @@ onionskin/
 │   │                       #   scaling, N-up, booklet, poster/tile,
 │   │                       #   print-as-image.
 │   │                       #   GPUI-free; `app` supplies only the dialog UI.
-│   ├── render              # The trait seam. CPU reference: hayro for base
-│   │                       #   pages + tiny-skia overlays, composited into
-│   │                       #   COW render tiles with damage tracking. GPU
-│   │                       #   backend (vello) added later behind the same
-│   │                       #   trait, parity-tested against the CPU.
+│   ├── render              # The trait seam. CPU reference: hayro renders
+│   │                       #   the base raster per (page, zoom) whole-page
+│   │                       #   (hayro has no sub-rect rendering; ratified in
+│   │                       #   docs/spikes/m1-render-hayro.md); tiny-skia
+│   │                       #   overlays composite above it into 256x256
+│   │                       #   damage-tracked tiles that cache COMPOSITES.
+│   │                       #   M2 adds tile eviction. GPU backend (vello)
+│   │                       #   later behind the same trait, parity-tested.
 │   ├── plugin-api          # The trait surface every feature implements:
 │   │                       #   ToolPlugin / CommandPlugin / CodecPlugin,
 │   │                       #   PointerInput in page space, Overlay out,
@@ -321,7 +324,7 @@ product in itself); it gets a scoreboard row saying so.
 | 8 | Redaction is a flattening export with a built-in verifier | Redaction under incremental update is a lie (old bytes remain). It must be the one destructive path, and it must prove itself. |
 | 9 | PDF JavaScript ships, via Boa | Real AcroForms compute; ignoring JS fills them wrong, silently. Scope: the Acrobat forms API subset (calculate, validate, format), sandboxed with no I/O and a fuel budget. Document-level and interactive JS beyond forms: out of scope, surfaced as a visible notice. A user-facing preference disables document JavaScript entirely, mirroring Acrobat's. |
 | 10 | Repair-on-open, Acrobat-grade | A large share of real PDFs are invalid; a drop-in replacement opens them. Recovery is a scan-and-rebuild path in `cos`; repaired structures are written into the first incremental section so the corrupt original survives byte-intact underneath. |
-| 11 | Lazy, xref-driven parsing with pinned budgets | Acrobat opens 2000-page files instantly because it never parses ahead of need. Budgets (enforced by benches, not aspiration): time-to-first-page under 200 ms on the 1000-page corpus file, memory proportional to viewed pages rather than file size, 60 fps scroll on the M2 viewer. |
+| 11 | Lazy, xref-driven parsing with pinned budgets | Acrobat opens 2000-page files instantly because it never parses ahead of need. Two budgets, enforced by benches: (1) lazy open - time-to-first-page under 200 ms on the 1000-page bench file (the corpus has none; synthesize one), guarding xref-driven laziness; (2) first paint - something visible under 200 ms on ANY page, with the full raster completing on a background thread, because a correct transparency-heavy page can cost 700+ ms in the CPU interpreter (spike-measured). Plus: memory proportional to viewed pages (tile eviction policy lands M2), 60 fps scroll on the M2 viewer. |
 | 12 | Accessibility is first-class, both senses | App side: AccessKit wired into the GPUI fork so the shell exposes a real accessibility tree (Section 508 / European Accessibility Act buyers are exactly Acrobat's institutional base). Document side: `core` owns the tagged-PDF structure tree and every edit keeps it valid. |
 | 13 | Printing is our own pipeline | GPUI has none, so `crates/print` renders pages and drives NSPrintOperation / CUPS / Windows print APIs directly, with Acrobat print-dialog parity. Treated as a milestone deliverable, not a stretch goal. |
 
@@ -475,9 +478,14 @@ what-does-not-transfer section demands:
   (thumbnails with context-menu page commands, bookmarks, attachments,
   layers with OCG visibility toggles, signatures), tool rail, Acrobat
   shortcuts, Full Screen mode, line-weights view toggle, AccessKit tree live
-  from the first release. Performance budgets (decision 11) enforced from
-  here on. Ships as a usable fast PDF viewer - first dogfoodable artifact,
-  first parity screenshots compared, and the registry's proof of shape.
+  from the first release. Performance budgets (decision 11, both) enforced
+  from here on: background render thread with progressive first paint, and
+  the tile eviction policy. Accessibility acceptance: one real VoiceOver
+  session (the spike proved the adapter, not the session; see
+  docs/spikes/m1-shell-accesskit.md) and correct role mapping so a page
+  reads as a document, not a group. Ships as a usable fast PDF viewer -
+  first dogfoodable artifact, first parity screenshots compared, and the
+  registry's proof of shape.
 - **M3 - First edits, first print.** `tools-comment`, `tools-organize`,
   `commands-core` (Combine files, split), incremental save, undo/redo, the
   skins panel. `crates/print` lands with the macOS backend and the Acrobat
