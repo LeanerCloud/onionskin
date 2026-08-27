@@ -3923,6 +3923,9 @@ version = "0.1.0"
 [[package]]
 name = "onionskin-cos"
 version = "0.1.0"
+dependencies = [
+ "flate2",
+]
 
 [[package]]
 name = "onionskin-crypto"

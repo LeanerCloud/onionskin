@@ -1,0 +1,28 @@
+[package]
+name = "onionskin-cos-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+# Its own workspace, per cargo-fuzz convention: the fuzz targets need nightly
+# and a sanitizer profile, and pulling them into the root workspace would put
+# that requirement on every ordinary `cargo build`.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+onionskin-cos = { path = ".." }
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
