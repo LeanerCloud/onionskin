@@ -44,7 +44,7 @@ pub use hayro::hayro_syntax::object::ObjectIdentifier;
 
 pub use base::{
     raster_size, BaseRaster, Document, PageRender, PageRenderGeometry, PageTransform, RenderError,
-    RenderOptions, RenderSession,
+    RenderOptions, RenderSession, TransformError,
 };
 pub use overlay::{Overlay, OverlayError, Rgba};
 pub use store::TileStore;

@@ -52,7 +52,40 @@ impl PageTransform {
         let [a, b, c, d, e, f] = self.coefficients;
         (a * x + c * y + e, b * x + d * y + f)
     }
+
+    pub fn apply_inverse(self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        let [a, b, c, d, e, f] = self.coefficients;
+        let determinant = a * d - b * c;
+        if determinant == 0.0 || !determinant.is_finite() {
+            return Err(TransformError::NonInvertible { determinant });
+        }
+
+        let x = x - e;
+        let y = y - f;
+        Ok((
+            (d * x - c * y) / determinant,
+            (-b * x + a * y) / determinant,
+        ))
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransformError {
+    NonInvertible { determinant: f64 },
+}
+
+impl fmt::Display for TransformError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonInvertible { determinant } => write!(
+                f,
+                "page transform is not invertible; determinant is {determinant}"
+            ),
+        }
+    }
+}
+
+impl Error for TransformError {}
 
 /// Owned page metadata that can cross the render-worker channel.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -375,6 +408,18 @@ mod tests {
         assert_eq!(raster_size(65_535.9, 2.0, 1.0).unwrap(), (65_535, 2));
         assert!(raster_size(65_536.0, 2.0, 1.0).is_err());
         assert!(raster_size(0.9, 2.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn a_non_invertible_transform_reports_a_typed_failure() {
+        let transform = PageTransform {
+            coefficients: [1.0, 2.0, 2.0, 4.0, 10.0, 20.0],
+        };
+
+        assert!(matches!(
+            transform.apply_inverse(10.0, 20.0),
+            Err(TransformError::NonInvertible { determinant: 0.0 })
+        ));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use onionskin_render::{Document as RenderDocument, RenderOptions};
 
 #[test]
 fn crop_and_rotation_map_extracted_glyphs_onto_rendered_pixels() {
-    for rotation in [0, 90, 270] {
+    for rotation in [0, 90, 180, 270] {
         let bytes = geometry_pdf(rotation);
         let mut session = Document::open_bytes(bytes.clone()).expect("session opens");
         let text = session.page_text(0).expect("text extracts");
@@ -15,7 +15,7 @@ fn crop_and_rotation_map_extracted_glyphs_onto_rendered_pixels() {
             .expect("fixture contains a mapped glyph")
             .quad;
         let geometry = session.page_geometry(0).expect("geometry loads").clone();
-        let expected_size = if rotation == 0 {
+        let expected_size = if rotation == 0 || rotation == 180 {
             (200.0, 150.0)
         } else {
             (150.0, 200.0)
@@ -44,6 +44,32 @@ fn crop_and_rotation_map_extracted_glyphs_onto_rendered_pixels() {
 }
 
 #[test]
+fn crop_and_intrinsic_rotation_round_trip_between_user_and_device_space() {
+    for rotation in [0, 90, 180, 270] {
+        let mut session = Document::open_bytes(geometry_pdf(rotation)).expect("session opens");
+        let geometry = session.page_geometry(0).expect("geometry loads");
+        let quad = onionskin_core::PageQuad {
+            page: 0,
+            corners: [(70.0, 120.0), (180.0, 120.0), (70.0, 60.0), (180.0, 60.0)],
+        };
+
+        for zoom in [1.0, 3.0] {
+            let device = geometry
+                .user_to_device(quad, zoom)
+                .expect("quad belongs to the page");
+            for (expected, (x, y)) in quad.corners.into_iter().zip(device.corners) {
+                let actual = geometry
+                    .device_to_user(x, y, zoom)
+                    .expect("device point maps back to the page");
+                assert_eq!(actual.page, 0);
+                assert_close(actual.x, expected.0, rotation, zoom);
+                assert_close(actual.y, expected.1, rotation, zoom);
+            }
+        }
+    }
+}
+
+#[test]
 fn mapping_rejects_the_wrong_page_and_invalid_zoom() {
     let mut session = Document::open_bytes(geometry_pdf(90)).expect("session opens");
     let geometry = session.page_geometry(0).expect("geometry loads");
@@ -56,7 +82,15 @@ fn mapping_rejects_the_wrong_page_and_invalid_zoom() {
     let quad = onionskin_core::PageQuad { page: 0, ..quad };
     for zoom in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         assert!(geometry.user_to_device(quad, zoom).is_err());
+        assert!(geometry.device_to_user(1.0, 1.0, zoom).is_err());
     }
+}
+
+fn assert_close(actual: f64, expected: f64, rotation: i32, zoom: f32) {
+    assert!(
+        (actual - expected).abs() < 1e-8,
+        "rotation {rotation} at zoom {zoom}: {actual} != {expected}"
+    );
 }
 
 fn quad_contains_mark(corners: &[(f64, f64); 4], width: u32, height: u32, rgba: &[u8]) -> bool {

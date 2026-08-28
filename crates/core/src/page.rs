@@ -78,6 +78,19 @@ impl PageGeometry {
             }),
         })
     }
+
+    pub fn device_to_user(&self, x: f64, y: f64, zoom: f32) -> Result<PagePoint, GeometryError> {
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(GeometryError::InvalidZoom(zoom));
+        }
+        let scale = f64::from(zoom);
+        let (x, y) = self.transform.apply_inverse(x / scale, y / scale)?;
+        Ok(PagePoint {
+            page: self.index,
+            x: x - self.media_box[0],
+            y: y - self.media_box[1],
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -93,6 +106,7 @@ pub enum GeometryError {
         quad: PageIndex,
     },
     InvalidZoom(f32),
+    Transform(onionskin_render::TransformError),
 }
 
 impl fmt::Display for GeometryError {
@@ -102,8 +116,22 @@ impl fmt::Display for GeometryError {
                 write!(f, "page {quad} quad cannot use page {geometry} geometry")
             }
             Self::InvalidZoom(zoom) => write!(f, "zoom must be positive and finite, got {zoom}"),
+            Self::Transform(error) => write!(f, "{error}"),
         }
     }
 }
 
-impl std::error::Error for GeometryError {}
+impl std::error::Error for GeometryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transform(error) => Some(error),
+            Self::WrongPage { .. } | Self::InvalidZoom(_) => None,
+        }
+    }
+}
+
+impl From<onionskin_render::TransformError> for GeometryError {
+    fn from(error: onionskin_render::TransformError) -> Self {
+        Self::Transform(error)
+    }
+}
