@@ -7,7 +7,10 @@ use onionskin_content as content;
 use onionskin_cos::{BytesSource, Provenance};
 
 use crate::render::WorkerHandle;
-use crate::{PageGeometry, PageIndex, SearchMatch, SearchOptions, SearchState, Selection};
+use crate::{
+    PageGeometry, PageIndex, RenderRequest, RenderResponse, SearchMatch, SearchOptions,
+    SearchState, Selection,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -145,6 +148,21 @@ impl Document {
         let cos = &self.cos;
         self.text
             .get_or_try_insert_with(index, || Ok(content::extract_page(cos, index)?))
+    }
+
+    pub fn request_render(
+        &mut self,
+        request: RenderRequest,
+        source: Option<&onionskin_render::BaseRaster>,
+    ) -> Result<()> {
+        self.render.validate_request(request)?;
+        let geometry = self.page_geometry(request.page)?.clone();
+        self.render.request_render(request, &geometry, source)?;
+        Ok(())
+    }
+
+    pub fn try_render_response(&mut self) -> Result<Option<RenderResponse>> {
+        Ok(self.render.try_response()?)
     }
 
     pub fn search_page(

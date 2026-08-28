@@ -14,6 +14,6 @@ pub use onionskin_cos::Provenance;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
-pub use render::WorkerError;
+pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
 pub use selection::{SearchMatch, SearchState, Selection};
 pub use session::{Document, Error, Result};
