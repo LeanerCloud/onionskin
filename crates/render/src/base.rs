@@ -15,6 +15,26 @@ use hayro::{RenderCache, RenderSettings};
 /// 80x zoom.
 const MAX_RASTER_AXIS: f64 = u16::MAX as f64;
 
+/// Return the dimensions hayro will allocate for a page at `zoom`.
+///
+/// hayro multiplies its `f32` dimensions and scale, floors the result, then
+/// converts to `u16`; keep that order here so validation and allocation agree.
+pub fn raster_size(width: f32, height: f32, zoom: f32) -> Result<(u16, u16), RenderError> {
+    let scaled_width = f64::from(width * zoom);
+    let scaled_height = f64::from(height * zoom);
+    let width = scaled_width.floor();
+    let height = scaled_height.floor();
+
+    if !(1.0..=MAX_RASTER_AXIS).contains(&width) || !(1.0..=MAX_RASTER_AXIS).contains(&height) {
+        return Err(RenderError::UnrenderableSize {
+            width: scaled_width,
+            height: scaled_height,
+        });
+    }
+
+    Ok((width as u16, height as u16))
+}
+
 /// An opened PDF, held only for display. Nothing here is the semantic
 /// contract: `cos` owns what a save writes.
 pub struct Document {
@@ -96,40 +116,55 @@ impl Document {
         })
     }
 
+    /// Run rendering with one hayro cache for the duration of the callback.
+    ///
+    /// The cache borrows this document, so keeping it beside `Document` would
+    /// require self-referential storage. A worker can keep this session alive
+    /// while it processes its request loop instead.
+    pub fn with_render_session<R>(&self, f: impl for<'a> FnOnce(&mut RenderSession<'a>) -> R) -> R {
+        f(&mut RenderSession {
+            document: self,
+            cache: RenderCache::new(),
+        })
+    }
+
     /// Rasterize one page at `zoom` (1.0 = 72 dpi) onto white.
     ///
-    /// A fresh [`RenderCache`] per call, which throws away hayro's font and
-    /// outline caching between pages: `RenderCache<'a>` borrows the `Pdf`, so
-    /// storing one beside the document it caches for is self-referential. A
-    /// viewer that pages through a document needs that fixed.
+    /// A short-lived session keeps the public convenience API compatible while
+    /// allowing workers to retain a cache across several pages.
     pub fn render_page(
         &self,
         index: usize,
         zoom: f32,
         options: &RenderOptions,
     ) -> Result<PageRender, RenderError> {
-        let pages = self.pdf.pages();
+        self.with_render_session(|session| session.render_page(index, zoom, options))
+    }
+}
+
+/// A borrowed PDF and its reusable hayro render cache.
+pub struct RenderSession<'a> {
+    document: &'a Document,
+    cache: RenderCache<'a>,
+}
+
+impl RenderSession<'_> {
+    /// Rasterize one page using this session's shared cache.
+    pub fn render_page(
+        &mut self,
+        index: usize,
+        zoom: f32,
+        options: &RenderOptions,
+    ) -> Result<PageRender, RenderError> {
+        let document = self.document;
+        let pages = document.pdf.pages();
         let page = pages.get(index).ok_or(RenderError::NoSuchPage {
             index,
             count: pages.len(),
         })?;
 
         let (pt_width, pt_height) = page.render_dimensions();
-        let (px_width, px_height) = (
-            pt_width as f64 * zoom as f64,
-            pt_height as f64 * zoom as f64,
-        );
-        // A malformed `/MediaBox` can round to nothing, and hayro answers with
-        // an empty pixmap rather than an error; the tile grid has no useful
-        // reading of that, so it is rejected here instead of panicking later.
-        if !(1.0..=MAX_RASTER_AXIS).contains(&px_width)
-            || !(1.0..=MAX_RASTER_AXIS).contains(&px_height)
-        {
-            return Err(RenderError::UnrenderableSize {
-                width: px_width,
-                height: px_height,
-            });
-        }
+        let (px_width, px_height) = raster_size(pt_width, pt_height, zoom)?;
 
         // hayro drops content it cannot interpret and carries on, so the sink
         // is the only way to tell a correct page from a quietly wrong one.
@@ -138,7 +173,7 @@ impl Document {
 
         let pixmap = hayro::render(
             page,
-            &RenderCache::new(),
+            &self.cache,
             &InterpreterSettings {
                 warning_sink: Arc::new(move |warning| {
                     sink.lock().expect("sink is never poisoned").push(warning)
@@ -150,8 +185,9 @@ impl Document {
             &RenderSettings {
                 x_scale: zoom,
                 y_scale: zoom,
+                width: Some(px_width),
+                height: Some(px_height),
                 bg_color: hayro::vello_cpu::color::palette::css::WHITE,
-                ..Default::default()
             },
         );
 
@@ -184,7 +220,7 @@ pub struct BaseRaster {
     width: u32,
     height: u32,
     zoom: f32,
-    rgba: Vec<u8>,
+    rgba: Arc<[u8]>,
 }
 
 impl BaseRaster {
@@ -217,7 +253,7 @@ impl BaseRaster {
             width,
             height,
             zoom,
-            rgba,
+            rgba: Arc::from(rgba),
         }
     }
 
@@ -331,5 +367,62 @@ mod tests {
     #[should_panic(expected = "positive finite scale")]
     fn a_base_raster_refuses_a_zoom_that_places_nothing() {
         BaseRaster::new(2, 2, 0.0, vec![255; 16]);
+    }
+
+    #[test]
+    fn raster_size_matches_hayros_floor_and_u16_limits() {
+        assert_eq!(raster_size(200.9, 100.1, 1.0).unwrap(), (200, 100));
+        assert_eq!(raster_size(65_535.9, 2.0, 1.0).unwrap(), (65_535, 2));
+        assert!(raster_size(65_536.0, 2.0, 1.0).is_err());
+        assert!(raster_size(0.9, 2.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn a_render_session_reuses_one_cache_for_multiple_pages() {
+        let document = Document::open(minimal_pdf()).expect("fixture opens");
+        document.with_render_session(|session| {
+            let first = session
+                .render_page(0, 1.0, &RenderOptions::default())
+                .expect("first page renders");
+            let second = session
+                .render_page(1, 1.0, &RenderOptions::default())
+                .expect("second page render reuses the session");
+            assert_eq!(first.raster.width(), second.raster.width());
+            assert_eq!(first.raster.height(), second.raster.height());
+        });
+    }
+
+    #[test]
+    fn cloning_a_base_raster_shares_its_pixels() {
+        let raster = BaseRaster::new(2, 2, 1.0, vec![255; 16]);
+        let clone = raster.clone();
+        assert!(Arc::ptr_eq(&raster.rgba, &clone.rgba));
+        assert_eq!(raster.rgba(), clone.rgba());
+    }
+
+    fn minimal_pdf() -> Vec<u8> {
+        let objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>".to_vec(),
+        ];
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            pdf.extend_from_slice(body);
+            pdf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        );
+        pdf
     }
 }
