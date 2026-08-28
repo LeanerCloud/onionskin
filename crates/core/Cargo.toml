@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 onionskin-content.workspace = true
 onionskin-cos.workspace = true
+onionskin-render.workspace = true

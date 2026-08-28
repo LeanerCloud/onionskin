@@ -5,11 +5,15 @@
 //! history, save, and shell integration land in later milestones.
 
 mod page;
+mod render;
 mod selection;
 mod session;
 
 pub use onionskin_content::SearchOptions;
 pub use onionskin_cos::Provenance;
-pub use page::{Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect};
+pub use page::{
+    DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
+};
+pub use render::WorkerError;
 pub use selection::{SearchMatch, SearchState, Selection};
 pub use session::{Document, Error, Result};

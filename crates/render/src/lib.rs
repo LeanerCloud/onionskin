@@ -42,7 +42,9 @@ pub use hayro::hayro_interpret::InterpreterWarning;
 /// it would only add a conversion.
 pub use hayro::hayro_syntax::object::ObjectIdentifier;
 
-pub use base::{BaseRaster, Document, PageRender, RenderError, RenderOptions};
+pub use base::{
+    BaseRaster, Document, PageRender, PageRenderGeometry, PageTransform, RenderError, RenderOptions,
+};
 pub use overlay::{Overlay, OverlayError, Rgba};
 pub use store::TileStore;
 pub use tile::{DeviceRect, Tile, TileCache, TILE_SIZE};

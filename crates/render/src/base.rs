@@ -21,6 +21,26 @@ pub struct Document {
     pdf: Pdf,
 }
 
+/// The page-to-device mapping hayro uses at 72 dpi.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageTransform {
+    coefficients: [f64; 6],
+}
+
+impl PageTransform {
+    pub fn apply(self, x: f64, y: f64) -> (f64, f64) {
+        let [a, b, c, d, e, f] = self.coefficients;
+        (a * x + c * y + e, b * x + d * y + f)
+    }
+}
+
+/// Owned page metadata that can cross the render-worker channel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageRenderGeometry {
+    pub render_size: (f64, f64),
+    pub transform: PageTransform,
+}
+
 /// What a render includes beyond the page's own marks.
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
@@ -59,6 +79,21 @@ impl Document {
 
     pub fn page_count(&self) -> usize {
         self.pdf.pages().len()
+    }
+
+    pub fn page_geometry(&self, index: usize) -> Result<PageRenderGeometry, RenderError> {
+        let pages = self.pdf.pages();
+        let page = pages.get(index).ok_or(RenderError::NoSuchPage {
+            index,
+            count: pages.len(),
+        })?;
+        let (width, height) = page.render_dimensions();
+        Ok(PageRenderGeometry {
+            render_size: (f64::from(width), f64::from(height)),
+            transform: PageTransform {
+                coefficients: page.initial_transform(true).as_coeffs(),
+            },
+        })
     }
 
     /// Rasterize one page at `zoom` (1.0 = 72 dpi) onto white.

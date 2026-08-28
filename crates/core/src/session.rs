@@ -6,6 +6,7 @@ use std::sync::Arc;
 use onionskin_content as content;
 use onionskin_cos::{BytesSource, Provenance};
 
+use crate::render::WorkerHandle;
 use crate::{PageGeometry, PageIndex, SearchMatch, SearchOptions, SearchState, Selection};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -16,6 +17,7 @@ pub enum Error {
     EncryptedUnsupported,
     Cos(onionskin_cos::Error),
     Content(content::Error),
+    Worker(crate::WorkerError),
 }
 
 impl fmt::Display for Error {
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
             }
             Error::Cos(e) => write!(f, "{e}"),
             Error::Content(e) => write!(f, "{e}"),
+            Error::Worker(e) => write!(f, "{e}"),
         }
     }
 }
@@ -37,6 +40,7 @@ impl std::error::Error for Error {
             Error::Io(e) => Some(e),
             Error::Cos(e) => Some(e),
             Error::Content(e) => Some(e),
+            Error::Worker(e) => Some(e),
             Error::EncryptedUnsupported => None,
         }
     }
@@ -66,6 +70,12 @@ impl From<content::Error> for Error {
     }
 }
 
+impl From<crate::WorkerError> for Error {
+    fn from(e: crate::WorkerError) -> Self {
+        Error::Worker(e)
+    }
+}
+
 const PAGE_CACHE_LIMIT: usize = 128;
 const TEXT_CACHE_LIMIT: usize = 16;
 
@@ -74,6 +84,7 @@ pub struct Document {
     cos: onionskin_cos::Document,
     provenance: Provenance,
     page_count: usize,
+    render: WorkerHandle,
     geometry: PageCache<PageGeometry>,
     text: PageCache<content::PageText>,
     selection: Selection,
@@ -94,11 +105,13 @@ impl Document {
             BytesSource::from_shared(Arc::clone(&bytes)),
         ))?;
         let page_count = content::page_count(&cos)?;
+        let render = WorkerHandle::spawn(Arc::clone(&bytes))?;
         Ok(Document {
             bytes,
             cos,
             provenance,
             page_count,
+            render,
             geometry: PageCache::new(PAGE_CACHE_LIMIT),
             text: PageCache::new(TEXT_CACHE_LIMIT),
             selection: Selection::default(),
@@ -120,9 +133,11 @@ impl Document {
 
     pub fn page_geometry(&mut self, index: PageIndex) -> Result<&PageGeometry> {
         let cos = &self.cos;
+        let render = &self.render;
         self.geometry.get_or_try_insert_with(index, || {
             let page = content::page(cos, index)?;
-            Ok(PageGeometry::from(&page))
+            let rendered = render.page_geometry(index)?;
+            Ok(PageGeometry::new(&page, rendered))
         })
     }
 

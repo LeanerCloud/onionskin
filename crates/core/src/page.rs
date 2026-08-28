@@ -1,4 +1,5 @@
 use onionskin_content as content;
+use std::fmt;
 
 pub use content::{PageIndex, PageQuad};
 
@@ -37,15 +38,72 @@ pub struct PageGeometry {
     pub media_box: [f64; 4],
     pub crop_box: Option<[f64; 4]>,
     pub rotate: i32,
+    pub render_size: (f64, f64),
+    transform: onionskin_render::PageTransform,
 }
 
-impl From<&content::Page> for PageGeometry {
-    fn from(page: &content::Page) -> Self {
+impl PageGeometry {
+    pub(crate) fn new(
+        page: &content::Page,
+        rendered: onionskin_render::PageRenderGeometry,
+    ) -> Self {
         PageGeometry {
             index: page.index,
             media_box: page.media_box,
             crop_box: page.crop_box,
             rotate: page.rotate,
+            render_size: rendered.render_size,
+            transform: rendered.transform,
+        }
+    }
+
+    pub fn user_to_device(&self, quad: PageQuad, zoom: f32) -> Result<DeviceQuad, GeometryError> {
+        if quad.page != self.index {
+            return Err(GeometryError::WrongPage {
+                geometry: self.index,
+                quad: quad.page,
+            });
+        }
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(GeometryError::InvalidZoom(zoom));
+        }
+        let scale = f64::from(zoom);
+        Ok(DeviceQuad {
+            page: quad.page,
+            corners: quad.corners.map(|(x, y)| {
+                let (x, y) = self
+                    .transform
+                    .apply(x + self.media_box[0], y + self.media_box[1]);
+                (x * scale, y * scale)
+            }),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviceQuad {
+    pub page: PageIndex,
+    pub corners: [(f64, f64); 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GeometryError {
+    WrongPage {
+        geometry: PageIndex,
+        quad: PageIndex,
+    },
+    InvalidZoom(f32),
+}
+
+impl fmt::Display for GeometryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongPage { geometry, quad } => {
+                write!(f, "page {quad} quad cannot use page {geometry} geometry")
+            }
+            Self::InvalidZoom(zoom) => write!(f, "zoom must be positive and finite, got {zoom}"),
         }
     }
 }
+
+impl std::error::Error for GeometryError {}
