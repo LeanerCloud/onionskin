@@ -9,10 +9,10 @@
 use std::ops::Range;
 
 use onionskin_cos::{ObjRef, Origin, Span};
-use onionskin_plugin_api::{PageIndex, PageQuad};
 
 use crate::error::Warning;
 use crate::font::FontId;
+use crate::{PageIndex, PageQuad};
 
 /// Where a run's operator lives in the file.
 ///

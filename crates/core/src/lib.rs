@@ -1,13 +1,15 @@
-//! Kernel: the document model over `cos` - page tree, the edit graph
-//! (base nodes are the original objects, overlay nodes are pending
-//! edits), history, selection and save. Owns the tagged-PDF structure
-//! tree, which every edit that touches tagged content must leave valid.
-//! Contains no features; those live in `plugins/`.
+//! Kernel: the shared, GPUI-free document session.
+//!
+//! M2's viewer session owns the original bytes, the repairing COS document,
+//! provenance, bounded page caches, selection, and find state. Edit graph,
+//! history, save, and shell integration land in later milestones.
 
-/// An open document.
-///
-/// The page tree, edit graph, history and save path land with M1. The
-/// type exists now because `plugin-api` hands it to every tool and
-/// command, and that signature is the contract M0 pins down.
-#[derive(Debug, Default)]
-pub struct Document;
+mod page;
+mod selection;
+mod session;
+
+pub use onionskin_content::SearchOptions;
+pub use onionskin_cos::Provenance;
+pub use page::{Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect};
+pub use selection::{SearchMatch, SearchState, Selection};
+pub use session::{Document, Error, Result};

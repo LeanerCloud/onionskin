@@ -14,54 +14,10 @@
 
 use onionskin_core::Document;
 
+pub use onionskin_core::{Modifiers, PageIndex, PagePoint, PageQuad, PageRect};
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
 
 pub mod registry;
-
-/// Zero-based index into the document's page tree.
-pub type PageIndex = usize;
-
-/// Keyboard modifiers accompanying a pointer event.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Modifiers {
-    pub shift: bool,
-    pub alt: bool,
-    pub ctrl_or_cmd: bool,
-}
-
-/// A point in a page's default user space: origin at the lower-left
-/// corner, y increasing upwards, units of 1/72 inch.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PagePoint {
-    pub page: PageIndex,
-    pub x: f64,
-    pub y: f64,
-}
-
-/// An axis-aligned rectangle in a page's user space, given in the corner
-/// order PDF itself uses for `/Rect`: lower-left, then upper-right.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PageRect {
-    pub page: PageIndex,
-    pub x0: f64,
-    pub y0: f64,
-    pub x1: f64,
-    pub y1: f64,
-}
-
-/// Four corners in a page's user space, in `/QuadPoints` order: upper-left,
-/// upper-right, lower-left, lower-right. Text selection needs a quad rather
-/// than a rect because a text run is not axis-aligned once it is rotated.
-///
-/// That corner order is deliberate and is not an error to correct: ISO
-/// 32000-1 12.5.6.10 describes the four points counterclockwise, but every
-/// producer follows Acrobat, which writes them in the Z order above, and
-/// every consumer reads them that way.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PageQuad {
-    pub page: PageIndex,
-    pub corners: [(f64, f64); 4],
-}
 
 /// A pointer event, already transformed out of window space into the page
 /// it landed on.

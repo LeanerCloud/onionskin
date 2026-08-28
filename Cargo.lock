@@ -3908,13 +3908,16 @@ name = "onionskin-content"
 version = "0.1.0"
 dependencies = [
  "onionskin-cos",
- "onionskin-plugin-api",
  "ttf-parser 0.25.1",
 ]
 
 [[package]]
 name = "onionskin-core"
 version = "0.1.0"
+dependencies = [
+ "onionskin-content",
+ "onionskin-cos",
+]
 
 [[package]]
 name = "onionskin-cos"

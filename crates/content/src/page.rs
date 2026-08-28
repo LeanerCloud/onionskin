@@ -6,9 +6,9 @@
 //! and the viewer use, and concatenating the page's content streams.
 
 use onionskin_cos::{Dict, Document, ObjRef, Object, Origin, PageNode, Span};
-use onionskin_plugin_api::PageIndex;
 
 use crate::error::{Result, Warning};
+use crate::PageIndex;
 
 /// A page, with the four attributes ISO 32000-2 7.7.3.4 says are inheritable
 /// resolved against its ancestors and normalised.
@@ -32,8 +32,8 @@ pub struct Page {
 
 impl Page {
     /// The transform from the page's own coordinates into the default user
-    /// space `plugin_api::PagePoint` names: origin at the media box's lower
-    /// left corner, y up.
+    /// space the viewer uses: origin at the media box's lower-left corner,
+    /// y increasing upwards.
     pub fn base_ctm(&self) -> crate::Matrix {
         crate::Matrix::translate(-self.media_box[0], -self.media_box[1])
     }

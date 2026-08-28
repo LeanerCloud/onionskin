@@ -8,9 +8,8 @@
 
 use std::ops::Range;
 
-use onionskin_plugin_api::{PageIndex, PageQuad};
-
 use crate::run::{ByteProvenance, PageText, TextRun};
+use crate::{PageIndex, PageQuad};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SearchOptions {

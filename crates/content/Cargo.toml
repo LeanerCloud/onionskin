@@ -8,7 +8,6 @@ license.workspace = true
 # does not collide on the root manifest.
 [dependencies]
 onionskin-cos.workspace = true
-onionskin-plugin-api.workspace = true
 
 # Embedded font programs: widths, ascent/descent, and the cmap that turns a
 # CID-keyed font with no /ToUnicode into readable text.

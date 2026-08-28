@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use onionskin_cos::{Dict, Document, ObjRef, Object, Span};
-use onionskin_plugin_api::{PageIndex, PageQuad};
 
 use crate::error::{Result, Warning};
 use crate::font::{self, Code, Font, FontId};
@@ -17,6 +16,7 @@ use crate::matrix::Matrix;
 use crate::page::{self, Content, ContentPart, Page};
 use crate::run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
 use crate::tokenizer::{Operation, Tokenizer};
+use crate::{PageIndex, PageQuad};
 
 /// Nesting cap for `Do`. ISO 32000-2 sets no limit; real documents nest three
 /// or four deep, and past this the file is trying something else.

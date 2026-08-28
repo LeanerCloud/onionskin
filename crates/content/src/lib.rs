@@ -44,6 +44,7 @@
 
 mod error;
 mod font;
+mod geometry;
 mod interpret;
 mod matrix;
 mod page;
@@ -53,6 +54,7 @@ mod tokenizer;
 
 pub use error::{Error, Result, Warning};
 pub use font::{Code, Font, FontId};
+pub use geometry::{PageIndex, PageQuad};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
 pub use run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
@@ -68,8 +70,6 @@ pub use search::{flatten, search, search_flattened, Flattened, Match, SearchOpti
 pub use tokenizer::{Operation, Operator, Tokenizer};
 
 use onionskin_cos::Document;
-use onionskin_plugin_api::PageIndex;
-
 /// Loads page `index`, parsing only the page-tree nodes on the path to it.
 pub fn page(doc: &Document, index: PageIndex) -> Result<Page> {
     page::page(doc, index)
