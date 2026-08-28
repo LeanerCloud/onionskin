@@ -18,6 +18,23 @@ fn page() -> BaseRaster {
     BaseRaster::new(PAGE_WIDTH, PAGE_HEIGHT, ZOOM, vec![255; BASE_BYTES])
 }
 
+/// US Letter at an arbitrary zoom, for the probes that vary it.
+fn page_at(zoom: f32) -> BaseRaster {
+    let (w, h) = page_size(zoom);
+    BaseRaster::new(w, h, zoom, vec![255; (w * h * 4) as usize])
+}
+
+fn page_size(zoom: f32) -> (u32, u32) {
+    ((612.0 * zoom) as u32, (792.0 * zoom) as u32)
+}
+
+/// Base raster plus every tile, which is what one page costs the store.
+fn page_bytes(zoom: f32) -> usize {
+    let (w, h) = page_size(zoom);
+    let tiles = (w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)) as usize;
+    (w * h * 4) as usize + tiles * TILE_BYTES
+}
+
 /// What the canvas does with a page it has scrolled into view.
 fn paint(store: &mut TileStore, page: usize) {
     let cache = store
@@ -64,10 +81,11 @@ fn scrolling_a_200_page_document_stays_under_the_budget() {
 }
 
 #[test]
-fn a_page_that_stays_in_view_is_never_recomposited() {
-    // Three pages visible, scrolled one page at a time under the real budget:
-    // a page in view for three frames must composite its tiles once, not once
-    // per frame, or eviction is dropping what the next frame paints.
+fn scrolling_at_a_zoom_that_fits_never_recomposites_a_visible_page() {
+    // A scrolling regression guard, not a test of the visible-set exemption:
+    // at 2x, twelve pages fit the budget, so three visible pages would survive
+    // on recency alone. It pins that a scroll does not evict its own working
+    // set at a zoom where nothing forces it to.
     let mut store = TileStore::new();
 
     for top in 0..20 {
@@ -87,6 +105,71 @@ fn a_page_that_stays_in_view_is_never_recomposited() {
             );
         }
     }
+}
+
+/// Paint a whole frame the way the canvas will: declare what is visible, then
+/// render anything missing and composite every visible page's tiles. Returns
+/// the number of pages that had to be rendered again this frame.
+fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
+    let pinned: Vec<(usize, f32)> = visible.iter().map(|&page| (page, zoom)).collect();
+    store.begin_frame(&pinned);
+
+    let mut rerendered = 0;
+    for &index in visible {
+        if store.get(index, zoom).is_none() {
+            store.insert(index, page_at(zoom));
+            rerendered += 1;
+        }
+        let cache = store
+            .get(index, zoom)
+            .expect("just inserted or already held");
+        for row in 0..cache.rows() {
+            for col in 0..cache.cols() {
+                let _ = cache.tile(col, row);
+            }
+        }
+    }
+    rerendered
+}
+
+#[test]
+fn two_visible_pages_survive_a_zoom_where_both_do_not_fit() {
+    // 6x: one page costs 138 MiB, so a two-page spread needs 276 MiB against a
+    // 202 MiB budget. Without the visible-set exemption the store protects
+    // only the page most recently asked for, so fetching the second evicts the
+    // first and both are rendered again on every frame.
+    const ZOOM_6: f32 = 6.0;
+    assert!(
+        2 * page_bytes(ZOOM_6) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless the spread really does not fit"
+    );
+
+    let mut store = TileStore::new();
+    let tiles_per_page = {
+        let (w, h) = page_size(ZOOM_6);
+        (w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)) as u64
+    };
+
+    assert_eq!(frame(&mut store, &[0, 1], ZOOM_6), 2, "the first frame");
+    for _ in 0..5 {
+        assert_eq!(
+            frame(&mut store, &[0, 1], ZOOM_6),
+            0,
+            "a visible page was evicted and had to be rendered again"
+        );
+        for index in 0..2 {
+            let cache = store.get(index, ZOOM_6).expect("visible and pinned");
+            assert_eq!(
+                cache.composites(),
+                tiles_per_page,
+                "page {index} recomposited"
+            );
+        }
+    }
+
+    // The spread does not fit, and the store says so instead of thrashing.
+    assert!(store.over_budget() > 0);
+    assert_eq!(store.len(), 2);
 }
 
 #[test]
@@ -181,6 +264,70 @@ fn a_cache_serves_only_the_zoom_it_was_rasterized_at() {
     assert!(store.get(3, ZOOM).is_some());
     assert!(store.get(3, ZOOM * 2.0).is_none(), "a different raster");
     assert!(store.get(4, ZOOM).is_none(), "a different page");
+}
+
+/// The probe the review asked for: hold a visible set steady for six frames at
+/// each zoom and count what the store made the caller redo. Run it with
+/// `--nocapture` to read the table.
+#[test]
+fn a_steady_visible_set_costs_nothing_to_repaint_at_any_zoom() {
+    println!(
+        "\n pages  zoom  page MiB  visible MiB  budget MiB  over MiB  re-renders  recomposites"
+    );
+
+    for visible_count in [2usize, 3] {
+        for zoom in [2.0f32, 4.0, 5.0, 6.0, 8.0] {
+            let visible: Vec<usize> = (0..visible_count).collect();
+            let tiles_per_page = {
+                let (w, h) = page_size(zoom);
+                (w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)) as u64
+            };
+
+            let mut store = TileStore::new();
+            frame(&mut store, &visible, zoom);
+
+            let mut rerendered = 0;
+            for _ in 0..5 {
+                rerendered += frame(&mut store, &visible, zoom);
+            }
+            let recomposited: u64 = visible
+                .iter()
+                .map(|&index| {
+                    store
+                        .get(index, zoom)
+                        .expect("visible and pinned")
+                        .composites()
+                        - tiles_per_page
+                })
+                .sum();
+
+            let mib = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+            println!(
+                "{visible_count:6}  {zoom:4.0}  {:8.1}  {:11.1}  {:10.1}  {:8.1}  {rerendered:10}  {recomposited:12}",
+                mib(page_bytes(zoom)),
+                mib(visible_count * page_bytes(zoom)),
+                mib(TileStore::DEFAULT_BUDGET_BYTES),
+                mib(store.over_budget()),
+            );
+
+            // Whether or not the visible set fits, nothing on screen may be
+            // rendered or composited twice. What varies is the overage.
+            assert_eq!(
+                rerendered, 0,
+                "{visible_count} pages at {zoom}x re-rendered"
+            );
+            assert_eq!(
+                recomposited, 0,
+                "{visible_count} pages at {zoom}x recomposited"
+            );
+            let fits = visible_count * page_bytes(zoom) <= TileStore::DEFAULT_BUDGET_BYTES;
+            assert_eq!(
+                store.over_budget() == 0,
+                fits,
+                "{visible_count} pages at {zoom}x: overage does not match what fits"
+            );
+        }
+    }
 }
 
 #[test]

@@ -63,7 +63,7 @@ pub enum OverlayError {
     NotFinite { x: f32, y: f32 },
     /// A stroke width is NaN, infinite, or not positive.
     InvalidWidth { width: f32 },
-    /// A highlight quad has no extent in x or in y, so it paints nothing.
+    /// A highlight quad encloses no area, so it paints nothing.
     EmptyQuad,
 }
 
@@ -77,7 +77,7 @@ impl fmt::Display for OverlayError {
             Self::InvalidWidth { width } => {
                 write!(f, "stroke width {width} is not a positive finite number")
             }
-            Self::EmptyQuad => write!(f, "a highlight quad with no width or height paints nothing"),
+            Self::EmptyQuad => write!(f, "a highlight quad enclosing no area paints nothing"),
         }
     }
 }
@@ -113,12 +113,12 @@ impl Overlay {
             }
         }
 
-        // Checked after finiteness, so the bounds it reads are real. A
+        // Checked after finiteness, so the corners it reads are real. A
         // collapsed quad is what a selection of zero characters produces, and
-        // keeping it would re-draw an empty path on every composite.
-        if let Self::Highlight { .. } = self {
-            let b = self.bounds();
-            if b.min_x == b.max_x || b.min_y == b.max_y {
+        // a degenerate one is what a bad coordinate mapping produces; keeping
+        // either re-fills a path that covers nothing on every composite.
+        if let Self::Highlight { corners, .. } = self {
+            if quad_area(corners) == 0.0 {
                 return Err(OverlayError::EmptyQuad);
             }
         }
@@ -204,6 +204,21 @@ pub(crate) fn draw<'a>(
             }
         }
     }
+}
+
+/// Twice the signed area of the quad, walked in the order [`draw`] fills it:
+/// `/QuadPoints` gives UL, UR, LL, LR, so the perimeter is 0, 1, 3, 2. Zero
+/// for anything that encloses nothing, a collapsed quad and a bow tie of
+/// collinear corners alike.
+fn quad_area(corners: &[(f32, f32); 4]) -> f32 {
+    let perimeter = [corners[0], corners[1], corners[3], corners[2]];
+    let mut sum = 0.0;
+    for i in 0..4 {
+        let (x0, y0) = perimeter[i];
+        let (x1, y1) = perimeter[(i + 1) % 4];
+        sum += x0 * y1 - x1 * y0;
+    }
+    sum.abs()
 }
 
 fn paint(color: Rgba) -> Paint<'static> {

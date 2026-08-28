@@ -218,6 +218,20 @@ fn a_degenerate_overlay_is_refused_and_never_reaches_a_composite() {
             highlight(300.0, 300.0, 100.0, 0.0),
             OverlayError::EmptyQuad,
         ),
+        (
+            // Collinear corners: a quad with a real bounding box and no area,
+            // which is what a broken coordinate mapping produces.
+            Overlay::Highlight {
+                corners: [
+                    (300.0, 300.0),
+                    (400.0, 340.0),
+                    (300.0, 300.0),
+                    (400.0, 340.0),
+                ],
+                color: YELLOW,
+            },
+            OverlayError::EmptyQuad,
+        ),
     ];
 
     for (overlay, expected) in refused {

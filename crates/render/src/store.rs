@@ -7,10 +7,11 @@
 //! store keeps the caches in least-recently-used order and, on every access,
 //! evicts back to a byte budget.
 //!
-//! Two things it deliberately does not do. It never drops the entry the caller
-//! just asked for, which is the one about to be painted. And eviction never
-//! invalidates anything already handed out: a tile is an `Arc`, so a frame
-//! holding one keeps it alive whatever the store does.
+//! Three things it deliberately does not do. It never drops the entry the
+//! caller just asked for, nor any page the caller declared visible through
+//! [`TileStore::begin_frame`]. And eviction never invalidates anything already
+//! handed out: a tile is an `Arc`, so a frame holding one keeps it alive
+//! whatever the store does.
 
 use crate::base::BaseRaster;
 use crate::tile::{TileCache, TILE_BYTES};
@@ -20,9 +21,15 @@ const VIEWPORT_TILES: usize = 15 * 9;
 /// What one screenful costs: its composited tiles, plus the base rasters under
 /// them, which the M1 spike measured at about the same again.
 const VIEWPORT_BYTES: usize = 2 * VIEWPORT_TILES * TILE_BYTES;
-/// The visible screen plus a screen of scroll slack above and below, so a
-/// continuous scroll evicts pages it has left rather than pages it is still
-/// painting.
+/// The visible screen plus a screen of scroll slack above and below.
+///
+/// What that buys depends entirely on zoom, because a cache is sized by the
+/// page's pixels and not by the screen's. Measured for US Letter: about twelve
+/// pages at 2x, four at 4x, two at 5x, one at 7x, and not even one at 8x,
+/// where a single page needs 255 MiB against this 202 MiB. The visible set is
+/// exempt from eviction for exactly that reason - above 5x the budget cannot
+/// hold a two-page spread, and without the exemption the pages on screen would
+/// be the ones evicted.
 const VIEWPORTS_RESIDENT: usize = 3;
 
 /// One page at one zoom. Zoom is keyed by its bits because a cache is only
@@ -56,6 +63,8 @@ pub struct TileStore {
     budget: usize,
     /// Least recently used first, most recently used last.
     entries: Vec<Entry>,
+    /// The pages the current frame paints, which eviction may not take.
+    pinned: Vec<Key>,
 }
 
 impl TileStore {
@@ -74,6 +83,7 @@ impl TileStore {
         Self {
             budget: bytes,
             entries: Vec::new(),
+            pinned: Vec::new(),
         }
     }
 
@@ -81,12 +91,36 @@ impl TileStore {
         self.budget
     }
 
-    /// Bytes held by every cache in the store.
+    /// Declare the pages this frame paints. They are exempt from eviction
+    /// until the next call, tiles and base raster both.
     ///
-    /// Above the budget only in the two cases [`Self::evict_to_budget`]
-    /// documents: between accesses, while the page the caller is holding
-    /// composites its tiles, and for as long as a single page is larger than
-    /// the whole budget.
+    /// Without this the store protects only the page most recently asked for,
+    /// which is enough while the visible set fits the budget and wrong as soon
+    /// as it does not: at 6x a two-page spread needs 276 MiB against a 202 MiB
+    /// budget, and fetching the second page would evict the first, every
+    /// frame, forever.
+    ///
+    /// When the visible set alone is over budget the store stops evicting and
+    /// stays over rather than thrashing. [`Self::over_budget`] reports by how
+    /// much, so a caller that cares can lower the zoom or narrow the spread;
+    /// nothing here silently drops what the frame is painting.
+    pub fn begin_frame(&mut self, visible: &[(usize, f32)]) {
+        self.pinned.clear();
+        self.pinned
+            .extend(visible.iter().map(|&(page, zoom)| Key::new(page, zoom)));
+        self.evict_to_budget();
+    }
+
+    /// Bytes the store is over its budget by, zero when it fits.
+    ///
+    /// Non-zero only while the visible set demands it, or momentarily while
+    /// the page a caller is holding composites its tiles.
+    pub fn over_budget(&self) -> usize {
+        self.resident_bytes().saturating_sub(self.budget)
+    }
+
+    /// Bytes held by every cache in the store. See [`Self::over_budget`] for
+    /// when this is allowed to exceed the budget.
     pub fn resident_bytes(&self) -> usize {
         self.entries
             .iter()
@@ -139,6 +173,7 @@ impl TileStore {
     /// predates the change and none of them would be rebuilt otherwise.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.pinned.clear();
     }
 
     fn position(&self, key: Key) -> Option<usize> {
@@ -150,36 +185,38 @@ impl TileStore {
         self.entries.push(entry);
     }
 
-    /// Evict until the store fits its budget, oldest page first and, within
-    /// that page, its composited tiles before its base raster.
+    /// Evict until the store fits its budget, oldest evictable page first and,
+    /// within that page, its composited tiles before its base raster.
     ///
     /// Recency outranks rebuild cost. Ranking the other way round - every
     /// other page's tiles before any page's base raster, because a tile costs
     /// ~0.1 ms and a base raster an interpreter run - makes a page one frame
-    /// old pay for a page the user scrolled past minutes ago, and at a zoom
-    /// where two pages do not fit it recomposites a visible page's whole grid
-    /// on every frame.
+    /// old pay for a page the user scrolled past minutes ago.
     ///
-    /// The most recently used entry is never evicted: it is the page the
-    /// caller just asked for and is about to paint. A single page can
-    /// therefore exceed the budget on its own at the zoom that was requested;
-    /// the budget bounds what the store keeps around, not what a caller
-    /// demands right now.
+    /// Off limits: the page the caller just asked for, and everything
+    /// [`Self::begin_frame`] declared visible. When only those are left the
+    /// loop stops with the store over budget, which is the one state it
+    /// reports rather than resolves.
     fn evict_to_budget(&mut self) {
         loop {
             let over = self.over_budget();
-            if over == 0 || self.entries.len() < 2 {
+            if over == 0 {
                 return;
             }
-            if self.entries[0].cache.evict_tiles(over) < over {
-                self.entries.remove(0);
+            let Some(at) = self.oldest_evictable() else {
+                return;
+            };
+            if self.entries[at].cache.evict_tiles(over) < over {
+                self.entries.remove(at);
             }
         }
     }
 
-    /// Bytes the store is over its budget by.
-    fn over_budget(&self) -> usize {
-        self.resident_bytes().saturating_sub(self.budget)
+    /// The oldest entry eviction is allowed to take: neither pinned by the
+    /// current frame nor the one just handed to the caller.
+    fn oldest_evictable(&self) -> Option<usize> {
+        let last = self.entries.len().checked_sub(1)?;
+        (0..last).find(|&at| !self.pinned.contains(&self.entries[at].key))
     }
 }
 
