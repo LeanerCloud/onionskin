@@ -48,9 +48,10 @@ pub enum Error {
     DepthExceeded {
         detail: String,
     },
-    /// A page index the page tree does not reach. `count` is how many pages the
-    /// walk actually found, which is the page tree's own answer rather than the
-    /// `/Count` the root claims.
+    /// A page index the page tree does not reach. `count` is how far the walk
+    /// got: leaves it reached, plus the declared size of any subtree it skipped
+    /// by `/Count` on the way. It is what the tree yields, which a root
+    /// `/Count` that lies about it does not change.
     NoSuchPage {
         index: usize,
         count: usize,

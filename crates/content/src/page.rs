@@ -49,7 +49,7 @@ impl Page {
 
 /// Loads page `index`, parsing only the tree nodes on the path to it.
 pub fn page(doc: &Document, index: PageIndex) -> Result<Page> {
-    Ok(from_node(doc.page(index)?))
+    Ok(from_node(index, doc.page(index)?))
 }
 
 /// Number of pages, taken from the page tree root's `/Count`.
@@ -62,9 +62,9 @@ pub fn page_count(doc: &Document) -> Result<usize> {
 /// undefined; every reader picks a default and this is the one they pick.
 const US_LETTER: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
 
-fn from_node(node: PageNode) -> Page {
+fn from_node(index: PageIndex, node: PageNode) -> Page {
     Page {
-        index: node.index,
+        index,
         objref: node.objref,
         resources: node.resources.unwrap_or_default(),
         media_box: node.media_box.map_or(US_LETTER, lower_left_first),

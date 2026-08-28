@@ -25,6 +25,15 @@ use crate::xref::{self, Xref, XrefEntry};
 const TAIL_WINDOW: usize = 2048;
 /// Depth limit for `/Length` chains and page-tree descent.
 const MAX_INDIRECTION: usize = 64;
+/// Nodes one page-tree descent may visit.
+///
+/// It only binds when `/Count` is unusable, because a tree whose counts are
+/// good is walked in a handful of nodes however many pages it has. Without them
+/// the walk degrades to a scan of every leaf before the target, so the budget
+/// has to clear the largest documents anyone ships, which run to six figures of
+/// pages. It is a separate bound from `MAX_INDIRECTION` because depth does not
+/// limit breadth: see the note in `descend_pages`.
+const MAX_PAGE_TREE_NODES: usize = 200_000;
 /// How much of the original a save copies at a time. The copy loop is what
 /// this bounds, and it is the part that scales with the file: a 4 GB document
 /// copies through in the same memory a 4 KB one does. The section a save
@@ -67,14 +76,15 @@ struct Inherited {
 }
 
 /// The mutable state of one page-tree descent: which page is wanted, how many
-/// leaves have gone by, and the nodes on the current path. `seen` is a path
-/// set rather than a visited set - a node is removed on the way back out - so
-/// a tree that legitimately shares a node between two branches still walks,
-/// while a cycle terminates.
+/// leaves have gone by, the nodes on the current path, and what is left of the
+/// visit budget. `seen` is a path set rather than a visited set - a node is
+/// removed on the way back out - so a tree that legitimately shares a node
+/// between two branches still walks, while a cycle terminates.
 struct PageWalk {
     target: usize,
     found: usize,
     seen: BTreeSet<u32>,
+    budget: usize,
 }
 
 pub struct Document {
@@ -562,12 +572,12 @@ impl Document {
     /// Consumers: `onionskin-content`'s page loader, the viewer's page model,
     /// and the navigation-pane readers above it.
     ///
-    /// `/Count` lets whole subtrees be skipped without parsing them, so a
-    /// thousand-page document costs a handful of nodes rather than a thousand.
-    /// It is trusted only when it is a plausible non-negative number on a node
-    /// that has `/Kids`: a lie there would silently renumber every later page,
-    /// so the walk falls through to a real descent whenever `/Count` is absent
-    /// or nonsensical.
+    /// `/Count` lets a whole subtree be skipped after parsing only its root, so
+    /// a thousand-page document costs a handful of nodes rather than a
+    /// thousand. It is trusted only when it is a plausible non-negative number
+    /// on a node that has `/Kids`: a lie there would silently renumber every
+    /// later page, so the walk falls through to a real descent whenever
+    /// `/Count` is absent or nonsensical.
     pub fn page(&self, index: usize) -> Result<PageNode> {
         let catalog = self.catalog()?;
         let root = catalog
@@ -581,6 +591,7 @@ impl Document {
             target: index,
             found: 0,
             seen: BTreeSet::new(),
+            budget: MAX_PAGE_TREE_NODES,
         };
         match self.descend_pages(root, &Inherited::default(), &mut walk, 0)? {
             Some(page) => Ok(page),
@@ -598,6 +609,16 @@ impl Document {
         walk: &mut PageWalk,
         depth: usize,
     ) -> Result<Option<PageNode>> {
+        // The depth cap alone does not bound the work. `seen` is a path set, so
+        // a node listed twice under the same parent is descended twice, and a
+        // tree of such nodes costs 2^depth visits while never repeating a node
+        // on any one path. The budget is what makes that terminate.
+        let Some(remaining) = walk.budget.checked_sub(1) else {
+            return Err(Error::DepthExceeded {
+                detail: format!("page tree visits more than {MAX_PAGE_TREE_NODES} nodes"),
+            });
+        };
+        walk.budget = remaining;
         if depth >= MAX_INDIRECTION || !walk.seen.insert(node.number) {
             return Ok(None);
         }
@@ -633,7 +654,6 @@ impl Document {
                     return Ok(None);
                 }
                 return Ok(Some(PageNode {
-                    index,
                     objref: parsed.objref,
                     dict,
                     resources: inherited.resources,
@@ -680,8 +700,8 @@ impl Document {
     }
 
     /// A rectangle entry, if it is four finite numbers enclosing a positive
-    /// area. Returned in the file's own coordinate order; the test is done on
-    /// the ordered copy. A box that fails the test is not a box, and must not
+    /// area. Returned in the file's own coordinate order; only the area test
+    /// needs the ordered copy. A box that fails is not a box, and must not
     /// shadow the one an ancestor gave.
     fn rectangle(&self, dict: &Dict, key: &[u8]) -> Option<[f64; 4]> {
         let Some(Object::Array(items)) = self.resolved(dict, key) else {
@@ -694,16 +714,12 @@ impl Document {
         for (slot, item) in v.iter_mut().zip(items.iter()) {
             *slot = as_number(&self.resolve(item).ok()?)?;
         }
-        let ordered = [
-            v[0].min(v[2]),
-            v[1].min(v[3]),
-            v[0].max(v[2]),
-            v[1].max(v[3]),
-        ];
-        if !ordered.iter().all(|n| n.is_finite())
-            || ordered[2] <= ordered[0]
-            || ordered[3] <= ordered[1]
-        {
+        // Finiteness is tested on the values themselves: `min` and `max` drop
+        // NaN, so an ordered copy would hide one.
+        if !v.iter().all(|n| n.is_finite()) {
+            return None;
+        }
+        if v[0].max(v[2]) <= v[0].min(v[2]) || v[1].max(v[3]) <= v[1].min(v[3]) {
             return None;
         }
         Some(v)

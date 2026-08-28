@@ -269,19 +269,22 @@ impl Object {
 /// ISO 32000-2 7.7.3.4 makes inheritable already resolved against the page's
 /// ancestors.
 ///
-/// Structural only. Nothing here is normalised or defaulted: an attribute the
-/// page and its ancestors never gave is `None` rather than a substituted
-/// value, so a caller can tell "the file says nothing" from "the file says
-/// US Letter". The rectangles keep the coordinate order the file wrote, which
-/// is not necessarily lower-left first; they are present only when the entry
-/// resolved to four finite numbers enclosing a positive area, because a
-/// rectangle that fails that test is not a rectangle and must not shadow an
-/// ancestor's. Turning any of this into a page's geometry is
-/// `onionskin-content`'s job.
+/// Structural only, with one deliberate exception. Nothing here is normalised
+/// or defaulted: an attribute the page and its ancestors never gave is `None`
+/// rather than a substituted value, so a caller can tell "the file says
+/// nothing" from "the file says US Letter", and the rectangles keep the
+/// coordinate order the file wrote, which is not necessarily lower-left first.
+/// Turning any of that into a page's geometry is `onionskin-content`'s job.
+///
+/// The exception is the one policy call the inheritance rule cannot avoid: a
+/// rectangle entry counts only when it resolves to four finite numbers
+/// enclosing a positive area. A `/MediaBox [0 0 0 0]` is not a smaller page,
+/// it is a producer bug, and treating it as a value would shadow the usable
+/// one an ancestor gave. The cost is that a caller cannot see that the page
+/// declared a degenerate box at all; only that the effective one came from
+/// higher up.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PageNode {
-    /// The page's zero-based position in document order.
-    pub index: usize,
     pub objref: ObjRef,
     pub dict: Dict,
     pub resources: Option<Dict>,

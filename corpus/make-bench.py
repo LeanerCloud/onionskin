@@ -5,9 +5,10 @@ The corpus holds no real 1000-page file, and the budgets in decision 11 are
 about a document that size. Three properties make this one able to measure
 them:
 
-  * **A balanced page tree**, branching by ten, so reaching page 500 walks four
-    nodes rather than one thousand. A flat tree would make the lazy-open bench
-    measure the cross-reference and nothing else.
+  * **A balanced page tree**, branching by ten, so reaching page 500 parses a
+    handful of nodes rather than one thousand: the four on the path, plus the
+    siblings whose /Count is read to skip them. A flat tree would make the
+    lazy-open bench measure the cross-reference and nothing else.
   * **Per-page varied text**, drawn from a fixed vocabulary by a seeded
     generator, so a renderer cannot cache its way out of page 999 after having
     drawn page 1.

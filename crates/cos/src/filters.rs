@@ -16,11 +16,6 @@ use std::io::{Read, Write};
 use crate::error::{Error, Result};
 use crate::object::{Dict, Object};
 
-/// Ceiling on one decoded stream. Larger than any real page description or
-/// cross-reference table, and small enough that a decompression bomb is an
-/// error rather than the machine.
-const MAX_DECODED: u64 = 128 * 1024 * 1024;
-
 /// What a decode does with a payload that does not decode all the way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Damaged {
@@ -32,6 +27,22 @@ pub(crate) enum Damaged {
     /// `/Length` is common, its first operators are still the page's real
     /// text, and refusing would cost the whole page to save nothing.
     Salvage,
+}
+
+impl Damaged {
+    /// Ceiling on one decoded stream, past which a decompression bomb is an
+    /// error rather than the machine.
+    ///
+    /// The two callers decode different things, so they get different room. A
+    /// cross-reference stream covering ten million objects is tens of
+    /// megabytes and legitimate; a page description, a font program or a CMap
+    /// is orders of magnitude smaller than either figure.
+    fn ceiling(self) -> u64 {
+        match self {
+            Damaged::Refuse => 256 * 1024 * 1024,
+            Damaged::Salvage => 128 * 1024 * 1024,
+        }
+    }
 }
 
 /// Decodes a stream's raw bytes through its `/Filter` chain.
@@ -55,7 +66,7 @@ pub(crate) fn decode(
         data = match name.as_str() {
             "FlateDecode" | "Fl" => {
                 let flat = inflate(&data, damaged)?;
-                apply_predictor(flat, parm.as_ref(), resolve, damaged)?
+                apply_predictor(flat, "FlateDecode", parm.as_ref(), resolve, damaged)?
             }
             "LZWDecode" | "LZW" => {
                 let early = parm
@@ -64,14 +75,32 @@ pub(crate) fn decode(
                     .and_then(Object::as_integer)
                     .unwrap_or(1);
                 let flat = lzw(&data, early != 0, damaged)?;
-                apply_predictor(flat, parm.as_ref(), resolve, damaged)?
+                apply_predictor(flat, "LZWDecode", parm.as_ref(), resolve, damaged)?
             }
             "ASCIIHexDecode" | "AHx" => ascii_hex_decode(&data)?,
             "ASCII85Decode" | "A85" => ascii85_decode(&data, damaged)?,
-            "RunLengthDecode" | "RL" => run_length_decode(&data)?,
-            // Identity /Crypt is a no-op marker; a named crypt filter needs the
-            // encryption handler this build refuses documents for anyway.
-            "Crypt" => data,
+            "RunLengthDecode" | "RL" => run_length_decode(&data, damaged)?,
+            // Identity /Crypt is a no-op marker and the default when
+            // `/DecodeParms /Name` is absent. A named handler is real
+            // encryption, which this build refuses at the trailer, so reaching
+            // one here means the bytes are ciphertext and passing them through
+            // would hand the caller garbage it could not tell from a page.
+            "Crypt" => {
+                let named = parm
+                    .as_ref()
+                    .and_then(|p| p.get(b"Name"))
+                    .and_then(Object::as_name)
+                    .map(|n| n.as_bytes().to_vec());
+                match named.as_deref() {
+                    None | Some(b"Identity") => data,
+                    Some(other) => {
+                        return Err(Error::UnsupportedFilter(format!(
+                            "Crypt /{}",
+                            String::from_utf8_lossy(other)
+                        )))
+                    }
+                }
+            }
             other => return Err(Error::UnsupportedFilter(other.to_string())),
         };
     }
@@ -102,7 +131,7 @@ fn filter_names(dict: &Dict, resolve: &dyn Fn(&Object) -> Result<Object>) -> Res
             Object::Null => Ok(None),
             _ => Err(Error::Filter {
                 filter: "Filter".into(),
-                detail: "filter entry is neither a name nor an array".into(),
+                detail: "filter entry is not a name".into(),
             }),
         }
     };
@@ -174,7 +203,7 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
 
     let mut zlib = Vec::new();
     let zlib_err = flate2::read::ZlibDecoder::new(trimmed)
-        .take(MAX_DECODED)
+        .take(damaged.ceiling())
         .read_to_end(&mut zlib)
         .err();
     if zlib_err.is_none() && !zlib.is_empty() {
@@ -183,7 +212,7 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
 
     let mut raw = Vec::new();
     let raw_err = flate2::read::DeflateDecoder::new(trimmed)
-        .take(MAX_DECODED)
+        .take(damaged.ceiling())
         .read_to_end(&mut raw)
         .err();
     if raw_err.is_none() && !raw.is_empty() {
@@ -213,10 +242,11 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
 }
 
 fn bounded(data: Vec<u8>, damaged: Damaged) -> Result<Vec<u8>> {
-    if damaged == Damaged::Refuse && data.len() as u64 >= MAX_DECODED {
+    let ceiling = damaged.ceiling();
+    if damaged == Damaged::Refuse && data.len() as u64 >= ceiling {
         return Err(Error::Filter {
             filter: "FlateDecode".into(),
-            detail: format!("inflated past the {MAX_DECODED} byte ceiling"),
+            detail: format!("inflated past the {ceiling} byte ceiling"),
         });
     }
     Ok(data)
@@ -257,7 +287,7 @@ fn lzw(data: &[u8], early_change: bool, damaged: Damaged) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut sink = Bounded {
         out: &mut out,
-        limit: MAX_DECODED as usize,
+        limit: damaged.ceiling() as usize,
     };
     let result = decoder.into_stream(&mut sink).decode_all(data);
     if let Err(e) = result.status {
@@ -273,8 +303,12 @@ fn lzw(data: &[u8], early_change: bool, damaged: Damaged) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Undoes the `/DecodeParms` predictor a Flate or LZW stream was encoded with.
+/// `filter` is the filter the parameters belong to, so an error names the
+/// entry a reader would go looking for rather than the predictor step.
 fn apply_predictor(
     data: Vec<u8>,
+    filter: &str,
     parms: Option<&Dict>,
     resolve: &dyn Fn(&Object) -> Result<Object>,
     damaged: Damaged,
@@ -308,7 +342,7 @@ fn apply_predictor(
         .map(|bits| bits.div_ceil(8))
         .filter(|len| *len <= data.len())
         .ok_or_else(|| Error::Filter {
-            filter: "Predictor".into(),
+            filter: filter.into(),
             detail: format!(
                 "row of {colors}x{bpc}x{columns} does not fit {} bytes of data",
                 data.len()
@@ -316,7 +350,7 @@ fn apply_predictor(
         })?;
 
     if predictor == 2 {
-        return tiff_predictor(data, colors, bpc, columns, damaged);
+        return tiff_predictor(data, filter, colors, bpc, columns, damaged);
     }
 
     // PNG predictors: each row is prefixed with its filter type byte.
@@ -324,7 +358,7 @@ fn apply_predictor(
     if damaged == Damaged::Refuse {
         if data.len() < stride {
             return Err(Error::Filter {
-                filter: "Predictor".into(),
+                filter: filter.into(),
                 detail: format!(
                     "predictor {predictor} needs at least {stride} bytes, got {}",
                     data.len()
@@ -335,7 +369,7 @@ fn apply_predictor(
         // row, which for a cross-reference stream means a fabricated entry.
         if !data.len().is_multiple_of(stride) {
             return Err(Error::Filter {
-                filter: "Predictor".into(),
+                filter: filter.into(),
                 detail: format!(
                     "{} bytes is not a whole number of {stride} byte predictor rows",
                     data.len()
@@ -365,7 +399,7 @@ fn apply_predictor(
                 4 => row[i].wrapping_add(paeth(left, up, up_left)),
                 other => {
                     return Err(Error::Filter {
-                        filter: "Predictor".into(),
+                        filter: filter.into(),
                         detail: format!("unknown PNG predictor tag {other}"),
                     })
                 }
@@ -379,6 +413,7 @@ fn apply_predictor(
 
 fn tiff_predictor(
     mut data: Vec<u8>,
+    filter: &str,
     colors: usize,
     bpc: usize,
     columns: usize,
@@ -390,7 +425,7 @@ fn tiff_predictor(
         // bytes untouched beats guessing at the packing.
         return match damaged {
             Damaged::Refuse => Err(Error::Filter {
-                filter: "Predictor".into(),
+                filter: filter.into(),
                 detail: format!("TIFF predictor with {bpc} bits per component is not implemented"),
             }),
             Damaged::Salvage => Ok(data),
@@ -520,7 +555,8 @@ fn push_base85(out: &mut Vec<u8>, group: &[u8; 5], count: usize, damaged: Damage
     Ok(())
 }
 
-fn run_length_decode(data: &[u8]) -> Result<Vec<u8>> {
+fn run_length_decode(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
+    let ceiling = damaged.ceiling();
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < data.len() {
@@ -540,10 +576,10 @@ fn run_length_decode(data: &[u8]) -> Result<Vec<u8>> {
                 out.extend(std::iter::repeat_n(byte, 257 - usize::from(length)));
             }
         }
-        if out.len() as u64 > MAX_DECODED {
+        if out.len() as u64 > ceiling {
             return Err(Error::Filter {
                 filter: "RunLengthDecode".into(),
-                detail: format!("expanded past the {MAX_DECODED} byte ceiling"),
+                detail: format!("expanded past the {ceiling} byte ceiling"),
             });
         }
     }
@@ -662,7 +698,10 @@ mod tests {
     fn run_length_expands_both_run_kinds() {
         // 0x02 -> copy 3 literals; 0xFE -> repeat the next byte 3 times.
         let encoded = [2u8, b'a', b'b', b'c', 254, b'z', 128];
-        assert_eq!(run_length_decode(&encoded).unwrap(), b"abczzz");
+        assert_eq!(
+            run_length_decode(&encoded, Damaged::Salvage).unwrap(),
+            b"abczzz"
+        );
     }
 
     #[test]
@@ -689,8 +728,9 @@ mod tests {
     fn an_lzw_bomb_stops_at_the_ceiling() {
         // A few kilobytes of LZW expanding past the ceiling. The source is a
         // reader rather than a buffer, so only the output is ever allocated.
+        let ceiling = Damaged::Salvage.ceiling();
         let mut compressed = Vec::new();
-        let source = std::io::BufReader::new(std::io::repeat(b'A').take(MAX_DECODED + 4096));
+        let source = std::io::BufReader::new(std::io::repeat(b'A').take(ceiling + 4096));
         weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
             .into_stream(&mut compressed)
             .encode_all(source)
@@ -700,16 +740,58 @@ mod tests {
 
         let out = lzw(&compressed, true, Damaged::Salvage).unwrap();
         assert!(
-            out.len() as u64 <= MAX_DECODED,
-            "LZW expanded to {} bytes, past the {MAX_DECODED} byte ceiling",
+            out.len() as u64 <= ceiling,
+            "LZW expanded to {} bytes, past the {ceiling} byte ceiling",
             out.len()
         );
+    }
+
+    /// The `Damaged` split again, on LZW: the decoder stops mid-stream, and
+    /// what that means depends on who is asking.
+    #[test]
+    fn a_truncated_lzw_stream_is_refused_structurally_and_salvaged_for_content() {
+        let source = b"BT /F1 12 Tf (the page's real text) Tj ET\n".repeat(50);
+        let mut compressed = Vec::new();
+        weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+            .into_stream(&mut compressed)
+            .encode_all(&source[..])
+            .status
+            .expect("the fixture encodes");
+        let cut = &compressed[..compressed.len() * 3 / 4];
+
+        let salvaged = lzw(cut, true, Damaged::Salvage).expect("the prefix decodes");
+        assert!(salvaged.starts_with(b"BT /F1 12 Tf (the page's real text)"));
+        assert!(
+            salvaged.len() < source.len(),
+            "the whole stream cannot decode"
+        );
         assert_eq!(
-            lzw(&compressed, true, Damaged::Refuse)
+            lzw(cut, true, Damaged::Refuse)
+                .map(|out| out.len())
                 .unwrap_err()
                 .category(),
             "filter-failed"
         );
+    }
+
+    /// `/Crypt` names the identity handler by default, which is a marker to
+    /// step over. A named handler means the bytes are ciphertext, and handing
+    /// those back as a decoded stream would be indistinguishable from a page.
+    #[test]
+    fn an_identity_crypt_filter_passes_through_and_a_named_one_does_not() {
+        let dict = filter_dict("Crypt");
+        assert_eq!(
+            decode(&dict, b"already plain", &identity, Damaged::Salvage).unwrap(),
+            b"already plain"
+        );
+
+        let mut named = Dict::new();
+        named.set("Name", Object::name("StdCF"));
+        let mut dict = filter_dict("Crypt");
+        dict.set("DecodeParms", Object::Dict(named));
+        let err = decode(&dict, b"ciphertext", &identity, Damaged::Salvage).unwrap_err();
+        assert_eq!(err.category(), "unsupported-filter");
+        assert!(err.to_string().contains("StdCF"), "{err}");
     }
 
     #[test]
@@ -730,7 +812,7 @@ mod tests {
         match err {
             Error::Filter { filter, detail } => {
                 assert_eq!(filter, "Filter");
-                assert!(detail.contains("neither a name nor an array"), "{detail}");
+                assert!(detail.contains("is not a name"), "{detail}");
             }
             other => panic!("expected a filter error, got {other:?}"),
         }
