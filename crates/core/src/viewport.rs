@@ -158,8 +158,12 @@ impl Viewport {
     }
 
     pub fn measure_page(&mut self, geometry: PageGeometry) -> Result<(), ViewportError> {
+        let page = geometry.index;
         let anchor = self.anchor_for_current_page().ok();
         self.layout.measure_page(geometry)?;
+        if page != 0 && self.layout.geometry(0).is_none() {
+            return Ok(());
+        }
         match self.zoom_policy {
             ZoomPolicy::Fit(mode) => self.apply_fit(mode)?,
             ZoomPolicy::Fixed => {
@@ -282,7 +286,10 @@ impl Viewport {
         if delta_y == 0.0 {
             return Ok(());
         }
-        self.zoom_at(2.0_f32.powf(delta_y / SCROLL_ZOOM_PIXELS_PER_DOUBLING), at)
+        let exponent = delta_y / SCROLL_ZOOM_PIXELS_PER_DOUBLING;
+        let minimum = (MIN_ZOOM / self.zoom).log2();
+        let maximum = (MAX_ZOOM / self.zoom).log2();
+        self.zoom_at(2.0_f32.powf(exponent.clamp(minimum, maximum)), at)
     }
 
     pub fn go_to_page(

@@ -215,6 +215,11 @@ fn dynamic_zoom_uses_the_scroll_formula_and_rejects_non_finite_deltas() {
     assert!((viewport.zoom() - before_zoom * 2.0).abs() < 1e-4);
     assert_point_close(render_point(&viewport, 0, anchor), before_point);
     assert!(viewport.dynamic_zoom(f32::NAN, anchor).is_err());
+
+    viewport.dynamic_zoom(f32::MAX, anchor).unwrap();
+    assert_eq!(viewport.zoom(), 32.0);
+    viewport.dynamic_zoom(f32::MIN, anchor).unwrap();
+    assert_eq!(viewport.zoom(), 0.05);
 }
 
 #[test]
@@ -313,6 +318,21 @@ fn an_unmeasured_later_page_can_be_rotated_without_loading_it() {
         .unwrap()
         .iter()
         .any(|page| page.page == 899 && !page.measured));
+}
+
+#[test]
+fn a_sparse_measurement_before_page_zero_is_retained() {
+    let mut viewport = Viewport::new(2, VIEWPORT, 12.0).unwrap();
+
+    viewport.measure_page(geometry(1, 700.0, 900.0)).unwrap();
+    viewport.measure_page(geometry(0, 850.0, 1_100.0)).unwrap();
+    viewport.go_to_page(1, PageAlignment::Start).unwrap();
+
+    assert!(viewport
+        .visible_pages()
+        .unwrap()
+        .iter()
+        .any(|page| page.page == 1 && page.measured));
 }
 
 #[test]
@@ -543,6 +563,26 @@ fn restoring_fit_visible_revalidates_the_target_document() {
         ),
         Err(LayoutError::RectOutsidePage { page: 0 })
     ));
+}
+
+#[test]
+fn restore_preserves_a_reachable_anchor_offset_outside_scroll_clamps() {
+    let mut source = viewport(1);
+    source.fit(FitMode::Page).unwrap();
+    let anchor = page(&source, 0).origin;
+    source.zoom_at(2.0, anchor).unwrap();
+    let state = source.snapshot();
+    assert!(state.offset.x < 0.0);
+
+    let mut restored = viewport(1);
+    restored.restore(state).unwrap();
+
+    assert_eq!(restored.snapshot(), state);
+    assert!(restored
+        .visible_pages()
+        .unwrap()
+        .iter()
+        .any(|page| page.page == state.current_page));
 }
 
 fn center() -> ViewPoint {
