@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -16,8 +16,10 @@ use gpui::{
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList};
+use self::chrome::ShellFrame;
 
 pub mod canvas;
+mod chrome;
 pub mod input;
 
 const WINDOW_WIDTH: f32 = 1100.0;
@@ -27,7 +29,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Debug)]
 pub enum ShellError {
-    Open(onionskin_core::Error),
+    NoDocuments,
+    Open {
+        path: PathBuf,
+        source: onionskin_core::Error,
+    },
     Canvas(CanvasError),
     Window(String),
 }
@@ -35,7 +41,10 @@ pub enum ShellError {
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Open(error) => write!(f, "cannot open PDF: {error}"),
+            Self::NoDocuments => write!(f, "cannot open a window without a PDF path"),
+            Self::Open { path, source } => {
+                write!(f, "cannot open PDF {}: {source}", path.display())
+            }
             Self::Canvas(error) => write!(f, "cannot start canvas: {error}"),
             Self::Window(error) => write!(f, "cannot create window: {error}"),
         }
@@ -45,9 +54,9 @@ impl fmt::Display for ShellError {
 impl std::error::Error for ShellError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Open(error) => Some(error),
+            Self::Open { source, .. } => Some(source),
             Self::Canvas(error) => Some(error),
-            Self::Window(_) => None,
+            Self::NoDocuments | Self::Window(_) => None,
         }
     }
 }
@@ -315,20 +324,23 @@ impl Render for Canvas {
     }
 }
 
-pub fn run(path: impl AsRef<Path>) -> Result<(), ShellError> {
-    let document = Document::open_path(path.as_ref()).map_err(ShellError::Open)?;
-    let model = CanvasModel::new(
-        document,
-        crate::build_registry(),
-        ViewSize {
-            width: WINDOW_WIDTH,
-            height: WINDOW_HEIGHT,
-        },
-    )?;
+pub fn run<I, P>(paths: I) -> Result<(), ShellError>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let prepared = prepare_tabs(paths)?;
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 
     Application::new().run(move |cx: &mut App| {
+        cx.on_window_closed(|cx| {
+            if should_quit_after_window_closed(cx.windows().len()) {
+                cx.quit();
+            }
+        })
+        .detach();
+
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         let result = cx.open_window(
             WindowOptions {
@@ -339,7 +351,13 @@ pub fn run(path: impl AsRef<Path>) -> Result<(), ShellError> {
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_cx| Canvas::new(model)),
+            |_window, cx| {
+                let tabs = prepared
+                    .into_iter()
+                    .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model))))
+                    .collect();
+                cx.new(|_cx| ShellFrame::new(tabs))
+            },
         );
         match result {
             Ok(_) => cx.activate(true),
@@ -355,6 +373,43 @@ pub fn run(path: impl AsRef<Path>) -> Result<(), ShellError> {
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+fn prepare_tabs<I, P>(paths: I) -> Result<Vec<(PathBuf, CanvasModel)>, ShellError>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(|path| path.as_ref().to_path_buf())
+        .collect();
+    if paths.is_empty() {
+        return Err(ShellError::NoDocuments);
+    }
+
+    paths
+        .into_iter()
+        .map(|path| {
+            let document = Document::open_path(&path).map_err(|source| ShellError::Open {
+                path: path.clone(),
+                source,
+            })?;
+            let model = CanvasModel::new(
+                document,
+                crate::build_registry(),
+                ViewSize {
+                    width: WINDOW_WIDTH,
+                    height: WINDOW_HEIGHT,
+                },
+            )?;
+            Ok((path, model))
+        })
+        .collect()
+}
+
+fn should_quit_after_window_closed(open_window_count: usize) -> bool {
+    open_window_count == 0
 }
 
 fn window_bounds(origin: Point<Pixels>, rect: ViewRect) -> Bounds<Pixels> {
@@ -375,5 +430,49 @@ fn status_text(status: &CanvasStatus) -> String {
             page: None,
             message,
         } => message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_real_seeds_prepare_as_two_document_tabs() {
+        let tabs = prepare_tabs([seed("hello.pdf"), seed("two-page.pdf")]).unwrap();
+
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].0.file_name().unwrap(), "hello.pdf");
+        assert_eq!(tabs[1].0.file_name().unwrap(), "two-page.pdf");
+    }
+
+    #[test]
+    fn an_invalid_path_fails_during_preparation() {
+        let missing = seed("missing.pdf");
+
+        assert!(matches!(
+            prepare_tabs([seed("hello.pdf"), missing.clone()]),
+            Err(ShellError::Open { path, .. }) if path == missing
+        ));
+    }
+
+    #[test]
+    fn empty_startup_is_rejected_explicitly() {
+        assert!(matches!(
+            prepare_tabs(Vec::<PathBuf>::new()),
+            Err(ShellError::NoDocuments)
+        ));
+    }
+
+    #[test]
+    fn closing_only_window_quits_but_closing_one_of_many_does_not() {
+        assert!(should_quit_after_window_closed(0));
+        assert!(!should_quit_after_window_closed(1));
+    }
+
+    fn seed(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/seeds")
+            .join(name)
     }
 }

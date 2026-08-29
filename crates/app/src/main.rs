@@ -1,5 +1,5 @@
 //! The Onionskin binary. Headless boot remains available in every build;
-//! enabling `shell` also accepts one PDF path and opens the viewer window.
+//! enabling `shell` also accepts one or more PDF paths and opens the viewer window.
 
 use std::process::ExitCode;
 
@@ -14,13 +14,15 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         #[cfg(feature = "shell")]
-        [path] if !path.starts_with('-') => match onionskin_app::shell::run(path) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("onionskin: {error}");
-                ExitCode::FAILURE
+        paths if !paths.is_empty() && paths.iter().all(|path| !path.starts_with('-')) => {
+            match onionskin_app::shell::run(paths) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("onionskin: {error}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         _ => {
             eprintln!("onionskin: usage: {}", usage());
             ExitCode::FAILURE
@@ -31,7 +33,7 @@ fn main() -> ExitCode {
 fn usage() -> &'static str {
     #[cfg(feature = "shell")]
     {
-        "onionskin --headless-boot | onionskin <pdf-path>"
+        "onionskin --headless-boot | onionskin <pdf-path> [<pdf-path> ...]"
     }
     #[cfg(not(feature = "shell"))]
     {
