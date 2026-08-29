@@ -1,5 +1,5 @@
-//! The Onionskin binary. M0 has no window: `--headless-boot` assembles
-//! the registry, prints what it holds and exits.
+//! The Onionskin binary. Headless boot remains available in every build;
+//! enabling `shell` also accepts one PDF path and opens the viewer window.
 
 use std::process::ExitCode;
 
@@ -13,11 +13,28 @@ fn main() -> ExitCode {
             println!("{}", onionskin_app::boot_summary(&registry));
             ExitCode::SUCCESS
         }
+        #[cfg(feature = "shell")]
+        [path] if !path.starts_with('-') => match onionskin_app::shell::run(path) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("onionskin: {error}");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
-            eprintln!(
-                "onionskin: the windowed shell lands in M1; usage: onionskin {HEADLESS_BOOT}"
-            );
+            eprintln!("onionskin: usage: {}", usage());
             ExitCode::FAILURE
         }
+    }
+}
+
+fn usage() -> &'static str {
+    #[cfg(feature = "shell")]
+    {
+        "onionskin --headless-boot | onionskin <pdf-path>"
+    }
+    #[cfg(not(feature = "shell"))]
+    {
+        "onionskin --headless-boot (windowed PDF opening requires --features shell)"
     }
 }

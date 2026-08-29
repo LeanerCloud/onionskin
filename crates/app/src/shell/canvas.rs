@@ -2,14 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Weak};
 
-use gpui::RenderImage;
+use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Document, FitMode, PageGeometryResponse, PageIndex, PagePlacement, RenderRequest,
     RenderResponse, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
-use onionskin_plugin_api::PluginRegistry;
+use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx};
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
+
+use super::input::{
+    pointer_input, validate_pressure, DragKind, DragUpdate, InputError, InputState,
+};
 
 const PAGE_GAP: f32 = 12.0;
 
@@ -19,6 +23,7 @@ pub enum CanvasError {
     GenerationExhausted,
     Core(onionskin_core::Error),
     Viewport(ViewportError),
+    Input(InputError),
     Render(onionskin_render::RenderError),
     InvalidImageBuffer {
         expected: usize,
@@ -39,6 +44,7 @@ impl fmt::Display for CanvasError {
             Self::GenerationExhausted => write!(f, "the render generation counter is exhausted"),
             Self::Core(error) => write!(f, "{error}"),
             Self::Viewport(error) => write!(f, "{error}"),
+            Self::Input(error) => write!(f, "{error}"),
             Self::Render(error) => write!(f, "{error}"),
             Self::InvalidImageBuffer { expected, actual } => {
                 write!(f, "tile image needs {expected} RGBA bytes, got {actual}")
@@ -61,6 +67,7 @@ impl std::error::Error for CanvasError {
         match self {
             Self::Core(error) => Some(error),
             Self::Viewport(error) => Some(error),
+            Self::Input(error) => Some(error),
             Self::Render(error) => Some(error),
             Self::EmptyDocument
             | Self::GenerationExhausted
@@ -79,6 +86,12 @@ impl From<onionskin_core::Error> for CanvasError {
 impl From<ViewportError> for CanvasError {
     fn from(error: ViewportError) -> Self {
         Self::Viewport(error)
+    }
+}
+
+impl From<InputError> for CanvasError {
+    fn from(error: InputError) -> Self {
+        Self::Input(error)
     }
 }
 
@@ -124,11 +137,19 @@ struct RenderSignature {
     zoom_bits: u32,
 }
 
+#[derive(Clone, Copy)]
+enum ToolPointerPhase {
+    Down,
+    Move,
+    Up,
+}
+
 pub struct CanvasModel {
     document: Document,
     viewport: Viewport,
     registry: PluginRegistry,
     active_tool: Option<usize>,
+    input: InputState,
     tiles: TileStore,
     sources: BTreeMap<PageIndex, BaseRaster>,
     geometry_requests: BTreeSet<PageIndex>,
@@ -161,6 +182,7 @@ impl CanvasModel {
             viewport,
             registry,
             active_tool,
+            input: InputState::default(),
             tiles: TileStore::new(),
             sources: BTreeMap::new(),
             geometry_requests: BTreeSet::new(),
@@ -208,7 +230,9 @@ impl CanvasModel {
 
     pub fn resize(&mut self, origin: ViewPoint, size: ViewSize) -> Result<(), CanvasError> {
         self.canvas_origin = origin;
-        self.viewport.resize(size)?;
+        if self.viewport.size() != size {
+            self.viewport.resize(size)?;
+        }
         Ok(())
     }
 
@@ -224,6 +248,115 @@ impl CanvasModel {
 
     pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, CanvasError> {
         Ok(self.viewport.pinch(factor, at)?)
+    }
+
+    pub fn pointer_down(
+        &mut self,
+        position: Point<Pixels>,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+    ) -> Result<bool, CanvasError> {
+        validate_pressure(pressure)?;
+        if self.active_tool.is_none() {
+            self.input.begin_pan(window_point(position));
+            return Ok(true);
+        }
+
+        let Some(input) = self.map_pointer(position, pressure, modifiers)? else {
+            return Ok(false);
+        };
+        self.input.begin_tool();
+        self.dispatch_tool(ToolPointerPhase::Down, input);
+        Ok(true)
+    }
+
+    pub fn pointer_move(
+        &mut self,
+        position: Point<Pixels>,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+        left_button_pressed: bool,
+    ) -> Result<bool, CanvasError> {
+        let update = self
+            .input
+            .move_to(window_point(position), left_button_pressed);
+        if let Err(error) = validate_pressure(pressure) {
+            let cancelled_tool = matches!(update, Some(DragUpdate::CancelTool))
+                || matches!(self.input.cancel(), Some(DragUpdate::CancelTool));
+            if cancelled_tool {
+                self.cancel_active_tool();
+            }
+            return Err(error.into());
+        }
+        match update {
+            Some(DragUpdate::PanBy(delta)) => {
+                self.viewport.pan_by(delta)?;
+                Ok(true)
+            }
+            Some(DragUpdate::ToolMove) => {
+                let input = match self.map_pointer(position, pressure, modifiers) {
+                    Ok(Some(input)) => input,
+                    Ok(None) => {
+                        self.input.cancel();
+                        self.cancel_active_tool();
+                        return Ok(true);
+                    }
+                    Err(error) => {
+                        self.input.cancel();
+                        self.cancel_active_tool();
+                        return Err(error);
+                    }
+                };
+                self.dispatch_tool(ToolPointerPhase::Move, input);
+                Ok(true)
+            }
+            Some(DragUpdate::CancelTool) => {
+                self.cancel_active_tool();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub fn pointer_up(
+        &mut self,
+        position: Point<Pixels>,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+    ) -> Result<bool, CanvasError> {
+        let drag = self.input.end();
+        if let Err(error) = validate_pressure(pressure) {
+            if drag == Some(DragKind::Tool) {
+                self.cancel_active_tool();
+            }
+            return Err(error.into());
+        }
+        match drag {
+            Some(DragKind::Pan) => Ok(true),
+            Some(DragKind::Tool) => {
+                match self.map_pointer(position, pressure, modifiers) {
+                    Ok(Some(input)) => self.dispatch_tool(ToolPointerPhase::Up, input),
+                    Ok(None) => self.cancel_active_tool(),
+                    Err(error) => {
+                        self.cancel_active_tool();
+                        return Err(error);
+                    }
+                }
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub fn cancel_pointer_gesture(&mut self) -> bool {
+        match self.input.end() {
+            Some(DragKind::Tool) => {
+                self.cancel_active_tool();
+                true
+            }
+            Some(DragKind::Pan) => true,
+            None => false,
+        }
     }
 
     pub fn update(&mut self) -> Result<(), CanvasError> {
@@ -318,11 +451,16 @@ impl CanvasModel {
         Ok(paint)
     }
 
-    pub fn record_error(&mut self, error: impl fmt::Display) {
-        self.status = Some(CanvasStatus::Error {
+    pub fn record_error(&mut self, error: impl fmt::Display) -> bool {
+        let status = CanvasStatus::Error {
             page: None,
             message: error.to_string(),
-        });
+        };
+        if self.status.as_ref() == Some(&status) {
+            return false;
+        }
+        self.status = Some(status);
+        true
     }
 
     fn queue_visible_geometry(&mut self) -> Result<usize, CanvasError> {
@@ -489,6 +627,57 @@ impl CanvasModel {
             self.tiles.insert(page, source);
         }
         Ok(Some((source_zoom, size.0, size.1)))
+    }
+
+    fn map_pointer(
+        &self,
+        position: Point<Pixels>,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+    ) -> Result<Option<PointerInput>, CanvasError> {
+        Ok(pointer_input(
+            &self.viewport,
+            position,
+            point(px(self.canvas_origin.x), px(self.canvas_origin.y)),
+            pressure,
+            modifiers,
+        )?)
+    }
+
+    fn dispatch_tool(&mut self, phase: ToolPointerPhase, input: PointerInput) {
+        let index = self
+            .active_tool
+            .expect("tool dispatch requires an active tool");
+        let document = &mut self.document;
+        let tool = self
+            .registry
+            .tool_mut(index)
+            .expect("the active tool remains registered");
+        let mut context = ToolCtx { doc: document };
+        match phase {
+            ToolPointerPhase::Down => tool.on_pointer_down(&mut context, input),
+            ToolPointerPhase::Move => tool.on_pointer_move(&mut context, input),
+            ToolPointerPhase::Up => tool.on_pointer_up(&mut context, input),
+        }
+    }
+
+    fn cancel_active_tool(&mut self) {
+        let Some(index) = self.active_tool else {
+            return;
+        };
+        let document = &mut self.document;
+        let tool = self
+            .registry
+            .tool_mut(index)
+            .expect("the active tool remains registered");
+        tool.on_cancel(&mut ToolCtx { doc: document });
+    }
+}
+
+fn window_point(point: Point<Pixels>) -> ViewPoint {
+    ViewPoint {
+        x: f32::from(point.x),
+        y: f32::from(point.y),
     }
 }
 
@@ -752,8 +941,10 @@ fn rotation_code(rotation: ViewRotation) -> u8 {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode};
+    use onionskin_plugin_api::{ToolCtx, ToolPlugin};
     use onionskin_render::{InterpreterWarning, PageRender, RenderError};
 
     use super::*;
@@ -764,14 +955,69 @@ mod tests {
     };
 
     fn model() -> CanvasModel {
+        model_with_registry(PluginRegistry::new())
+    }
+
+    fn model_with_registry(registry: PluginRegistry) -> CanvasModel {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
         CanvasModel::new(
             Document::open_path(&path).expect("seed opens"),
-            PluginRegistry::new(),
+            registry,
             VIEWPORT,
         )
         .expect("canvas starts")
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum RecordedToolEvent {
+        Down(PointerInput),
+        Move(PointerInput),
+        Up(PointerInput),
+        Cancel,
+    }
+
+    struct RecordingTool {
+        events: Arc<Mutex<Vec<RecordedToolEvent>>>,
+    }
+
+    impl ToolPlugin for RecordingTool {
+        fn id(&self) -> &'static str {
+            "recording"
+        }
+
+        fn name(&self) -> &'static str {
+            "Recording"
+        }
+
+        fn icon(&self) -> &'static str {
+            "recording"
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, input: PointerInput) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(RecordedToolEvent::Down(input));
+        }
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, input: PointerInput) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(RecordedToolEvent::Move(input));
+        }
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, input: PointerInput) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(RecordedToolEvent::Up(input));
+        }
+
+        fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
+            self.events.lock().unwrap().push(RecordedToolEvent::Cancel);
+        }
     }
 
     fn prepare_request(model: &mut CanvasModel) -> RenderRequest {
@@ -806,6 +1052,144 @@ mod tests {
                 warnings: Vec::new(),
             },
         }
+    }
+
+    #[test]
+    fn the_default_active_tool_receives_page_space_pointer_input() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(RecordingTool {
+            events: Arc::clone(&events),
+        }));
+        let mut model = model_with_registry(registry);
+        let origin = ViewPoint { x: 50.0, y: 40.0 };
+        model.resize(origin, VIEWPORT).unwrap();
+        assert_eq!(model.active_tool(), Some(0));
+
+        let page = model.viewport().visible_pages().unwrap()[0].rect;
+        let local = [
+            ViewPoint {
+                x: page.origin.x + page.size.width * 0.4,
+                y: page.origin.y + page.size.height * 0.4,
+            },
+            ViewPoint {
+                x: page.origin.x + page.size.width * 0.5,
+                y: page.origin.y + page.size.height * 0.5,
+            },
+            ViewPoint {
+                x: page.origin.x + page.size.width * 0.6,
+                y: page.origin.y + page.size.height * 0.6,
+            },
+        ];
+        let positions = local.map(|at| point(px(at.x + origin.x), px(at.y + origin.y)));
+        let modifiers = [
+            GpuiModifiers {
+                shift: true,
+                ..Default::default()
+            },
+            GpuiModifiers {
+                alt: true,
+                ..Default::default()
+            },
+            GpuiModifiers {
+                platform: true,
+                ..Default::default()
+            },
+        ];
+        let pressures = [0.25, 0.5, 0.75];
+        let expected: [PointerInput; 3] = std::array::from_fn(|index| {
+            pointer_input(
+                model.viewport(),
+                positions[index],
+                point(px(origin.x), px(origin.y)),
+                pressures[index],
+                modifiers[index],
+            )
+            .unwrap()
+            .unwrap()
+        });
+
+        assert!(model
+            .pointer_down(positions[0], pressures[0], modifiers[0])
+            .unwrap());
+        assert!(model
+            .pointer_move(positions[1], pressures[1], modifiers[1], true)
+            .unwrap());
+        assert!(model
+            .pointer_up(positions[2], pressures[2], modifiers[2])
+            .unwrap());
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                RecordedToolEvent::Down(expected[0]),
+                RecordedToolEvent::Move(expected[1]),
+                RecordedToolEvent::Up(expected[2]),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaving_the_window_cancels_an_active_tool_gesture() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(RecordingTool {
+            events: Arc::clone(&events),
+        }));
+        let mut model = model_with_registry(registry);
+        let page = model.viewport().visible_pages().unwrap()[0].rect;
+        let position = point(
+            px(page.origin.x + page.size.width / 2.0),
+            px(page.origin.y + page.size.height / 2.0),
+        );
+
+        assert!(model
+            .pointer_down(position, 1.0, GpuiModifiers::default())
+            .unwrap());
+        assert!(model.cancel_pointer_gesture());
+        assert!(!model.cancel_pointer_gesture());
+
+        assert!(matches!(
+            events.lock().unwrap().as_slice(),
+            [RecordedToolEvent::Down(_), RecordedToolEvent::Cancel]
+        ));
+    }
+
+    #[test]
+    fn an_empty_registry_drag_pans_through_the_viewport() {
+        let mut model = model();
+        assert_eq!(model.active_tool(), None);
+        let before = model.viewport().offset();
+
+        assert!(model
+            .pointer_down(point(px(400.0), px(300.0)), 1.0, GpuiModifiers::default(),)
+            .unwrap());
+        assert!(model
+            .pointer_move(
+                point(px(400.0), px(400.0)),
+                1.0,
+                GpuiModifiers::default(),
+                true,
+            )
+            .unwrap());
+        assert!(model
+            .pointer_up(point(px(400.0), px(400.0)), 1.0, GpuiModifiers::default(),)
+            .unwrap());
+
+        let panned = model.viewport().offset();
+        assert_ne!(panned, before);
+        model
+            .resize(ViewPoint { x: 25.0, y: 15.0 }, VIEWPORT)
+            .unwrap();
+        assert_eq!(model.viewport().offset(), panned);
+        assert!(!model
+            .pointer_move(
+                point(px(500.0), px(350.0)),
+                1.0,
+                GpuiModifiers::default(),
+                true,
+            )
+            .unwrap());
     }
 
     #[test]

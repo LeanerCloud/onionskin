@@ -46,9 +46,7 @@ pub fn pointer_input(
     pressure: f32,
     modifiers: GpuiModifiers,
 ) -> Result<Option<PointerInput>, InputError> {
-    if !pressure.is_finite() || !(0.0..=1.0).contains(&pressure) {
-        return Err(InputError::InvalidPressure(pressure));
-    }
+    validate_pressure(pressure)?;
 
     let point = ViewPoint {
         x: f32::from(window_point.x) - f32::from(canvas_origin.x),
@@ -63,6 +61,13 @@ pub fn pointer_input(
             ctrl_or_cmd: modifiers.control || modifiers.platform,
         },
     }))
+}
+
+pub fn validate_pressure(pressure: f32) -> Result<(), InputError> {
+    if !pressure.is_finite() || !(0.0..=1.0).contains(&pressure) {
+        return Err(InputError::InvalidPressure(pressure));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
