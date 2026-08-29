@@ -10,6 +10,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,3 +28,27 @@ jobs:
       # it catches a plugin whose feature is enabled but whose manifest never
       # reached the registry.
       - run: cargo test -p onionskin-app --no-default-features --features tools-basic,commands-core
+
+  shell:
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Update Linux package index
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
+      - name: Install GPUI Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libfontconfig1-dev libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: Install macOS Metal toolchain
+        if: runner.os == 'macOS'
+        run: xcodebuild -downloadComponent MetalToolchain
+      - run: cargo build -p onionskin-app --features shell
+      - run: cargo test -p onionskin-app --features shell
