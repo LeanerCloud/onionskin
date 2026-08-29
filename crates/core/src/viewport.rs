@@ -236,7 +236,11 @@ impl Viewport {
         if !factor.is_finite() || factor <= 0.0 {
             return Err(LayoutError::InvalidZoom(factor).into());
         }
-        self.set_zoom((self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM), anchor)
+        let requested = self.zoom * factor;
+        if !requested.is_finite() || requested <= 0.0 {
+            return Err(LayoutError::InvalidZoom(requested).into());
+        }
+        self.set_zoom(requested.clamp(MIN_ZOOM, MAX_ZOOM), anchor)
     }
 
     pub fn pan_by(&mut self, delta: ViewPoint) -> Result<(), ViewportError> {

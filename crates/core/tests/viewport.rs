@@ -397,6 +397,11 @@ fn invalid_viewport_inputs_fail_loudly() {
     .is_err());
     let mut viewport = viewport(1);
     assert!(viewport.zoom_to(f32::NAN, center()).is_err());
+    viewport.zoom_to(2.0, center()).unwrap();
+    assert!(matches!(
+        viewport.zoom_at(f32::MAX, center()),
+        Err(ViewportError::Layout(LayoutError::InvalidZoom(zoom))) if zoom.is_infinite()
+    ));
     assert!(viewport
         .pan_by(ViewPoint {
             x: f32::INFINITY,
