@@ -16,7 +16,7 @@ use gpui::{
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList};
-use self::chrome::ShellFrame;
+use self::chrome::{install_native_menus, MenuState, ShellFrame};
 
 pub mod canvas;
 mod chrome;
@@ -337,6 +337,7 @@ where
     P: AsRef<Path>,
 {
     let prepared = prepare_tabs(paths)?;
+    let menu_state = MenuState::new(prepared.len());
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 
@@ -367,7 +368,10 @@ where
             },
         );
         match result {
-            Ok(_) => cx.activate(true),
+            Ok(window) => {
+                install_native_menus(cx, window, menu_state);
+                cx.activate(true);
+            }
             Err(error) => {
                 *error_slot.borrow_mut() = Some(ShellError::Window(error.to_string()));
                 cx.quit();
