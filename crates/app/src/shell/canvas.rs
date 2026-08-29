@@ -153,7 +153,9 @@ pub struct CanvasModel {
     tiles: TileStore,
     sources: BTreeMap<PageIndex, BaseRaster>,
     geometry_requests: BTreeSet<PageIndex>,
+    failed_geometry: BTreeSet<PageIndex>,
     requests: BTreeMap<PageIndex, RenderRequest>,
+    failed_renders: BTreeSet<PageIndex>,
     placeholders: BTreeSet<PageIndex>,
     generation: u64,
     signature: Option<RenderSignature>,
@@ -186,7 +188,9 @@ impl CanvasModel {
             tiles: TileStore::new(),
             sources: BTreeMap::new(),
             geometry_requests: BTreeSet::new(),
+            failed_geometry: BTreeSet::new(),
             requests: BTreeMap::new(),
+            failed_renders: BTreeSet::new(),
             placeholders: BTreeSet::new(),
             generation: 0,
             signature: None,
@@ -466,7 +470,7 @@ impl CanvasModel {
     fn queue_visible_geometry(&mut self) -> Result<usize, CanvasError> {
         let mut queued = 0;
         for placement in self.viewport.visible_pages()? {
-            if !placement.measured {
+            if !placement.measured && !self.failed_geometry.contains(&placement.page) {
                 if self.document.request_page_geometry(placement.page)? {
                     queued += 1;
                 }
@@ -482,8 +486,12 @@ impl CanvasModel {
     ) -> Result<(), CanvasError> {
         self.geometry_requests.remove(&response.page());
         match response {
-            PageGeometryResponse::Ready(geometry) => self.viewport.measure_page(geometry)?,
+            PageGeometryResponse::Ready(geometry) => {
+                self.failed_geometry.remove(&geometry.index);
+                self.viewport.measure_page(geometry)?;
+            }
             PageGeometryResponse::Failed { page, error } => {
+                self.failed_geometry.insert(page);
                 self.status = Some(CanvasStatus::Error {
                     page: Some(page),
                     message: error.to_string(),
@@ -507,6 +515,7 @@ impl CanvasModel {
             .ok_or(CanvasError::GenerationExhausted)?;
         self.signature = Some(signature);
         self.requests.clear();
+        self.failed_renders.clear();
         self.placeholders.clear();
         Ok(true)
     }
@@ -549,6 +558,7 @@ impl CanvasModel {
             };
             if self.tiles.get(placement.page, zoom).is_some()
                 || self.requests.get(&placement.page) == Some(&request)
+                || self.failed_renders.contains(&placement.page)
             {
                 continue;
             }
@@ -583,11 +593,22 @@ impl CanvasModel {
             }
             RenderResponse::Raster { render, .. } => {
                 self.requests.remove(&request.page);
+                self.failed_renders.remove(&request.page);
                 self.placeholders.remove(&request.page);
                 let raster = render.raster;
                 self.sources.insert(request.page, raster.clone());
                 self.tiles.insert(request.page, raster);
-                if !render.warnings.is_empty() {
+                if render.warnings.is_empty() {
+                    if matches!(
+                        self.status.as_ref(),
+                        Some(CanvasStatus::Error {
+                            page: Some(page),
+                            ..
+                        }) if *page == request.page
+                    ) {
+                        self.status = None;
+                    }
+                } else {
                     self.status = Some(CanvasStatus::Warning {
                         page: request.page,
                         message: format!("{:?}", render.warnings),
@@ -596,6 +617,7 @@ impl CanvasModel {
             }
             RenderResponse::Failed { error, .. } => {
                 self.requests.remove(&request.page);
+                self.failed_renders.insert(request.page);
                 self.placeholders.remove(&request.page);
                 self.status = Some(CanvasStatus::Error {
                     page: Some(request.page),
@@ -1208,6 +1230,7 @@ mod tests {
     #[test]
     fn geometry_failure_is_visible() {
         let mut model = model();
+        model.viewport.go_to_page(1, PageAlignment::Start).unwrap();
         model.geometry_requests.insert(1);
         model
             .apply_geometry_response(PageGeometryResponse::Failed {
@@ -1217,11 +1240,16 @@ mod tests {
             .unwrap();
 
         assert!(!model.geometry_requests.contains(&1));
+        assert!(model.failed_geometry.contains(&1));
         assert!(matches!(
             model.status(),
             Some(CanvasStatus::Error { page: Some(1), message })
                 if message.contains("outside a 1-page document")
         ));
+        assert_eq!(model.queue_visible_geometry().unwrap(), 0);
+        model.update().unwrap();
+        assert!(!model.geometry_requests.contains(&1));
+        assert!(model.failed_geometry.contains(&1));
     }
 
     #[test]
@@ -1291,6 +1319,42 @@ mod tests {
         }));
         assert!(!model.has_pending_render());
         assert!(!model.placeholders.contains(&request.page));
+    }
+
+    #[test]
+    fn a_render_failure_is_terminal_for_its_signature() {
+        let mut model = model();
+        let request = prepare_request(&mut model);
+        assert!(model.apply_render_response(RenderResponse::Failed {
+            request,
+            error: RenderError::UnrenderableSize {
+                width: 100_000.0,
+                height: 100_000.0,
+            },
+        }));
+
+        let visible = model.viewport.visible_pages().unwrap();
+        assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 0);
+        assert!(model.failed_renders.contains(&request.page));
+        assert!(!model.requests.contains_key(&request.page));
+        assert!(matches!(
+            model.status(),
+            Some(CanvasStatus::Error { page: Some(page), .. }) if *page == request.page
+        ));
+
+        model
+            .viewport
+            .zoom_to(2.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(model.update_signature(&visible).unwrap());
+        assert!(!model.failed_renders.contains(&request.page));
+        assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
+
+        let retry = *model.requests.get(&request.page).unwrap();
+        let rendered = raster(&model, retry.page, retry.zoom, [255, 255, 255, 255]);
+        assert!(model.apply_render_response(raster_response(retry, rendered)));
+        assert!(model.status().is_none());
     }
 
     #[test]
