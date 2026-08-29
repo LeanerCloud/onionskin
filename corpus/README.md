@@ -30,10 +30,11 @@ second and needs no network.
 
 ## Sets
 
-### `seeds/` (3 files, 1783 bytes)
+### `seeds/` (3 files, 1818 bytes)
 
 Three tiny PDFs written by `make-seeds.py`: `minimal.pdf` (one empty page),
-`hello.pdf` (one page, one text run, one standard-14 font) and `two-page.pdf`.
+`hello.pdf` (one page, one text run, one standard-14 font) and `two-page.pdf`
+(two pages, with a cropped and rotated second page).
 They exist so `malformed/` has a known-good starting point where every byte is
 accounted for.
 
@@ -48,7 +49,7 @@ Two properties are deliberate:
 its object, and fails loud otherwise. The generated PDFs are committed, so the
 script only needs re-running when a seed definition changes.
 
-### `malformed/` (15 files, 11255 bytes)
+### `malformed/` (15 files, 11416 bytes)
 
 Five deterministic damage variants per seed. The suffix names the defect:
 

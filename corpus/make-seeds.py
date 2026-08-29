@@ -111,7 +111,7 @@ def hello_pdf() -> bytes:
 
 
 def two_page_pdf() -> bytes:
-    """Two pages, so page-tree edits have something to move around."""
+    """Two pages, with crop and rotation coverage on the second page."""
     return build_pdf(
         [
             b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -119,7 +119,11 @@ def two_page_pdf() -> bytes:
             page(2, " /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R"),
             text_stream("Page one"),
             HELVETICA,
-            page(2, " /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R"),
+            page(
+                2,
+                " /CropBox [10 10 190 90] /Rotate 90"
+                " /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R",
+            ),
             text_stream("Page two"),
         ]
     )

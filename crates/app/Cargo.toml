@@ -8,8 +8,8 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
-# M1 spike (c)/(d). Behind `shell` so default builds and the headless tests
-# never pull GPUI.
+# M1 spike (c). Behind `shell` so default builds and the headless tests never
+# pull GPUI.
 [[bin]]
 name = "shell_spike"
 path = "src/bin/shell_spike.rs"
@@ -18,10 +18,12 @@ required-features = ["shell"]
 [[bin]]
 name = "a11y_spike"
 path = "src/bin/a11y_spike.rs"
-required-features = ["shell"]
+required-features = ["a11y-spike"]
 
 [dependencies]
+onionskin-core = { workspace = true, optional = true }
 onionskin-plugin-api.workspace = true
+onionskin-render = { workspace = true, optional = true }
 
 # Fork of gpui 0.2.2 adding PinchEvent/on_pinch and stylus pressure, pinned
 # by rev exactly as Schist pins it (PLAN.md key decision 5).
@@ -81,11 +83,17 @@ tools-measure = ["dep:onionskin-tools-measure"]
 tools-organize = ["dep:onionskin-tools-organize"]
 tools-protect = ["dep:onionskin-tools-protect"]
 
-# GPUI shell. Off by default: the kernel and its tests stay GPUI-free.
+# GPUI shell. Off by default: the kernel and its tests stay GPUI-free. The
+# AccessibilityKit dependencies remain isolated to the M1 accessibility spike.
 shell = [
     "dep:gpui",
     "dep:image",
     "dep:smallvec",
+    "dep:onionskin-core",
+    "dep:onionskin-render",
+]
+a11y-spike = [
+    "shell",
     "dep:accesskit",
     "dep:accesskit_macos",
     "dep:raw-window-handle",

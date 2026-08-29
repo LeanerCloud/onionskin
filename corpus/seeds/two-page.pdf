@@ -19,7 +19,7 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 6 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /CropBox [10 10 190 90] /Rotate 90 /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>
 endobj
 7 0 obj
 <<  /Length 39 >>
@@ -37,9 +37,9 @@ xref
 0000000247 00000 n 
 0000000337 00000 n 
 0000000407 00000 n 
-0000000533 00000 n 
+0000000568 00000 n 
 trailer
 << /Size 8 /Root 1 0 R >>
 startxref
-623
+658
 %%EOF

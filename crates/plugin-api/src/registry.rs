@@ -83,7 +83,51 @@ impl PluginRegistry {
         self.tools.iter().map(|t| t.as_ref())
     }
 
+    pub fn tool_mut(&mut self, index: usize) -> Option<&mut (dyn ToolPlugin + '_)> {
+        match self.tools.get_mut(index) {
+            Some(tool) => Some(tool.as_mut()),
+            None => None,
+        }
+    }
+
     pub fn commands(&self) -> &[Command] {
         &self.commands
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PointerInput, ToolCtx};
+
+    struct TestTool;
+
+    impl ToolPlugin for TestTool {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn name(&self) -> &'static str {
+            "Test"
+        }
+
+        fn icon(&self) -> &'static str {
+            "test"
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    #[test]
+    fn a_registered_tool_can_be_borrowed_mutably_by_index() {
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(TestTool));
+
+        assert_eq!(registry.tool_mut(0).unwrap().id(), "test");
+        assert!(registry.tool_mut(1).is_none());
     }
 }

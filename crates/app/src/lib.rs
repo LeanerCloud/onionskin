@@ -1,10 +1,11 @@
-//! Application assembly: builds the plugin registry from the first-party
-//! set and reports what it holds. The GPUI shell - window, canvas,
-//! thumbnails, panels, keymap, and the translation between GPUI events
-//! and `plugin-api` types - lands with M1; until then this crate is
-//! windowless, so the assembled registry is testable on every platform.
+//! Application assembly and the optional GPUI shell. The plugin registry stays
+//! usable in headless builds; enabling `shell` adds the window and the adapter
+//! between GPUI events and the framework-free core and plugin APIs.
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
+
+#[cfg(feature = "shell")]
+pub mod shell;
 
 /// Assemble the first-party plugin set. Every entry sits behind its own
 /// cargo feature: with `--no-default-features` this returns an empty
