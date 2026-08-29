@@ -57,8 +57,8 @@ referenced.
   AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
 - Linux packaging script and Windows NSIS installer have inspection-only
   confidence; the first tagged release is their real test.
-- Shell spike nits for M2: drag state not cleared on outside-window
-  mouse-up; fit-to-window not re-run on resize.
+- Shell spike nit for M2: drag state not cleared on outside-window
+  mouse-up.
 - parity/reference/ screenshot corpus not yet captured (needs Acrobat driven
   on-screen; local-only per Legal posture rule 4).
 
