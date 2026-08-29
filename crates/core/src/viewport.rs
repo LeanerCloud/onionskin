@@ -157,6 +157,10 @@ impl Viewport {
         self.current_page
     }
 
+    pub fn page_geometry(&self, page: PageIndex) -> Option<&PageGeometry> {
+        self.layout.geometry(page)
+    }
+
     pub fn measure_page(&mut self, geometry: PageGeometry) -> Result<(), ViewportError> {
         let page = geometry.index;
         let anchor = self.anchor_for_current_page().ok();

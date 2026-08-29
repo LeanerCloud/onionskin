@@ -24,5 +24,5 @@ pub use page::{
 };
 pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
 pub use selection::{SearchMatch, SearchState, Selection};
-pub use session::{Document, Error, Result};
+pub use session::{Document, Error, PageGeometryResponse, Result};
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy};

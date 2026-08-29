@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,6 +18,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     Io(std::io::Error),
     EncryptedUnsupported,
+    NoSuchPage {
+        page: PageIndex,
+        count: usize,
+    },
+    GeometryPageMismatch {
+        request: PageIndex,
+        geometry: PageIndex,
+    },
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -30,6 +38,13 @@ impl fmt::Display for Error {
             Error::EncryptedUnsupported => {
                 write!(f, "encrypted PDFs are not viewable in M2")
             }
+            Error::NoSuchPage { page, count } => {
+                write!(f, "page {page} is outside a {count}-page document")
+            }
+            Error::GeometryPageMismatch { request, geometry } => write!(
+                f,
+                "render request is for page {request}, but its geometry is for page {geometry}"
+            ),
             Error::Cos(e) => write!(f, "{e}"),
             Error::Content(e) => write!(f, "{e}"),
             Error::Worker(e) => write!(f, "{e}"),
@@ -44,7 +59,9 @@ impl std::error::Error for Error {
             Error::Cos(e) => Some(e),
             Error::Content(e) => Some(e),
             Error::Worker(e) => Some(e),
-            Error::EncryptedUnsupported => None,
+            Error::EncryptedUnsupported
+            | Error::NoSuchPage { .. }
+            | Error::GeometryPageMismatch { .. } => None,
         }
     }
 }
@@ -79,6 +96,21 @@ impl From<crate::WorkerError> for Error {
     }
 }
 
+#[derive(Debug)]
+pub enum PageGeometryResponse {
+    Ready(PageGeometry),
+    Failed { page: PageIndex, error: Error },
+}
+
+impl PageGeometryResponse {
+    pub fn page(&self) -> PageIndex {
+        match self {
+            Self::Ready(geometry) => geometry.index,
+            Self::Failed { page, .. } => *page,
+        }
+    }
+}
+
 const PAGE_CACHE_LIMIT: usize = 128;
 const TEXT_CACHE_LIMIT: usize = 16;
 
@@ -88,6 +120,7 @@ pub struct Document {
     provenance: Provenance,
     page_count: usize,
     render: WorkerHandle,
+    pending_geometry: BTreeSet<PageIndex>,
     geometry: PageCache<PageGeometry>,
     text: PageCache<content::PageText>,
     selection: Selection,
@@ -115,6 +148,7 @@ impl Document {
             provenance,
             page_count,
             render,
+            pending_geometry: BTreeSet::new(),
             geometry: PageCache::new(PAGE_CACHE_LIMIT),
             text: PageCache::new(TEXT_CACHE_LIMIT),
             selection: Selection::default(),
@@ -144,6 +178,51 @@ impl Document {
         })
     }
 
+    pub fn request_page_geometry(&mut self, index: PageIndex) -> Result<bool> {
+        if index >= self.page_count {
+            return Err(Error::NoSuchPage {
+                page: index,
+                count: self.page_count,
+            });
+        }
+        if !self.pending_geometry.insert(index) {
+            return Ok(false);
+        }
+        if let Err(error) = self.render.request_page_geometry(index) {
+            self.pending_geometry.remove(&index);
+            return Err(error.into());
+        }
+        Ok(true)
+    }
+
+    pub fn try_page_geometry_response(&mut self) -> Result<Option<PageGeometryResponse>> {
+        let Some((index, result)) = self.render.try_geometry_response()? else {
+            return Ok(None);
+        };
+        self.pending_geometry.remove(&index);
+        let rendered = match result {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                return Ok(Some(PageGeometryResponse::Failed {
+                    page: index,
+                    error: Error::Worker(error),
+                }));
+            }
+        };
+        let page = match content::page(&self.cos, index) {
+            Ok(page) => page,
+            Err(error) => {
+                return Ok(Some(PageGeometryResponse::Failed {
+                    page: index,
+                    error: error.into(),
+                }));
+            }
+        };
+        let geometry = PageGeometry::new(&page, rendered);
+        self.geometry.insert(index, geometry.clone());
+        Ok(Some(PageGeometryResponse::Ready(geometry)))
+    }
+
     pub fn page_text(&mut self, index: PageIndex) -> Result<&content::PageText> {
         let cos = &self.cos;
         self.text
@@ -158,6 +237,29 @@ impl Document {
         self.render.validate_request(request)?;
         let geometry = self.page_geometry(request.page)?.clone();
         self.render.request_render(request, &geometry, source)?;
+        Ok(())
+    }
+
+    pub fn request_render_with_geometry(
+        &mut self,
+        request: RenderRequest,
+        geometry: &PageGeometry,
+        source: Option<&onionskin_render::BaseRaster>,
+    ) -> Result<()> {
+        self.render.validate_request(request)?;
+        if request.page >= self.page_count {
+            return Err(Error::NoSuchPage {
+                page: request.page,
+                count: self.page_count,
+            });
+        }
+        if geometry.index != request.page {
+            return Err(Error::GeometryPageMismatch {
+                request: request.page,
+                geometry: geometry.index,
+            });
+        }
+        self.render.request_render(request, geometry, source)?;
         Ok(())
     }
 
@@ -221,6 +323,18 @@ impl<T> PageCache<T> {
         }
 
         let value = load()?;
+        Ok(self.insert(index, value))
+    }
+
+    fn insert(&mut self, index: PageIndex, value: T) -> &T {
+        if let Some(existing) = self.items.get_mut(&index) {
+            *existing = value;
+            self.touch(index);
+            return self
+                .items
+                .get(&index)
+                .expect("replaced cache item is present");
+        }
         while self.items.len() >= self.limit {
             if let Some(oldest) = self.order.pop_front() {
                 self.items.remove(&oldest);
@@ -228,10 +342,9 @@ impl<T> PageCache<T> {
         }
         self.items.insert(index, value);
         self.order.push_back(index);
-        Ok(self
-            .items
+        self.items
             .get(&index)
-            .expect("inserted cache item is present"))
+            .expect("inserted cache item is present")
     }
 
     fn touch(&mut self, index: PageIndex) {

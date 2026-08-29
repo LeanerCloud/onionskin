@@ -80,13 +80,19 @@ enum Request {
         page: usize,
         response: mpsc::SyncSender<Result<PageRenderGeometry, WorkerError>>,
     },
+    GeometryAsync {
+        page: PageIndex,
+    },
     Render(RenderRequest),
     Shutdown,
 }
 
+type GeometryResponse = (PageIndex, Result<PageRenderGeometry, WorkerError>);
+
 pub(crate) struct WorkerHandle {
     requests: mpsc::Sender<Request>,
     responses: mpsc::Receiver<RenderResponse>,
+    geometry_responses: mpsc::Receiver<GeometryResponse>,
     placeholders: VecDeque<PagePlaceholder>,
     generation: Option<u64>,
     latest: BTreeMap<PageIndex, RenderRequest>,
@@ -97,6 +103,7 @@ impl WorkerHandle {
     pub(crate) fn spawn(bytes: Arc<Vec<u8>>) -> Result<Self, WorkerError> {
         let (requests, incoming) = mpsc::channel();
         let (outgoing, responses) = mpsc::channel();
+        let (geometry_outgoing, geometry_responses) = mpsc::channel();
         let (ready, initialized) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("onionskin-render".into())
@@ -120,6 +127,7 @@ impl WorkerHandle {
                         renderer,
                         &incoming,
                         &outgoing,
+                        &geometry_outgoing,
                         &mut pending,
                         &options,
                     );
@@ -131,6 +139,7 @@ impl WorkerHandle {
             Ok(()) => Ok(Self {
                 requests,
                 responses,
+                geometry_responses,
                 placeholders: VecDeque::new(),
                 generation: None,
                 latest: BTreeMap::new(),
@@ -149,6 +158,20 @@ impl WorkerHandle {
             .send(Request::Geometry { page, response })
             .map_err(|_| WorkerError::Stopped)?;
         result.recv().map_err(|_| WorkerError::Stopped)?
+    }
+
+    pub(crate) fn request_page_geometry(&self, page: PageIndex) -> Result<(), WorkerError> {
+        self.requests
+            .send(Request::GeometryAsync { page })
+            .map_err(|_| WorkerError::Stopped)
+    }
+
+    pub(crate) fn try_geometry_response(&self) -> Result<Option<GeometryResponse>, WorkerError> {
+        match self.geometry_responses.try_recv() {
+            Ok(response) => Ok(Some(response)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err(WorkerError::Stopped),
+        }
     }
 
     pub(crate) fn request_render(
@@ -284,6 +307,7 @@ fn worker_loop(
     renderer: &mut onionskin_render::RenderSession<'_>,
     incoming: &mpsc::Receiver<Request>,
     outgoing: &mpsc::Sender<RenderResponse>,
+    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
     pending: &mut PendingRequests,
     options: &RenderOptions,
 ) {
@@ -292,19 +316,19 @@ fn worker_loop(
             let Ok(request) = incoming.recv() else {
                 return;
             };
-            if handle_request(document, pending, request) {
+            if handle_request(document, pending, geometry_outgoing, request) {
                 return;
             }
         }
 
-        if drain_requests(document, pending, incoming) {
+        if drain_requests(document, pending, incoming, geometry_outgoing) {
             return;
         }
         let Some(request) = pending.pop_front() else {
             continue;
         };
         let rendered = renderer.render_page(request.page, request.zoom, options);
-        if drain_requests(document, pending, incoming) {
+        if drain_requests(document, pending, incoming, geometry_outgoing) {
             return;
         }
         if !pending.should_publish(request) {
@@ -325,11 +349,12 @@ fn drain_requests(
     document: &onionskin_render::Document,
     pending: &mut PendingRequests,
     incoming: &mpsc::Receiver<Request>,
+    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
 ) -> bool {
     loop {
         match incoming.try_recv() {
             Ok(request) => {
-                if handle_request(document, pending, request) {
+                if handle_request(document, pending, geometry_outgoing, request) {
                     return true;
                 }
             }
@@ -342,12 +367,18 @@ fn drain_requests(
 fn handle_request(
     document: &onionskin_render::Document,
     pending: &mut PendingRequests,
+    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
     request: Request,
 ) -> bool {
     match request {
         Request::Geometry { page, response } => {
             let result = document.page_geometry(page).map_err(WorkerError::Render);
             let _ = response.send(result);
+            false
+        }
+        Request::GeometryAsync { page } => {
+            let result = document.page_geometry(page).map_err(WorkerError::Render);
+            let _ = geometry_outgoing.send((page, result));
             false
         }
         Request::Render(request) => {
@@ -370,6 +401,7 @@ impl Drop for WorkerHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn request(page: usize, zoom: f32, generation: u64) -> RenderRequest {
         RenderRequest {
@@ -394,19 +426,26 @@ mod tests {
         }
     }
 
-    fn idle_handle() -> (WorkerHandle, mpsc::Sender<RenderResponse>) {
+    fn idle_handle() -> (
+        WorkerHandle,
+        mpsc::Sender<RenderResponse>,
+        mpsc::Sender<GeometryResponse>,
+    ) {
         let (requests, _incoming) = mpsc::channel();
         let (outgoing, responses) = mpsc::channel();
+        let (geometry_outgoing, geometry_responses) = mpsc::channel();
         (
             WorkerHandle {
                 requests,
                 responses,
+                geometry_responses,
                 placeholders: VecDeque::new(),
                 generation: None,
                 latest: BTreeMap::new(),
                 thread: None,
             },
             outgoing,
+            geometry_outgoing,
         )
     }
 
@@ -459,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_generation_advance_prunes_placeholders_across_pages() {
-        let (mut handle, _outgoing) = idle_handle();
+        let (mut handle, _outgoing, _geometry_outgoing) = idle_handle();
         let old = request(7, 1.0, 1);
         let current = request(0, 2.0, 2);
         handle.commit_request(old, placeholder(old));
@@ -472,7 +511,7 @@ mod tests {
 
     #[test]
     fn polling_discards_a_raster_that_lost_the_outbound_race() {
-        let (mut handle, outgoing) = idle_handle();
+        let (mut handle, outgoing, _geometry_outgoing) = idle_handle();
         let old = request(7, 1.0, 1);
         let current = request(0, 2.0, 2);
         outgoing
@@ -495,9 +534,11 @@ mod tests {
         let (requests, incoming) = mpsc::channel();
         drop(incoming);
         let (_outgoing, responses) = mpsc::channel();
+        let (_geometry_outgoing, geometry_responses) = mpsc::channel();
         let mut handle = WorkerHandle {
             requests,
             responses,
+            geometry_responses,
             placeholders: VecDeque::new(),
             generation: None,
             latest: BTreeMap::new(),
@@ -512,5 +553,92 @@ mod tests {
         assert!(handle.placeholders.is_empty());
         assert!(handle.latest.is_empty());
         assert_eq!(handle.generation, None);
+    }
+
+    #[test]
+    fn an_async_geometry_request_returns_before_the_worker_answers() {
+        let (requests, incoming) = mpsc::channel();
+        let (_outgoing, responses) = mpsc::channel();
+        let (_geometry_outgoing, geometry_responses) = mpsc::channel();
+        let handle = WorkerHandle {
+            requests,
+            responses,
+            geometry_responses,
+            placeholders: VecDeque::new(),
+            generation: None,
+            latest: BTreeMap::new(),
+            thread: None,
+        };
+
+        handle.request_page_geometry(7).unwrap();
+
+        assert!(matches!(
+            incoming.try_recv(),
+            Ok(Request::GeometryAsync { page: 7 })
+        ));
+        assert!(handle.try_geometry_response().unwrap().is_none());
+    }
+
+    #[test]
+    fn geometry_queued_while_the_worker_is_busy_is_polled_without_blocking() {
+        let (requests, incoming) = mpsc::channel();
+        let (_outgoing, responses) = mpsc::channel();
+        let (geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (started, worker_started) = mpsc::sync_channel(1);
+        let (release, worker_release) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            assert!(matches!(incoming.recv(), Ok(Request::Render(_))));
+            started.send(()).unwrap();
+            worker_release.recv().unwrap();
+            let Ok(Request::GeometryAsync { page }) = incoming.recv() else {
+                panic!("geometry request follows the in-flight render");
+            };
+            geometry_outgoing
+                .send((page, Err(WorkerError::InvalidZoom(-1.0))))
+                .unwrap();
+        });
+        let handle = WorkerHandle {
+            requests,
+            responses,
+            geometry_responses,
+            placeholders: VecDeque::new(),
+            generation: None,
+            latest: BTreeMap::new(),
+            thread: None,
+        };
+        handle
+            .requests
+            .send(Request::Render(request(0, 1.0, 1)))
+            .unwrap();
+        worker_started.recv().unwrap();
+
+        handle.request_page_geometry(4).unwrap();
+        assert!(handle.try_geometry_response().unwrap().is_none());
+
+        release.send(()).unwrap();
+        worker.join().unwrap();
+        let (page, result) = handle.try_geometry_response().unwrap().unwrap();
+        assert_eq!(page, 4);
+        assert!(matches!(result, Err(WorkerError::InvalidZoom(-1.0))));
+    }
+
+    #[test]
+    fn a_failed_render_response_retains_its_page_request() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/minimal.pdf");
+        let bytes = Arc::new(std::fs::read(path).expect("seed is readable"));
+        let handle = WorkerHandle::spawn(bytes).expect("worker starts");
+        let oversized = request(0, 1_000.0, 9);
+
+        handle.requests.send(Request::Render(oversized)).unwrap();
+
+        let response = handle
+            .responses
+            .recv_timeout(Duration::from_secs(5))
+            .expect("failed render response arrives");
+        assert!(matches!(
+            response,
+            RenderResponse::Failed { request, .. } if request == oversized
+        ));
     }
 }

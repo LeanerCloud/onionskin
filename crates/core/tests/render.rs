@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use onionskin_core::{Document, RenderRequest, RenderResponse, WorkerError};
+use onionskin_core::{
+    Document, Error, PageGeometryResponse, RenderRequest, RenderResponse, ViewSize, Viewport,
+    WorkerError,
+};
 use onionskin_render::{BaseRaster, InterpreterWarning, Rgba};
 
 #[test]
@@ -161,6 +164,105 @@ fn dropping_a_session_joins_the_worker() {
     drop(document);
 }
 
+#[test]
+fn page_geometry_can_be_requested_and_polled_without_waiting() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+
+    assert!(document
+        .request_page_geometry(1)
+        .expect("geometry request queues"));
+    assert!(!document
+        .request_page_geometry(1)
+        .expect("duplicate geometry request is suppressed"));
+    let geometry = collect_geometry(&mut document);
+
+    let PageGeometryResponse::Ready(geometry) = geometry else {
+        panic!("valid page geometry failed");
+    };
+    assert_eq!(geometry.index, 1);
+    assert_eq!(
+        document
+            .page_geometry(1)
+            .expect("async response populated the document cache"),
+        &geometry
+    );
+}
+
+#[test]
+fn an_invalid_async_geometry_request_fails_before_it_is_queued() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+
+    assert!(matches!(
+        document.request_page_geometry(2),
+        Err(Error::NoSuchPage { page: 2, count: 2 })
+    ));
+}
+
+#[test]
+fn a_viewport_geometry_enqueues_render_after_the_document_cache_evicts_it() {
+    let mut document = Document::open_bytes(pages_pdf(130)).expect("document opens");
+    let first = document
+        .page_geometry(0)
+        .expect("first geometry loads")
+        .clone();
+    for page in 1..130 {
+        document.page_geometry(page).expect("geometry loads");
+    }
+
+    let mut viewport = Viewport::new(
+        130,
+        ViewSize {
+            width: 800.0,
+            height: 600.0,
+        },
+        12.0,
+    )
+    .unwrap();
+    viewport.measure_page(first.clone()).unwrap();
+    let retained = viewport
+        .page_geometry(0)
+        .expect("viewport retained page zero");
+
+    document
+        .request_render_with_geometry(request(0, 1.0, 1), retained, None)
+        .expect("explicit geometry queues without a document-cache lookup");
+    assert!(matches!(
+        document.try_render_response().unwrap(),
+        Some(RenderResponse::Placeholder(_))
+    ));
+}
+
+#[test]
+fn explicit_render_geometry_must_belong_to_the_requested_page() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+    let other = document.page_geometry(1).expect("geometry loads").clone();
+
+    assert!(matches!(
+        document.request_render_with_geometry(request(0, 1.0, 1), &other, None),
+        Err(Error::GeometryPageMismatch {
+            request: 0,
+            geometry: 1
+        })
+    ));
+    assert!(document.try_render_response().unwrap().is_none());
+}
+
+#[test]
+fn explicit_render_geometry_cannot_expand_the_target_document() {
+    let mut source_document = Document::open_bytes(pages_pdf(2)).expect("source opens");
+    let second = source_document
+        .page_geometry(1)
+        .expect("source geometry loads")
+        .clone();
+    let mut target_document = Document::open_bytes(pages_pdf(1)).expect("target opens");
+
+    assert!(matches!(
+        target_document.request_render_with_geometry(request(1, 1.0, 1), &second, None),
+        Err(Error::NoSuchPage { page: 1, count: 1 })
+    ));
+    assert!(target_document.try_render_response().unwrap().is_none());
+}
+
 fn request(page: usize, zoom: f32, generation: u64) -> RenderRequest {
     RenderRequest {
         page,
@@ -183,6 +285,20 @@ fn collect(document: &mut Document, expected: usize) -> Vec<RenderResponse> {
         }
     }
     responses
+}
+
+fn collect_geometry(document: &mut Document) -> PageGeometryResponse {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match document
+            .try_page_geometry_response()
+            .expect("worker remains live")
+        {
+            Some(response) => return response,
+            None if Instant::now() < deadline => std::thread::yield_now(),
+            None => panic!("timed out waiting for page geometry"),
+        }
+    }
 }
 
 fn pages_pdf(count: usize) -> Vec<u8> {
