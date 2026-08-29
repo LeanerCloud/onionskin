@@ -121,6 +121,7 @@ pub struct PagePaint {
 pub struct TilePaint {
     pub page: PageIndex,
     pub rect: ViewRect,
+    pub clip_rect: ViewRect,
     pub source_zoom: f32,
     pub image: Arc<RenderImage>,
 }
@@ -443,9 +444,12 @@ impl CanvasModel {
                     rotation,
                 )?;
                 displayed_images.insert(key);
+                let (content_width, content_height) =
+                    rotated_size(raw.region.width, raw.region.height, rotation);
                 paint.tiles.push(TilePaint {
                     page: placement.page,
-                    rect: raw.rect,
+                    rect: atlas_image_rect(raw.rect, content_width, content_height),
+                    clip_rect: raw.rect,
                     source_zoom,
                     image,
                 });
@@ -752,7 +756,7 @@ impl TileImageCache {
         }
 
         let (width, height, bgra) =
-            tile_bgra(tile.rgba(), TILE_SIZE, TILE_SIZE, width, height, rotation)?;
+            atlas_tile_bgra(tile.rgba(), TILE_SIZE, TILE_SIZE, width, height, rotation)?;
         let buffer = image::RgbaImage::from_raw(width, height, bgra)
             .expect("tile conversion returns exactly width*height*4 bytes");
         let image = Arc::new(RenderImage::new(smallvec![image::Frame::new(buffer)]));
@@ -880,6 +884,41 @@ fn tile_bgra(
     Ok((output_width, output_height, output))
 }
 
+fn atlas_tile_bgra(
+    rgba: &[u8],
+    source_width: u32,
+    source_height: u32,
+    crop_width: u32,
+    crop_height: u32,
+    rotation: ViewRotation,
+) -> Result<(u32, u32, Vec<u8>), CanvasError> {
+    let (width, height, pixels) = tile_bgra(
+        rgba,
+        source_width,
+        source_height,
+        crop_width,
+        crop_height,
+        rotation,
+    )?;
+    let output_width = width + 2;
+    let output_height = height + 2;
+    let mut output = vec![0; output_width as usize * output_height as usize * 4];
+
+    // GPUI linearly samples to exact atlas-allocation edges. Keep visible
+    // samples inside duplicate pixels so adjacent atlas entries cannot bleed.
+    for y in 0..output_height {
+        let source_y = y.saturating_sub(1).min(height - 1);
+        for x in 0..output_width {
+            let source_x = x.saturating_sub(1).min(width - 1);
+            let source = (source_y as usize * width as usize + source_x as usize) * 4;
+            let destination = (y as usize * output_width as usize + x as usize) * 4;
+            output[destination..destination + 4].copy_from_slice(&pixels[source..source + 4]);
+        }
+    }
+
+    Ok((output_width, output_height, output))
+}
+
 fn unpremultiplied_bgra(rgba: &[u8]) -> [u8; 4] {
     let alpha = rgba[3];
     if alpha == 0 {
@@ -947,6 +986,21 @@ fn tile_rect(
         size: ViewSize {
             width: width as f32 * scale_x,
             height: height as f32 * scale_y,
+        },
+    }
+}
+
+fn atlas_image_rect(clip: ViewRect, content_width: u32, content_height: u32) -> ViewRect {
+    let gutter_width = clip.size.width / content_width as f32;
+    let gutter_height = clip.size.height / content_height as f32;
+    ViewRect {
+        origin: ViewPoint {
+            x: clip.origin.x - gutter_width,
+            y: clip.origin.y - gutter_height,
+        },
+        size: ViewSize {
+            width: clip.size.width + 2.0 * gutter_width,
+            height: clip.size.height + 2.0 * gutter_height,
         },
     }
 }
@@ -1590,6 +1644,43 @@ mod tests {
     }
 
     #[test]
+    fn tile_images_keep_visible_samples_one_pixel_inside_the_gpui_atlas() {
+        let (width, height, output) = atlas_tile_bgra(
+            &[255, 255, 255, 255, 0, 0, 0, 255],
+            2,
+            1,
+            2,
+            1,
+            ViewRotation::None,
+        )
+        .unwrap();
+
+        assert_eq!((width, height), (4, 3));
+        let guarded_row = [
+            255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+        ];
+        assert_eq!(output, guarded_row.repeat(3));
+
+        let clip = ViewRect {
+            origin: ViewPoint { x: 10.0, y: 20.0 },
+            size: ViewSize {
+                width: 20.0,
+                height: 10.0,
+            },
+        };
+        assert_eq!(
+            atlas_image_rect(clip, 2, 1),
+            ViewRect {
+                origin: ViewPoint { x: 0.0, y: 10.0 },
+                size: ViewSize {
+                    width: 40.0,
+                    height: 30.0,
+                },
+            }
+        );
+    }
+
+    #[test]
     fn replacing_a_tile_replaces_its_gpui_image() {
         let mut store = TileStore::new();
         let key = TileImageKey::new(0, 1.0, 0, 0, ViewRotation::None);
@@ -1609,8 +1700,8 @@ mod tests {
             .unwrap();
 
         assert_ne!(first.id, second.id);
-        assert_eq!(first.as_bytes(0).unwrap(), [0, 0, 255, 255]);
-        assert_eq!(second.as_bytes(0).unwrap(), [255, 0, 0, 255]);
+        assert_eq!(first.as_bytes(0).unwrap(), [0, 0, 255, 255].repeat(9));
+        assert_eq!(second.as_bytes(0).unwrap(), [255, 0, 0, 255].repeat(9));
     }
 
     #[test]

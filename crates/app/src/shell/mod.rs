@@ -294,12 +294,19 @@ impl Render for Canvas {
                         }
                         for tile in paint.tiles {
                             window
-                                .paint_image(
-                                    window_bounds(bounds.origin, tile.rect),
-                                    gpui::Corners::default(),
-                                    tile.image,
-                                    0,
-                                    false,
+                                .with_content_mask(
+                                    Some(gpui::ContentMask {
+                                        bounds: window_bounds(bounds.origin, tile.clip_rect),
+                                    }),
+                                    |window| {
+                                        window.paint_image(
+                                            window_bounds(bounds.origin, tile.rect),
+                                            gpui::Corners::default(),
+                                            tile.image,
+                                            0,
+                                            false,
+                                        )
+                                    },
                                 )
                                 .expect("canvas tile image is valid");
                         }
