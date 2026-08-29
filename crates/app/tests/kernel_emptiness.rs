@@ -34,11 +34,22 @@ fn the_registry_holds_exactly_the_plugins_compiled_in() {
     );
 }
 
+#[cfg(not(any(
+    feature = "codecs-common",
+    feature = "commands-core",
+    feature = "redact",
+    feature = "tools-accessibility",
+    feature = "tools-basic",
+    feature = "tools-comment",
+    feature = "tools-edit",
+    feature = "tools-fill-sign",
+    feature = "tools-form",
+    feature = "tools-measure",
+    feature = "tools-organize",
+    feature = "tools-protect",
+)))]
 #[test]
 fn a_kernel_with_no_plugins_registers_nothing_at_all() {
-    if COMPILED_IN_PLUGINS > 0 {
-        return;
-    }
     let registry = build_registry();
     assert_eq!(registry.plugins().len(), 0);
     assert_eq!(registry.tools().count(), 0);
