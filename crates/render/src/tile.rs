@@ -82,6 +82,11 @@ impl TileCache {
         self.rows
     }
 
+    /// The page raster underneath this cache's overlays.
+    pub fn base(&self) -> &BaseRaster {
+        &self.base
+    }
+
     /// How many tiles have been composited since construction. The damage
     /// tracking is only worth anything if this stays small, so it is part of
     /// the public surface rather than a debug counter.
