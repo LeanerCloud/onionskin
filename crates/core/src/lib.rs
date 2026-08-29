@@ -4,6 +4,7 @@
 //! provenance, bounded page caches, selection, and find state. Edit graph,
 //! history, save, and shell integration land in later milestones.
 
+mod history;
 mod layout;
 mod page;
 mod render;
@@ -11,6 +12,7 @@ mod selection;
 mod session;
 mod viewport;
 
+pub use history::{ViewHistory, ViewState};
 pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,
     ViewRotation, ViewSize,
@@ -23,4 +25,4 @@ pub use page::{
 pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
 pub use selection::{SearchMatch, SearchState, Selection};
 pub use session::{Document, Error, Result};
-pub use viewport::{FitMode, ViewState, Viewport, ViewportError, ZoomPolicy};
+pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy};

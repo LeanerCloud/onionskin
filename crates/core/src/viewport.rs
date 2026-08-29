@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::history::ViewState;
 use crate::layout::{Layout, LayoutError, LayoutQuery};
 use crate::{
     GeometryError, PageAlignment, PageGeometry, PageIndex, PageLayoutMode, PagePlacement,
@@ -23,17 +24,6 @@ pub enum FitMode {
 pub enum ZoomPolicy {
     Fixed,
     Fit(FitMode),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ViewState {
-    pub current_page: PageIndex,
-    pub offset: ViewPoint,
-    pub zoom: f32,
-    pub zoom_policy: ZoomPolicy,
-    pub mode: PageLayoutMode,
-    pub show_cover: bool,
-    pub rotation: ViewRotation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
