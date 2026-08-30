@@ -1,15 +1,16 @@
 use std::ops::Range;
 
 use gpui::{
-    actions, div, fill, hsla, point, px, relative, rgba, App, Bounds, ClipboardItem, Context,
-    CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
-    Focusable, GlobalElementId, InteractiveElement as _, IntoElement, KeyBinding, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement as _,
-    Pixels, Point, ShapedLine, SharedString, Style, Styled as _, TextRun, UTF16Selection,
-    UnderlineStyle, Window,
+    actions, div, fill, point, px, relative, App, Bounds, ClipboardItem, Context, CursorStyle,
+    Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
+    GlobalElementId, InteractiveElement as _, IntoElement, KeyBinding, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement as _, Pixels, Point,
+    ShapedLine, SharedString, Style, Styled as _, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use onionskin_plugin_api::PluginRegistry;
 use unicode_segmentation::UnicodeSegmentation as _;
+
+use super::theme::ThemeTokens;
 
 actions!(
     onionskin_search,
@@ -259,16 +260,18 @@ pub(super) struct SearchInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    theme: ThemeTokens,
 }
 
 impl SearchInput {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
-        Self::with_placeholder("global-search-input", "Search tools or document", cx)
+    pub(super) fn new(theme: ThemeTokens, cx: &mut Context<Self>) -> Self {
+        Self::with_placeholder("global-search-input", "Search tools or document", theme, cx)
     }
 
     pub(super) fn with_placeholder(
         element_id: &'static str,
         placeholder: impl Into<SharedString>,
+        theme: ThemeTokens,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -280,7 +283,16 @@ impl SearchInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            theme,
         }
+    }
+
+    pub(super) fn set_theme(&mut self, theme: ThemeTokens, cx: &mut Context<Self>) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        cx.notify();
     }
 
     pub(super) fn query(&self) -> &str {
@@ -629,7 +641,7 @@ impl Element for SearchTextElement {
         let cursor = input.buffer.cursor_offset();
         let style = window.text_style();
         let (display_text, color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0.0, 0.0, 0.7, 1.0))
+            (input.placeholder.clone(), input.theme.muted_text.into())
         } else {
             (SharedString::from(content), style.color)
         };
@@ -680,7 +692,7 @@ impl Element for SearchTextElement {
                         point(bounds.left() + cursor_x, bounds.top()),
                         gpui::size(px(1.0), bounds.size.height),
                     ),
-                    gpui::white(),
+                    input.theme.text,
                 )),
             )
         } else {
@@ -696,7 +708,7 @@ impl Element for SearchTextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x4f7cff66),
+                    input.theme.selection,
                 )),
                 None,
             )
@@ -744,6 +756,7 @@ impl Element for SearchTextElement {
 
 impl gpui::Render for SearchInput {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         div()
             .id(self.element_id)
             .key_context("OnionskinSearch")
@@ -755,8 +768,8 @@ impl gpui::Render for SearchInput {
             .overflow_hidden()
             .px_2()
             .rounded_md()
-            .bg(gpui::rgb(0x2d2f33))
-            .text_color(gpui::white())
+            .bg(theme.input)
+            .text_color(theme.text)
             .text_size(px(13.0))
             .line_height(px(18.0))
             .cursor(CursorStyle::IBeam)

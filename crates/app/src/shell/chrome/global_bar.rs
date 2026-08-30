@@ -1,6 +1,8 @@
 use gpui::{actions, App, Menu, MenuItem, WindowHandle};
 use onionskin_core::{FitMode, PageLayoutMode};
 
+use super::quick_actions::QuickAction;
+use super::theme::{ShellViewAction, ShellViewState, ThemePreference};
 use super::ShellFrame;
 use crate::shell::canvas::{CanvasViewState, ViewAction};
 
@@ -53,7 +55,15 @@ pub(super) enum MenuCommand {
     TwoPage,
     TwoPageContinuous,
     ToggleCover,
-    ViewControls,
+    ToggleNavigationPane,
+    ToggleQuickAction(QuickAction),
+    TogglePageControls,
+    LineWeights,
+    ThemeSystem,
+    ThemeLight,
+    ThemeDark,
+    ReadMode,
+    FullScreen,
     NewWindow,
     About,
     KeyboardShortcuts,
@@ -70,14 +80,31 @@ pub(in crate::shell) struct MenuState {
     tab_count: usize,
     has_active_tab: bool,
     view: Option<CanvasViewState>,
+    shell_view: ShellViewState,
+    quick_actions_visible: [bool; QuickAction::ALL.len()],
 }
 
 impl MenuState {
-    pub(in crate::shell) fn with_view(tab_count: usize, view: Option<CanvasViewState>) -> Self {
+    pub(in crate::shell) fn initial(
+        tab_count: usize,
+        view: Option<CanvasViewState>,
+        shell_view: ShellViewState,
+    ) -> Self {
+        Self::new(tab_count, view, shell_view, [true; QuickAction::ALL.len()])
+    }
+
+    pub(in crate::shell) fn new(
+        tab_count: usize,
+        view: Option<CanvasViewState>,
+        shell_view: ShellViewState,
+        quick_actions_visible: [bool; QuickAction::ALL.len()],
+    ) -> Self {
         Self {
             tab_count,
             has_active_tab: tab_count > 0,
             view,
+            shell_view,
+            quick_actions_visible,
         }
     }
 }
@@ -172,7 +199,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
         },
         MenuSection {
             id: MenuSectionId::View,
-            entries: view_menu_entries(state.view),
+            entries: view_menu_entries(state.view, state.shell_view, state.quick_actions_visible),
         },
         MenuSection {
             id: MenuSectionId::Window,
@@ -203,7 +230,11 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
     ]
 }
 
-fn view_menu_entries(view: Option<CanvasViewState>) -> Vec<MenuEntry> {
+fn view_menu_entries(
+    view: Option<CanvasViewState>,
+    shell_view: ShellViewState,
+    quick_actions_visible: [bool; QuickAction::ALL.len()],
+) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
     let availability = view
@@ -224,7 +255,7 @@ fn view_menu_entries(view: Option<CanvasViewState>) -> Vec<MenuEntry> {
         selected,
     };
 
-    vec![
+    let mut entries = vec![
         entry(
             MenuCommand::PreviousView,
             "Previous View",
@@ -347,13 +378,66 @@ fn view_menu_entries(view: Option<CanvasViewState>) -> Vec<MenuEntry> {
             availability,
             show_cover,
         ),
+    ];
+    entries.push(entry(
+        MenuCommand::ToggleNavigationPane,
+        "Show Navigation Panes",
+        Enabled,
+        shell_view.navigation_pane_visible(),
+    ));
+    entries.extend(QuickAction::ALL.into_iter().map(|action| {
         entry(
-            MenuCommand::ViewControls,
+            MenuCommand::ToggleQuickAction(action),
+            action.menu_label(),
+            Enabled,
+            quick_actions_visible[action.index()],
+        )
+    }));
+    entries.extend([
+        entry(
+            MenuCommand::TogglePageControls,
             "Show Page Controls",
-            Disabled("Visibility controls land in M2 P7c task 3"),
-            true,
+            Enabled,
+            shell_view.page_controls_visible(),
         ),
-    ]
+        entry(
+            MenuCommand::LineWeights,
+            "Line Weights",
+            Disabled("Line Weights land in M3"),
+            false,
+        ),
+        entry(
+            MenuCommand::ThemeSystem,
+            "System Theme",
+            Enabled,
+            shell_view.theme() == ThemePreference::System,
+        ),
+        entry(
+            MenuCommand::ThemeLight,
+            "Light Theme",
+            Enabled,
+            shell_view.theme() == ThemePreference::Light,
+        ),
+        entry(
+            MenuCommand::ThemeDark,
+            "Dark Theme",
+            Enabled,
+            shell_view.theme() == ThemePreference::Dark,
+        ),
+        entry(
+            MenuCommand::ReadMode,
+            "Read Mode",
+            Enabled,
+            shell_view.read_mode(),
+        ),
+        entry(
+            MenuCommand::FullScreen,
+            "Full Screen",
+            Enabled,
+            shell_view.fullscreen(),
+        ),
+    ]);
+    entries
 }
 
 impl MenuCommand {
@@ -385,7 +469,56 @@ impl MenuCommand {
             | Self::CloseAllTabs
             | Self::Undo
             | Self::Redo
-            | Self::ViewControls
+            | Self::ToggleNavigationPane
+            | Self::ToggleQuickAction(_)
+            | Self::TogglePageControls
+            | Self::LineWeights
+            | Self::ThemeSystem
+            | Self::ThemeLight
+            | Self::ThemeDark
+            | Self::ReadMode
+            | Self::FullScreen
+            | Self::NewWindow
+            | Self::About
+            | Self::KeyboardShortcuts => return None,
+        })
+    }
+
+    pub(super) fn shell_view_action(self) -> Option<ShellViewAction> {
+        Some(match self {
+            Self::ToggleNavigationPane => ShellViewAction::ToggleNavigationPane,
+            Self::TogglePageControls => ShellViewAction::TogglePageControls,
+            Self::ThemeSystem => ShellViewAction::SetTheme(ThemePreference::System),
+            Self::ThemeLight => ShellViewAction::SetTheme(ThemePreference::Light),
+            Self::ThemeDark => ShellViewAction::SetTheme(ThemePreference::Dark),
+            Self::ReadMode => ShellViewAction::ToggleReadMode,
+            Self::Open
+            | Self::CloseTab
+            | Self::CloseOtherTabs
+            | Self::CloseAllTabs
+            | Self::Undo
+            | Self::Redo
+            | Self::PreviousView
+            | Self::NextView
+            | Self::FirstPage
+            | Self::PreviousPage
+            | Self::NextPage
+            | Self::LastPage
+            | Self::RotateClockwise
+            | Self::ActualSize
+            | Self::ZoomOut
+            | Self::ZoomIn
+            | Self::FitPage
+            | Self::FitWidth
+            | Self::FitHeight
+            | Self::SinglePage
+            | Self::SinglePageContinuous
+            | Self::TwoPage
+            | Self::TwoPageContinuous
+            | Self::ToggleCover
+            | Self::ToggleQuickAction(_)
+            | Self::LineWeights
+            | Self::FullScreen
             | Self::NewWindow
             | Self::About
             | Self::KeyboardShortcuts => return None,
@@ -469,7 +602,15 @@ fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
         | MenuCommand::SinglePageContinuous
         | MenuCommand::TwoPage
         | MenuCommand::TwoPageContinuous
-        | MenuCommand::ToggleCover => Some(MenuItem::action(
+        | MenuCommand::ToggleCover
+        | MenuCommand::ToggleNavigationPane
+        | MenuCommand::ToggleQuickAction(_)
+        | MenuCommand::TogglePageControls
+        | MenuCommand::ThemeSystem
+        | MenuCommand::ThemeLight
+        | MenuCommand::ThemeDark
+        | MenuCommand::ReadMode
+        | MenuCommand::FullScreen => Some(MenuItem::action(
             label,
             RunViewMenu {
                 command: entry.command,
@@ -478,7 +619,7 @@ fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
         MenuCommand::Open
         | MenuCommand::Undo
         | MenuCommand::Redo
-        | MenuCommand::ViewControls
+        | MenuCommand::LineWeights
         | MenuCommand::NewWindow
         | MenuCommand::About
         | MenuCommand::KeyboardShortcuts => None,
@@ -487,6 +628,7 @@ fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
 
 #[cfg(test)]
 mod tests {
+    use gpui::WindowAppearance;
     use onionskin_core::{ViewRotation, ZoomPolicy};
 
     use super::*;
@@ -505,9 +647,26 @@ mod tests {
         }
     }
 
+    fn menu_state(tab_count: usize, view: Option<CanvasViewState>) -> MenuState {
+        MenuState::new(
+            tab_count,
+            view,
+            ShellViewState::new(WindowAppearance::Dark),
+            [true; QuickAction::ALL.len()],
+        )
+    }
+
+    fn view_entries(view: Option<CanvasViewState>) -> Vec<MenuEntry> {
+        view_menu_entries(
+            view,
+            ShellViewState::new(WindowAppearance::Dark),
+            [true; QuickAction::ALL.len()],
+        )
+    }
+
     #[test]
     fn main_menu_has_the_five_required_sections_in_order() {
-        let ids: Vec<_> = main_menu_schema(MenuState::with_view(2, None))
+        let ids: Vec<_> = main_menu_schema(menu_state(2, None))
             .into_iter()
             .map(|section| section.id)
             .collect();
@@ -526,7 +685,7 @@ mod tests {
 
     #[test]
     fn every_deferred_entry_names_its_own_delivery_stage() {
-        let disabled: Vec<_> = main_menu_schema(MenuState::with_view(2, None))
+        let disabled: Vec<_> = main_menu_schema(menu_state(2, None))
             .into_iter()
             .flat_map(|section| section.entries)
             .filter(|entry| {
@@ -535,7 +694,7 @@ mod tests {
                     MenuCommand::Open
                         | MenuCommand::Undo
                         | MenuCommand::Redo
-                        | MenuCommand::ViewControls
+                        | MenuCommand::LineWeights
                         | MenuCommand::NewWindow
                         | MenuCommand::About
                         | MenuCommand::KeyboardShortcuts
@@ -548,13 +707,19 @@ mod tests {
         assert!(disabled
             .iter()
             .all(|reason| reason.contains("M2") || reason.contains("M3")));
-        assert!(disabled.iter().any(|reason| reason.contains("P7c")));
+        assert!(disabled.iter().any(|reason| reason.contains("M3")));
         assert!(disabled.iter().any(|reason| reason.contains("P11")));
     }
 
     #[test]
     fn native_menus_are_derived_from_the_same_five_section_schema() {
-        let menus = native_menus(MenuState::with_view(2, None));
+        let state = menu_state(2, None);
+        let expected_view_items = main_menu_schema(state)[2]
+            .entries
+            .iter()
+            .filter(|entry| entry.availability.is_enabled())
+            .count();
+        let menus = native_menus(state);
 
         assert_eq!(menus.len(), 5);
         assert_eq!(menus[0].name.as_ref(), "File");
@@ -563,12 +728,14 @@ mod tests {
         assert_eq!(menus[3].name.as_ref(), "Window");
         assert_eq!(menus[4].name.as_ref(), "Help");
         assert_eq!(menus[0].items.len(), 3);
-        assert!(menus[1..].iter().all(|menu| menu.items.is_empty()));
+        assert_eq!(menus[2].items.len(), expected_view_items);
+        assert!(menus[1].items.is_empty());
+        assert!(menus[3..].iter().all(|menu| menu.items.is_empty()));
     }
 
     #[test]
     fn close_others_is_disabled_consistently_for_one_tab() {
-        let file = &main_menu_schema(MenuState::with_view(1, None))[0];
+        let file = &main_menu_schema(menu_state(1, None))[0];
         let close_others = file
             .entries
             .iter()
@@ -579,15 +746,12 @@ mod tests {
             close_others.availability,
             MenuAvailability::Disabled("No other tabs are open")
         );
-        assert_eq!(
-            native_menus(MenuState::with_view(1, None))[0].items.len(),
-            2
-        );
+        assert_eq!(native_menus(menu_state(1, None))[0].items.len(), 2);
     }
 
     #[test]
     fn hamburger_and_native_view_entries_read_the_same_canvas_state() {
-        let state = MenuState::with_view(1, Some(view()));
+        let state = menu_state(1, Some(view()));
         let entries = &main_menu_schema(state)[2].entries;
         let expected_labels: Vec<_> = entries
             .iter()
@@ -637,7 +801,7 @@ mod tests {
     fn zoom_policy_selects_the_same_actual_or_fit_choice_as_the_controls() {
         let mut actual = view();
         actual.zoom = 1.0;
-        let actual_entries = view_menu_entries(Some(actual));
+        let actual_entries = view_entries(Some(actual));
         assert!(
             actual_entries
                 .iter()
@@ -648,7 +812,7 @@ mod tests {
 
         let mut fitted = view();
         fitted.zoom_policy = ZoomPolicy::Fit(FitMode::Width);
-        let fitted_entries = view_menu_entries(Some(fitted));
+        let fitted_entries = view_entries(Some(fitted));
         assert!(
             fitted_entries
                 .iter()
@@ -663,5 +827,69 @@ mod tests {
                 .unwrap()
                 .selected
         );
+    }
+
+    #[test]
+    fn shell_view_selections_and_native_labels_share_one_schema() {
+        let mut shell_view = ShellViewState::new(WindowAppearance::Dark);
+        shell_view.apply(ShellViewAction::ToggleNavigationPane);
+        shell_view.apply(ShellViewAction::TogglePageControls);
+        shell_view.apply(ShellViewAction::SetTheme(ThemePreference::Light));
+        shell_view.apply(ShellViewAction::ToggleReadMode);
+        shell_view.set_fullscreen(true);
+        let mut quick_actions_visible = [true; QuickAction::ALL.len()];
+        quick_actions_visible[QuickAction::Comment.index()] = false;
+        let state = MenuState::new(1, Some(view()), shell_view, quick_actions_visible);
+        let entries = &main_menu_schema(state)[2].entries;
+        let native_labels: Vec<_> = native_menus(state)[2]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action { name, .. } => Some(name.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        for command in [
+            MenuCommand::ToggleNavigationPane,
+            MenuCommand::ToggleQuickAction(QuickAction::Comment),
+            MenuCommand::TogglePageControls,
+        ] {
+            assert!(
+                !entries
+                    .iter()
+                    .find(|entry| entry.command == command)
+                    .unwrap()
+                    .selected
+            );
+        }
+        for command in [
+            MenuCommand::ThemeLight,
+            MenuCommand::ReadMode,
+            MenuCommand::FullScreen,
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .unwrap();
+            assert!(entry.selected);
+            assert!(native_labels.contains(&format!("✓ {}", entry.label)));
+        }
+    }
+
+    #[test]
+    fn line_weights_is_disabled_until_m3_and_has_no_action_route() {
+        let entry = view_entries(Some(view()))
+            .into_iter()
+            .find(|entry| entry.command == MenuCommand::LineWeights)
+            .unwrap();
+
+        assert_eq!(
+            entry.availability,
+            MenuAvailability::Disabled("Line Weights land in M3")
+        );
+        assert_eq!(entry.command.view_action(view()), None);
+        assert_eq!(entry.command.shell_view_action(), None);
+        assert!(native_menu_item(entry).is_none());
     }
 }

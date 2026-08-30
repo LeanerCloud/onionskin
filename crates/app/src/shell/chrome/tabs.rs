@@ -22,6 +22,7 @@ use super::quick_actions::{
 };
 use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
 use super::side_panel::{render_side_panel, SidePanelState};
+use super::theme::{ShellViewAction, ShellViewState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
@@ -178,6 +179,7 @@ pub(in crate::shell) struct ShellFrame {
     page_input: Entity<SearchInput>,
     page_entry_error: Option<PageEntryError>,
     observed_view_state: Option<CanvasViewState>,
+    shell_view_state: ShellViewState,
     rail_state: RailState,
     quick_actions_state: QuickActionsState,
     side_panel_state: SidePanelState,
@@ -218,10 +220,15 @@ fn close_other_tabs<T>(
 impl ShellFrame {
     pub(in crate::shell) fn new(
         tabs: Vec<(PathBuf, Entity<Canvas>)>,
+        mut shell_view_state: ShellViewState,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search_input = cx.new(SearchInput::new);
-        let page_input = cx.new(|cx| SearchInput::with_placeholder("page-entry-input", "Page", cx));
+        shell_view_state.set_fullscreen(window.is_fullscreen());
+        let theme = shell_view_state.tokens();
+        let search_input = cx.new(|cx| SearchInput::new(theme, cx));
+        let page_input =
+            cx.new(|cx| SearchInput::with_placeholder("page-entry-input", "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
             frame.search_feedback = None;
             cx.notify();
@@ -230,6 +237,14 @@ impl ShellFrame {
         cx.observe(&page_input, |frame, _, cx| {
             frame.page_entry_error = None;
             cx.notify();
+        })
+        .detach();
+        cx.observe_window_appearance(window, |frame, window, cx| {
+            frame.window_appearance_changed(window, cx);
+        })
+        .detach();
+        cx.observe_window_bounds(window, |frame, window, cx| {
+            frame.window_bounds_changed(window, cx);
         })
         .detach();
         let document_tabs: Vec<_> = tabs
@@ -255,6 +270,7 @@ impl ShellFrame {
             page_input,
             page_entry_error: None,
             observed_view_state,
+            shell_view_state,
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),
             side_panel_state: SidePanelState::default(),
@@ -336,10 +352,35 @@ impl ShellFrame {
                 );
                 Ok(())
             }
+            MenuCommand::ToggleQuickAction(action) => {
+                self.main_menu_open = false;
+                self.toggle_quick_action_visibility(action, cx);
+                Ok(())
+            }
+            command @ (MenuCommand::ToggleNavigationPane
+            | MenuCommand::TogglePageControls
+            | MenuCommand::ThemeSystem
+            | MenuCommand::ThemeLight
+            | MenuCommand::ThemeDark
+            | MenuCommand::ReadMode) => {
+                self.main_menu_open = false;
+                self.run_shell_view_action(
+                    command
+                        .shell_view_action()
+                        .expect("shell view commands map to shell actions"),
+                    cx,
+                );
+                Ok(())
+            }
+            MenuCommand::FullScreen => {
+                self.main_menu_open = false;
+                self.toggle_fullscreen(window, cx);
+                Ok(())
+            }
             MenuCommand::Open
             | MenuCommand::Undo
             | MenuCommand::Redo
-            | MenuCommand::ViewControls
+            | MenuCommand::LineWeights
             | MenuCommand::NewWindow
             | MenuCommand::About
             | MenuCommand::KeyboardShortcuts => Err(TabError::CommandUnavailable),
@@ -409,7 +450,60 @@ impl ShellFrame {
     }
 
     fn menu_state(&self, cx: &App) -> MenuState {
-        MenuState::with_view(self.tabs.tabs().len(), self.active_view_state(cx))
+        MenuState::new(
+            self.tabs.tabs().len(),
+            self.active_view_state(cx),
+            self.shell_view_state,
+            self.quick_actions_state.visibility(),
+        )
+    }
+
+    fn apply_theme(&mut self, cx: &mut Context<Self>) {
+        let theme = self.shell_view_state.tokens();
+        self.search_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
+        self.page_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
+        for tab in self.tabs.tabs() {
+            tab.canvas
+                .update(cx, |canvas, cx| canvas.set_theme(theme, cx));
+        }
+    }
+
+    fn window_appearance_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .shell_view_state
+            .set_system_appearance(window.appearance())
+        {
+            self.apply_theme(cx);
+            cx.notify();
+        }
+    }
+
+    fn window_bounds_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.shell_view_state.set_fullscreen(window.is_fullscreen()) {
+            refresh_native_menus(cx, self.menu_state(cx));
+            cx.notify();
+        }
+    }
+
+    fn run_shell_view_action(&mut self, action: ShellViewAction, cx: &mut Context<Self>) {
+        let previous_theme = self.shell_view_state.resolved_theme();
+        if !self.shell_view_state.apply(action) {
+            return;
+        }
+        if previous_theme != self.shell_view_state.resolved_theme() {
+            self.apply_theme(cx);
+        }
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    fn toggle_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.toggle_fullscreen();
+        cx.on_next_frame(window, |frame, window, cx| {
+            frame.window_bounds_changed(window, cx);
+        });
     }
 
     fn sync_page_entry(&self, cx: &mut Context<Self>) {
@@ -496,14 +590,15 @@ impl ShellFrame {
     }
 
     fn render_global_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
         div()
             .h(px(GLOBAL_BAR_HEIGHT))
             .flex()
             .items_center()
             .gap_3()
             .px_3()
-            .bg(gpui::rgb(0x17181a))
-            .text_color(gpui::white())
+            .bg(theme.global_bar)
+            .text_color(theme.text)
             .child(
                 div()
                     .id("main-menu-button")
@@ -514,7 +609,7 @@ impl ShellFrame {
                     .justify_center()
                     .cursor_pointer()
                     .rounded_md()
-                    .hover(|button| button.bg(gpui::rgb(0x34363a)))
+                    .hover(move |button| button.bg(theme.subtle_hover))
                     .on_click(cx.listener(|frame, _event, _window, cx| {
                         frame.toggle_main_menu(cx);
                     }))
@@ -649,6 +744,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         self.quick_actions_state.toggle_visibility(action);
+        refresh_native_menus(cx, self.menu_state(cx));
         cx.notify();
     }
 
@@ -660,8 +756,15 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         let viewport = window.viewport_size();
-        let document =
-            document_view_bounds(viewport, self.rail_state.expanded(), self.side_panel_state);
+        let visibility = self.shell_view_state.visibility();
+        let document = document_view_bounds(
+            viewport,
+            visibility.rail,
+            self.rail_state.expanded(),
+            visibility.side_panel,
+            self.side_panel_state,
+            visibility.page_controls,
+        );
         let bounds = gpui::Bounds {
             origin: Point::default(),
             size: document.size,
@@ -684,6 +787,7 @@ impl ShellFrame {
     }
 
     fn render_search_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
         let mut panel = div()
             .absolute()
             .top(px(GLOBAL_BAR_HEIGHT))
@@ -692,8 +796,8 @@ impl ShellFrame {
             .p_1()
             .rounded_md()
             .occlude()
-            .bg(gpui::rgb(0x292a2d))
-            .text_color(gpui::white());
+            .bg(theme.raised)
+            .text_color(theme.text);
 
         for (index, result) in self.search_results(cx).into_iter().enumerate() {
             let selection = result.clone();
@@ -708,7 +812,7 @@ impl ShellFrame {
                     .px_2()
                     .rounded_sm()
                     .cursor_pointer()
-                    .hover(|row| row.bg(gpui::rgb(0x3a3b3f)))
+                    .hover(move |row| row.bg(theme.selected))
                     .on_click(cx.listener(move |frame, _event, _window, cx| {
                         frame.choose_search_result(selection.clone(), cx);
                     }))
@@ -716,7 +820,7 @@ impl ShellFrame {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui::rgb(0x85878c))
+                            .text_color(theme.muted_text)
                             .child(result.detail()),
                     ),
             );
@@ -729,9 +833,9 @@ impl ShellFrame {
                     .px_2()
                     .py_1()
                     .rounded_sm()
-                    .bg(gpui::rgb(0x202124))
+                    .bg(theme.surface)
                     .text_sm()
-                    .text_color(gpui::rgb(0xc6c8cd))
+                    .text_color(theme.feedback_text)
                     .child(feedback.detail()),
             );
         }
@@ -739,6 +843,7 @@ impl ShellFrame {
     }
 
     fn render_main_menu(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
         let max_height = (window.viewport_size().height - px(GLOBAL_BAR_HEIGHT + 8.0)).max(px(0.0));
         let mut panel = div()
             .id("main-menu-panel")
@@ -750,25 +855,28 @@ impl ShellFrame {
             .overflow_y_scroll()
             .p_2()
             .rounded_md()
-            .bg(gpui::rgb(0x292a2d))
-            .text_color(gpui::white());
+            .bg(theme.raised)
+            .text_color(theme.text);
 
+        let mut menu_entry_index = 0_usize;
         for section in main_menu_schema(self.menu_state(cx)) {
             panel = panel.child(
                 div()
                     .mt_2()
                     .px_2()
                     .text_xs()
-                    .text_color(gpui::rgb(0xaeb0b5))
+                    .text_color(theme.secondary_text)
                     .child(section.id.label()),
             );
             for entry in section.entries {
+                let row_index = menu_entry_index;
+                menu_entry_index += 1;
                 let command = entry.command;
                 let enabled = entry.availability.is_enabled();
                 let reason = entry.availability.reason();
                 panel = panel.child(
                     div()
-                        .id(("main-menu-entry", command as usize))
+                        .id(("main-menu-entry", row_index))
                         .min_h(px(30.0))
                         .flex()
                         .items_center()
@@ -776,13 +884,13 @@ impl ShellFrame {
                         .px_2()
                         .rounded_sm()
                         .text_color(if enabled {
-                            gpui::rgb(0xffffff)
+                            theme.text
                         } else {
-                            gpui::rgb(0x85878c)
+                            theme.disabled_text
                         })
                         .when(enabled, |row| {
                             row.cursor_pointer()
-                                .hover(|row| row.bg(gpui::rgb(0x3a3b3f)))
+                                .hover(move |row| row.bg(theme.selected))
                         })
                         .on_click(cx.listener(move |frame, _event, window, cx| {
                             if enabled {
@@ -804,7 +912,7 @@ impl ShellFrame {
                                     .flex_1()
                                     .text_right()
                                     .text_xs()
-                                    .text_color(gpui::rgb(0x85878c))
+                                    .text_color(theme.muted_text)
                                     .child(reason),
                             )
                         }),
@@ -819,6 +927,7 @@ impl ShellFrame {
         menu: TabContextMenu,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
         let mut panel = div()
             .absolute()
             .left(menu.origin.x)
@@ -826,8 +935,8 @@ impl ShellFrame {
             .w(px(230.0))
             .p_1()
             .rounded_md()
-            .bg(gpui::rgb(0x292a2d))
-            .text_color(gpui::white());
+            .bg(theme.raised)
+            .text_color(theme.text);
 
         for (row_index, entry) in tab_context_entries(menu.tab_index, self.tabs.tabs().len())
             .expect("context-menu targets are validated when opened")
@@ -847,13 +956,13 @@ impl ShellFrame {
                     .px_2()
                     .rounded_sm()
                     .text_color(if enabled {
-                        gpui::rgb(0xffffff)
+                        theme.text
                     } else {
-                        gpui::rgb(0x85878c)
+                        theme.disabled_text
                     })
                     .when(enabled, |row| {
                         row.cursor_pointer()
-                            .hover(|row| row.bg(gpui::rgb(0x3a3b3f)))
+                            .hover(move |row| row.bg(theme.selected))
                     })
                     .on_click(cx.listener(move |frame, _event, window, cx| {
                         if enabled {
@@ -870,7 +979,7 @@ impl ShellFrame {
                             div()
                                 .ml_2()
                                 .text_xs()
-                                .text_color(gpui::rgb(0x85878c))
+                                .text_color(theme.muted_text)
                                 .child(reason),
                         )
                     }),
@@ -882,13 +991,18 @@ impl ShellFrame {
 
 impl Render for ShellFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
+        let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
             window.viewport_size(),
+            visibility.rail,
             self.rail_state.expanded(),
+            visibility.side_panel,
             self.side_panel_state,
+            visibility.page_controls,
         );
         self.quick_actions_state.constrain_to(document_bounds.size);
-        let mut tab_bar = div().flex().h(px(TAB_BAR_HEIGHT)).bg(gpui::rgb(0x202124));
+        let mut tab_bar = div().flex().h(px(TAB_BAR_HEIGHT)).bg(theme.surface);
         for (index, tab) in self.tabs.tabs().iter().enumerate() {
             let active = self.tabs.active_index() == Some(index);
             tab_bar = tab_bar.child(
@@ -899,12 +1013,8 @@ impl Render for ShellFrame {
                     .flex()
                     .items_center()
                     .cursor_pointer()
-                    .bg(if active {
-                        gpui::rgb(0x3a3b3f)
-                    } else {
-                        gpui::rgb(0x292a2d)
-                    })
-                    .text_color(gpui::white())
+                    .bg(if active { theme.selected } else { theme.raised })
+                    .text_color(theme.text)
                     .on_click(
                         cx.listener(move |frame, event: &gpui::ClickEvent, _window, cx| {
                             if !event.is_right_click() {
@@ -924,12 +1034,13 @@ impl Render for ShellFrame {
 
         let rail_entries = self.rail_entries(cx);
         let rail_expanded = self.rail_state.expanded();
-        let mut body =
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .child(render_rail(rail_entries, rail_expanded, cx));
+        let mut body = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .when(visibility.rail, |body| {
+                body.child(render_rail(rail_entries, rail_expanded, theme, cx))
+            });
         if let Some(tab) = self.tabs.active() {
             let canvas = tab.canvas.clone();
             let page_controls_state =
@@ -940,6 +1051,7 @@ impl Render for ShellFrame {
                 quick_action_entries,
                 all_quick_action_entries,
                 &self.quick_actions_state,
+                theme,
                 cx,
             );
             let canvas_view = div()
@@ -950,25 +1062,29 @@ impl Render for ShellFrame {
                 .min_w_0()
                 .min_h_0()
                 .child(canvas)
-                .child(quick_actions);
-            body = body.child(
-                div()
-                    .w(document_bounds.size.width)
-                    .h_full()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .child(canvas_view)
-                    .child(render_page_controls(
+                .when(visibility.quick_actions, |view| view.child(quick_actions));
+            let document_column = div()
+                .w(document_bounds.size.width)
+                .h_full()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .child(canvas_view)
+                .when(visibility.page_controls, |column| {
+                    column.child(render_page_controls(
                         page_controls_state,
                         self.page_input.clone(),
                         self.page_entry_error.as_ref(),
                         document_bounds.size.width,
+                        theme,
                         cx,
-                    )),
-            );
+                    ))
+                });
+            body = body.child(document_column);
         }
-        body = body.child(render_side_panel(self.side_panel_state, cx));
+        body = body.when(visibility.side_panel, |body| {
+            body.child(render_side_panel(self.side_panel_state, theme, cx))
+        });
 
         let frame = div()
             .size_full()
@@ -1009,16 +1125,33 @@ impl Render for ShellFrame {
 
 fn document_view_bounds(
     viewport: gpui::Size<Pixels>,
+    rail_visible: bool,
     rail_expanded: bool,
+    side_panel_visible: bool,
     side_panel: SidePanelState,
+    page_controls_visible: bool,
 ) -> gpui::Bounds<Pixels> {
-    let rail = rail_width(rail_expanded);
+    let rail = if rail_visible {
+        rail_width(rail_expanded)
+    } else {
+        px(0.0)
+    };
+    let side_panel = if side_panel_visible {
+        side_panel.width()
+    } else {
+        px(0.0)
+    };
+    let page_controls = if page_controls_visible {
+        px(PAGE_CONTROLS_HEIGHT)
+    } else {
+        px(0.0)
+    };
     let header = px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT);
     gpui::Bounds {
         origin: Point { x: rail, y: header },
         size: gpui::size(
-            (viewport.width - rail - side_panel.width()).max(px(0.0)),
-            (viewport.height - header - px(PAGE_CONTROLS_HEIGHT)).max(px(0.0)),
+            (viewport.width - rail - side_panel).max(px(0.0)),
+            (viewport.height - header - page_controls).max(px(0.0)),
         ),
     }
 }
@@ -1088,6 +1221,8 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    #[cfg(feature = "shell-test-support")]
+    use gpui::TestAppContext;
     use onionskin_core::{Document, PageLayoutMode, ViewPoint, ViewRotation, ViewSize, ZoomPolicy};
     use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
 
@@ -1124,7 +1259,8 @@ mod tests {
     fn rails_and_the_side_panel_adjust_document_bounds_once() {
         let viewport = gpui::size(px(1_100.0), px(860.0));
 
-        let collapsed_closed = document_view_bounds(viewport, false, SidePanelState::Closed);
+        let collapsed_closed =
+            document_view_bounds(viewport, true, false, true, SidePanelState::Closed, true);
         assert_eq!(
             collapsed_closed.origin,
             Point {
@@ -1134,7 +1270,8 @@ mod tests {
         );
         assert_eq!(collapsed_closed.size, gpui::size(px(972.0), px(736.0)));
 
-        let expanded_closed = document_view_bounds(viewport, true, SidePanelState::Closed);
+        let expanded_closed =
+            document_view_bounds(viewport, true, true, true, SidePanelState::Closed, true);
         assert_eq!(
             expanded_closed.origin,
             Point {
@@ -1144,21 +1281,113 @@ mod tests {
         );
         assert_eq!(expanded_closed.size, gpui::size(px(820.0), px(736.0)));
 
-        let collapsed_open = document_view_bounds(viewport, false, SidePanelState::OpenEmpty);
+        let collapsed_open =
+            document_view_bounds(viewport, true, false, true, SidePanelState::OpenEmpty, true);
         assert_eq!(collapsed_open.origin, collapsed_closed.origin);
         assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(736.0)));
 
-        let expanded_open = document_view_bounds(viewport, true, SidePanelState::OpenEmpty);
+        let expanded_open =
+            document_view_bounds(viewport, true, true, true, SidePanelState::OpenEmpty, true);
         assert_eq!(expanded_open.origin, expanded_closed.origin);
         assert_eq!(expanded_open.size, gpui::size(px(580.0), px(736.0)));
+    }
+
+    #[test]
+    fn hidden_document_chrome_returns_its_space_to_the_canvas() {
+        let bounds = document_view_bounds(
+            gpui::size(px(1_100.0), px(860.0)),
+            false,
+            true,
+            false,
+            SidePanelState::OpenEmpty,
+            false,
+        );
+
+        assert_eq!(
+            bounds.origin,
+            Point {
+                x: px(0.0),
+                y: px(76.0)
+            }
+        );
+        assert_eq!(bounds.size, gpui::size(px(1_100.0), px(784.0)));
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn fullscreen_command_updates_the_real_window_and_mirrored_menu_state(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let mut shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        shell_view.apply(ShellViewAction::ToggleReadMode);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::FullScreen, window, cx)
+                    .unwrap();
+            });
+        });
+        cx.simulate_resize(gpui::size(px(900.0), px(700.0)));
+        cx.run_until_parked();
+
+        let (window_fullscreen, state, read_mode) = cx.update(|window, app| {
+            let state = frame.read(app).menu_state(app);
+            (
+                window.is_fullscreen(),
+                state,
+                frame.read(app).shell_view_state.read_mode(),
+            )
+        });
+        let full_screen = main_menu_schema(state)[2]
+            .entries
+            .iter()
+            .find(|entry| entry.command == MenuCommand::FullScreen)
+            .copied()
+            .unwrap();
+        assert!(window_fullscreen);
+        assert!(full_screen.selected);
+        assert!(read_mode);
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::FullScreen, window, cx)
+                    .unwrap();
+            });
+        });
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            assert!(!window.is_fullscreen());
+            assert!(!frame.read(app).shell_view_state.fullscreen());
+            assert!(frame.read(app).shell_view_state.read_mode());
+        });
     }
 
     #[test]
     fn composite_layout_origin_reaches_canvas_pointer_mapping() {
         let bounds = document_view_bounds(
             gpui::size(px(1_100.0), px(860.0)),
+            true,
             false,
+            true,
             SidePanelState::OpenEmpty,
+            true,
         );
         let inputs = Arc::new(Mutex::new(Vec::new()));
         let mut registry = PluginRegistry::new();
@@ -1178,7 +1407,8 @@ mod tests {
             },
         )
         .unwrap();
-        let mut canvas = Canvas::new(model);
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark).tokens();
+        let mut canvas = Canvas::new(model, theme);
         let origin = ViewPoint {
             x: f32::from(bounds.origin.x),
             y: f32::from(bounds.origin.y),

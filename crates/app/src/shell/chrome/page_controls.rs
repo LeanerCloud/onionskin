@@ -8,6 +8,7 @@ use gpui::{
 use onionskin_core::{FitMode, PageIndex};
 
 use super::tabs::ShellFrame;
+use super::theme::ThemeTokens;
 use super::tool_search::SearchInput;
 use crate::shell::canvas::{CanvasViewState, ViewAction};
 
@@ -100,6 +101,7 @@ pub(super) fn render_page_controls(
     page_input: Entity<SearchInput>,
     error: Option<&PageEntryError>,
     document_width: Pixels,
+    theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let current_and_count = format!("/ {}", state.page_count);
@@ -116,6 +118,7 @@ pub(super) fn render_page_controls(
             "↶",
             state.can_previous_view,
             ViewAction::PreviousView,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -123,6 +126,7 @@ pub(super) fn render_page_controls(
             "↷",
             state.can_next_view,
             ViewAction::NextView,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -130,6 +134,7 @@ pub(super) fn render_page_controls(
             "|‹",
             state.can_previous_page(),
             ViewAction::FirstPage,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -137,16 +142,18 @@ pub(super) fn render_page_controls(
             "‹",
             state.can_previous_page(),
             ViewAction::PreviousPage,
+            theme,
             cx,
         ))
         .child(div().w(px(42.0)).child(page_input))
         .child(div().min_w(px(34.0)).text_sm().child(current_and_count))
-        .child(submit_button(cx))
+        .child(submit_button(theme, cx))
         .child(action_button(
             "next-page",
             "›",
             state.can_next_page(),
             ViewAction::NextPage,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -154,6 +161,7 @@ pub(super) fn render_page_controls(
             "›|",
             state.can_next_page(),
             ViewAction::LastPage,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -161,6 +169,7 @@ pub(super) fn render_page_controls(
             "↻",
             true,
             ViewAction::RotateClockwise,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -168,6 +177,7 @@ pub(super) fn render_page_controls(
             if state.actual_size { "1:1 ✓" } else { "1:1" },
             true,
             ViewAction::ActualSize,
+            theme,
             cx,
         ))
         .child(action_button(
@@ -175,15 +185,24 @@ pub(super) fn render_page_controls(
             "−",
             true,
             ViewAction::ZoomOut,
+            theme,
             cx,
         ))
         .child(div().min_w(px(48.0)).text_center().text_sm().child(zoom))
-        .child(action_button("zoom-in", "+", true, ViewAction::ZoomIn, cx))
+        .child(action_button(
+            "zoom-in",
+            "+",
+            true,
+            ViewAction::ZoomIn,
+            theme,
+            cx,
+        ))
         .child(action_button(
             "fit-page",
             fit_labels.0,
             true,
             ViewAction::Fit(FitMode::Page),
+            theme,
             cx,
         ))
         .child(action_button(
@@ -191,6 +210,7 @@ pub(super) fn render_page_controls(
             fit_labels.1,
             true,
             ViewAction::Fit(FitMode::Width),
+            theme,
             cx,
         ))
         .child(action_button(
@@ -198,6 +218,7 @@ pub(super) fn render_page_controls(
             fit_labels.2,
             true,
             ViewAction::Fit(FitMode::Height),
+            theme,
             cx,
         ));
 
@@ -207,8 +228,8 @@ pub(super) fn render_page_controls(
         .w_full()
         .flex_none()
         .relative()
-        .bg(gpui::rgb(0x202124))
-        .text_color(gpui::white())
+        .bg(theme.surface)
+        .text_color(theme.text)
         .child(controls_scroller(controls))
         .when_some(error, |controls, error| {
             controls.child(
@@ -220,9 +241,9 @@ pub(super) fn render_page_controls(
                     .max_w(px(210.0))
                     .p_1()
                     .rounded_sm()
-                    .bg(gpui::rgb(0x451a1a))
+                    .bg(theme.error_surface)
                     .text_xs()
-                    .text_color(gpui::rgb(0xfca5a5))
+                    .text_color(theme.error_text)
                     .child(error),
             )
         })
@@ -254,6 +275,7 @@ fn action_button(
     label: impl Into<SharedString>,
     enabled: bool,
     action: ViewAction,
+    theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     div()
@@ -267,14 +289,14 @@ fn action_button(
         .rounded_sm()
         .text_sm()
         .text_color(if enabled {
-            gpui::rgb(0xffffff)
+            theme.text
         } else {
-            gpui::rgb(0x696b70)
+            theme.disabled_text
         })
         .when(enabled, |button| {
             button
                 .cursor_pointer()
-                .hover(|button| button.bg(gpui::rgb(0x45464b)))
+                .hover(move |button| button.bg(theme.hover))
         })
         .on_click(cx.listener(move |frame, _event, _window, cx| {
             if enabled {
@@ -284,7 +306,7 @@ fn action_button(
         .child(label.into())
 }
 
-fn submit_button(cx: &mut Context<ShellFrame>) -> impl IntoElement {
+fn submit_button(theme: ThemeTokens, cx: &mut Context<ShellFrame>) -> impl IntoElement {
     div()
         .id("go-to-page")
         .h(px(28.0))
@@ -295,7 +317,7 @@ fn submit_button(cx: &mut Context<ShellFrame>) -> impl IntoElement {
         .rounded_sm()
         .text_sm()
         .cursor_pointer()
-        .hover(|button| button.bg(gpui::rgb(0x45464b)))
+        .hover(move |button| button.bg(theme.hover))
         .on_click(cx.listener(|frame, _event, _window, cx| {
             frame.submit_page_entry(cx);
         }))

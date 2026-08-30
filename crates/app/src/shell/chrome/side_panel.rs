@@ -4,6 +4,7 @@ use gpui::{
 };
 
 use super::tabs::ShellFrame;
+use super::theme::ThemeTokens;
 
 pub(super) const CLOSED_WIDTH: f32 = 40.0;
 pub(super) const OPEN_WIDTH: f32 = 280.0;
@@ -39,6 +40,7 @@ impl SidePanelState {
 
 pub(super) fn render_side_panel(
     state: SidePanelState,
+    theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let toggle = div()
@@ -50,7 +52,7 @@ pub(super) fn render_side_panel(
         .justify_center()
         .rounded_sm()
         .cursor_pointer()
-        .hover(|button| button.bg(gpui::rgb(0x45464b)))
+        .hover(move |button| button.bg(theme.hover))
         .on_click(cx.listener(|frame, _event, _window, cx| {
             frame.toggle_side_panel(cx);
         }))
@@ -60,8 +62,8 @@ pub(super) fn render_side_panel(
         .w(state.width())
         .h_full()
         .flex_none()
-        .bg(gpui::rgb(0x202124))
-        .text_color(gpui::white());
+        .bg(theme.surface)
+        .text_color(theme.text);
 
     if state.is_open() {
         panel = panel.child(

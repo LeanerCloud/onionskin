@@ -7,6 +7,7 @@ use gpui::{
 use onionskin_plugin_api::{PluginRegistry, ToolCapability};
 
 use super::tabs::ShellFrame;
+use super::theme::ThemeTokens;
 
 const TOOLBAR_WIDTH: f32 = 640.0;
 const TOOLBAR_HEIGHT: f32 = 64.0;
@@ -32,7 +33,7 @@ impl QuickAction {
         Self::AddSignature,
     ];
 
-    fn index(self) -> usize {
+    pub(super) fn index(self) -> usize {
         match self {
             Self::Select => 0,
             Self::Comment => 1,
@@ -51,6 +52,17 @@ impl QuickAction {
             Self::Draw => "Draw",
             Self::FillTextFields => "Fill text",
             Self::AddSignature => "Add sign",
+        }
+    }
+
+    pub(super) fn menu_label(self) -> &'static str {
+        match self {
+            Self::Select => "Toolbar: Select",
+            Self::Comment => "Toolbar: Comment",
+            Self::Highlight => "Toolbar: Highlight",
+            Self::Draw => "Toolbar: Draw",
+            Self::FillTextFields => "Toolbar: Fill text",
+            Self::AddSignature => "Toolbar: Add signature",
         }
     }
 
@@ -192,6 +204,10 @@ impl QuickActionsState {
         self.visible[action.index()]
     }
 
+    pub(super) fn visibility(&self) -> [bool; QuickAction::ALL.len()] {
+        self.visible
+    }
+
     pub(super) fn toggle_visibility(&mut self, action: QuickAction) {
         let visible = &mut self.visible[action.index()];
         *visible = !*visible;
@@ -310,17 +326,15 @@ impl QuickActionDrag {
 
 struct QuickActionDragPreview {
     offset: Point<Pixels>,
+    color: gpui::Rgba,
 }
 
 impl Render for QuickActionDragPreview {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().pl(self.offset.x).pt(self.offset.y).child(
-            div()
-                .w(px(20.0))
-                .h(px(28.0))
-                .rounded_sm()
-                .bg(gpui::rgba(0x777a80aa)),
-        )
+        div()
+            .pl(self.offset.x)
+            .pt(self.offset.y)
+            .child(div().w(px(20.0)).h(px(28.0)).rounded_sm().bg(self.color))
     }
 }
 
@@ -328,6 +342,7 @@ pub(super) fn render_quick_actions(
     entries: Vec<QuickActionEntry>,
     all_entries: Vec<QuickActionEntry>,
     state: &QuickActionsState,
+    theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let position = state.position();
@@ -351,9 +366,12 @@ pub(super) fn render_quick_actions(
                 .items_center()
                 .justify_center()
                 .cursor_move()
-                .text_color(gpui::rgb(0xaeb0b5))
-                .on_drag(drag, |_drag, offset, _window, cx| {
-                    cx.new(|_| QuickActionDragPreview { offset })
+                .text_color(theme.secondary_text)
+                .on_drag(drag, move |_drag, offset, _window, cx| {
+                    cx.new(|_| QuickActionDragPreview {
+                        offset,
+                        color: theme.drag_preview,
+                    })
                 })
                 .on_drag_move::<QuickActionDrag>(cx.listener(
                     |frame, event: &gpui::DragMoveEvent<QuickActionDrag>, window, cx| {
@@ -378,14 +396,14 @@ pub(super) fn render_quick_actions(
                 .justify_center()
                 .rounded_sm()
                 .text_color(if enabled {
-                    gpui::rgb(0xffffff)
+                    theme.text
                 } else {
-                    gpui::rgb(0x85878c)
+                    theme.muted_text
                 })
                 .when(enabled, |button| {
                     button
                         .cursor_pointer()
-                        .hover(|button| button.bg(gpui::rgb(0x45464b)))
+                        .hover(move |button| button.bg(theme.hover))
                 })
                 .on_click(cx.listener(move |frame, _event, _window, cx| {
                     if enabled {
@@ -398,7 +416,7 @@ pub(super) fn render_quick_actions(
                         div()
                             .mt_1()
                             .text_xs()
-                            .text_color(gpui::rgb(0x85878c))
+                            .text_color(theme.muted_text)
                             .child(stage.label()),
                     )
                 }),
@@ -416,7 +434,7 @@ pub(super) fn render_quick_actions(
             .justify_center()
             .rounded_sm()
             .cursor_pointer()
-            .hover(|button| button.bg(gpui::rgb(0x45464b)))
+            .hover(move |button| button.bg(theme.hover))
             .on_click(cx.listener(|frame, _event, _window, cx| {
                 frame.toggle_quick_action_customization(cx);
             }))
@@ -431,8 +449,8 @@ pub(super) fn render_quick_actions(
         .w(px(TOOLBAR_WIDTH))
         .rounded_md()
         .occlude()
-        .bg(gpui::rgb(0x292a2d))
-        .text_color(gpui::white())
+        .bg(theme.raised)
+        .text_color(theme.text)
         .shadow_md()
         .child(row);
 
@@ -458,7 +476,7 @@ pub(super) fn render_quick_actions(
                     .px_2()
                     .rounded_sm()
                     .cursor_pointer()
-                    .hover(|item| item.bg(gpui::rgb(0x3a3b3f)))
+                    .hover(move |item| item.bg(theme.selected))
                     .on_click(cx.listener(move |frame, _event, _window, cx| {
                         frame.toggle_quick_action_visibility(action, cx);
                     }))
@@ -469,7 +487,7 @@ pub(super) fn render_quick_actions(
                             div()
                                 .ml_auto()
                                 .text_xs()
-                                .text_color(gpui::rgb(0x85878c))
+                                .text_color(theme.muted_text)
                                 .child(reason),
                         )
                     }),

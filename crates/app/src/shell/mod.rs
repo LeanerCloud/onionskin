@@ -16,7 +16,10 @@ use gpui::{
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList, ViewAction};
-use self::chrome::{install_native_menus, install_search_keybindings, MenuState, ShellFrame};
+use self::chrome::{
+    install_native_menus, install_search_keybindings, MenuState, ShellFrame, ShellViewState,
+    ThemeTokens,
+};
 
 pub mod canvas;
 mod chrome;
@@ -78,14 +81,24 @@ impl From<CanvasError> for ShellError {
 pub struct Canvas {
     model: CanvasModel,
     polling: bool,
+    theme: ThemeTokens,
 }
 
 impl Canvas {
-    fn new(model: CanvasModel) -> Self {
+    fn new(model: CanvasModel, theme: ThemeTokens) -> Self {
         Self {
             model,
             polling: false,
+            theme,
         }
+    }
+
+    fn set_theme(&mut self, theme: ThemeTokens, cx: &mut Context<Self>) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        cx.notify();
     }
 
     fn prepare_paint(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) -> PaintList {
@@ -294,7 +307,7 @@ impl Render for Canvas {
             .id("canvas")
             .size_full()
             .overflow_hidden()
-            .bg(gpui::rgb(0x2c2c30))
+            .bg(self.theme.canvas)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|canvas, event, window, cx| canvas.on_mouse_down(event, window, cx)),
@@ -368,8 +381,8 @@ impl Render for Canvas {
                     .left(px(8.0))
                     .max_w(px(700.0))
                     .p_2()
-                    .bg(gpui::rgb(0x7f1d1d))
-                    .text_color(gpui::white())
+                    .bg(self.theme.canvas_error_surface)
+                    .text_color(self.theme.canvas_error_text)
                     .child(status),
             );
         }
@@ -383,10 +396,6 @@ where
     P: AsRef<Path>,
 {
     let prepared = prepare_tabs(paths)?;
-    let menu_state = MenuState::with_view(
-        prepared.len(),
-        prepared.first().map(|(_, model)| model.view_state()),
-    );
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 
@@ -399,6 +408,13 @@ where
         })
         .detach();
 
+        let shell_view_state = ShellViewState::new(cx.window_appearance());
+        let theme = shell_view_state.tokens();
+        let menu_state = MenuState::initial(
+            prepared.len(),
+            prepared.first().map(|(_, model)| model.view_state()),
+            shell_view_state,
+        );
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         let result = cx.open_window(
             WindowOptions {
@@ -409,12 +425,12 @@ where
                 }),
                 ..Default::default()
             },
-            |_window, cx| {
+            |window, cx| {
                 let tabs = prepared
                     .into_iter()
-                    .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model))))
+                    .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model, theme))))
                     .collect();
-                cx.new(|cx| ShellFrame::new(tabs, cx))
+                cx.new(|cx| ShellFrame::new(tabs, shell_view_state, window, cx))
             },
         );
         match result {

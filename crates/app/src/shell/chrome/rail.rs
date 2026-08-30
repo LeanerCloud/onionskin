@@ -8,6 +8,7 @@ use gpui::{
 use onionskin_plugin_api::{PluginRegistry, ToolPlugin};
 
 use super::tabs::ShellFrame;
+use super::theme::ThemeTokens;
 
 const COLLAPSED_WIDTH: f32 = 88.0;
 const EXPANDED_WIDTH: f32 = 240.0;
@@ -131,6 +132,7 @@ pub(super) fn apply_rail_selection<E>(
 pub(super) fn render_rail(
     entries: Vec<RailEntry>,
     expanded: bool,
+    theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let mut rail = div()
@@ -141,8 +143,8 @@ pub(super) fn render_rail(
         .flex_col()
         .gap_1()
         .p_2()
-        .bg(gpui::rgb(0x202124))
-        .text_color(gpui::white());
+        .bg(theme.surface)
+        .text_color(theme.text);
 
     if entries.is_empty() {
         rail = rail.child(
@@ -152,7 +154,7 @@ pub(super) fn render_rail(
                 .items_center()
                 .justify_center()
                 .text_xs()
-                .text_color(gpui::rgb(0x85878c))
+                .text_color(theme.muted_text)
                 .child(if expanded {
                     "No tools installed"
                 } else {
@@ -172,11 +174,11 @@ pub(super) fn render_rail(
                     .rounded_sm()
                     .cursor_pointer()
                     .bg(if entry.active {
-                        gpui::rgb(0x3a3b3f)
+                        theme.selected
                     } else {
-                        gpui::rgb(0x292a2d)
+                        theme.raised
                     })
-                    .hover(|row| row.bg(gpui::rgb(0x45464b)))
+                    .hover(move |row| row.bg(theme.hover))
                     .on_click(cx.listener(move |frame, _event, _window, cx| {
                         frame.select_rail_entry(entry, cx);
                     }))
@@ -185,17 +187,14 @@ pub(super) fn render_rail(
                             .w(px(24.0))
                             .flex_none()
                             .text_xs()
-                            .text_color(gpui::rgb(0xaeb0b5))
+                            .text_color(theme.secondary_text)
                             .child(entry.icon),
                     )
                     .when(expanded, |row| {
                         row.child(div().flex_1().text_sm().child(entry.name))
                             .when_some(entry.shortcut, |row, shortcut| {
                                 row.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(gpui::rgb(0x85878c))
-                                        .child(shortcut),
+                                    div().text_xs().text_color(theme.muted_text).child(shortcut),
                                 )
                             })
                     }),
@@ -212,8 +211,8 @@ pub(super) fn render_rail(
             .justify_center()
             .rounded_sm()
             .cursor_pointer()
-            .bg(gpui::rgb(0x292a2d))
-            .hover(|button| button.bg(gpui::rgb(0x3a3b3f)))
+            .bg(theme.raised)
+            .hover(move |button| button.bg(theme.selected))
             .on_click(cx.listener(|frame, _event, _window, cx| {
                 frame.toggle_rail_expanded(cx);
             }))
