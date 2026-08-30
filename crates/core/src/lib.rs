@@ -17,12 +17,12 @@ pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,
     ViewRotation, ViewSize,
 };
-pub use onionskin_content::SearchOptions;
+pub use onionskin_content::{Glyph, Mapping, PageText, SearchOptions, TextRun};
 pub use onionskin_cos::Provenance;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
 pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
-pub use selection::{SearchMatch, SearchState, Selection};
-pub use session::{Document, Error, PageGeometryResponse, Result};
+pub use selection::{SearchMatch, SearchState, Selection, TextSelection};
+pub use session::{Document, Error, PageGeometryResponse, Result, SnapshotRequest};
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy};

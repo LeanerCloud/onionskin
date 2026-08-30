@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use onionskin_core::{Document, Error, PageRect, Provenance, SearchOptions};
+use onionskin_core::{Document, Error, PageRect, Provenance, SearchOptions, SnapshotRequest};
 
 fn corpus_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -99,6 +99,28 @@ fn page_text_search_and_state_use_core_types() {
         y1: 20.0,
     });
     assert!(doc.selection().region().is_some());
+}
+
+#[test]
+fn a_snapshot_request_selects_its_region_and_is_taken_once() {
+    let mut doc = Document::open_path(&seed("hello.pdf")).expect("seed opens");
+    let region = PageRect {
+        page: 0,
+        x0: 10.0,
+        y0: 20.0,
+        x1: 30.0,
+        y1: 40.0,
+    };
+
+    assert!(doc.take_snapshot_request().is_none());
+    doc.request_snapshot(region);
+
+    assert_eq!(doc.selection().region(), Some(region));
+    assert_eq!(
+        doc.take_snapshot_request(),
+        Some(SnapshotRequest { region })
+    );
+    assert!(doc.take_snapshot_request().is_none());
 }
 
 #[test]
