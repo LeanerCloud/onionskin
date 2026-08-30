@@ -570,6 +570,7 @@ mod tests {
             ToolCapability::Draw => &[ToolCapability::Draw],
             ToolCapability::FillTextFields => &[ToolCapability::FillTextFields],
             ToolCapability::AddSignature => &[ToolCapability::AddSignature],
+            ToolCapability::Snapshot => &[ToolCapability::Snapshot],
         }
     }
 
@@ -613,11 +614,35 @@ mod tests {
         }
     }
 
+    /// The Select quick action goes live through the registry, with no
+    /// application-code change: `tools-basic`'s text-selection tool declares
+    /// the capability and the toolbar finds it. The rest wait for the
+    /// plugins that own them.
     #[test]
-    fn the_current_registry_does_not_claim_any_quick_action_capability() {
-        let entries = QuickActionsState::default().entries(&crate::build_registry());
+    fn the_registry_makes_exactly_the_select_quick_action_live() {
+        let registry = crate::build_registry();
+        let entries = QuickActionsState::default().entries(&registry);
 
-        assert!(entries.iter().all(|entry| !entry.availability.is_enabled()));
+        let live = entries
+            .iter()
+            .filter(|entry| entry.availability.is_enabled())
+            .map(|entry| entry.action)
+            .collect::<Vec<_>>();
+        let expected = if cfg!(feature = "tools-basic") {
+            vec![QuickAction::Select]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(live, expected);
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.action == QuickAction::Select)
+                .and_then(|entry| entry.availability.tool_index()),
+            registry
+                .tools()
+                .position(|tool| tool.capabilities().contains(&ToolCapability::Select)),
+        );
     }
 
     #[test]

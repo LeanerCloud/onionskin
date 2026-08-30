@@ -47,6 +47,11 @@ onionskin-tools-measure = { workspace = true, optional = true }
 onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
 
+# The registry-exhaustive tests drive every registered tool against a real
+# session, which needs `core` even in the headless, GPUI-free build.
+[dev-dependencies]
+onionskin-core.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = { version = "0.26", optional = true }
 # Spike (d) reads the NSAccessibility surface back off the view directly, so
