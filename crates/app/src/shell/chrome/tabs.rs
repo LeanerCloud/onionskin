@@ -13,10 +13,16 @@ use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
 };
-use super::rail::{apply_rail_selection, render_rail, RailEntry, RailState};
+use super::quick_actions::{
+    render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
+};
+use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
+
+const GLOBAL_BAR_HEIGHT: f32 = 40.0;
+const TAB_BAR_HEIGHT: f32 = 36.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TabError {
@@ -165,6 +171,7 @@ pub(in crate::shell) struct ShellFrame {
     search_input: Entity<SearchInput>,
     search_feedback: Option<SearchResult>,
     rail_state: RailState,
+    quick_actions_state: QuickActionsState,
 }
 
 fn activate_tab<T>(
@@ -221,6 +228,7 @@ impl ShellFrame {
             search_input,
             search_feedback: None,
             rail_state: RailState::default(),
+            quick_actions_state: QuickActionsState::default(),
         }
     }
 
@@ -368,7 +376,7 @@ impl ShellFrame {
 
     fn render_global_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .h(px(40.0))
+            .h(px(GLOBAL_BAR_HEIGHT))
             .flex()
             .items_center()
             .gap_3()
@@ -481,6 +489,69 @@ impl ShellFrame {
         cx.notify();
     }
 
+    fn quick_action_entries(&self, cx: &App) -> Vec<QuickActionEntry> {
+        self.tabs
+            .active()
+            .map(|tab| {
+                self.quick_actions_state
+                    .entries(tab.canvas.read(cx).model.registry())
+            })
+            .unwrap_or_default()
+    }
+
+    fn all_quick_action_entries(&self, cx: &App) -> Vec<QuickActionEntry> {
+        self.tabs
+            .active()
+            .map(|tab| {
+                self.quick_actions_state
+                    .all_entries(tab.canvas.read(cx).model.registry())
+            })
+            .unwrap_or_default()
+    }
+
+    pub(super) fn select_quick_action(&mut self, entry: QuickActionEntry, cx: &mut Context<Self>) {
+        let Some(index) = entry.availability.tool_index() else {
+            return;
+        };
+        let rail_entry = self.active_rail_entry(index, cx);
+        let _ = self.activate_canvas_tool(index, rail_entry, cx);
+    }
+
+    pub(super) fn toggle_quick_action_customization(&mut self, cx: &mut Context<Self>) {
+        self.quick_actions_state.toggle_customizing();
+        cx.notify();
+    }
+
+    pub(super) fn toggle_quick_action_visibility(
+        &mut self,
+        action: QuickAction,
+        cx: &mut Context<Self>,
+    ) {
+        self.quick_actions_state.toggle_visibility(action);
+        cx.notify();
+    }
+
+    pub(super) fn drag_quick_actions(
+        &mut self,
+        id: u64,
+        pointer: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport = window.viewport_size();
+        let bounds = gpui::Bounds {
+            origin: Point::default(),
+            size: gpui::size(
+                (viewport.width - rail_width(self.rail_state.expanded())).max(px(0.0)),
+                (viewport.height - px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT)).max(px(0.0)),
+            ),
+        };
+        let toolbar_size = self.quick_actions_state.toolbar_size();
+        self.quick_actions_state
+            .drag_to(id, pointer, bounds, toolbar_size);
+        cx.notify();
+    }
+
     fn search_panel_visible(&self, cx: &App) -> bool {
         !self.main_menu_open
             && self.tab_context_menu.is_none()
@@ -490,7 +561,7 @@ impl ShellFrame {
     fn render_search_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut panel = div()
             .absolute()
-            .top(px(40.0))
+            .top(px(GLOBAL_BAR_HEIGHT))
             .right(px(12.0))
             .w(px(420.0))
             .p_1()
@@ -545,7 +616,7 @@ impl ShellFrame {
     fn render_main_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut panel = div()
             .absolute()
-            .top(px(40.0))
+            .top(px(GLOBAL_BAR_HEIGHT))
             .left(px(8.0))
             .w(px(420.0))
             .p_2()
@@ -678,7 +749,7 @@ impl ShellFrame {
 
 impl Render for ShellFrame {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut tab_bar = div().flex().h(px(36.0)).bg(gpui::rgb(0x202124));
+        let mut tab_bar = div().flex().h(px(TAB_BAR_HEIGHT)).bg(gpui::rgb(0x202124));
         for (index, tab) in self.tabs.tabs().iter().enumerate() {
             let active = self.tabs.active_index() == Some(index);
             tab_bar = tab_bar.child(
@@ -721,7 +792,25 @@ impl Render for ShellFrame {
                 .flex()
                 .child(render_rail(rail_entries, rail_expanded, cx));
         if let Some(tab) = self.tabs.active() {
-            body = body.child(div().flex_1().min_w_0().min_h_0().child(tab.canvas.clone()));
+            let canvas = tab.canvas.clone();
+            let quick_action_entries = self.quick_action_entries(cx);
+            let all_quick_action_entries = self.all_quick_action_entries(cx);
+            let quick_actions = render_quick_actions(
+                quick_action_entries,
+                all_quick_action_entries,
+                &self.quick_actions_state,
+                cx,
+            );
+            body = body.child(
+                div()
+                    .id("document-view")
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(canvas)
+                    .child(quick_actions),
+            );
         }
 
         let frame = div()

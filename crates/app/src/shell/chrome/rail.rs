@@ -9,6 +9,17 @@ use onionskin_plugin_api::{PluginRegistry, ToolPlugin};
 
 use super::tabs::ShellFrame;
 
+const COLLAPSED_WIDTH: f32 = 88.0;
+const EXPANDED_WIDTH: f32 = 240.0;
+
+pub(super) fn rail_width(expanded: bool) -> gpui::Pixels {
+    px(if expanded {
+        EXPANDED_WIDTH
+    } else {
+        COLLAPSED_WIDTH
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RailEntry {
     pub(super) registry_index: usize,
@@ -123,7 +134,7 @@ pub(super) fn render_rail(
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let mut rail = div()
-        .w(px(if expanded { 240.0 } else { 88.0 }))
+        .w(rail_width(expanded))
         .h_full()
         .flex_none()
         .flex()

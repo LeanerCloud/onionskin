@@ -1,4 +1,5 @@
 mod global_bar;
+mod quick_actions;
 mod rail;
 mod tabs;
 mod tool_search;
