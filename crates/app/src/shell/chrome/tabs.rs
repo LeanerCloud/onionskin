@@ -177,6 +177,26 @@ fn activate_tab<T>(
     activated
 }
 
+fn close_tab<T>(
+    tabs: &mut TabState<T>,
+    search_feedback: &mut Option<SearchResult>,
+    index: usize,
+) -> Result<bool, TabError> {
+    tabs.close(index)?;
+    *search_feedback = None;
+    Ok(tabs.is_empty())
+}
+
+fn close_other_tabs<T>(
+    tabs: &mut TabState<T>,
+    search_feedback: &mut Option<SearchResult>,
+    index: usize,
+) -> Result<(), TabError> {
+    tabs.close_others(index)?;
+    *search_feedback = None;
+    Ok(())
+}
+
 impl ShellFrame {
     pub(in crate::shell) fn new(
         tabs: Vec<(PathBuf, Entity<Canvas>)>,
@@ -261,8 +281,7 @@ impl ShellFrame {
         self.tab_context_menu = None;
         match command {
             TabCommand::Close => {
-                self.tabs.close(index)?;
-                if self.tabs.is_empty() {
+                if close_tab(&mut self.tabs, &mut self.search_feedback, index)? {
                     window.remove_window();
                 } else {
                     refresh_native_menus(cx, self.menu_state());
@@ -270,7 +289,7 @@ impl ShellFrame {
                 }
             }
             TabCommand::CloseOthers => {
-                self.tabs.close_others(index)?;
+                close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
                 refresh_native_menus(cx, self.menu_state());
                 cx.notify();
             }
@@ -834,6 +853,33 @@ mod tests {
 
         assert!(activate_tab(&mut tabs, &mut feedback, 1));
         assert_eq!(tabs.active_index(), Some(1));
+        assert_eq!(feedback, None);
+    }
+
+    #[test]
+    fn closing_the_active_tab_clears_search_feedback() {
+        let mut tabs = TabState::new(vec!["one", "two"]);
+        let mut feedback = Some(SearchResult::Unavailable {
+            label: "Old tab".to_owned(),
+            reason: "Old result",
+        });
+
+        assert!(!close_tab(&mut tabs, &mut feedback, 0).unwrap());
+        assert_eq!(tabs.active(), Some(&"two"));
+        assert_eq!(feedback, None);
+    }
+
+    #[test]
+    fn closing_other_tabs_from_an_inactive_tab_clears_search_feedback() {
+        let mut tabs = TabState::new(vec!["one", "two", "three"]);
+        let mut feedback = Some(SearchResult::Unavailable {
+            label: "Old tab".to_owned(),
+            reason: "Old result",
+        });
+
+        close_other_tabs(&mut tabs, &mut feedback, 1).unwrap();
+        assert_eq!(tabs.tabs(), &["two"]);
+        assert_eq!(tabs.active_index(), Some(0));
         assert_eq!(feedback, None);
     }
 }
