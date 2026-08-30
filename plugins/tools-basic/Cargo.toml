@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+onionskin-core.workspace = true
 onionskin-plugin-api.workspace = true

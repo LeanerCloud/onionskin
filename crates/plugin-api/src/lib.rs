@@ -57,6 +57,9 @@ pub enum ToolCapability {
     Draw,
     FillTextFields,
     AddSignature,
+    /// Copies a page region as an image. The canvas context menu's Take A
+    /// Snapshot entry finds its tool through this rather than by id.
+    Snapshot,
 }
 
 /// Everything a tool may touch while handling input.
