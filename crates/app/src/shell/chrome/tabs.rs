@@ -8,11 +8,13 @@ use gpui::{
     IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
     StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
 };
+use onionskin_plugin_api::{ExportedFile, PageIndex};
 
-use super::super::canvas::{CanvasViewState, ViewAction};
+use super::super::canvas::{CanvasError, CanvasViewState, ViewAction};
 use super::super::Canvas;
 use super::global_bar::{
-    main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
+    main_menu_schema, refresh_native_menus, ExportCodecs, ExportTarget, MenuAvailability,
+    MenuCommand, MenuState,
 };
 use super::page_controls::{
     parse_page_entry, render_page_controls, PageControlsState, PageEntryError, PAGE_CONTROLS_HEIGHT,
@@ -377,7 +379,13 @@ impl ShellFrame {
                 self.toggle_fullscreen(window, cx);
                 Ok(())
             }
+            MenuCommand::Export(target) => {
+                self.main_menu_open = false;
+                self.start_export(target, cx);
+                Ok(())
+            }
             MenuCommand::Open
+            | MenuCommand::SaveAs
             | MenuCommand::Undo
             | MenuCommand::Redo
             | MenuCommand::LineWeights
@@ -385,6 +393,44 @@ impl ShellFrame {
             | MenuCommand::About
             | MenuCommand::KeyboardShortcuts => Err(TabError::CommandUnavailable),
         }
+    }
+
+    /// Ask where the export goes, then run it.
+    ///
+    /// Nothing is produced until the user has chosen a destination, and the
+    /// codec produces every page before this writes any of them, so a failure
+    /// part-way through an export leaves no files at all.
+    fn start_export(&mut self, target: ExportTarget, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        let canvas = tab.canvas.clone();
+        let extension = canvas
+            .read(cx)
+            .model
+            .registry()
+            .codec(target.codec())
+            .map(|codec| codec.extension());
+        let Some(extension) = extension else {
+            report_export_failure(&canvas, CanvasError::UnknownCodec(target.codec()), cx);
+            return;
+        };
+        let directory = tab
+            .source
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let suggested = format!("{}.{extension}", tab_title(&tab.source));
+        let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
+
+        cx.spawn(async move |frame, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            frame
+                .update(cx, |_frame, cx| run_export(&canvas, target, &path, cx))
+                .ok();
+        })
+        .detach();
     }
 
     fn run_tab_command(
@@ -455,7 +501,22 @@ impl ShellFrame {
             self.active_view_state(cx),
             self.shell_view_state,
             self.quick_actions_state.visibility(),
+            self.export_codecs(cx),
         )
+    }
+
+    /// Which export formats the active document's registry installed. Derived
+    /// from the registry rather than from a hardcoded list, so a build with
+    /// `codecs-common` compiled out disables the entries with a reason
+    /// instead of offering entries that would fail.
+    fn export_codecs(&self, cx: &App) -> ExportCodecs {
+        match self.tabs.active() {
+            Some(tab) => {
+                let model = &tab.canvas.read(cx).model;
+                ExportCodecs::installed(|id| model.has_codec(id))
+            }
+            None => ExportCodecs::default(),
+        }
     }
 
     fn apply_theme(&mut self, cx: &mut Context<Self>) {
@@ -1206,6 +1267,77 @@ pub(super) fn tab_context_entries(
             availability: Enabled,
         },
     ])
+}
+
+/// Resolution for a raster export. M2 has no export-settings dialog, so this
+/// is Acrobat's own default rather than a number picked here; the codec API
+/// takes the resolution as an argument so the dialog that lands with M3's
+/// `File > Export To` has somewhere to put the user's choice.
+const EXPORT_DPI: f32 = 150.0;
+
+/// Run a chosen export and write it, reporting any failure on the document it
+/// came from.
+fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &mut App) {
+    let exported = canvas.update(cx, |canvas, _cx| {
+        canvas.model.export(target.codec(), EXPORT_DPI)
+    });
+    let result = match exported {
+        Ok(files) => write_export(path, &files).map_err(ExportFailure::Write),
+        Err(error) => Err(ExportFailure::Codec(error)),
+    };
+    if let Err(failure) = result {
+        report_export_failure(canvas, failure, cx);
+    }
+}
+
+fn write_export(chosen: &Path, files: &[ExportedFile]) -> std::io::Result<()> {
+    for file in files {
+        std::fs::write(export_path(chosen, file.page, files.len()), &file.bytes)?;
+    }
+    Ok(())
+}
+
+/// Where one exported file goes. A single file takes the name the user chose;
+/// a per-page export numbers beside it, one-based like the page controls, so
+/// `report.png` becomes `report-001.png`, `report-002.png`.
+fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf {
+    let (Some(page), true) = (page, count > 1) else {
+        return chosen.to_path_buf();
+    };
+    let stem = chosen
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+    let mut name = format!("{stem}-{:03}", page + 1);
+    if let Some(extension) = chosen.extension() {
+        name.push('.');
+        name.push_str(&extension.to_string_lossy());
+    }
+    chosen.with_file_name(name)
+}
+
+/// Everything that can go wrong once the user has chosen a destination.
+enum ExportFailure {
+    Codec(CanvasError),
+    Write(std::io::Error),
+}
+
+impl fmt::Display for ExportFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Codec(error) => write!(f, "export failed: {error}"),
+            Self::Write(error) => write!(f, "export could not be written: {error}"),
+        }
+    }
+}
+
+/// Surface the failure on the document it belongs to, rather than only on
+/// stderr where a user will never see it.
+fn report_export_failure(canvas: &Entity<Canvas>, failure: impl fmt::Display, cx: &mut App) {
+    canvas.update(cx, |canvas, cx| {
+        if canvas.model.record_error(failure) {
+            cx.notify();
+        }
+    });
 }
 
 fn tab_title(path: &Path) -> String {

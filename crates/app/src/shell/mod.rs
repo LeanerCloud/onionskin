@@ -17,8 +17,8 @@ use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList, ViewAction};
 use self::chrome::{
-    install_native_menus, install_search_keybindings, MenuState, ShellFrame, ShellViewState,
-    ThemeTokens,
+    install_native_menus, install_search_keybindings, ExportCodecs, MenuState, ShellFrame,
+    ShellViewState, ThemeTokens,
 };
 
 pub mod canvas;
@@ -414,6 +414,11 @@ where
             prepared.len(),
             prepared.first().map(|(_, model)| model.view_state()),
             shell_view_state,
+            prepared
+                .first()
+                .map_or_else(ExportCodecs::default, |(_, model)| {
+                    ExportCodecs::installed(|id| model.has_codec(id))
+                }),
         );
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         let result = cx.open_window(
