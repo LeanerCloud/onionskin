@@ -19,6 +19,10 @@ pub use layout::{
 };
 pub use onionskin_content::SearchOptions;
 pub use onionskin_cos::Provenance;
+/// Re-exported because [`Document::render_page_now`] and
+/// [`Document::page_svg`] hand these back: a caller outside `core` has to be
+/// able to name what it received.
+pub use onionskin_render::{BaseRaster, PageRender, PageSvg};
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };

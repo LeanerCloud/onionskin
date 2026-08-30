@@ -263,6 +263,81 @@ fn explicit_render_geometry_cannot_expand_the_target_document() {
     assert!(target_document.try_render_response().unwrap().is_none());
 }
 
+#[test]
+fn a_synchronous_render_matches_the_interactive_one_for_the_same_page_and_zoom() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+    document
+        .request_render(request(1, 2.0, 1), None)
+        .expect("request queues");
+    let interactive = collect(&mut document, 2)
+        .into_iter()
+        .find_map(|response| match response {
+            RenderResponse::Raster { render, .. } => Some(render),
+            _ => None,
+        })
+        .expect("the interactive path produces a raster");
+
+    let exported = document
+        .render_page_now(1, 2.0)
+        .expect("the same page renders synchronously");
+
+    assert_eq!(
+        (exported.raster.width(), exported.raster.height()),
+        (interactive.raster.width(), interactive.raster.height())
+    );
+    assert_eq!(exported.raster.rgba(), interactive.raster.rgba());
+}
+
+#[test]
+fn a_synchronous_render_leaves_the_interactive_queue_alone() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+    document
+        .request_render(request(0, 1.0, 7), None)
+        .expect("request queues");
+
+    document
+        .render_page_now(1, 1.0)
+        .expect("page renders synchronously");
+
+    let responses = collect(&mut document, 2);
+    assert!(responses
+        .iter()
+        .all(|response| response.request() == request(0, 1.0, 7)));
+    assert!(matches!(responses[0], RenderResponse::Placeholder(_)));
+    assert!(matches!(responses[1], RenderResponse::Raster { .. }));
+}
+
+#[test]
+fn synchronous_work_refuses_a_page_or_a_zoom_the_document_cannot_serve() {
+    let mut document = Document::open_bytes(pages_pdf(1)).expect("document opens");
+
+    assert!(matches!(
+        document.render_page_now(4, 1.0),
+        Err(Error::NoSuchPage { page: 4, count: 1 })
+    ));
+    assert!(matches!(
+        document.page_svg(4),
+        Err(Error::NoSuchPage { page: 4, count: 1 })
+    ));
+    assert!(matches!(
+        document.render_page_now(0, 0.0),
+        Err(Error::Worker(WorkerError::InvalidZoom(zoom))) if zoom == 0.0
+    ));
+    // The worker is still answering, so a refused request never reached it.
+    assert!(document.render_page_now(0, 1.0).is_ok());
+}
+
+#[test]
+fn a_page_converts_to_svg_sized_like_its_raster() {
+    let mut document = Document::open_bytes(pages_pdf(1)).expect("document opens");
+
+    let page = document.page_svg(0).expect("page converts");
+
+    assert!(page.svg.starts_with("<svg"));
+    assert!(page.svg.contains("viewBox=\"0 0 72 144\""), "{}", page.svg);
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+}
+
 fn request(page: usize, zoom: f32, generation: u64) -> RenderRequest {
     RenderRequest {
         page,

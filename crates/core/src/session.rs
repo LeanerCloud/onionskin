@@ -8,8 +8,8 @@ use onionskin_cos::{BytesSource, Provenance};
 
 use crate::render::WorkerHandle;
 use crate::{
-    PageGeometry, PageIndex, RenderRequest, RenderResponse, SearchMatch, SearchOptions,
-    SearchState, Selection,
+    PageGeometry, PageIndex, PageRender, PageSvg, RenderRequest, RenderResponse, SearchMatch,
+    SearchOptions, SearchState, Selection,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -179,12 +179,7 @@ impl Document {
     }
 
     pub fn request_page_geometry(&mut self, index: PageIndex) -> Result<bool> {
-        if index >= self.page_count {
-            return Err(Error::NoSuchPage {
-                page: index,
-                count: self.page_count,
-            });
-        }
+        self.check_page(index)?;
         if !self.pending_geometry.insert(index) {
             return Ok(false);
         }
@@ -247,12 +242,7 @@ impl Document {
         source: Option<&onionskin_render::BaseRaster>,
     ) -> Result<()> {
         self.render.validate_request(request)?;
-        if request.page >= self.page_count {
-            return Err(Error::NoSuchPage {
-                page: request.page,
-                count: self.page_count,
-            });
-        }
+        self.check_page(request.page)?;
         if geometry.index != request.page {
             return Err(Error::GeometryPageMismatch {
                 request: request.page,
@@ -265,6 +255,36 @@ impl Document {
 
     pub fn try_render_response(&mut self) -> Result<Option<RenderResponse>> {
         Ok(self.render.try_response()?)
+    }
+
+    /// Rasterize one page and wait for it, on the same worker, cache and
+    /// render options the canvas draws through.
+    ///
+    /// The interactive path is a queue whose answers arrive out of
+    /// [`Document::try_render_response`] when the worker gets to them, which
+    /// an export cannot use: it needs every page it asked for, in order, and
+    /// it needs to know which one failed. Both go to the same renderer, so a
+    /// PNG export and the pixels on screen are the same rasterizer at the
+    /// same zoom.
+    pub fn render_page_now(&mut self, page: PageIndex, zoom: f32) -> Result<PageRender> {
+        self.check_page(page)?;
+        Ok(self.render.render_page_now(page, zoom)?)
+    }
+
+    /// Convert one page to SVG on the same worker and render options.
+    pub fn page_svg(&mut self, page: PageIndex) -> Result<PageSvg> {
+        self.check_page(page)?;
+        Ok(self.render.page_svg(page)?)
+    }
+
+    fn check_page(&self, page: PageIndex) -> Result<()> {
+        if page >= self.page_count {
+            return Err(Error::NoSuchPage {
+                page,
+                count: self.page_count,
+            });
+        }
+        Ok(())
     }
 
     pub fn search_page(

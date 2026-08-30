@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 
-use onionskin_render::{BaseRaster, PageRender, PageRenderGeometry, RenderOptions};
+use onionskin_render::{BaseRaster, PageRender, PageRenderGeometry, PageSvg, RenderOptions};
 
 use crate::{PageGeometry, PageIndex};
 
@@ -84,6 +84,20 @@ enum Request {
         page: PageIndex,
     },
     Render(RenderRequest),
+    /// One page rasterized now, answered on the caller's own channel. Export
+    /// needs the pixels in hand rather than whenever the interactive queue
+    /// gets to them, and routing it here keeps it on the one renderer, cache
+    /// and options the canvas draws through.
+    RenderNow {
+        page: PageIndex,
+        zoom: f32,
+        response: mpsc::SyncSender<Result<PageRender, WorkerError>>,
+    },
+    /// One page converted to SVG, for the same reason.
+    Svg {
+        page: PageIndex,
+        response: mpsc::SyncSender<Result<PageSvg, WorkerError>>,
+    },
     Shutdown,
 }
 
@@ -156,6 +170,36 @@ impl WorkerHandle {
         let (response, result) = mpsc::sync_channel(1);
         self.requests
             .send(Request::Geometry { page, response })
+            .map_err(|_| WorkerError::Stopped)?;
+        result.recv().map_err(|_| WorkerError::Stopped)?
+    }
+
+    /// Rasterize one page and wait for it, without disturbing the interactive
+    /// queue's generation bookkeeping.
+    pub(crate) fn render_page_now(
+        &self,
+        page: PageIndex,
+        zoom: f32,
+    ) -> Result<PageRender, WorkerError> {
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(WorkerError::InvalidZoom(zoom));
+        }
+        let (response, result) = mpsc::sync_channel(1);
+        self.requests
+            .send(Request::RenderNow {
+                page,
+                zoom,
+                response,
+            })
+            .map_err(|_| WorkerError::Stopped)?;
+        result.recv().map_err(|_| WorkerError::Stopped)?
+    }
+
+    /// Convert one page to SVG and wait for it.
+    pub(crate) fn page_svg(&self, page: PageIndex) -> Result<PageSvg, WorkerError> {
+        let (response, result) = mpsc::sync_channel(1);
+        self.requests
+            .send(Request::Svg { page, response })
             .map_err(|_| WorkerError::Stopped)?;
         result.recv().map_err(|_| WorkerError::Stopped)?
     }
@@ -316,19 +360,40 @@ fn worker_loop(
             let Ok(request) = incoming.recv() else {
                 return;
             };
-            if handle_request(document, pending, geometry_outgoing, request) {
+            if handle_request(
+                document,
+                renderer,
+                options,
+                pending,
+                geometry_outgoing,
+                request,
+            ) {
                 return;
             }
         }
 
-        if drain_requests(document, pending, incoming, geometry_outgoing) {
+        if drain_requests(
+            document,
+            renderer,
+            options,
+            pending,
+            incoming,
+            geometry_outgoing,
+        ) {
             return;
         }
         let Some(request) = pending.pop_front() else {
             continue;
         };
         let rendered = renderer.render_page(request.page, request.zoom, options);
-        if drain_requests(document, pending, incoming, geometry_outgoing) {
+        if drain_requests(
+            document,
+            renderer,
+            options,
+            pending,
+            incoming,
+            geometry_outgoing,
+        ) {
             return;
         }
         if !pending.should_publish(request) {
@@ -347,6 +412,8 @@ fn worker_loop(
 
 fn drain_requests(
     document: &onionskin_render::Document,
+    renderer: &mut onionskin_render::RenderSession<'_>,
+    options: &RenderOptions,
     pending: &mut PendingRequests,
     incoming: &mpsc::Receiver<Request>,
     geometry_outgoing: &mpsc::Sender<GeometryResponse>,
@@ -354,7 +421,14 @@ fn drain_requests(
     loop {
         match incoming.try_recv() {
             Ok(request) => {
-                if handle_request(document, pending, geometry_outgoing, request) {
+                if handle_request(
+                    document,
+                    renderer,
+                    options,
+                    pending,
+                    geometry_outgoing,
+                    request,
+                ) {
                     return true;
                 }
             }
@@ -366,6 +440,8 @@ fn drain_requests(
 
 fn handle_request(
     document: &onionskin_render::Document,
+    renderer: &mut onionskin_render::RenderSession<'_>,
+    options: &RenderOptions,
     pending: &mut PendingRequests,
     geometry_outgoing: &mpsc::Sender<GeometryResponse>,
     request: Request,
@@ -383,6 +459,24 @@ fn handle_request(
         }
         Request::Render(request) => {
             pending.push(request);
+            false
+        }
+        Request::RenderNow {
+            page,
+            zoom,
+            response,
+        } => {
+            let result = renderer
+                .render_page(page, zoom, options)
+                .map_err(WorkerError::Render);
+            let _ = response.send(result);
+            false
+        }
+        Request::Svg { page, response } => {
+            let result = document
+                .render_page_svg(page, options)
+                .map_err(WorkerError::Render);
+            let _ = response.send(result);
             false
         }
         Request::Shutdown => true,
