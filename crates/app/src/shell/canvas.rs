@@ -35,6 +35,10 @@ pub enum CanvasError {
         crop_width: u32,
         crop_height: u32,
     },
+    ToolOutOfRange {
+        index: usize,
+        count: usize,
+    },
 }
 
 impl fmt::Display for CanvasError {
@@ -58,6 +62,9 @@ impl fmt::Display for CanvasError {
                 f,
                 "tile crop {crop_width}x{crop_height} is outside {width}x{height}"
             ),
+            Self::ToolOutOfRange { index, count } => {
+                write!(f, "tool {index} is outside a {count}-tool registry")
+            }
         }
     }
 }
@@ -72,7 +79,8 @@ impl std::error::Error for CanvasError {
             Self::EmptyDocument
             | Self::GenerationExhausted
             | Self::InvalidImageBuffer { .. }
-            | Self::InvalidImageCrop { .. } => None,
+            | Self::InvalidImageCrop { .. }
+            | Self::ToolOutOfRange { .. } => None,
         }
     }
 }
@@ -168,7 +176,7 @@ pub struct CanvasModel {
 impl CanvasModel {
     pub fn new(
         mut document: Document,
-        registry: PluginRegistry,
+        mut registry: PluginRegistry,
         size: ViewSize,
     ) -> Result<Self, CanvasError> {
         if document.page_count() == 0 {
@@ -180,6 +188,12 @@ impl CanvasModel {
         viewport.measure_page(first)?;
         viewport.fit(FitMode::Page)?;
         let active_tool = registry.tools().next().map(|_| 0);
+        if let Some(index) = active_tool {
+            registry
+                .tool_mut(index)
+                .expect("the initial tool remains registered")
+                .on_activate(&mut ToolCtx { doc: &mut document });
+        }
         Ok(Self {
             document,
             viewport,
@@ -211,6 +225,34 @@ impl CanvasModel {
 
     pub fn active_tool(&self) -> Option<usize> {
         self.active_tool
+    }
+
+    pub fn activate_tool(&mut self, index: usize) -> Result<bool, CanvasError> {
+        let count = self.registry.tools().count();
+        if index >= count {
+            return Err(CanvasError::ToolOutOfRange { index, count });
+        }
+        if self.active_tool == Some(index) {
+            return Ok(false);
+        }
+
+        self.cancel_pointer_gesture();
+        if let Some(active) = self.active_tool {
+            self.registry
+                .tool_mut(active)
+                .expect("the active tool remains registered")
+                .on_deactivate(&mut ToolCtx {
+                    doc: &mut self.document,
+                });
+        }
+        self.active_tool = Some(index);
+        self.registry
+            .tool_mut(index)
+            .expect("validated tools remain registered")
+            .on_activate(&mut ToolCtx {
+                doc: &mut self.document,
+            });
+        Ok(true)
     }
 
     pub fn canvas_origin(&self) -> ViewPoint {
@@ -1096,6 +1138,79 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum LifecycleEvent {
+        Activate(&'static str),
+        Down(&'static str),
+        Cancel(&'static str),
+        Deactivate(&'static str),
+    }
+
+    struct LifecycleTool {
+        id: &'static str,
+        events: Arc<Mutex<Vec<LifecycleEvent>>>,
+    }
+
+    impl LifecycleTool {
+        fn record(&self, event: LifecycleEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    impl ToolPlugin for LifecycleTool {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn name(&self) -> &'static str {
+            self.id
+        }
+
+        fn icon(&self) -> &'static str {
+            self.id
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.record(LifecycleEvent::Down(self.id));
+        }
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_activate(&mut self, _ctx: &mut ToolCtx) {
+            self.record(LifecycleEvent::Activate(self.id));
+        }
+
+        fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
+            self.record(LifecycleEvent::Cancel(self.id));
+        }
+
+        fn on_deactivate(&mut self, _ctx: &mut ToolCtx) {
+            self.record(LifecycleEvent::Deactivate(self.id));
+        }
+    }
+
+    fn lifecycle_model() -> (CanvasModel, Arc<Mutex<Vec<LifecycleEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = PluginRegistry::new();
+        for id in ["first", "second"] {
+            registry.register_tool(Box::new(LifecycleTool {
+                id,
+                events: Arc::clone(&events),
+            }));
+        }
+        (model_with_registry(registry), events)
+    }
+
+    fn page_center(model: &CanvasModel) -> Point<Pixels> {
+        let page = model.viewport().visible_pages().unwrap()[0].rect;
+        point(
+            px(page.origin.x + page.size.width / 2.0),
+            px(page.origin.y + page.size.height / 2.0),
+        )
+    }
+
     fn prepare_request(model: &mut CanvasModel) -> RenderRequest {
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
@@ -1203,6 +1318,121 @@ mod tests {
                 RecordedToolEvent::Up(expected[2]),
             ]
         );
+    }
+
+    #[test]
+    fn the_initial_registered_tool_is_activated_exactly_once() {
+        let (model, events) = lifecycle_model();
+
+        assert_eq!(model.active_tool(), Some(0));
+        assert_eq!(*events.lock().unwrap(), [LifecycleEvent::Activate("first")]);
+    }
+
+    #[test]
+    fn switching_tools_deactivates_then_activates_and_same_tool_is_a_no_op() {
+        let (mut model, events) = lifecycle_model();
+
+        assert!(model.activate_tool(1).unwrap());
+        assert_eq!(model.active_tool(), Some(1));
+        assert!(!model.activate_tool(1).unwrap());
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                LifecycleEvent::Activate("first"),
+                LifecycleEvent::Deactivate("first"),
+                LifecycleEvent::Activate("second"),
+            ]
+        );
+    }
+
+    #[test]
+    fn switching_during_a_gesture_cancels_before_deactivation_and_activation() {
+        let (mut model, events) = lifecycle_model();
+        let position = page_center(&model);
+        assert!(model
+            .pointer_down(position, 1.0, GpuiModifiers::default())
+            .unwrap());
+
+        assert!(model.activate_tool(1).unwrap());
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                LifecycleEvent::Activate("first"),
+                LifecycleEvent::Down("first"),
+                LifecycleEvent::Cancel("first"),
+                LifecycleEvent::Deactivate("first"),
+                LifecycleEvent::Activate("second"),
+            ]
+        );
+    }
+
+    #[test]
+    fn selecting_the_active_tool_preserves_its_gesture() {
+        let (mut model, events) = lifecycle_model();
+        let position = page_center(&model);
+        assert!(model
+            .pointer_down(position, 1.0, GpuiModifiers::default())
+            .unwrap());
+        let before = events.lock().unwrap().clone();
+
+        assert!(!model.activate_tool(0).unwrap());
+        assert_eq!(*events.lock().unwrap(), before);
+        assert!(model.cancel_pointer_gesture());
+        assert!(matches!(
+            events.lock().unwrap().as_slice(),
+            [
+                LifecycleEvent::Activate("first"),
+                LifecycleEvent::Down("first"),
+                LifecycleEvent::Cancel("first")
+            ]
+        ));
+    }
+
+    #[test]
+    fn out_of_range_activation_preserves_the_active_tool_gesture_and_events() {
+        let (mut model, events) = lifecycle_model();
+        let position = page_center(&model);
+        assert!(model
+            .pointer_down(position, 1.0, GpuiModifiers::default())
+            .unwrap());
+        let before = events.lock().unwrap().clone();
+
+        assert!(matches!(
+            model.activate_tool(2),
+            Err(CanvasError::ToolOutOfRange { index: 2, count: 2 })
+        ));
+        assert_eq!(model.active_tool(), Some(0));
+        assert_eq!(*events.lock().unwrap(), before);
+        assert!(model.cancel_pointer_gesture());
+        assert!(matches!(
+            events.lock().unwrap().as_slice(),
+            [
+                LifecycleEvent::Activate("first"),
+                LifecycleEvent::Down("first"),
+                LifecycleEvent::Cancel("first")
+            ]
+        ));
+    }
+
+    #[test]
+    fn pointer_dispatch_follows_the_newly_activated_tool() {
+        let (mut model, events) = lifecycle_model();
+        assert!(model.activate_tool(1).unwrap());
+
+        assert!(model
+            .pointer_down(page_center(&model), 1.0, GpuiModifiers::default())
+            .unwrap());
+
+        assert!(matches!(
+            events.lock().unwrap().as_slice(),
+            [
+                LifecycleEvent::Activate("first"),
+                LifecycleEvent::Deactivate("first"),
+                LifecycleEvent::Activate("second"),
+                LifecycleEvent::Down("second")
+            ]
+        ));
     }
 
     #[test]

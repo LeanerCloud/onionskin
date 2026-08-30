@@ -29,7 +29,6 @@ actions!(
     ]
 );
 
-const TOOL_ACTIVATION_UNAVAILABLE: &str = "Tool activation lands in M2 P7b";
 const COMMAND_EXECUTION_UNAVAILABLE: &str = "Command execution lands in M2 P11";
 const DOCUMENT_SEARCH_UNAVAILABLE: &str = "Document search lands in M2 P9";
 
@@ -117,17 +116,17 @@ pub(super) fn document_search_result(query: &str) -> Option<SearchResult> {
     })
 }
 
-pub(super) fn unavailable_selection(result: SearchResult) -> SearchResult {
+pub(super) fn unavailable_selection(result: SearchResult) -> Option<SearchResult> {
     let (label, reason) = match result {
-        SearchResult::Tool { name, .. } => (name.to_owned(), TOOL_ACTIVATION_UNAVAILABLE),
+        SearchResult::Tool { .. } => return None,
         SearchResult::Command { title, .. } => (title.to_owned(), COMMAND_EXECUTION_UNAVAILABLE),
         SearchResult::DocumentSearch { query } => (
             format!("Search document for \"{query}\""),
             DOCUMENT_SEARCH_UNAVAILABLE,
         ),
-        unavailable @ SearchResult::Unavailable { .. } => return unavailable,
+        unavailable @ SearchResult::Unavailable { .. } => return Some(unavailable),
     };
-    SearchResult::Unavailable { label, reason }
+    Some(SearchResult::Unavailable { label, reason })
 }
 
 pub(in crate::shell) fn install_keybindings(cx: &mut App) {
@@ -879,22 +878,19 @@ mod tests {
         assert!(matches!(explicit, SearchResult::DocumentSearch { .. }));
         assert!(matches!(
             unavailable_selection(explicit),
-            SearchResult::Unavailable { reason, .. } if reason.contains("M2 P9")
+            Some(SearchResult::Unavailable { reason, .. }) if reason.contains("M2 P9")
         ));
     }
 
     #[test]
-    fn every_selection_maps_to_its_typed_unavailable_milestone() {
+    fn tool_selection_is_live_while_deferred_routes_keep_typed_milestones() {
         assert_eq!(
             unavailable_selection(SearchResult::Tool {
                 index: 0,
                 id: "view.select",
                 name: "Select Tool",
             }),
-            SearchResult::Unavailable {
-                label: "Select Tool".to_owned(),
-                reason: TOOL_ACTIVATION_UNAVAILABLE,
-            }
+            None
         );
         assert_eq!(
             unavailable_selection(SearchResult::Command {
@@ -902,42 +898,41 @@ mod tests {
                 id: "pages.rotate",
                 title: "Rotate Clockwise",
             }),
-            SearchResult::Unavailable {
+            Some(SearchResult::Unavailable {
                 label: "Rotate Clockwise".to_owned(),
                 reason: COMMAND_EXECUTION_UNAVAILABLE,
-            }
+            })
         );
         assert_eq!(
             unavailable_selection(SearchResult::DocumentSearch {
                 query: "needle".to_owned(),
             }),
-            SearchResult::Unavailable {
+            Some(SearchResult::Unavailable {
                 label: "Search document for \"needle\"".to_owned(),
                 reason: DOCUMENT_SEARCH_UNAVAILABLE,
-            }
+            })
         );
         let unavailable = SearchResult::Unavailable {
             label: "Already unavailable".to_owned(),
             reason: "Pinned reason",
         };
-        assert_eq!(unavailable_selection(unavailable.clone()), unavailable);
+        assert_eq!(
+            unavailable_selection(unavailable.clone()),
+            Some(unavailable)
+        );
     }
 
     #[test]
-    fn selecting_future_routes_reports_typed_unavailable_reasons() {
+    fn registry_tool_hits_are_live_but_command_hits_remain_deferred() {
         let registry = registry();
 
         let tool = search_registry(&registry, "select").remove(0);
-        assert!(matches!(
-            unavailable_selection(tool),
-            SearchResult::Unavailable { label, reason }
-                if label == "Select Tool" && reason == TOOL_ACTIVATION_UNAVAILABLE
-        ));
+        assert_eq!(unavailable_selection(tool), None);
 
         let command = search_registry(&registry, "rotate").remove(0);
         assert!(matches!(
             unavailable_selection(command),
-            SearchResult::Unavailable { label, reason }
+            Some(SearchResult::Unavailable { label, reason })
                 if label == "Rotate Clockwise" && reason == COMMAND_EXECUTION_UNAVAILABLE
         ));
     }

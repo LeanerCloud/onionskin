@@ -13,6 +13,7 @@ use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
 };
+use super::rail::{apply_rail_selection, render_rail, RailEntry, RailState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
@@ -163,6 +164,7 @@ pub(in crate::shell) struct ShellFrame {
     tab_context_menu: Option<TabContextMenu>,
     search_input: Entity<SearchInput>,
     search_feedback: Option<SearchResult>,
+    rail_state: RailState,
 }
 
 fn activate_tab<T>(
@@ -218,6 +220,7 @@ impl ShellFrame {
             tab_context_menu: None,
             search_input,
             search_feedback: None,
+            rail_state: RailState::default(),
         }
     }
 
@@ -412,7 +415,69 @@ impl ShellFrame {
     }
 
     fn choose_search_result(&mut self, result: SearchResult, cx: &mut Context<Self>) {
-        self.search_feedback = Some(unavailable_selection(result));
+        match result {
+            SearchResult::Tool { index, .. } => {
+                let entry = self.active_rail_entry(index, cx);
+                if self.activate_canvas_tool(index, entry, cx).is_ok() {
+                    self.search_feedback = None;
+                    cx.notify();
+                }
+            }
+            deferred => {
+                self.search_feedback = unavailable_selection(deferred);
+                cx.notify();
+            }
+        }
+    }
+
+    fn active_rail_entry(&self, index: usize, cx: &App) -> Option<RailEntry> {
+        let canvas = self.tabs.active()?.canvas.read(cx);
+        self.rail_state
+            .entry_for_index(canvas.model.registry(), canvas.model.active_tool(), index)
+    }
+
+    fn rail_entries(&self, cx: &App) -> Vec<RailEntry> {
+        self.tabs
+            .active()
+            .map(|tab| {
+                let canvas = tab.canvas.read(cx);
+                self.rail_state
+                    .entries(canvas.model.registry(), canvas.model.active_tool())
+            })
+            .unwrap_or_default()
+    }
+
+    fn activate_canvas_tool(
+        &mut self,
+        index: usize,
+        entry: Option<RailEntry>,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, super::super::canvas::CanvasError> {
+        let canvas = self
+            .tabs
+            .active()
+            .expect("tool selection requires an active document")
+            .canvas
+            .clone();
+        let result = if let Some(entry) = entry {
+            apply_rail_selection(&mut self.rail_state, entry, |index| {
+                canvas.update(cx, |canvas, cx| canvas.activate_tool(index, cx))
+            })
+        } else {
+            canvas.update(cx, |canvas, cx| canvas.activate_tool(index, cx))
+        };
+        if result.is_ok() {
+            cx.notify();
+        }
+        result
+    }
+
+    pub(super) fn select_rail_entry(&mut self, entry: RailEntry, cx: &mut Context<Self>) {
+        let _ = self.activate_canvas_tool(entry.registry_index, Some(entry), cx);
+    }
+
+    pub(super) fn toggle_rail_expanded(&mut self, cx: &mut Context<Self>) {
+        self.rail_state.toggle_expanded();
         cx.notify();
     }
 
@@ -647,16 +712,26 @@ impl Render for ShellFrame {
             );
         }
 
-        let mut frame = div()
+        let rail_entries = self.rail_entries(cx);
+        let rail_expanded = self.rail_state.expanded();
+        let mut body =
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .child(render_rail(rail_entries, rail_expanded, cx));
+        if let Some(tab) = self.tabs.active() {
+            body = body.child(div().flex_1().min_w_0().min_h_0().child(tab.canvas.clone()));
+        }
+
+        let frame = div()
             .size_full()
             .relative()
             .flex()
             .flex_col()
             .child(self.render_global_bar(cx))
-            .child(tab_bar);
-        if let Some(tab) = self.tabs.active() {
-            frame = frame.child(div().flex_1().min_h_0().child(tab.canvas.clone()));
-        }
+            .child(tab_bar)
+            .child(body);
 
         let mut root = div().size_full().relative().child(frame);
         if self.main_menu_open || self.tab_context_menu.is_some() {

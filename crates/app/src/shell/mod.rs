@@ -129,6 +129,21 @@ impl Canvas {
         }
     }
 
+    fn activate_tool(&mut self, index: usize, cx: &mut Context<Self>) -> Result<bool, CanvasError> {
+        match self.model.activate_tool(index) {
+            Ok(changed) => {
+                if changed {
+                    cx.notify();
+                }
+                Ok(changed)
+            }
+            Err(error) => {
+                self.record_error(&error, cx);
+                Err(error)
+            }
+        }
+    }
+
     fn record_error(&mut self, error: impl fmt::Display, cx: &mut Context<Self>) {
         if self.model.record_error(error) {
             cx.notify();
