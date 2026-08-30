@@ -9,14 +9,20 @@
 //! translates in both directions, which is what makes every tool
 //! unit-testable headless and confines a framework swap to one crate.
 //!
-//! `CodecPlugin` joins these in M2, with `codecs-common`: its shape is
-//! `Document` in and out, so it waits for a `Document` worth naming.
+//! [`CodecPlugin`] joined them in M2 with `codecs-common`, export only:
+//! pages out to text, PNG and SVG. Import waits for the edit graph that can
+//! build a `Document` from something that is not a PDF, which is M3.
 
-use onionskin_core::Document;
-
-pub use onionskin_core::{Modifiers, PageIndex, PagePoint, PageQuad, PageRect};
+pub use codec::{CodecPlugin, ExportError, ExportRequest, ExportedFile, PageRange};
+/// Re-exported so a plugin crate needs this one dependency to name what the
+/// contract hands it: `Document` for every trait here, the page-render types
+/// for what a codec gets back when it asks for a page.
+pub use onionskin_core::{
+    BaseRaster, Document, Modifiers, PageIndex, PagePoint, PageQuad, PageRect, PageRender, PageSvg,
+};
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
 
+pub mod codec;
 pub mod registry;
 
 /// A pointer event, already transformed out of window space into the page
