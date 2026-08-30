@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    StatefulInteractiveElement as _,
+    div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_plugin_api::{PluginRegistry, ToolPlugin};
 
