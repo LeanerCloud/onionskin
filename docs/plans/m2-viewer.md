@@ -556,6 +556,14 @@ Whether the signature pane claims anything about validity (it must not; that
 is M6). Whether the layers pane silently no-ops when the OCG override is
 unavailable rather than disabling the control.
 
+**Note from P4 review (layer toggles).** `TileStore::clear()` drops overlays
+together with the cached rasters, by the documented ownership model on
+`insert`: the caller that re-rendered owns re-adding overlays, because only
+it knows what the new raster already contains. So toggling an OCG layer in
+the Layers pane costs a re-render of the affected pages plus re-adding every
+annotation overlay on them. P8's layers implementation must do both; a
+toggle that re-renders and forgets the overlays is the bug to test for.
+
 ### P9. Find bar and document search
 
 **Goal.** Ctrl+F with Acrobat's options, wired to `content::search`, plus the
