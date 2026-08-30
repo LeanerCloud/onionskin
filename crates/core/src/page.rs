@@ -61,22 +61,41 @@ impl PageGeometry {
         if quad.page != self.index {
             return Err(GeometryError::WrongPage {
                 geometry: self.index,
-                quad: quad.page,
+                requested: quad.page,
             });
         }
         if !zoom.is_finite() || zoom <= 0.0 {
             return Err(GeometryError::InvalidZoom(zoom));
         }
-        let scale = f64::from(zoom);
         Ok(DeviceQuad {
             page: quad.page,
-            corners: quad.corners.map(|(x, y)| {
-                let (x, y) = self
-                    .transform
-                    .apply(x + self.media_box[0], y + self.media_box[1]);
-                (x * scale, y * scale)
-            }),
+            corners: quad.corners.map(|(x, y)| self.device_of(x, y, zoom)),
         })
+    }
+
+    pub fn user_to_device_point(
+        &self,
+        point: PagePoint,
+        zoom: f32,
+    ) -> Result<(f64, f64), GeometryError> {
+        if point.page != self.index {
+            return Err(GeometryError::WrongPage {
+                geometry: self.index,
+                requested: point.page,
+            });
+        }
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(GeometryError::InvalidZoom(zoom));
+        }
+        Ok(self.device_of(point.x, point.y, zoom))
+    }
+
+    fn device_of(&self, x: f64, y: f64, zoom: f32) -> (f64, f64) {
+        let scale = f64::from(zoom);
+        let (x, y) = self
+            .transform
+            .apply(x + self.media_box[0], y + self.media_box[1]);
+        (x * scale, y * scale)
     }
 
     pub fn device_to_user(&self, x: f64, y: f64, zoom: f32) -> Result<PagePoint, GeometryError> {
@@ -103,7 +122,7 @@ pub struct DeviceQuad {
 pub enum GeometryError {
     WrongPage {
         geometry: PageIndex,
-        quad: PageIndex,
+        requested: PageIndex,
     },
     InvalidZoom(f32),
     Transform(onionskin_render::TransformError),
@@ -112,8 +131,14 @@ pub enum GeometryError {
 impl fmt::Display for GeometryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongPage { geometry, quad } => {
-                write!(f, "page {quad} quad cannot use page {geometry} geometry")
+            Self::WrongPage {
+                geometry,
+                requested,
+            } => {
+                write!(
+                    f,
+                    "page {requested} coordinates cannot use page {geometry} geometry"
+                )
             }
             Self::InvalidZoom(zoom) => write!(f, "zoom must be positive and finite, got {zoom}"),
             Self::Transform(error) => write!(f, "{error}"),

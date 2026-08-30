@@ -241,7 +241,10 @@ impl CanvasModel {
             registry
                 .tool_mut(index)
                 .expect("the initial tool remains registered")
-                .on_activate(&mut ToolCtx { doc: &mut document });
+                .on_activate(&mut ToolCtx {
+                    doc: &mut document,
+                    viewport: &mut viewport,
+                });
         }
         Ok(Self {
             document,
@@ -427,6 +430,7 @@ impl CanvasModel {
                 .expect("the active tool remains registered")
                 .on_deactivate(&mut ToolCtx {
                     doc: &mut self.document,
+                    viewport: &mut self.viewport,
                 });
         }
         self.active_tool = Some(index);
@@ -435,6 +439,7 @@ impl CanvasModel {
             .expect("validated tools remain registered")
             .on_activate(&mut ToolCtx {
                 doc: &mut self.document,
+                viewport: &mut self.viewport,
             });
         Ok(true)
     }
@@ -894,11 +899,15 @@ impl CanvasModel {
             .active_tool
             .expect("tool dispatch requires an active tool");
         let document = &mut self.document;
+        let viewport = &mut self.viewport;
         let tool = self
             .registry
             .tool_mut(index)
             .expect("the active tool remains registered");
-        let mut context = ToolCtx { doc: document };
+        let mut context = ToolCtx {
+            doc: document,
+            viewport,
+        };
         match phase {
             ToolPointerPhase::Down => tool.on_pointer_down(&mut context, input),
             ToolPointerPhase::Move => tool.on_pointer_move(&mut context, input),
@@ -911,11 +920,15 @@ impl CanvasModel {
             return;
         };
         let document = &mut self.document;
+        let viewport = &mut self.viewport;
         let tool = self
             .registry
             .tool_mut(index)
             .expect("the active tool remains registered");
-        tool.on_cancel(&mut ToolCtx { doc: document });
+        tool.on_cancel(&mut ToolCtx {
+            doc: document,
+            viewport,
+        });
     }
 }
 

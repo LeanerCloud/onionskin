@@ -392,6 +392,34 @@ impl Viewport {
         )?))
     }
 
+    /// Where a page point sits in the viewport, the forward direction of
+    /// [`Viewport::page_point_at`]. `None` when the page is not laid out in
+    /// the current mode. Tools that move the view work in page space and
+    /// need this to say what a gesture means in viewport pixels.
+    pub fn view_point_for(&self, point: PagePoint) -> Result<Option<ViewPoint>, ViewportError> {
+        let geometry = self
+            .layout
+            .geometry(point.page)
+            .ok_or(ViewportError::UnmeasuredPage(point.page))?;
+        let Some(placement) = self.layout.placement(point.page, self.query())? else {
+            return Ok(None);
+        };
+        let (x, y) = geometry.user_to_device_point(point, self.zoom)?;
+        let unrotated = ViewPoint {
+            x: (x / f64::from(self.zoom)) as f32,
+            y: (y / f64::from(self.zoom)) as f32,
+        };
+        let page_size = ViewSize {
+            width: geometry.render_size.0 as f32,
+            height: geometry.render_size.1 as f32,
+        };
+        let rotated = self.rotation.rotate_point(unrotated, page_size);
+        Ok(Some(ViewPoint {
+            x: placement.rect.origin.x + rotated.x * self.zoom - self.offset.x,
+            y: placement.rect.origin.y + rotated.y * self.zoom - self.offset.y,
+        }))
+    }
+
     pub fn snapshot(&self) -> ViewState {
         ViewState {
             current_page: self.current_page,

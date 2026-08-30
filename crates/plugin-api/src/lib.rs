@@ -12,7 +12,7 @@
 //! `CodecPlugin` joins these in M2, with `codecs-common`: its shape is
 //! `Document` in and out, so it waits for a `Document` worth naming.
 
-use onionskin_core::Document;
+use onionskin_core::{Document, Viewport};
 
 pub use onionskin_core::{Modifiers, PageIndex, PagePoint, PageQuad, PageRect};
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
@@ -60,8 +60,14 @@ pub enum ToolCapability {
 }
 
 /// Everything a tool may touch while handling input.
+///
+/// The viewport is here because pan and zoom are view state, not document
+/// state: without it a hand tool cannot pan and a zoom tool cannot zoom.
+/// Its named consumers are `tools-basic`'s hand and zoom tools; a tool that
+/// only marks up the document has no reason to touch it.
 pub struct ToolCtx<'a> {
     pub doc: &'a mut Document,
+    pub viewport: &'a mut Viewport,
 }
 
 /// A canvas tool. One is active at a time; the canvas routes pointer
