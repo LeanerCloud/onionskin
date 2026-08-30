@@ -1,15 +1,15 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, point, px, size, AppContext as _, Bounds, Context, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, Point, Render, Size, StatefulInteractiveElement as _, Styled as _,
-    Window,
+    div, point, px, size, AppContext as _, Bounds, Context, Div, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Point, Render, Size, Stateful,
+    StatefulInteractiveElement as _, Styled as _, Window,
 };
 use onionskin_plugin_api::{PluginRegistry, ToolCapability};
 
 use super::tabs::ShellFrame;
 use super::theme::ThemeTokens;
 
-const TOOLBAR_WIDTH: f32 = 640.0;
+const PREFERRED_TOOLBAR_WIDTH: f32 = 640.0;
 const TOOLBAR_HEIGHT: f32 = 64.0;
 const CUSTOMIZATION_HEIGHT: f32 = 296.0;
 
@@ -225,9 +225,9 @@ impl QuickActionsState {
         self.position
     }
 
-    pub(super) fn toolbar_size(&self) -> Size<Pixels> {
+    pub(super) fn toolbar_size(&self, document: Size<Pixels>) -> Size<Pixels> {
         size(
-            px(TOOLBAR_WIDTH),
+            toolbar_width(document.width),
             px(if self.customizing {
                 CUSTOMIZATION_HEIGHT
             } else {
@@ -269,8 +269,12 @@ impl QuickActionsState {
     }
 
     pub(super) fn constrain_to(&mut self, document: Size<Pixels>) {
-        self.position = constrained_position(self.position, document, self.toolbar_size());
+        self.position = constrained_position(self.position, document, self.toolbar_size(document));
     }
+}
+
+fn toolbar_width(document_width: Pixels) -> Pixels {
+    document_width.min(px(PREFERRED_TOOLBAR_WIDTH)).max(px(0.0))
 }
 
 fn constrained_position(
@@ -342,45 +346,41 @@ pub(super) fn render_quick_actions(
     entries: Vec<QuickActionEntry>,
     all_entries: Vec<QuickActionEntry>,
     state: &QuickActionsState,
+    document: Size<Pixels>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let position = state.position();
+    let toolbar_size = state.toolbar_size(document);
     let customizing = state.customizing();
     let drag = QuickActionDrag {
         id: state.next_drag(),
     };
-    let mut row = div()
-        .h(px(TOOLBAR_HEIGHT))
-        .flex()
-        .items_center()
-        .gap_1()
-        .p_1()
-        .child(
-            div()
-                .id("quick-actions-drag-handle")
-                .w(px(24.0))
-                .h_full()
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_move()
-                .text_color(theme.secondary_text)
-                .on_drag(drag, move |_drag, offset, _window, cx| {
-                    cx.new(|_| QuickActionDragPreview {
-                        offset,
-                        color: theme.drag_preview,
-                    })
+    let mut row = quick_actions_row().child(
+        div()
+            .id("quick-actions-drag-handle")
+            .w(px(24.0))
+            .h_full()
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_move()
+            .text_color(theme.secondary_text)
+            .on_drag(drag, move |_drag, offset, _window, cx| {
+                cx.new(|_| QuickActionDragPreview {
+                    offset,
+                    color: theme.drag_preview,
                 })
-                .on_drag_move::<QuickActionDrag>(cx.listener(
-                    |frame, event: &gpui::DragMoveEvent<QuickActionDrag>, window, cx| {
-                        let id = event.drag(cx).id();
-                        frame.drag_quick_actions(id, event.event.position, window, cx);
-                    },
-                ))
-                .child("⠿"),
-        );
+            })
+            .on_drag_move::<QuickActionDrag>(cx.listener(
+                |frame, event: &gpui::DragMoveEvent<QuickActionDrag>, window, cx| {
+                    let id = event.drag(cx).id();
+                    frame.drag_quick_actions(id, event.event.position, window, cx);
+                },
+            ))
+            .child("⠿"),
+    );
 
     for entry in entries {
         let enabled = entry.availability.is_enabled();
@@ -446,13 +446,13 @@ pub(super) fn render_quick_actions(
         .absolute()
         .left(position.x)
         .top(position.y)
-        .w(px(TOOLBAR_WIDTH))
+        .w(toolbar_size.width)
         .rounded_md()
         .occlude()
         .bg(theme.raised)
         .text_color(theme.text)
         .shadow_md()
-        .child(row);
+        .child(toolbar_row_scroller(row));
 
     if customizing {
         let mut panel = div()
@@ -499,9 +499,32 @@ pub(super) fn render_quick_actions(
     toolbar
 }
 
+fn quick_actions_row() -> Div {
+    div()
+        .flex_none()
+        .min_w_full()
+        .h(px(TOOLBAR_HEIGHT))
+        .flex()
+        .items_center()
+        .gap_1()
+        .p_1()
+}
+
+fn toolbar_row_scroller(row: impl IntoElement) -> Stateful<Div> {
+    div()
+        .id("quick-actions-scroll")
+        .w_full()
+        .h(px(TOOLBAR_HEIGHT))
+        .flex()
+        .overflow_x_scroll()
+        .child(row)
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{point, px, size, Bounds};
+    #[cfg(feature = "shell-test-support")]
+    use gpui::{Render, ScrollHandle, TestAppContext, Window};
     use onionskin_plugin_api::{
         PluginManifest, PluginRegistry, PointerInput, ToolCapability, ToolCtx, ToolPlugin,
     };
@@ -703,7 +726,7 @@ mod tests {
         let mut state = QuickActionsState::default();
         let closed_document = size(px(972.0), px(784.0));
         let open_document = size(px(732.0), px(784.0));
-        let toolbar = state.toolbar_size();
+        let toolbar = state.toolbar_size(closed_document);
         let drag = state.next_drag();
         state.drag_to(
             drag,
@@ -728,5 +751,65 @@ mod tests {
         state.constrain_to(open_document);
 
         assert_eq!(state.position().x, px(92.0));
+    }
+
+    #[test]
+    fn expanded_rail_and_open_panel_keep_the_toolbar_inside_the_document() {
+        let document = size(px(580.0), px(736.0));
+        let mut state = QuickActionsState::default();
+
+        state.constrain_to(document);
+
+        assert_eq!(state.toolbar_size(document).width, document.width);
+        assert_eq!(state.position().x, px(0.0));
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    struct QuickActionsLayoutProbe {
+        scroller: ScrollHandle,
+        row: ScrollHandle,
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    impl Render for QuickActionsLayoutProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mut row = quick_actions_row()
+                .id("quick-actions-probe-row")
+                .track_scroll(&self.row)
+                .child(div().flex_none().w(px(24.0)).h(px(52.0)));
+            for _ in QuickAction::ALL {
+                row = row.child(div().flex_none().w(px(82.0)).h(px(52.0)));
+            }
+            row = row.child(div().flex_none().w(px(76.0)).h(px(52.0)));
+
+            div()
+                .w(px(580.0))
+                .h(px(TOOLBAR_HEIGHT))
+                .child(toolbar_row_scroller(row).track_scroll(&self.scroller))
+        }
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn narrow_toolbar_scrolls_until_the_last_control_is_reachable(cx: &mut TestAppContext) {
+        let scroller = ScrollHandle::new();
+        let row = ScrollHandle::new();
+        let (_, cx) = cx.add_window_view(|_window, _cx| QuickActionsLayoutProbe {
+            scroller: scroller.clone(),
+            row: row.clone(),
+        });
+        cx.run_until_parked();
+
+        let viewport = scroller.bounds();
+        let first = row.bounds_for_item(0).unwrap();
+        let last = row.bounds_for_item(7).unwrap();
+        let max_scroll = scroller.max_offset().width;
+
+        assert_eq!(viewport.size.width, px(580.0));
+        assert!(max_scroll > px(0.0));
+        assert!(first.left() >= viewport.left());
+        assert!(last.left() - max_scroll < viewport.right());
+        assert!(last.right() - max_scroll <= viewport.right());
+        assert!(last.right() - max_scroll > viewport.left());
     }
 }

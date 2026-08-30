@@ -769,7 +769,7 @@ impl ShellFrame {
             origin: Point::default(),
             size: document.size,
         };
-        let toolbar_size = self.quick_actions_state.toolbar_size();
+        let toolbar_size = self.quick_actions_state.toolbar_size(bounds.size);
         self.quick_actions_state
             .drag_to(id, pointer, bounds, toolbar_size);
         cx.notify();
@@ -1051,6 +1051,7 @@ impl Render for ShellFrame {
                 quick_action_entries,
                 all_quick_action_entries,
                 &self.quick_actions_state,
+                document_bounds.size,
                 theme,
                 cx,
             );
@@ -1290,6 +1291,12 @@ mod tests {
             document_view_bounds(viewport, true, true, true, SidePanelState::OpenEmpty, true);
         assert_eq!(expanded_open.origin, expanded_closed.origin);
         assert_eq!(expanded_open.size, gpui::size(px(580.0), px(736.0)));
+        assert_eq!(
+            QuickActionsState::default()
+                .toolbar_size(expanded_open.size)
+                .width,
+            expanded_open.size.width
+        );
     }
 
     #[test]
