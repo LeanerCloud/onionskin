@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
-    Document, FitMode, PageGeometryResponse, PageIndex, PagePlacement, RenderRequest,
-    RenderResponse, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    Document, FitMode, PageAlignment, PageGeometryResponse, PageIndex, PageLayoutMode,
+    PagePlacement, RenderRequest, RenderResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation,
+    ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx};
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
@@ -16,6 +18,7 @@ use super::input::{
 };
 
 const PAGE_GAP: f32 = 12.0;
+const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 #[derive(Debug)]
 pub enum CanvasError {
@@ -156,6 +159,7 @@ enum ToolPointerPhase {
 pub struct CanvasModel {
     document: Document,
     viewport: Viewport,
+    view_history: ViewHistory,
     registry: PluginRegistry,
     active_tool: Option<usize>,
     input: InputState,
@@ -197,6 +201,7 @@ impl CanvasModel {
         Ok(Self {
             document,
             viewport,
+            view_history: ViewHistory::new(VIEW_HISTORY_CAPACITY),
             registry,
             active_tool,
             input: InputState::default(),
@@ -225,6 +230,126 @@ impl CanvasModel {
 
     pub fn active_tool(&self) -> Option<usize> {
         self.active_tool
+    }
+
+    pub fn can_previous_view(&self) -> bool {
+        self.view_history.can_previous()
+    }
+
+    pub fn can_next_view(&self) -> bool {
+        self.view_history.can_next()
+    }
+
+    pub fn go_to_page(&mut self, page: PageIndex) -> Result<bool, CanvasError> {
+        self.apply_view_change(|viewport| viewport.go_to_page(page, PageAlignment::Start))
+    }
+
+    pub fn first_page(&mut self) -> Result<bool, CanvasError> {
+        self.apply_view_change(Viewport::first_page)
+    }
+
+    pub fn previous_page(&mut self) -> Result<bool, CanvasError> {
+        self.apply_view_change(Viewport::previous_page)
+    }
+
+    pub fn next_page(&mut self) -> Result<bool, CanvasError> {
+        self.apply_view_change(Viewport::next_page)
+    }
+
+    pub fn last_page(&mut self) -> Result<bool, CanvasError> {
+        self.apply_view_change(Viewport::last_page)
+    }
+
+    pub fn zoom_in(&mut self) -> Result<bool, CanvasError> {
+        let anchor = self.viewport_center();
+        self.apply_view_change(|viewport| viewport.zoom_in(anchor))
+    }
+
+    pub fn zoom_out(&mut self) -> Result<bool, CanvasError> {
+        let anchor = self.viewport_center();
+        self.apply_view_change(|viewport| viewport.zoom_out(anchor))
+    }
+
+    pub fn zoom_to(&mut self, zoom: f32) -> Result<bool, CanvasError> {
+        let anchor = self.viewport_center();
+        self.apply_view_change(|viewport| viewport.zoom_to(zoom, anchor))
+    }
+
+    pub fn fit(&mut self, mode: FitMode) -> Result<bool, CanvasError> {
+        self.apply_view_change(|viewport| viewport.fit(mode))
+    }
+
+    pub fn actual_size(&mut self) -> Result<bool, CanvasError> {
+        self.apply_view_change(Viewport::actual_size)
+    }
+
+    pub fn set_rotation(&mut self, rotation: ViewRotation) -> Result<bool, CanvasError> {
+        self.apply_view_change(|viewport| viewport.set_rotation(rotation))
+    }
+
+    pub fn rotate_clockwise(&mut self) -> Result<bool, CanvasError> {
+        let rotation = match self.viewport.rotation() {
+            ViewRotation::None => ViewRotation::Clockwise90,
+            ViewRotation::Clockwise90 => ViewRotation::HalfTurn,
+            ViewRotation::HalfTurn => ViewRotation::Clockwise270,
+            ViewRotation::Clockwise270 => ViewRotation::None,
+        };
+        self.set_rotation(rotation)
+    }
+
+    pub fn set_layout_mode(&mut self, mode: PageLayoutMode) -> Result<bool, CanvasError> {
+        self.apply_view_change(|viewport| viewport.set_mode(mode))
+    }
+
+    pub fn set_show_cover(&mut self, show_cover: bool) -> Result<bool, CanvasError> {
+        self.apply_view_change(|viewport| viewport.set_show_cover(show_cover))
+    }
+
+    pub fn previous_view(&mut self) -> Result<bool, CanvasError> {
+        let current = self.viewport.snapshot();
+        let Some(target) = self.view_history.previous(current) else {
+            return Ok(false);
+        };
+        if let Err(error) = self.viewport.restore(target) {
+            let restored = self.view_history.next(target);
+            debug_assert_eq!(restored, Some(current));
+            return Err(error.into());
+        }
+        Ok(true)
+    }
+
+    pub fn next_view(&mut self) -> Result<bool, CanvasError> {
+        let current = self.viewport.snapshot();
+        let Some(target) = self.view_history.next(current) else {
+            return Ok(false);
+        };
+        if let Err(error) = self.viewport.restore(target) {
+            let restored = self.view_history.previous(target);
+            debug_assert_eq!(restored, Some(current));
+            return Err(error.into());
+        }
+        Ok(true)
+    }
+
+    fn apply_view_change(
+        &mut self,
+        change: impl FnOnce(&mut Viewport) -> Result<(), ViewportError>,
+    ) -> Result<bool, CanvasError> {
+        let before = self.viewport.snapshot();
+        change(&mut self.viewport)?;
+        if self.viewport.snapshot() == before {
+            return Ok(false);
+        }
+        self.view_history.record(before);
+        Ok(true)
+    }
+
+    fn viewport_center(&self) -> ViewPoint {
+        let size = self.viewport.size();
+        ViewPoint {
+            x: size.width / 2.0,
+            y: size.height / 2.0,
+        }
     }
 
     pub fn activate_tool(&mut self, index: usize) -> Result<bool, CanvasError> {
@@ -1087,6 +1212,28 @@ mod tests {
         .expect("canvas starts")
     }
 
+    fn assert_view_change_matches(
+        model: &mut CanvasModel,
+        direct: &mut CanvasModel,
+        model_change: impl FnOnce(&mut CanvasModel) -> Result<bool, CanvasError>,
+        direct_change: impl FnOnce(&mut Viewport) -> Result<(), ViewportError>,
+    ) {
+        let before = direct.viewport.snapshot();
+        direct_change(&mut direct.viewport).unwrap();
+        let expected_changed = direct.viewport.snapshot() != before;
+
+        assert_eq!(model_change(model).unwrap(), expected_changed);
+        assert_eq!(model.viewport.snapshot(), direct.viewport.snapshot());
+    }
+
+    fn direct_viewport_center(viewport: &Viewport) -> ViewPoint {
+        let size = viewport.size();
+        ViewPoint {
+            x: size.width / 2.0,
+            y: size.height / 2.0,
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum RecordedToolEvent {
         Down(PointerInput),
@@ -1509,6 +1656,204 @@ mod tests {
         assert_eq!(model.queue_visible_geometry().unwrap(), 0);
         assert!(model.has_pending_work());
         assert!(model.geometry_requests.contains(&1));
+    }
+
+    #[test]
+    fn view_command_wrappers_match_direct_viewport_behavior() {
+        let mut subject = model();
+        let mut direct = model();
+
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            |model| model.go_to_page(1),
+            |viewport| viewport.go_to_page(1, PageAlignment::Start),
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::first_page,
+            Viewport::first_page,
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::last_page,
+            Viewport::last_page,
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::previous_page,
+            Viewport::previous_page,
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::next_page,
+            Viewport::next_page,
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::zoom_in,
+            |viewport| {
+                let anchor = direct_viewport_center(viewport);
+                viewport.zoom_in(anchor)
+            },
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::zoom_out,
+            |viewport| {
+                let anchor = direct_viewport_center(viewport);
+                viewport.zoom_out(anchor)
+            },
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            |model| model.zoom_to(1.5),
+            |viewport| {
+                let anchor = direct_viewport_center(viewport);
+                viewport.zoom_to(1.5, anchor)
+            },
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            |model| model.fit(FitMode::Width),
+            |viewport| viewport.fit(FitMode::Width),
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::actual_size,
+            Viewport::actual_size,
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            |model| model.set_rotation(ViewRotation::Clockwise90),
+            |viewport| viewport.set_rotation(ViewRotation::Clockwise90),
+        );
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            CanvasModel::rotate_clockwise,
+            |viewport| viewport.set_rotation(ViewRotation::HalfTurn),
+        );
+        for mode in [
+            PageLayoutMode::SinglePage,
+            PageLayoutMode::SinglePageContinuous,
+            PageLayoutMode::TwoPage,
+            PageLayoutMode::TwoPageContinuous,
+        ] {
+            assert_view_change_matches(
+                &mut subject,
+                &mut direct,
+                |model| model.set_layout_mode(mode),
+                |viewport| viewport.set_mode(mode),
+            );
+        }
+        assert_view_change_matches(
+            &mut subject,
+            &mut direct,
+            |model| model.set_show_cover(true),
+            |viewport| viewport.set_show_cover(true),
+        );
+    }
+
+    #[test]
+    fn previous_and_next_view_restore_every_view_state_field() {
+        let mut model = model();
+        let mut states = vec![model.viewport.snapshot()];
+
+        assert!(model.set_layout_mode(PageLayoutMode::TwoPage).unwrap());
+        states.push(model.viewport.snapshot());
+        assert!(model.set_show_cover(true).unwrap());
+        states.push(model.viewport.snapshot());
+        assert!(model.set_rotation(ViewRotation::Clockwise90).unwrap());
+        states.push(model.viewport.snapshot());
+        assert!(model.zoom_to(1.5).unwrap());
+        states.push(model.viewport.snapshot());
+        let target_page = if model.viewport.current_page() == 0 {
+            1
+        } else {
+            0
+        };
+        assert!(model.go_to_page(target_page).unwrap());
+        states.push(model.viewport.snapshot());
+
+        for expected in states.iter().rev().skip(1) {
+            assert!(model.can_previous_view());
+            assert!(model.previous_view().unwrap());
+            assert_eq!(&model.viewport.snapshot(), expected);
+        }
+        assert!(!model.can_previous_view());
+
+        for expected in states.iter().skip(1) {
+            assert!(model.can_next_view());
+            assert!(model.next_view().unwrap());
+            assert_eq!(&model.viewport.snapshot(), expected);
+        }
+        assert!(!model.can_next_view());
+    }
+
+    #[test]
+    fn no_op_view_commands_do_not_create_history() {
+        let mut model = model();
+
+        assert!(!model.set_show_cover(false).unwrap());
+        assert!(!model.can_previous_view());
+        assert!(!model.can_next_view());
+    }
+
+    #[test]
+    fn failed_view_commands_do_not_create_history() {
+        let mut model = model();
+        let page_count = model.viewport.page_count();
+
+        assert!(model.go_to_page(page_count).is_err());
+        assert!(!model.can_previous_view());
+        assert!(!model.can_next_view());
+    }
+
+    #[test]
+    fn continuous_pan_does_not_add_view_history_entries() {
+        let mut model = model();
+        let initial = model.viewport.snapshot();
+
+        assert!(model.zoom_to(2.0).unwrap());
+        assert!(model
+            .pointer_down(point(px(400.0), px(300.0)), 1.0, GpuiModifiers::default())
+            .unwrap());
+        for y in [320.0, 340.0, 360.0, 380.0, 400.0] {
+            assert!(model
+                .pointer_move(point(px(400.0), px(y)), 1.0, GpuiModifiers::default(), true,)
+                .unwrap());
+        }
+        assert!(model
+            .pointer_up(point(px(400.0), px(400.0)), 1.0, GpuiModifiers::default())
+            .unwrap());
+
+        assert!(model.previous_view().unwrap());
+        assert_eq!(model.viewport.snapshot(), initial);
+        assert!(!model.can_previous_view());
+    }
+
+    #[test]
+    fn successful_view_commands_reuse_render_generation_scheduling() {
+        let mut model = model();
+        model.update().unwrap();
+        let generation = model.generation();
+
+        assert!(model.zoom_to(2.0).unwrap());
+        model.update().unwrap();
+
+        assert!(model.generation() > generation);
+        assert!(model.has_pending_render());
     }
 
     #[test]
