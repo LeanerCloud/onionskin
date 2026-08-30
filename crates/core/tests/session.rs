@@ -86,9 +86,18 @@ fn page_text_search_and_state_use_core_types() {
     assert_eq!(matches[0].page, 0);
     assert!(!matches[0].quads.is_empty());
 
-    doc.search_mut().set_query("Onionskin", options);
-    doc.search_mut().replace_matches(matches);
+    // The document-wide walk is `search.rs`'s subject; here it only has to
+    // agree with the per-page call and land in the session's own state.
+    assert!(doc
+        .start_search("Onionskin", options, 0)
+        .expect("the search worker starts"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while doc.search().is_running() && std::time::Instant::now() < deadline {
+        doc.poll_search()
+            .expect("the search worker keeps answering");
+    }
     assert_eq!(doc.search().needle(), "Onionskin");
+    assert_eq!(doc.search().matches().cloned().collect::<Vec<_>>(), matches);
     assert!(doc.search().current().is_some());
 
     doc.selection_mut().set_region(PageRect {

@@ -7,9 +7,10 @@ use onionskin_content as content;
 use onionskin_cos::{BytesSource, Provenance};
 
 use crate::render::WorkerHandle;
+use crate::search::{DocumentSearch, SearchUpdate};
 use crate::{
     PageGeometry, PageIndex, PageRect, PageRender, PageSvg, RenderRequest, RenderResponse,
-    SearchMatch, SearchOptions, SearchState, Selection,
+    SearchMatch, SearchOptions, SearchState, SearchWorkerError, Selection,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -29,6 +30,7 @@ pub enum Error {
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
+    SearchWorker(SearchWorkerError),
 }
 
 impl fmt::Display for Error {
@@ -48,6 +50,7 @@ impl fmt::Display for Error {
             Error::Cos(e) => write!(f, "{e}"),
             Error::Content(e) => write!(f, "{e}"),
             Error::Worker(e) => write!(f, "{e}"),
+            Error::SearchWorker(e) => write!(f, "{e}"),
         }
     }
 }
@@ -59,6 +62,7 @@ impl std::error::Error for Error {
             Error::Cos(e) => Some(e),
             Error::Content(e) => Some(e),
             Error::Worker(e) => Some(e),
+            Error::SearchWorker(e) => Some(e),
             Error::EncryptedUnsupported
             | Error::NoSuchPage { .. }
             | Error::GeometryPageMismatch { .. } => None,
@@ -93,6 +97,12 @@ impl From<content::Error> for Error {
 impl From<crate::WorkerError> for Error {
     fn from(e: crate::WorkerError) -> Self {
         Error::Worker(e)
+    }
+}
+
+impl From<SearchWorkerError> for Error {
+    fn from(e: SearchWorkerError) -> Self {
+        Error::SearchWorker(e)
     }
 }
 
@@ -136,6 +146,9 @@ pub struct Document {
     selection: Selection,
     search: SearchState,
     snapshot: Option<SnapshotRequest>,
+    /// Spawned by the first find, so a document nobody searches never pays for
+    /// the worker's own parse of the bytes.
+    search_worker: Option<DocumentSearch>,
 }
 
 impl Document {
@@ -165,6 +178,7 @@ impl Document {
             selection: Selection::default(),
             search: SearchState::default(),
             snapshot: None,
+            search_worker: None,
         })
     }
 
@@ -310,6 +324,71 @@ impl Document {
             .into_iter()
             .map(SearchMatch::from)
             .collect())
+    }
+
+    /// Starts a document-wide walk for `needle`, beginning at `start_page` and
+    /// wrapping, on the search worker. Returns false when the query is the one
+    /// already running or already answered, whose results stay as they are.
+    ///
+    /// The call returns as soon as the worker has the request; results arrive
+    /// through [`Document::poll_search`], one page at a time.
+    pub fn start_search(
+        &mut self,
+        needle: &str,
+        options: SearchOptions,
+        start_page: PageIndex,
+    ) -> Result<bool> {
+        if start_page >= self.page_count {
+            return Err(Error::NoSuchPage {
+                page: start_page,
+                count: self.page_count,
+            });
+        }
+        if !self.search.set_query(needle, options) {
+            return Ok(false);
+        }
+        if needle.is_empty() {
+            self.cancel_search();
+            return Ok(false);
+        }
+        let worker = match &mut self.search_worker {
+            Some(worker) => worker,
+            slot => slot.insert(DocumentSearch::spawn(Arc::clone(&self.bytes))?),
+        };
+        worker.start(needle, options, start_page, self.page_count)?;
+        self.search.begin();
+        Ok(true)
+    }
+
+    /// Applies whatever the search worker has produced since the last call.
+    /// Returns whether anything was applied, so a caller can decide to repaint.
+    pub fn poll_search(&mut self) -> Result<bool> {
+        let Some(worker) = &mut self.search_worker else {
+            return Ok(false);
+        };
+        let mut applied = false;
+        while let Some(update) = worker.try_update()? {
+            applied = true;
+            match update {
+                SearchUpdate::Page { page, matches } => {
+                    self.search.insert_page(page, matches);
+                }
+                SearchUpdate::PageFailed { page, message } => {
+                    self.search.record_failure(page, message);
+                }
+                SearchUpdate::Finished => self.search.finish(),
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Abandons the walk in flight and forgets the query, which is what closing
+    /// the find bar does.
+    pub fn cancel_search(&mut self) {
+        if let Some(worker) = &mut self.search_worker {
+            worker.cancel();
+        }
+        self.search = SearchState::default();
     }
 
     pub fn selection(&self) -> &Selection {

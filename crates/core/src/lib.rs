@@ -8,6 +8,7 @@ mod history;
 mod layout;
 mod page;
 mod render;
+mod search;
 mod selection;
 mod session;
 mod viewport;
@@ -17,7 +18,7 @@ pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,
     ViewRotation, ViewSize,
 };
-pub use onionskin_content::{Glyph, Mapping, PageText, SearchOptions, TextRun};
+pub use onionskin_content::{Glyph, Mapping, MatchMode, PageText, SearchOptions, TextRun};
 pub use onionskin_cos::Provenance;
 /// Re-exported because [`Document::render_page_now`] and
 /// [`Document::page_svg`] hand these back: a caller outside `core` has to be
@@ -27,6 +28,7 @@ pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
 pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
-pub use selection::{SearchMatch, SearchState, Selection, TextSelection};
+pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
+pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, PageGeometryResponse, Result, SnapshotRequest};
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy};

@@ -1,4 +1,4 @@
-//! What the user has picked out on a page, and what a find has matched.
+//! What the user has picked out on a page.
 //!
 //! A [`Selection`] is one of two things, never both: a marquee region or a run
 //! of text quads. `set_region` and `set_text_quads` each clear the other for
@@ -7,12 +7,11 @@
 //! selection survives a zoom, a rotation and a re-render without being
 //! recomputed.
 //!
-//! Search state lives here rather than in the find UI because the same match
-//! set feeds the canvas highlight, the MCP verbs and the CLI.
+//! What a find has matched lives in [`crate::search`] instead: a selection is
+//! one thing the user pointed at, and a search result set is a walk over the
+//! whole document.
 
-use onionskin_content as content;
-
-use crate::{PageIndex, PageQuad, PageRect, SearchOptions};
+use crate::{PageIndex, PageQuad, PageRect};
 
 /// Selected text: the quads to draw it with, and the text they cover in
 /// document order. The text travels with the quads because the clipboard
@@ -63,65 +62,6 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct SearchMatch {
-    pub page: PageIndex,
-    pub text: String,
-    pub quads: Vec<PageQuad>,
-}
-
-impl From<content::Match> for SearchMatch {
-    fn from(hit: content::Match) -> Self {
-        SearchMatch {
-            page: hit.page,
-            text: hit.text,
-            quads: hit.quads,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SearchState {
-    needle: String,
-    options: SearchOptions,
-    matches: Vec<SearchMatch>,
-    current: Option<usize>,
-}
-
-impl SearchState {
-    pub fn needle(&self) -> &str {
-        &self.needle
-    }
-
-    pub fn options(&self) -> SearchOptions {
-        self.options
-    }
-
-    pub fn matches(&self) -> &[SearchMatch] {
-        &self.matches
-    }
-
-    pub fn current(&self) -> Option<&SearchMatch> {
-        self.current.and_then(|index| self.matches.get(index))
-    }
-
-    pub fn set_query(&mut self, needle: impl Into<String>, options: SearchOptions) {
-        let needle = needle.into();
-        if self.needle == needle && self.options == options {
-            return;
-        }
-        self.needle = needle;
-        self.options = options;
-        self.matches.clear();
-        self.current = None;
-    }
-
-    pub fn replace_matches(&mut self, matches: Vec<SearchMatch>) {
-        self.current = (!matches.is_empty()).then_some(0);
-        self.matches = matches;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,20 +94,5 @@ mod tests {
         assert!(selection.region().is_none());
         assert!(selection.text_quads().is_empty());
         assert!(selection.text().is_none());
-    }
-
-    #[test]
-    fn changing_the_search_query_clears_stale_matches() {
-        let mut state = SearchState::default();
-        state.replace_matches(vec![SearchMatch {
-            page: 0,
-            text: "needle".into(),
-            quads: Vec::new(),
-        }]);
-        state.set_query("other", SearchOptions::default());
-
-        assert_eq!(state.needle(), "other");
-        assert!(state.matches().is_empty());
-        assert!(state.current().is_none());
     }
 }
