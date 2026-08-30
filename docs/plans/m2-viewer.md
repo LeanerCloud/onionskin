@@ -1,6 +1,6 @@
 # M2 implementation plan: the viewer
 
-Status: draft, awaiting adversarial review. No code written.
+Status: approved after two adversarial review rounds (2026-08-27). Implementation in progress as of 2026-08-30: P1, P4 (final commit 78fbc50 pending), P2, P3, P5, P6a, P6b and P7a/b/c are merged to main; P9, P10 and P13 are the next parallel wave, then P8, P11, P12, P14.
 
 M2 turns three isolated M1 spikes into one application: open a PDF (repaired
 if needed), render it, navigate it, search it, select text in it, wearing the

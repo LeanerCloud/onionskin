@@ -15,6 +15,11 @@ referenced.
   #[non_exhaustive] semver note). Track the PR: if upstream takes it or the
   #[non_exhaustive] alternative, re-pin accordingly; onionskin-render
   re-exports the enum, forwarding the exhaustive-match hazard either way.
+- Annotation-level optional content: hayro's annotation loop never reads an
+  annotation dict's /OC (only the /F hidden flag), so no OCG override can
+  hide an annotation whose visibility is layer-controlled; form XObject /OC
+  on appearance streams is honoured. /VE visibility expressions unsupported
+  upstream. Affects the M2 Layers pane; upstream feature request.
 - RenderSettings has no origin, so no sub-rectangle base rendering; ratified
   workaround: tiles cache composites. Upstream feature request.
 - RenderCache borrows the Pdf (self-referential storage); viewer-lifetime
