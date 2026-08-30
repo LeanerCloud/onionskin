@@ -3990,6 +3990,8 @@ version = "0.1.0"
 name = "onionskin-codecs-common"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "onionskin-core",
  "onionskin-plugin-api",
 ]
 
