@@ -15,3 +15,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # means driving `core`'s interactive render queue directly.
 [dev-dependencies]
 onionskin-core.workspace = true
+# Rasterizes an exported SVG back to pixels, so the SVG round trip is checked
+# against the PNG rather than against a shape of text. Already in the lock:
+# gpui pulls it, and dev-only here so no shipped crate gains it.
+resvg = { version = "0.45", default-features = false }
