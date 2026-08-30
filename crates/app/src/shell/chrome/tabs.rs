@@ -531,7 +531,10 @@ impl Render for ShellFrame {
                 div()
                     .id("menu-dismiss-layer")
                     .absolute()
+                    .top_0()
+                    .left_0()
                     .size_full()
+                    .occlude()
                     .on_click(cx.listener(|frame, _event, _window, cx| {
                         frame.dismiss_menus(cx);
                     })),

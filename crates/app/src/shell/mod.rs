@@ -34,6 +34,10 @@ pub enum ShellError {
         path: PathBuf,
         source: onionskin_core::Error,
     },
+    ResolvePath {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     Canvas(CanvasError),
     Window(String),
 }
@@ -45,6 +49,9 @@ impl fmt::Display for ShellError {
             Self::Open { path, source } => {
                 write!(f, "cannot open PDF {}: {source}", path.display())
             }
+            Self::ResolvePath { path, source } => {
+                write!(f, "cannot resolve PDF path {}: {source}", path.display())
+            }
             Self::Canvas(error) => write!(f, "cannot start canvas: {error}"),
             Self::Window(error) => write!(f, "cannot create window: {error}"),
         }
@@ -55,6 +62,7 @@ impl std::error::Error for ShellError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Open { source, .. } => Some(source),
+            Self::ResolvePath { source, .. } => Some(source),
             Self::Canvas(error) => Some(error),
             Self::NoDocuments | Self::Window(_) => None,
         }
@@ -406,6 +414,11 @@ where
                 path: path.clone(),
                 source,
             })?;
+            let source_path =
+                std::path::absolute(&path).map_err(|source| ShellError::ResolvePath {
+                    path: path.clone(),
+                    source,
+                })?;
             let model = CanvasModel::new(
                 document,
                 crate::build_registry(),
@@ -414,7 +427,7 @@ where
                     height: WINDOW_HEIGHT,
                 },
             )?;
-            Ok((path, model))
+            Ok((source_path, model))
         })
         .collect()
 }
@@ -453,6 +466,7 @@ mod tests {
         let tabs = prepare_tabs([seed("hello.pdf"), seed("two-page.pdf")]).unwrap();
 
         assert_eq!(tabs.len(), 2);
+        assert!(tabs.iter().all(|(path, _)| path.is_absolute()));
         assert_eq!(tabs[0].0.file_name().unwrap(), "hello.pdf");
         assert_eq!(tabs[1].0.file_name().unwrap(), "two-page.pdf");
     }
