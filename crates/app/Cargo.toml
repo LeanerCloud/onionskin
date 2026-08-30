@@ -94,6 +94,7 @@ shell = [
     "dep:onionskin-core",
     "dep:onionskin-render",
 ]
+shell-test-support = ["shell", "gpui/test-support"]
 a11y-spike = [
     "shell",
     "dep:accesskit",

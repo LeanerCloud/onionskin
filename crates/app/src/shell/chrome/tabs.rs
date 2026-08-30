@@ -9,9 +9,13 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
 };
 
+use super::super::canvas::{CanvasViewState, ViewAction};
 use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
+};
+use super::page_controls::{
+    parse_page_entry, render_page_controls, PageControlsState, PageEntryError, PAGE_CONTROLS_HEIGHT,
 };
 use super::quick_actions::{
     render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
@@ -171,6 +175,9 @@ pub(in crate::shell) struct ShellFrame {
     tab_context_menu: Option<TabContextMenu>,
     search_input: Entity<SearchInput>,
     search_feedback: Option<SearchResult>,
+    page_input: Entity<SearchInput>,
+    page_entry_error: Option<PageEntryError>,
+    observed_view_state: Option<CanvasViewState>,
     rail_state: RailState,
     quick_actions_state: QuickActionsState,
     side_panel_state: SidePanelState,
@@ -214,29 +221,54 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) -> Self {
         let search_input = cx.new(SearchInput::new);
+        let page_input = cx.new(|cx| SearchInput::with_placeholder("page-entry-input", "Page", cx));
         cx.observe(&search_input, |frame, _, cx| {
             frame.search_feedback = None;
             cx.notify();
         })
         .detach();
-        Self {
-            tabs: TabState::new(
-                tabs.into_iter()
-                    .map(|(source, canvas)| DocumentTab::new(source, canvas))
-                    .collect(),
-            ),
+        cx.observe(&page_input, |frame, _, cx| {
+            frame.page_entry_error = None;
+            cx.notify();
+        })
+        .detach();
+        let document_tabs: Vec<_> = tabs
+            .into_iter()
+            .map(|(source, canvas)| DocumentTab::new(source, canvas))
+            .collect();
+        for tab in &document_tabs {
+            cx.observe(&tab.canvas, |frame, _, cx| {
+                frame.canvas_view_changed(cx);
+            })
+            .detach();
+        }
+        let tabs = TabState::new(document_tabs);
+        let observed_view_state = tabs
+            .active()
+            .map(|tab| tab.canvas.read(cx).model.view_state());
+        let frame = Self {
+            tabs,
             main_menu_open: false,
             tab_context_menu: None,
             search_input,
             search_feedback: None,
+            page_input,
+            page_entry_error: None,
+            observed_view_state,
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),
             side_panel_state: SidePanelState::default(),
-        }
+        };
+        frame.sync_page_entry(cx);
+        frame
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
         if activate_tab(&mut self.tabs, &mut self.search_feedback, index) {
+            self.page_entry_error = None;
+            self.observed_view_state = self.active_view_state(cx);
+            self.sync_page_entry(cx);
+            refresh_native_menus(cx, self.menu_state(cx));
             cx.notify();
         }
     }
@@ -274,6 +306,36 @@ impl ShellFrame {
             MenuCommand::CloseAllTabs => {
                 self.run_tab_command(TabCommand::CloseAll, active, window, cx)
             }
+            MenuCommand::PreviousView
+            | MenuCommand::NextView
+            | MenuCommand::FirstPage
+            | MenuCommand::PreviousPage
+            | MenuCommand::NextPage
+            | MenuCommand::LastPage
+            | MenuCommand::RotateClockwise
+            | MenuCommand::ActualSize
+            | MenuCommand::ZoomOut
+            | MenuCommand::ZoomIn
+            | MenuCommand::FitPage
+            | MenuCommand::FitWidth
+            | MenuCommand::FitHeight
+            | MenuCommand::SinglePage
+            | MenuCommand::SinglePageContinuous
+            | MenuCommand::TwoPage
+            | MenuCommand::TwoPageContinuous
+            | MenuCommand::ToggleCover => {
+                let view = self
+                    .active_view_state(cx)
+                    .expect("view commands require an active document");
+                self.main_menu_open = false;
+                self.run_view_action(
+                    command
+                        .view_action(view)
+                        .expect("view menu commands map to canvas actions"),
+                    cx,
+                );
+                Ok(())
+            }
             MenuCommand::Open
             | MenuCommand::Undo
             | MenuCommand::Redo
@@ -298,13 +360,17 @@ impl ShellFrame {
                 if close_tab(&mut self.tabs, &mut self.search_feedback, index)? {
                     window.remove_window();
                 } else {
-                    refresh_native_menus(cx, self.menu_state());
+                    self.observed_view_state = self.active_view_state(cx);
+                    self.sync_page_entry(cx);
+                    refresh_native_menus(cx, self.menu_state(cx));
                     cx.notify();
                 }
             }
             TabCommand::CloseOthers => {
                 close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
-                refresh_native_menus(cx, self.menu_state());
+                self.observed_view_state = self.active_view_state(cx);
+                self.sync_page_entry(cx);
+                refresh_native_menus(cx, self.menu_state(cx));
                 cx.notify();
             }
             TabCommand::CloseAll => {
@@ -336,8 +402,60 @@ impl ShellFrame {
             })
     }
 
-    fn menu_state(&self) -> MenuState {
-        MenuState::new(self.tabs.tabs().len())
+    fn active_view_state(&self, cx: &App) -> Option<CanvasViewState> {
+        self.tabs
+            .active()
+            .map(|tab| tab.canvas.read(cx).model.view_state())
+    }
+
+    fn menu_state(&self, cx: &App) -> MenuState {
+        MenuState::with_view(self.tabs.tabs().len(), self.active_view_state(cx))
+    }
+
+    fn sync_page_entry(&self, cx: &mut Context<Self>) {
+        let Some(view) = self.active_view_state(cx) else {
+            return;
+        };
+        self.page_input.update(cx, |input, cx| {
+            input.set_query((view.current_page + 1).to_string(), cx);
+        });
+    }
+
+    fn canvas_view_changed(&mut self, cx: &mut Context<Self>) {
+        let view = self.active_view_state(cx);
+        if self.observed_view_state == view {
+            return;
+        }
+        self.observed_view_state = view;
+        self.sync_page_entry(cx);
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    pub(super) fn run_view_action(&mut self, action: ViewAction, cx: &mut Context<Self>) {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        canvas.update(cx, |canvas, cx| canvas.run_view_action(action, cx));
+        self.page_entry_error = None;
+        self.observed_view_state = self.active_view_state(cx);
+        self.sync_page_entry(cx);
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    pub(super) fn submit_page_entry(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.active_view_state(cx) else {
+            return;
+        };
+        let input = self.page_input.read(cx).query().to_owned();
+        match parse_page_entry(&input, view.page_count) {
+            Ok(page) => self.run_view_action(ViewAction::GoToPage(page), cx),
+            Err(error) => {
+                self.page_entry_error = Some(error);
+                cx.notify();
+            }
+        }
     }
 
     fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
@@ -620,18 +738,22 @@ impl ShellFrame {
         panel
     }
 
-    fn render_main_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_main_menu(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let max_height = (window.viewport_size().height - px(GLOBAL_BAR_HEIGHT + 8.0)).max(px(0.0));
         let mut panel = div()
+            .id("main-menu-panel")
             .absolute()
             .top(px(GLOBAL_BAR_HEIGHT))
             .left(px(8.0))
             .w(px(420.0))
+            .max_h(max_height)
+            .overflow_y_scroll()
             .p_2()
             .rounded_md()
             .bg(gpui::rgb(0x292a2d))
             .text_color(gpui::white());
 
-        for section in main_menu_schema(self.menu_state()) {
+        for section in main_menu_schema(self.menu_state(cx)) {
             panel = panel.child(
                 div()
                     .mt_2()
@@ -670,7 +792,11 @@ impl ShellFrame {
                                 }
                             }
                         }))
-                        .child(div().flex_none().child(entry.label))
+                        .child(div().flex_none().child(if entry.selected {
+                            format!("✓ {}", entry.label)
+                        } else {
+                            entry.label.to_owned()
+                        }))
                         .when_some(reason, |row, reason| {
                             row.child(
                                 div()
@@ -806,6 +932,8 @@ impl Render for ShellFrame {
                 .child(render_rail(rail_entries, rail_expanded, cx));
         if let Some(tab) = self.tabs.active() {
             let canvas = tab.canvas.clone();
+            let page_controls_state =
+                PageControlsState::from_view(tab.canvas.read(cx).model.view_state());
             let quick_action_entries = self.quick_action_entries(cx);
             let all_quick_action_entries = self.all_quick_action_entries(cx);
             let quick_actions = render_quick_actions(
@@ -814,16 +942,30 @@ impl Render for ShellFrame {
                 &self.quick_actions_state,
                 cx,
             );
+            let canvas_view = div()
+                .id("document-view")
+                .relative()
+                .w_full()
+                .h(document_bounds.size.height)
+                .min_w_0()
+                .min_h_0()
+                .child(canvas)
+                .child(quick_actions);
             body = body.child(
                 div()
-                    .id("document-view")
-                    .relative()
                     .w(document_bounds.size.width)
+                    .h_full()
                     .flex_none()
-                    .min_w_0()
-                    .min_h_0()
-                    .child(canvas)
-                    .child(quick_actions),
+                    .flex()
+                    .flex_col()
+                    .child(canvas_view)
+                    .child(render_page_controls(
+                        page_controls_state,
+                        self.page_input.clone(),
+                        self.page_entry_error.as_ref(),
+                        document_bounds.size.width,
+                        cx,
+                    )),
             );
         }
         body = body.child(render_side_panel(self.side_panel_state, cx));
@@ -853,7 +995,7 @@ impl Render for ShellFrame {
             );
         }
         if self.main_menu_open {
-            root = root.child(self.render_main_menu(cx));
+            root = root.child(self.render_main_menu(window, cx));
         }
         if let Some(menu) = self.tab_context_menu {
             root = root.child(self.render_tab_context_menu(menu, cx));
@@ -876,7 +1018,7 @@ fn document_view_bounds(
         origin: Point { x: rail, y: header },
         size: gpui::size(
             (viewport.width - rail - side_panel.width()).max(px(0.0)),
-            (viewport.height - header).max(px(0.0)),
+            (viewport.height - header - px(PAGE_CONTROLS_HEIGHT)).max(px(0.0)),
         ),
     }
 }
@@ -946,7 +1088,7 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use onionskin_core::{Document, ViewPoint, ViewSize};
+    use onionskin_core::{Document, PageLayoutMode, ViewPoint, ViewRotation, ViewSize, ZoomPolicy};
     use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
 
     use super::*;
@@ -990,7 +1132,7 @@ mod tests {
                 y: px(76.0)
             }
         );
-        assert_eq!(collapsed_closed.size, gpui::size(px(972.0), px(784.0)));
+        assert_eq!(collapsed_closed.size, gpui::size(px(972.0), px(736.0)));
 
         let expanded_closed = document_view_bounds(viewport, true, SidePanelState::Closed);
         assert_eq!(
@@ -1000,15 +1142,15 @@ mod tests {
                 y: px(76.0)
             }
         );
-        assert_eq!(expanded_closed.size, gpui::size(px(820.0), px(784.0)));
+        assert_eq!(expanded_closed.size, gpui::size(px(820.0), px(736.0)));
 
         let collapsed_open = document_view_bounds(viewport, false, SidePanelState::OpenEmpty);
         assert_eq!(collapsed_open.origin, collapsed_closed.origin);
-        assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(784.0)));
+        assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(736.0)));
 
         let expanded_open = document_view_bounds(viewport, true, SidePanelState::OpenEmpty);
         assert_eq!(expanded_open.origin, expanded_closed.origin);
-        assert_eq!(expanded_open.size, gpui::size(px(580.0), px(784.0)));
+        assert_eq!(expanded_open.size, gpui::size(px(580.0), px(736.0)));
     }
 
     #[test]
@@ -1094,6 +1236,44 @@ mod tests {
         assert_eq!(tabs.active(), Some(&"three"));
         assert_eq!(tabs.close(0).unwrap(), "three");
         assert_eq!(tabs.active_index(), None);
+    }
+
+    #[test]
+    fn tab_switching_exposes_the_active_documents_page_control_values() {
+        let first = CanvasViewState {
+            current_page: 0,
+            page_count: 1,
+            zoom: 1.0,
+            zoom_policy: ZoomPolicy::Fixed,
+            layout_mode: PageLayoutMode::SinglePageContinuous,
+            show_cover: false,
+            rotation: ViewRotation::None,
+            can_previous_view: false,
+            can_next_view: false,
+        };
+        let second = CanvasViewState {
+            current_page: 1,
+            page_count: 2,
+            zoom: 2.0,
+            zoom_policy: ZoomPolicy::Fixed,
+            layout_mode: PageLayoutMode::TwoPage,
+            show_cover: true,
+            rotation: ViewRotation::Clockwise90,
+            can_previous_view: true,
+            can_next_view: false,
+        };
+        let mut tabs = TabState::new(vec![first, second]);
+
+        assert_eq!(
+            PageControlsState::from_view(*tabs.active().unwrap()).current_page,
+            1
+        );
+        assert!(tabs.activate(1).unwrap());
+        let active = PageControlsState::from_view(*tabs.active().unwrap());
+        assert_eq!(active.current_page, 2);
+        assert_eq!(active.page_count, 2);
+        assert_eq!(active.zoom_percent, 200);
+        assert!(active.can_previous_view);
     }
 
     #[test]

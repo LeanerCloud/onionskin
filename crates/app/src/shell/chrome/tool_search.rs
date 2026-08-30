@@ -251,6 +251,7 @@ impl SearchBuffer {
 }
 
 pub(super) struct SearchInput {
+    element_id: &'static str,
     focus_handle: FocusHandle,
     buffer: SearchBuffer,
     placeholder: SharedString,
@@ -262,10 +263,19 @@ pub(super) struct SearchInput {
 
 impl SearchInput {
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
+        Self::with_placeholder("global-search-input", "Search tools or document", cx)
+    }
+
+    pub(super) fn with_placeholder(
+        element_id: &'static str,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
+            element_id,
             focus_handle: cx.focus_handle(),
             buffer: SearchBuffer::default(),
-            placeholder: "Search tools or document".into(),
+            placeholder: placeholder.into(),
             marked_range: None,
             last_layout: None,
             last_bounds: None,
@@ -275,6 +285,17 @@ impl SearchInput {
 
     pub(super) fn query(&self) -> &str {
         &self.buffer.content
+    }
+
+    pub(super) fn set_query(&mut self, query: impl Into<String>, cx: &mut Context<Self>) {
+        let query = query.into();
+        if self.buffer.content == query {
+            return;
+        }
+        self.buffer.content = query;
+        self.buffer.move_to(self.buffer.content.len());
+        self.marked_range = None;
+        cx.notify();
     }
 
     fn left(&mut self, _: &SearchLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -724,7 +745,7 @@ impl Element for SearchTextElement {
 impl gpui::Render for SearchInput {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("global-search-input")
+            .id(self.element_id)
             .key_context("OnionskinSearch")
             .track_focus(&self.focus_handle(cx))
             .h(px(28.0))

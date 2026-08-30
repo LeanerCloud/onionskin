@@ -20,6 +20,51 @@ use super::input::{
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct CanvasViewState {
+    pub(super) current_page: PageIndex,
+    pub(super) page_count: usize,
+    pub(super) zoom: f32,
+    pub(super) zoom_policy: onionskin_core::ZoomPolicy,
+    pub(super) layout_mode: PageLayoutMode,
+    pub(super) show_cover: bool,
+    pub(super) rotation: ViewRotation,
+    pub(super) can_previous_view: bool,
+    pub(super) can_next_view: bool,
+}
+
+impl CanvasViewState {
+    pub(super) fn is_actual_size(self) -> bool {
+        self.zoom_policy == onionskin_core::ZoomPolicy::Fixed
+            && (self.zoom - 1.0).abs() < f32::EPSILON
+    }
+
+    pub(super) fn fit_mode(self) -> Option<FitMode> {
+        match self.zoom_policy {
+            onionskin_core::ZoomPolicy::Fit(mode) => Some(mode),
+            onionskin_core::ZoomPolicy::Fixed => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum ViewAction {
+    PreviousView,
+    NextView,
+    FirstPage,
+    PreviousPage,
+    NextPage,
+    LastPage,
+    GoToPage(PageIndex),
+    RotateClockwise,
+    ActualSize,
+    ZoomOut,
+    ZoomIn,
+    Fit(FitMode),
+    SetLayout(PageLayoutMode),
+    SetShowCover(bool),
+}
+
 #[derive(Debug)]
 pub enum CanvasError {
     EmptyDocument,
@@ -230,6 +275,20 @@ impl CanvasModel {
 
     pub fn active_tool(&self) -> Option<usize> {
         self.active_tool
+    }
+
+    pub(super) fn view_state(&self) -> CanvasViewState {
+        CanvasViewState {
+            current_page: self.viewport.current_page(),
+            page_count: self.viewport.page_count(),
+            zoom: self.viewport.zoom(),
+            zoom_policy: self.viewport.zoom_policy(),
+            layout_mode: self.viewport.mode(),
+            show_cover: self.viewport.show_cover(),
+            rotation: self.viewport.rotation(),
+            can_previous_view: self.can_previous_view(),
+            can_next_view: self.can_next_view(),
+        }
     }
 
     pub fn can_previous_view(&self) -> bool {

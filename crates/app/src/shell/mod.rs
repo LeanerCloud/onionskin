@@ -15,7 +15,7 @@ use gpui::{
 };
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
-use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList};
+use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList, ViewAction};
 use self::chrome::{install_native_menus, install_search_keybindings, MenuState, ShellFrame};
 
 pub mod canvas;
@@ -145,6 +145,26 @@ impl Canvas {
                 Err(error)
             }
         }
+    }
+
+    fn run_view_action(&mut self, action: ViewAction, cx: &mut Context<Self>) {
+        let result = match action {
+            ViewAction::PreviousView => self.model.previous_view(),
+            ViewAction::NextView => self.model.next_view(),
+            ViewAction::FirstPage => self.model.first_page(),
+            ViewAction::PreviousPage => self.model.previous_page(),
+            ViewAction::NextPage => self.model.next_page(),
+            ViewAction::LastPage => self.model.last_page(),
+            ViewAction::GoToPage(page) => self.model.go_to_page(page),
+            ViewAction::RotateClockwise => self.model.rotate_clockwise(),
+            ViewAction::ActualSize => self.model.actual_size(),
+            ViewAction::ZoomOut => self.model.zoom_out(),
+            ViewAction::ZoomIn => self.model.zoom_in(),
+            ViewAction::Fit(mode) => self.model.fit(mode),
+            ViewAction::SetLayout(mode) => self.model.set_layout_mode(mode),
+            ViewAction::SetShowCover(show_cover) => self.model.set_show_cover(show_cover),
+        };
+        self.handle_change(result, cx);
     }
 
     fn record_error(&mut self, error: impl fmt::Display, cx: &mut Context<Self>) {
@@ -363,7 +383,10 @@ where
     P: AsRef<Path>,
 {
     let prepared = prepare_tabs(paths)?;
-    let menu_state = MenuState::new(prepared.len());
+    let menu_state = MenuState::with_view(
+        prepared.len(),
+        prepared.first().map(|(_, model)| model.view_state()),
+    );
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 

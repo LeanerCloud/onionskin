@@ -1,4 +1,5 @@
 mod global_bar;
+mod page_controls;
 mod quick_actions;
 mod rail;
 mod side_panel;
