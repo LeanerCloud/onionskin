@@ -599,7 +599,10 @@ impl CanvasModel {
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
         self.retain_visible_state(&visible);
-        self.pin_visible_tiles(&visible);
+        // Everything the store hands out from here until `paint_list` ends is
+        // this frame's, and exempt from eviction: the exact-zoom cache, and
+        // the other-zoom cache a rescaled placeholder paints from.
+        self.tiles.begin_frame();
         self.schedule_visible_renders(&visible)?;
         self.drain_render_responses()?;
         Ok(())
@@ -682,6 +685,7 @@ impl CanvasModel {
             }
         }
         self.image_cache.retain_keys(&displayed_images);
+        self.tiles.end_frame();
         Ok(paint)
     }
 
@@ -758,20 +762,6 @@ impl CanvasModel {
     fn retain_visible_state(&mut self, visible: &[PagePlacement]) {
         let pages: BTreeSet<_> = visible.iter().map(|page| page.page).collect();
         self.sources.retain(|page, _| pages.contains(page));
-    }
-
-    fn pin_visible_tiles(&mut self, visible: &[PagePlacement]) {
-        let exact_zoom = self.viewport.zoom();
-        let mut keys = Vec::new();
-        for placement in visible.iter().filter(|page| page.measured) {
-            keys.push((placement.page, exact_zoom));
-            if let Some(source_zoom) = self.sources.get(&placement.page).map(BaseRaster::zoom) {
-                if source_zoom.to_bits() != exact_zoom.to_bits() {
-                    keys.push((placement.page, source_zoom));
-                }
-            }
-        }
-        self.tiles.begin_frame(&keys);
     }
 
     fn schedule_visible_renders(
@@ -1420,7 +1410,7 @@ mod tests {
     fn prepare_request(model: &mut CanvasModel) -> RenderRequest {
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         *model.requests.get(&0).expect("page zero is requested")
     }
@@ -2058,7 +2048,7 @@ mod tests {
             .unwrap();
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         let placeholder = model
             .document
@@ -2092,7 +2082,7 @@ mod tests {
         model.viewport.zoom_to(2.0, anchor).unwrap();
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         let at_two = *model.requests.get(&0).expect("2x raster is requested");
         let two = raster(&model, at_two.page, at_two.zoom, [200, 200, 200, 255]);
@@ -2101,7 +2091,7 @@ mod tests {
         model.viewport.zoom_to(1.0, anchor).unwrap();
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 0);
         assert!(!model.paint_list().unwrap().tiles.is_empty());
         assert_eq!(model.sources.get(&0).map(BaseRaster::zoom), Some(1.0));
@@ -2109,7 +2099,7 @@ mod tests {
         model.viewport.zoom_to(3.0, anchor).unwrap();
         let visible = model.viewport.visible_pages().unwrap();
         model.update_signature(&visible).unwrap();
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         let placeholder = model
             .document
@@ -2191,7 +2181,7 @@ mod tests {
                 .sources
                 .insert(page, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
         }
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         for page in 0..2 {
             model
                 .tiles
@@ -2215,7 +2205,7 @@ mod tests {
             BaseRaster::new(1, 1, source_zoom, vec![200, 200, 200, 255]),
         );
         model.tiles = TileStore::with_budget(1);
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         model.tiles.insert(
             0,
             BaseRaster::new(1, 1, exact_zoom, vec![255, 255, 255, 255]),
@@ -2225,7 +2215,7 @@ mod tests {
             BaseRaster::new(1, 1, source_zoom, vec![200, 200, 200, 255]),
         );
 
-        model.pin_visible_tiles(&visible);
+        model.tiles.begin_frame();
         assert_eq!(model.tiles.len(), 2);
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 0);
         assert!(!model.has_pending_render());

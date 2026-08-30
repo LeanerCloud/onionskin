@@ -126,14 +126,44 @@ impl TileStore {
     /// much, so a caller that cares can lower the zoom or narrow the spread;
     /// nothing here silently drops what the frame is painting.
     pub fn begin_frame(&mut self) {
-        self.last_frame = self.frame.replace(Vec::new()).unwrap_or_default();
+        self.close_frame();
+        self.frame = Some(Vec::new());
         self.evict_to_budget();
+    }
+
+    /// End the frame opened by [`Self::begin_frame`].
+    ///
+    /// The pages it painted keep their exemption until the frame after next,
+    /// but nothing else joins them. Without this the frame stays open, and
+    /// every later `get` or `insert` exempts itself into it: a worker raster
+    /// arriving between paints would pin a page nothing is showing, and a
+    /// document delivering pages faster than it repaints would fill memory
+    /// with caches eviction is not allowed to take.
+    ///
+    /// A frame left open is closed by the next [`Self::begin_frame`], so a
+    /// caller that updates without painting exposes one cycle of inserts, not
+    /// an unbounded run of them.
+    pub fn end_frame(&mut self) {
+        self.close_frame();
+        self.evict_to_budget();
+    }
+
+    /// Retire the open frame's pages into the grace window.
+    fn close_frame(&mut self) {
+        if let Some(painted) = self.frame.take() {
+            self.last_frame = painted;
+        }
     }
 
     /// Bytes the store is over its budget by, zero when it fits.
     ///
-    /// Non-zero only while the visible set demands it, or momentarily while
-    /// the page a caller is holding composites its tiles.
+    /// Three things put it above zero, all of them bounded. The pages of one
+    /// frame can exceed the budget on their own, above 5x for a two-page
+    /// spread. Compositing grows the cache a caller is holding, after that
+    /// caller's own sweep. And a zoom change carries the previous zoom's pages
+    /// alongside the new ones for the length of the grace window, which peaks
+    /// at roughly twice the steady overage during a zoom animation and settles
+    /// as soon as the old set ages out.
     pub fn over_budget(&self) -> usize {
         self.resident_bytes().saturating_sub(self.budget)
     }
@@ -193,10 +223,12 @@ impl TileStore {
     /// the raster was produced with, so a caller that changes those - toggling
     /// a layer, turning annotations off - has to say so: every cached raster
     /// predates the change and none of them would be rebuilt otherwise.
+    ///
+    /// The frame is left open. A caller clearing mid-paint is replacing what
+    /// it is painting, not abandoning it, and dropping the exemption there
+    /// would evict the pages it is about to insert again.
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.frame = None;
-        self.last_frame.clear();
     }
 
     fn position(&self, key: Key) -> Option<usize> {

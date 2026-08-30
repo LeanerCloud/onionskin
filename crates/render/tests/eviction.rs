@@ -107,9 +107,9 @@ fn scrolling_at_a_zoom_that_fits_never_recomposites_a_visible_page() {
     }
 }
 
-/// Paint a whole frame the way the canvas will: declare what is visible, then
-/// render anything missing and composite every visible page's tiles. Returns
-/// the number of pages that had to be rendered again this frame.
+/// Paint a whole frame the way the canvas does: open a frame, render anything
+/// missing, composite every visible page's tiles, and close it. Returns the
+/// number of pages that had to be rendered again this frame.
 fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
     store.begin_frame();
 
@@ -128,6 +128,8 @@ fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
             }
         }
     }
+    store.end_frame();
+
     rerendered
 }
 
@@ -212,13 +214,63 @@ fn a_framed_scroll_still_evicts_what_it_has_scrolled_past() {
             "frame {top}: {} bytes over budget",
             store.over_budget()
         );
+        // The budget holds twelve pages at this zoom, and eviction runs
+        // before the frame's last page composites its tiles, so one more can
+        // be resident at the moment the frame ends.
         assert!(
-            store.len() <= 16,
+            store.len() <= 13,
             "frame {top}: {} caches resident, the exemption is leaking",
             store.len()
         );
     }
     assert!(store.get(0, ZOOM).is_none(), "page 0 is long out of view");
+}
+
+#[test]
+fn caches_arriving_between_frames_do_not_join_the_last_one() {
+    // A render worker delivers pages whenever it finishes, not when the canvas
+    // paints. Those inserts land outside any frame, so they must be evictable:
+    // while the frame stayed open they exempted themselves into it, and thirty
+    // of them at 6x held 4 GB that eviction was not allowed to touch.
+    const ZOOM_6: f32 = 6.0;
+    let mut store = TileStore::new();
+    frame(&mut store, &[0, 1], ZOOM_6);
+
+    for index in 2..32 {
+        store.insert(index, page_at(ZOOM_6));
+    }
+
+    // The two pages the last frame painted keep their grace exemption; nothing
+    // that arrived after it does.
+    assert!(
+        store.resident_bytes() <= 2 * page_bytes(ZOOM_6) + page_bytes(ZOOM_6),
+        "{} bytes resident after thirty unframed inserts",
+        store.resident_bytes()
+    );
+    assert!(store.len() <= 3, "{} caches resident", store.len());
+}
+
+#[test]
+fn clearing_mid_frame_keeps_the_frame_open() {
+    // A layers toggle clears the store while the canvas is painting. The pages
+    // it is about to insert again are still the frame's, so re-inserting the
+    // second must not evict the first.
+    const ZOOM_6: f32 = 6.0;
+    let mut store = TileStore::new();
+
+    store.begin_frame();
+    for index in 0..2 {
+        store.insert(index, page_at(ZOOM_6));
+    }
+
+    store.clear();
+    assert!(store.is_empty());
+
+    for index in 0..2 {
+        store.insert(index, page_at(ZOOM_6));
+    }
+    assert_eq!(store.len(), 2, "the frame's own pages evicted each other");
+    assert!(store.get(0, ZOOM_6).is_some(), "the first page survived");
 }
 
 #[test]
