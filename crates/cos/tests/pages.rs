@@ -196,23 +196,6 @@ fn check(tally: &mut Tally, coverage: &mut Coverage, path: &Path) {
         return;
     };
 
-    // Page zero is the one `first_page` reaches by its own, shorter descent.
-    // Checked before the single-page skip below, because the corpus is mostly
-    // single-page files and they are as entitled to agree as the rest.
-    if let (Ok(node), Ok(first)) = (doc.page(0), doc.first_page()) {
-        if node.objref != first.objref {
-            tally.fail(
-                path,
-                "first-page-disagrees",
-                &format!(
-                    "page(0) is object {} and first_page() is {}",
-                    node.objref.number, first.objref.number
-                ),
-            );
-            return;
-        }
-    }
-
     // A one-page tree proves nothing about ordering.
     if naive.pages.len() < 2 {
         tally.skip(path, "single-page");
@@ -476,4 +459,41 @@ fn reaching_a_page_in_the_middle_reads_far_less_than_a_full_walk() {
         indexed * 50 < file_len,
         "page(500) read {indexed} bytes of a {file_len} byte file"
     );
+}
+
+/// `first_page` is `page(0)` under another name. Two trees where the two used
+/// to disagree: a `/Pages` node whose `/Kids` is empty, which is not a page
+/// however it is typed, and a `/Kids` array whose first entry is a direct
+/// dictionary, which the indexed accessor steps over on its way to the page
+/// after it.
+#[test]
+fn first_page_reaches_what_page_zero_reaches() {
+    let reached = |bodies: &[&[u8]]| {
+        let doc = Document::open(Box::new(onionskin_cos::BytesSource::new(
+            common::classic_pdf(bodies, &[]),
+        )))
+        .expect("the fixture opens clean");
+        (
+            doc.page(0)
+                .map(|node| node.objref)
+                .map_err(|e| e.category()),
+            doc.first_page()
+                .map(|parsed| parsed.objref)
+                .map_err(|e| e.category()),
+        )
+    };
+
+    let (indexed, first) = reached(&[
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 0>>",
+        b"<</Type/Pages/Kids[]/Count 0>>",
+    ]);
+    assert_eq!(indexed, first, "a node with no kids is not a page");
+
+    let (indexed, first) = reached(&[
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[<</Type/Page/MediaBox[0 0 200 100]>> 3 0 R]/Count 1>>",
+        b"<</Type/Page/MediaBox[0 0 200 100]>>",
+    ]);
+    assert_eq!(indexed, first, "a direct dictionary in /Kids is not a page");
 }

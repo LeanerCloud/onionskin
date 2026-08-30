@@ -535,35 +535,17 @@ impl Document {
             })
     }
 
-    /// Descends to the first page, touching only the nodes on that path. This
-    /// is the shape the time-to-first-page budget (decision 11) measures.
+    /// The page [`Document::page`] gives for index 0, as the object itself
+    /// rather than with its inheritable attributes resolved. Reaching it
+    /// touches only the nodes on that path, which is the shape the
+    /// time-to-first-page budget (decision 11) measures.
+    ///
+    /// It is the indexed accessor rather than a descent of its own, because a
+    /// second descent is a second set of rules about what counts as a page,
+    /// and the two disagreeing is a bug that only shows up on the trees where
+    /// it matters.
     pub fn first_page(&self) -> Result<Parsed> {
-        let catalog = self.catalog()?;
-        let mut current = catalog
-            .get(b"Pages")
-            .and_then(Object::as_reference)
-            .ok_or_else(|| Error::Unrecoverable {
-                detail: "catalog has no indirect /Pages".into(),
-            })?;
-        for _ in 0..MAX_INDIRECTION {
-            let parsed = self.get(current.number)?;
-            let dict = parsed
-                .object
-                .as_dict()
-                .ok_or_else(|| Error::Unrecoverable {
-                    detail: format!("page tree node {} is not a dictionary", current.number),
-                })?;
-            let kids = match self.resolve_key(dict, b"Kids")? {
-                Some(Object::Array(kids)) if !kids.is_empty() => kids,
-                _ => return Ok(parsed),
-            };
-            current = kids[0].as_reference().ok_or_else(|| Error::Unrecoverable {
-                detail: "page tree /Kids holds a direct object".into(),
-            })?;
-        }
-        Err(Error::DepthExceeded {
-            detail: "page tree descent".into(),
-        })
+        self.get(self.page(0)?.objref.number)
     }
 
     /// Loads page `index` in document order, parsing only the page-tree nodes
