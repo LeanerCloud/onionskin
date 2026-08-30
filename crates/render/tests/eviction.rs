@@ -32,7 +32,14 @@ fn page_size(zoom: f32) -> (u32, u32) {
 fn page_bytes(zoom: f32) -> usize {
     let (w, h) = page_size(zoom);
     let tiles = (w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)) as usize;
-    (w * h * 4) as usize + tiles * TILE_BYTES
+    base_bytes(zoom) + tiles * TILE_BYTES
+}
+
+/// What a page costs before any of its tiles are composited, which is all an
+/// insert puts in the store.
+fn base_bytes(zoom: f32) -> usize {
+    let (w, h) = page_size(zoom);
+    (w * h * 4) as usize
 }
 
 /// What the canvas does with a page it has scrolled into view.
@@ -251,26 +258,67 @@ fn caches_arriving_between_frames_do_not_join_the_last_one() {
 }
 
 #[test]
+fn a_burst_of_rasters_inside_a_frame_does_not_evict_itself() {
+    // The canvas drains its render worker inside the frame. A worker that
+    // finishes several pages between two paints delivers them in one drain,
+    // and at 6x four base rasters are 266 MiB against a 202 MiB budget, so
+    // unframed the earlier arrivals pay for the later ones and the canvas
+    // renders them a second time.
+    const ZOOM_6: f32 = 6.0;
+    const BURST: usize = 4;
+    assert!(
+        BURST * base_bytes(ZOOM_6) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless the burst goes over budget"
+    );
+
+    let mut framed = TileStore::new();
+    framed.begin_frame();
+    for index in 0..BURST {
+        framed.insert(index, page_at(ZOOM_6));
+    }
+    assert_eq!(framed.len(), BURST, "a frame's own deliveries evicted");
+
+    // Outside a frame the same burst is ordinary cache traffic, and recency
+    // decides: this is what the canvas used to do before the drain moved
+    // inside the frame.
+    let mut unframed = TileStore::new();
+    for index in 0..BURST {
+        unframed.insert(index, page_at(ZOOM_6));
+    }
+    assert!(
+        unframed.len() < BURST,
+        "unframed inserts stayed resident, so the probe proves nothing"
+    );
+}
+
+#[test]
 fn clearing_mid_frame_keeps_the_frame_open() {
     // A layers toggle clears the store while the canvas is painting. The pages
     // it is about to insert again are still the frame's, so re-inserting the
     // second must not evict the first.
-    const ZOOM_6: f32 = 6.0;
+    //
+    // 8x, because two base rasters have to exceed the budget on their own for
+    // the sweep on the second insert to run at all: 237 MiB against 202 MiB.
+    const ZOOM_8: f32 = 8.0;
     let mut store = TileStore::new();
+    assert!(
+        2 * base_bytes(ZOOM_8) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless re-inserting both goes over budget"
+    );
 
     store.begin_frame();
     for index in 0..2 {
-        store.insert(index, page_at(ZOOM_6));
+        store.insert(index, page_at(ZOOM_8));
     }
 
     store.clear();
     assert!(store.is_empty());
 
     for index in 0..2 {
-        store.insert(index, page_at(ZOOM_6));
+        store.insert(index, page_at(ZOOM_8));
     }
     assert_eq!(store.len(), 2, "the frame's own pages evicted each other");
-    assert!(store.get(0, ZOOM_6).is_some(), "the first page survived");
+    assert!(store.get(0, ZOOM_8).is_some(), "the first page survived");
 }
 
 #[test]

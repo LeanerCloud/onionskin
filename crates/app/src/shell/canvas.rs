@@ -591,7 +591,6 @@ impl CanvasModel {
     }
 
     pub fn update(&mut self) -> Result<(), CanvasError> {
-        self.drain_render_responses()?;
         self.drain_geometry_responses()?;
         self.queue_visible_geometry()?;
         self.drain_geometry_responses()?;
@@ -601,8 +600,12 @@ impl CanvasModel {
         self.retain_visible_state(&visible);
         // Everything the store hands out from here until `paint_list` ends is
         // this frame's, and exempt from eviction: the exact-zoom cache, and
-        // the other-zoom cache a rescaled placeholder paints from.
+        // the other-zoom cache a rescaled placeholder paints from. Draining
+        // inside the frame matters when several rasters land at once: four of
+        // them at 6x are 266 MiB against a 202 MiB budget, and unframed they
+        // would evict each other as they arrived.
         self.tiles.begin_frame();
+        self.drain_render_responses()?;
         self.schedule_visible_renders(&visible)?;
         self.drain_render_responses()?;
         Ok(())
