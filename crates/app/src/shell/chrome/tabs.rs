@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, App, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
+    div, px, App, AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _,
+    IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
     StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
 };
 
 use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
+};
+use super::tool_search::{
+    document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,10 +161,33 @@ pub(in crate::shell) struct ShellFrame {
     tabs: TabState<DocumentTab>,
     main_menu_open: bool,
     tab_context_menu: Option<TabContextMenu>,
+    search_input: Entity<SearchInput>,
+    search_feedback: Option<SearchResult>,
+}
+
+fn activate_tab<T>(
+    tabs: &mut TabState<T>,
+    search_feedback: &mut Option<SearchResult>,
+    index: usize,
+) -> bool {
+    let activated = tabs.activate(index).unwrap_or(false);
+    if activated {
+        *search_feedback = None;
+    }
+    activated
 }
 
 impl ShellFrame {
-    pub(in crate::shell) fn new(tabs: Vec<(PathBuf, Entity<Canvas>)>) -> Self {
+    pub(in crate::shell) fn new(
+        tabs: Vec<(PathBuf, Entity<Canvas>)>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let search_input = cx.new(SearchInput::new);
+        cx.observe(&search_input, |frame, _, cx| {
+            frame.search_feedback = None;
+            cx.notify();
+        })
+        .detach();
         Self {
             tabs: TabState::new(
                 tabs.into_iter()
@@ -170,11 +196,13 @@ impl ShellFrame {
             ),
             main_menu_open: false,
             tab_context_menu: None,
+            search_input,
+            search_feedback: None,
         }
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.tabs.activate(index).unwrap_or(false) {
+        if activate_tab(&mut self.tabs, &mut self.search_feedback, index) {
             cx.notify();
         }
     }
@@ -342,6 +370,92 @@ impl ShellFrame {
                     .child("☰"),
             )
             .child(div().text_sm().child("Onionskin"))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .w(px(320.0))
+                    .flex_none()
+                    .child(self.search_input.clone()),
+            )
+    }
+
+    fn search_results(&self, cx: &App) -> Vec<SearchResult> {
+        let query = self.search_input.read(cx).query().to_owned();
+        let mut results = self
+            .tabs
+            .active()
+            .map(|tab| search_registry(tab.canvas.read(cx).model.registry(), &query))
+            .unwrap_or_default();
+        if let Some(document_search) = document_search_result(&query) {
+            results.push(document_search);
+        }
+        results
+    }
+
+    fn choose_search_result(&mut self, result: SearchResult, cx: &mut Context<Self>) {
+        self.search_feedback = Some(unavailable_selection(result));
+        cx.notify();
+    }
+
+    fn search_panel_visible(&self, cx: &App) -> bool {
+        !self.main_menu_open
+            && self.tab_context_menu.is_none()
+            && !self.search_input.read(cx).query().trim().is_empty()
+    }
+
+    fn render_search_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut panel = div()
+            .absolute()
+            .top(px(40.0))
+            .right(px(12.0))
+            .w(px(420.0))
+            .p_1()
+            .rounded_md()
+            .occlude()
+            .bg(gpui::rgb(0x292a2d))
+            .text_color(gpui::white());
+
+        for (index, result) in self.search_results(cx).into_iter().enumerate() {
+            let selection = result.clone();
+            panel = panel.child(
+                div()
+                    .id(("global-search-result", index))
+                    .min_h(px(38.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|row| row.bg(gpui::rgb(0x3a3b3f)))
+                    .on_click(cx.listener(move |frame, _event, _window, cx| {
+                        frame.choose_search_result(selection.clone(), cx);
+                    }))
+                    .child(result.label())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(gpui::rgb(0x85878c))
+                            .child(result.detail()),
+                    ),
+            );
+        }
+
+        if let Some(feedback) = self.search_feedback.as_ref() {
+            panel = panel.child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(gpui::rgb(0x202124))
+                    .text_sm()
+                    .text_color(gpui::rgb(0xc6c8cd))
+                    .child(feedback.detail()),
+            );
+        }
+        panel
     }
 
     fn render_main_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -546,6 +660,9 @@ impl Render for ShellFrame {
         if let Some(menu) = self.tab_context_menu {
             root = root.child(self.render_tab_context_menu(menu, cx));
         }
+        if self.search_panel_visible(cx) {
+            root = root.child(self.render_search_results(cx));
+        }
         root
     }
 }
@@ -705,5 +822,18 @@ mod tests {
             tab_context_entries(2, 2),
             Err(TabError::OutOfRange { index: 2, count: 2 })
         ));
+    }
+
+    #[test]
+    fn activating_another_tab_clears_search_feedback() {
+        let mut tabs = TabState::new(vec!["one", "two"]);
+        let mut feedback = Some(SearchResult::Unavailable {
+            label: "Old tab".to_owned(),
+            reason: "Old result",
+        });
+
+        assert!(activate_tab(&mut tabs, &mut feedback, 1));
+        assert_eq!(tabs.active_index(), Some(1));
+        assert_eq!(feedback, None);
     }
 }

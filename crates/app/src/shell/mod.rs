@@ -16,7 +16,7 @@ use gpui::{
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList};
-use self::chrome::{install_native_menus, MenuState, ShellFrame};
+use self::chrome::{install_native_menus, install_search_keybindings, MenuState, ShellFrame};
 
 pub mod canvas;
 mod chrome;
@@ -350,6 +350,7 @@ where
     let error_slot = Rc::clone(&launch_error);
 
     Application::new().run(move |cx: &mut App| {
+        install_search_keybindings(cx);
         cx.on_window_closed(|cx| {
             if should_quit_after_window_closed(cx.windows().len()) {
                 cx.quit();
@@ -372,7 +373,7 @@ where
                     .into_iter()
                     .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model))))
                     .collect();
-                cx.new(|_cx| ShellFrame::new(tabs))
+                cx.new(|cx| ShellFrame::new(tabs, cx))
             },
         );
         match result {

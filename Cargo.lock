@@ -3885,6 +3885,7 @@ dependencies = [
  "onionskin-tools-protect",
  "raw-window-handle",
  "smallvec",
+ "unicode-segmentation",
 ]
 
 [[package]]

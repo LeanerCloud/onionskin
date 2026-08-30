@@ -30,6 +30,7 @@ onionskin-render = { workspace = true, optional = true }
 gpui = { git = "https://github.com/IAmJSD/gpui", rev = "84bdb01b29887ca09b6c437dad9a0ae838fe48e8", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 smallvec = { version = "1.13", optional = true }
+unicode-segmentation = { version = "1.13", optional = true }
 accesskit = { version = "0.24", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
@@ -89,6 +90,7 @@ shell = [
     "dep:gpui",
     "dep:image",
     "dep:smallvec",
+    "dep:unicode-segmentation",
     "dep:onionskin-core",
     "dep:onionskin-render",
 ]
