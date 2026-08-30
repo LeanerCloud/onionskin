@@ -12,8 +12,9 @@ use hayro::{RenderCache, RenderSettings};
 
 /// hayro sizes its pixmaps with `u16`, so a page is unrenderable once either
 /// axis exceeds this at the requested zoom. A letter page reaches it at about
-/// 80x zoom.
-const MAX_RASTER_AXIS: f64 = u16::MAX as f64;
+/// 80x zoom. Public so callers can clamp a zoom gesture to what a page can
+/// actually be rasterized at instead of turning it into a [`RenderError`].
+pub const MAX_RASTER_AXIS: f64 = u16::MAX as f64;
 
 /// Return the dimensions hayro will allocate for a page at `zoom`.
 ///

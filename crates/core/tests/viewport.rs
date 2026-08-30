@@ -1,7 +1,10 @@
+use std::time::{Duration, Instant};
+
 use onionskin_core::{
     Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PageRenderRect,
     ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError, ZoomPolicy,
 };
+use onionskin_render::raster_size;
 
 const VIEWPORT: ViewSize = ViewSize {
     width: 1_100.0,
@@ -672,4 +675,71 @@ fn geometry_pdf(rotation: i32) -> Vec<u8> {
         format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
     );
     out
+}
+
+#[test]
+fn a_measurement_under_fit_does_not_recentre_a_scrolled_page() {
+    let mut viewport = viewport(20);
+    viewport.fit(FitMode::Page).unwrap();
+    viewport.go_to_page(10, PageAlignment::Start).unwrap();
+    viewport.pan_by(ViewPoint { x: 0.0, y: -300.0 }).unwrap();
+    let before = viewport.offset();
+    let zoom = viewport.zoom();
+    viewport.measure_page(geometry(11, 850.0, 1_100.0)).unwrap();
+    assert_eq!(viewport.zoom_policy(), ZoomPolicy::Fit(FitMode::Page));
+    assert_eq!(viewport.zoom(), zoom);
+    assert_point_close(viewport.offset(), before);
+}
+
+#[test]
+fn the_largest_legal_page_stays_inside_what_the_renderer_can_rasterize() {
+    // 14400 pt is the largest page a PDF can declare. hayro sizes pixmaps with
+    // u16, so this page runs out of raster at about 4.5x, far below the 32x the
+    // zoom menu offers; asking for 32x has to be capped, not passed through.
+    let mut large = Viewport::new(1, VIEWPORT, 12.0).unwrap();
+    large.measure_page(geometry(0, 14_400.0, 14_400.0)).unwrap();
+    large.zoom_to(1_000.0, center()).unwrap();
+    assert!(
+        raster_size(14_400.0, 14_400.0, large.zoom()).is_ok(),
+        "zoomed to {} which the renderer cannot rasterize",
+        large.zoom()
+    );
+
+    // The floor comes off the same limit: under one pixel is unrenderable too.
+    let mut small = Viewport::new(1, VIEWPORT, 12.0).unwrap();
+    small.measure_page(geometry(0, 3.0, 4.0)).unwrap();
+    small.zoom_to(0.001, center()).unwrap();
+    assert!(
+        raster_size(3.0, 4.0, small.zoom()).is_ok(),
+        "zoomed to {} which the renderer cannot rasterize",
+        small.zoom()
+    );
+}
+
+#[test]
+fn painting_a_frame_does_not_walk_every_measured_page() {
+    const PAGES: usize = 1_000;
+    const FRAMES: usize = 1_000;
+
+    let mut viewport = Viewport::new(PAGES, VIEWPORT, 12.0).unwrap();
+    let template = geometry(0, 850.0, 1_100.0);
+    for index in 0..PAGES {
+        let mut page = template.clone();
+        page.index = index;
+        // Vary the heights so every row carries a correction of its own.
+        page.render_size = (850.0, 1_100.0 + (index % 7) as f64 * 10.0);
+        viewport.measure_page(page).unwrap();
+    }
+    viewport.go_to_page(PAGES / 2, PageAlignment::Start).unwrap();
+
+    let start = Instant::now();
+    for _ in 0..FRAMES {
+        viewport.visible_pages().unwrap();
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(150),
+        "{FRAMES} frames over {PAGES} measured pages took {elapsed:?}: \
+         the layout is still walking the measured rows per frame"
+    );
 }

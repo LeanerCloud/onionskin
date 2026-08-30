@@ -1,15 +1,42 @@
+//! What the window is showing: pan offset, zoom, layout mode, view rotation.
+//!
+//! [`Viewport`] is the only place that turns a scroll, a pinch or a page jump
+//! into an offset and a zoom. It owns a [`Layout`] and asks it where pages sit;
+//! it never places pages itself, and nothing above it (the GPUI canvas, the MCP
+//! verbs) places them either. See [`crate::layout`] for the estimate-and-refine
+//! scroll metric every position here is expressed in.
+//!
+//! Two invariants run through the file. Zoom only moves through
+//! [`Viewport::set_zoom`] or [`Viewport::apply_fit`], so it is clamped to
+//! [`Viewport::zoom_limits`] exactly once. Anything that reflows the layout
+//! (a measurement, a mode change, a rotation) captures an [`Anchor`] first and
+//! restores it after, so the page point in the middle of the view stays there;
+//! re-centring belongs only to the calls that explicitly ask for it.
+
 use std::fmt;
 
 use crate::history::ViewState;
+use crate::layout;
 use crate::layout::{Layout, LayoutError, LayoutQuery};
 use crate::{
     GeometryError, PageAlignment, PageGeometry, PageIndex, PageLayoutMode, PagePlacement,
     PagePoint, PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize,
 };
+use onionskin_render::MAX_RASTER_AXIS;
 
+/// The zoom range the product offers, matching Acrobat's 5% to 3200%.
+///
+/// This is a UI range, not a renderable one. The renderer sizes pixmaps with
+/// `u16` ([`MAX_RASTER_AXIS`]) and refuses anything under one pixel, so the
+/// largest page a PDF can declare (14400 pt) runs out of raster at about 4.5x,
+/// far inside [`MAX_ZOOM`]. [`Viewport::zoom_limits`] narrows this range to
+/// what the current page can be rasterized at.
 pub const MIN_ZOOM: f32 = 0.05;
+/// See [`MIN_ZOOM`].
 pub const MAX_ZOOM: f32 = 32.0;
+/// One zoom-button press: the fourth root of two, so four presses double.
 const ZOOM_STEP: f32 = 1.189_207_1;
+/// Trackpad pixels of a modified scroll that double the zoom.
 const SCROLL_ZOOM_PIXELS_PER_DOUBLING: f32 = 240.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -161,26 +188,45 @@ impl Viewport {
         self.layout.geometry(page)
     }
 
+    /// Refine the layout with a page's real geometry.
+    ///
+    /// A measurement arrives while the user is reading, so it must not move
+    /// what they are looking at: the anchor captured before the refinement is
+    /// restored afterwards under both zoom policies. Under a fit policy the
+    /// zoom is re-derived as well, because the refinement can change the
+    /// current page's size, but the re-centring stays with the explicit
+    /// [`Viewport::fit`] call that asked for it.
     pub fn measure_page(&mut self, geometry: PageGeometry) -> Result<(), ViewportError> {
         let page = geometry.index;
-        let anchor = self.anchor_for_current_page().ok();
+        let anchor = match self.anchor_for_current_page() {
+            Ok(anchor) => Some(anchor),
+            // Before the first measurement the layout has no estimate, so
+            // there is no anchor to preserve. Every other failure is real.
+            Err(ViewportError::Layout(LayoutError::MissingEstimate) | ViewportError::NoPages) => {
+                None
+            }
+            Err(error) => return Err(error),
+        };
         self.layout.measure_page(geometry)?;
         if page != 0 && self.layout.geometry(0).is_none() {
             return Ok(());
         }
-        match self.zoom_policy {
-            ZoomPolicy::Fit(mode) => self.apply_fit(mode)?,
-            ZoomPolicy::Fixed => {
-                if let Some(anchor) = anchor {
-                    self.restore_anchor(anchor)?;
-                    self.sync_current_page()?;
-                } else {
+        let Some(anchor) = anchor else {
+            // Nothing to preserve: this measurement is what makes the layout
+            // usable, so give the policy its opening position.
+            return match self.zoom_policy {
+                ZoomPolicy::Fit(mode) => self.apply_fit(mode),
+                ZoomPolicy::Fixed => {
                     self.clamp_offset()?;
-                    self.sync_current_page()?;
+                    self.sync_current_page()
                 }
-            }
+            };
+        };
+        if let ZoomPolicy::Fit(mode) = self.zoom_policy {
+            self.zoom = self.fit_zoom(mode)?.0;
         }
-        Ok(())
+        self.restore_anchor(anchor)?;
+        self.sync_current_page()
     }
 
     pub fn resize(&mut self, size: ViewSize) -> Result<(), ViewportError> {
@@ -237,7 +283,7 @@ impl Viewport {
         if !zoom.is_finite() || zoom <= 0.0 {
             return Err(LayoutError::InvalidZoom(zoom).into());
         }
-        self.set_zoom(zoom.clamp(MIN_ZOOM, MAX_ZOOM), anchor)
+        self.set_zoom(zoom, anchor)
     }
 
     pub fn zoom_at(&mut self, factor: f32, anchor: ViewPoint) -> Result<(), ViewportError> {
@@ -248,7 +294,7 @@ impl Viewport {
         if !requested.is_finite() || requested <= 0.0 {
             return Err(LayoutError::InvalidZoom(requested).into());
         }
-        self.set_zoom(requested.clamp(MIN_ZOOM, MAX_ZOOM), anchor)
+        self.set_zoom(requested, anchor)
     }
 
     pub fn pan_by(&mut self, delta: ViewPoint) -> Result<(), ViewportError> {
@@ -291,8 +337,9 @@ impl Viewport {
             return Ok(());
         }
         let exponent = delta_y / SCROLL_ZOOM_PIXELS_PER_DOUBLING;
-        let minimum = (MIN_ZOOM / self.zoom).log2();
-        let maximum = (MAX_ZOOM / self.zoom).log2();
+        let (floor, ceiling) = self.zoom_limits()?;
+        let minimum = (floor / self.zoom).log2();
+        let maximum = (ceiling / self.zoom).log2();
         self.zoom_at(2.0_f32.powf(exponent.clamp(minimum, maximum)), at)
     }
 
@@ -471,14 +518,36 @@ impl Viewport {
 
     fn set_zoom(&mut self, zoom: f32, anchor: ViewPoint) -> Result<(), ViewportError> {
         validate_anchor(anchor, self.size)?;
+        let (minimum, maximum) = self.zoom_limits()?;
         let anchor = self.anchor_at(anchor)?;
-        self.zoom = zoom;
+        self.zoom = zoom.clamp(minimum, maximum);
         self.zoom_policy = ZoomPolicy::Fixed;
         self.restore_anchor(anchor)?;
         self.sync_current_page()
     }
 
-    fn apply_fit(&mut self, mode: FitMode) -> Result<(), ViewportError> {
+    /// The zoom range the current page can actually be rasterized in.
+    ///
+    /// Product decision: a gesture past the raster ceiling is capped, not
+    /// refused. Refusing it stops a 14400 pt page zooming with an error the
+    /// user cannot act on; letting it through fails the frame with
+    /// [`onionskin_render::RenderError::UnrenderableSize`] instead.
+    fn zoom_limits(&self) -> Result<(f32, f32), ViewportError> {
+        match self.layout.page_render_size(self.current_page) {
+            Ok(size) => Ok(zoom_limits_for(size)),
+            // No page is measured yet, so there is no raster to be bounded by.
+            Err(LayoutError::MissingEstimate | LayoutError::NoSuchPage { .. }) => {
+                Ok((MIN_ZOOM, MAX_ZOOM))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The zoom `mode` asks for, and the page-space rect it wants centred.
+    ///
+    /// Split out of [`Self::apply_fit`] so a measurement can re-derive the
+    /// zoom without also re-centring the view the user has scrolled.
+    fn fit_zoom(&self, mode: FitMode) -> Result<(f32, Option<ViewRect>), ViewportError> {
         self.require_pages()?;
         let gap = self.layout.page_gap();
         let available = ViewSize {
@@ -515,10 +584,7 @@ impl Viewport {
                     .layout
                     .geometry(self.current_page)
                     .ok_or(ViewportError::UnmeasuredPage(self.current_page))?;
-                let page_size = ViewSize {
-                    width: geometry.render_size.0 as f32,
-                    height: geometry.render_size.1 as f32,
-                };
+                let page_size = layout::render_size(geometry);
                 PageRenderRect::new(bounds.page(), bounds.origin(), bounds.size(), page_size)?;
                 let visible = self.rotation.rotate_rect(bounds, page_size);
                 (
@@ -531,7 +597,13 @@ impl Viewport {
         if !zoom.is_finite() || zoom <= 0.0 {
             return Err(LayoutError::InvalidZoom(zoom).into());
         }
-        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        let (minimum, maximum) = self.zoom_limits()?;
+        Ok((zoom.clamp(minimum, maximum), visible_target))
+    }
+
+    fn apply_fit(&mut self, mode: FitMode) -> Result<(), ViewportError> {
+        let (zoom, visible_target) = self.fit_zoom(mode)?;
+        self.zoom = zoom;
         self.zoom_policy = ZoomPolicy::Fit(mode);
         if let Some(visible) = visible_target {
             let placement = self
@@ -702,6 +774,19 @@ fn validate_anchor(point: ViewPoint, viewport: ViewSize) -> Result<(), ViewportE
     } else {
         Ok(())
     }
+}
+
+/// Narrow [`MIN_ZOOM`]..=[`MAX_ZOOM`] to what a page of `size` points can be
+/// rasterized at: at least one pixel on its short axis, at most
+/// [`MAX_RASTER_AXIS`] on its long one.
+fn zoom_limits_for(size: ViewSize) -> (f32, f32) {
+    let longest = size.width.max(size.height);
+    let shortest = size.width.min(size.height);
+    // `raster_size` floors an `f32` product, so step one ulp up rather than
+    // land on the pixel boundary the floor would round away.
+    let minimum = MIN_ZOOM.max((1.0 / shortest).next_up());
+    let maximum = MAX_ZOOM.min(MAX_RASTER_AXIS as f32 / longest);
+    (minimum, minimum.max(maximum))
 }
 
 fn viewport_center(size: ViewSize) -> ViewPoint {
