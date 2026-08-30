@@ -63,8 +63,10 @@ pub enum OverlayError {
     NotFinite { x: f32, y: f32 },
     /// A stroke width is NaN, infinite, or not positive.
     InvalidWidth { width: f32 },
-    /// A highlight quad encloses no area, so it paints nothing.
-    EmptyQuad,
+    /// A highlight quad has zero signed area: its corners are collapsed,
+    /// collinear, or in the wrong order. Under a winding fill the last of
+    /// those still paints something, just not the quad that was meant.
+    DegenerateQuad,
 }
 
 impl fmt::Display for OverlayError {
@@ -77,7 +79,11 @@ impl fmt::Display for OverlayError {
             Self::InvalidWidth { width } => {
                 write!(f, "stroke width {width} is not a positive finite number")
             }
-            Self::EmptyQuad => write!(f, "a highlight quad enclosing no area paints nothing"),
+            Self::DegenerateQuad => write!(
+                f,
+                "a highlight quad with zero signed area; corners must be in \
+                 /QuadPoints order (UL, UR, LL, LR)"
+            ),
         }
     }
 }
@@ -113,13 +119,14 @@ impl Overlay {
             }
         }
 
-        // Checked after finiteness, so the corners it reads are real. A
-        // collapsed quad is what a selection of zero characters produces, and
-        // a degenerate one is what a bad coordinate mapping produces; keeping
-        // either re-fills a path that covers nothing on every composite.
+        // Checked after finiteness, so the corners it reads are real. Zero
+        // signed area means the caller built the quad wrong: collapsed to a
+        // line by a selection of no characters, or wound in perimeter order
+        // instead of /QuadPoints order, which fills a bow tie rather than the
+        // rectangle that was meant.
         if let Self::Highlight { corners, .. } = self {
             if quad_area(corners) == 0.0 {
-                return Err(OverlayError::EmptyQuad);
+                return Err(OverlayError::DegenerateQuad);
             }
         }
         Ok(())
@@ -206,16 +213,19 @@ pub(crate) fn draw<'a>(
     }
 }
 
-/// Twice the signed area of the quad, walked in the order [`draw`] fills it:
-/// `/QuadPoints` gives UL, UR, LL, LR, so the perimeter is 0, 1, 3, 2. Zero
-/// for anything that encloses nothing, a collapsed quad and a bow tie of
-/// collinear corners alike.
+/// Twice the unsigned area of the quad, walked in the order [`draw`] fills
+/// it: `/QuadPoints` gives UL, UR, LL, LR, so the perimeter is 0, 1, 3, 2.
+///
+/// Corners are taken relative to the first one, which costs a subtraction and
+/// keeps the products exact: a quad 40 points tall out at 10000 points loses
+/// most of its significant bits to cancellation otherwise.
 fn quad_area(corners: &[(f32, f32); 4]) -> f32 {
+    let (ox, oy) = corners[0];
     let perimeter = [corners[0], corners[1], corners[3], corners[2]];
     let mut sum = 0.0;
     for i in 0..4 {
-        let (x0, y0) = perimeter[i];
-        let (x1, y1) = perimeter[(i + 1) % 4];
+        let (x0, y0) = (perimeter[i].0 - ox, perimeter[i].1 - oy);
+        let (x1, y1) = (perimeter[(i + 1) % 4].0 - ox, perimeter[(i + 1) % 4].1 - oy);
         sum += x0 * y1 - x1 * y0;
     }
     sum.abs()

@@ -8,10 +8,10 @@
 //! evicts back to a byte budget.
 //!
 //! Three things it deliberately does not do. It never drops the entry the
-//! caller just asked for, nor any page the caller declared visible through
-//! [`TileStore::begin_frame`]. And eviction never invalidates anything already
-//! handed out: a tile is an `Arc`, so a frame holding one keeps it alive
-//! whatever the store does.
+//! caller just asked for, nor any page painted by the current frame or the one
+//! before it (see [`TileStore::begin_frame`]). And eviction never invalidates
+//! anything already handed out: a tile is an `Arc`, so a frame holding one
+//! keeps it alive whatever the store does.
 
 use crate::base::BaseRaster;
 use crate::tile::{TileCache, TILE_BYTES};
@@ -25,11 +25,11 @@ const VIEWPORT_BYTES: usize = 2 * VIEWPORT_TILES * TILE_BYTES;
 ///
 /// What that buys depends entirely on zoom, because a cache is sized by the
 /// page's pixels and not by the screen's. Measured for US Letter: about twelve
-/// pages at 2x, four at 4x, two at 5x, one at 7x, and not even one at 8x,
-/// where a single page needs 255 MiB against this 202 MiB. The visible set is
-/// exempt from eviction for exactly that reason - above 5x the budget cannot
-/// hold a two-page spread, and without the exemption the pages on screen would
-/// be the ones evicted.
+/// pages at 2x, three at 4x, two at 5x, one at 7x, and not even one at 8x,
+/// where a single page needs 243 MiB against this 202 MiB. The pages a frame
+/// touches are exempt from eviction for exactly that reason - above 5x the
+/// budget cannot hold a two-page spread, and without the exemption the pages
+/// on screen would be the ones evicted.
 const VIEWPORTS_RESIDENT: usize = 3;
 
 /// One page at one zoom. Zoom is keyed by its bits because a cache is only
@@ -63,8 +63,16 @@ pub struct TileStore {
     budget: usize,
     /// Least recently used first, most recently used last.
     entries: Vec<Entry>,
-    /// The pages the current frame paints, which eviction may not take.
-    pinned: Vec<Key>,
+    /// The pages the frame in progress has touched, which eviction may not
+    /// take. `None` until a frame is declared: a caller that never declares
+    /// one, a headless warmer filling caches say, gets plain recency
+    /// eviction and nothing pinned forever.
+    frame: Option<Vec<Key>>,
+    /// The pages the previous frame touched, exempt for one more frame. A
+    /// frame asks for its pages one at a time, so without this the second
+    /// page of a spread is evicted in the moment between the first being
+    /// pinned and the second being asked for.
+    last_frame: Vec<Key>,
 }
 
 impl TileStore {
@@ -83,7 +91,8 @@ impl TileStore {
         Self {
             budget: bytes,
             entries: Vec::new(),
-            pinned: Vec::new(),
+            frame: None,
+            last_frame: Vec::new(),
         }
     }
 
@@ -91,23 +100,33 @@ impl TileStore {
         self.budget
     }
 
-    /// Declare the pages this frame paints. They are exempt from eviction
-    /// until the next call, tiles and base raster both.
+    /// Start a frame, ageing out the exemption two frames back.
     ///
-    /// Without this the store protects only the page most recently asked for,
-    /// which is enough while the visible set fits the budget and wrong as soon
-    /// as it does not: at 6x a two-page spread needs 276 MiB against a 202 MiB
-    /// budget, and fetching the second page would evict the first, every
-    /// frame, forever.
+    /// Every page the frame asks for, through [`Self::get`] or
+    /// [`Self::insert`], is exempt from eviction for this frame and the next,
+    /// tiles and base raster both. Without an exemption the store protects
+    /// only the page most recently asked for, which is enough while the
+    /// visible set fits the budget and wrong as soon as it does not: at 6x a
+    /// two-page spread needs 276 MiB against a 202 MiB budget, so fetching the
+    /// second page would evict the first, every frame, forever.
     ///
-    /// When the visible set alone is over budget the store stops evicting and
+    /// The extra frame is what lets a frame ask for its pages one at a time:
+    /// the spread's second page has to survive the moment between the first
+    /// being pinned and itself being asked for, and it is the previous frame's
+    /// exemption that carries it there.
+    ///
+    /// Both come from the keys `get` and `insert` are called with, so there is
+    /// no second value to disagree with them. A frame that declared its pages
+    /// separately had one: a single ULP between the zoom it named and the zoom
+    /// it painted with left every visible page unpinned and re-rendered on
+    /// every frame, with nothing in the store able to notice.
+    ///
+    /// When one frame's pages exceed the budget the store stops evicting and
     /// stays over rather than thrashing. [`Self::over_budget`] reports by how
     /// much, so a caller that cares can lower the zoom or narrow the spread;
     /// nothing here silently drops what the frame is painting.
-    pub fn begin_frame(&mut self, visible: &[(usize, f32)]) {
-        self.pinned.clear();
-        self.pinned
-            .extend(visible.iter().map(|&(page, zoom)| Key::new(page, zoom)));
+    pub fn begin_frame(&mut self) {
+        self.last_frame = self.frame.replace(Vec::new()).unwrap_or_default();
         self.evict_to_budget();
     }
 
@@ -139,8 +158,10 @@ impl TileStore {
     /// The cache for `(page, zoom)`, marked most recently used, or `None` if
     /// it was never inserted or has been evicted.
     pub fn get(&mut self, page: usize, zoom: f32) -> Option<&mut TileCache> {
-        let at = self.position(Key::new(page, zoom))?;
+        let key = Key::new(page, zoom);
+        let at = self.position(key)?;
         self.touch(at);
+        self.pin(key);
         self.evict_to_budget();
         Some(&mut self.entries.last_mut().expect("just touched").cache)
     }
@@ -161,6 +182,7 @@ impl TileStore {
             cache: TileCache::new(base),
         });
 
+        self.pin(key);
         self.evict_to_budget();
         &mut self.entries.last_mut().expect("just pushed").cache
     }
@@ -173,7 +195,8 @@ impl TileStore {
     /// predates the change and none of them would be rebuilt otherwise.
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.pinned.clear();
+        self.frame = None;
+        self.last_frame.clear();
     }
 
     fn position(&self, key: Key) -> Option<usize> {
@@ -212,11 +235,26 @@ impl TileStore {
         }
     }
 
-    /// The oldest entry eviction is allowed to take: neither pinned by the
-    /// current frame nor the one just handed to the caller.
+    /// Exempt the key from eviction for the rest of the frame, if one is in
+    /// progress.
+    fn pin(&mut self, key: Key) {
+        if let Some(frame) = &mut self.frame {
+            if !frame.contains(&key) {
+                frame.push(key);
+            }
+        }
+    }
+
+    fn is_pinned(&self, key: Key) -> bool {
+        self.frame.as_deref().unwrap_or(&[]).contains(&key) || self.last_frame.contains(&key)
+    }
+
+    /// The oldest entry eviction is allowed to take: not painted by this frame
+    /// or the one before it, and not the entry just handed to the caller.
     fn oldest_evictable(&self) -> Option<usize> {
         let last = self.entries.len().checked_sub(1)?;
-        (0..last).find(|&at| !self.pinned.contains(&self.entries[at].key))
+
+        (0..last).find(|&at| !self.is_pinned(self.entries[at].key))
     }
 }
 

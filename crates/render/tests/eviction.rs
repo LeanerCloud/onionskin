@@ -111,8 +111,7 @@ fn scrolling_at_a_zoom_that_fits_never_recomposites_a_visible_page() {
 /// render anything missing and composite every visible page's tiles. Returns
 /// the number of pages that had to be rendered again this frame.
 fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
-    let pinned: Vec<(usize, f32)> = visible.iter().map(|&page| (page, zoom)).collect();
-    store.begin_frame(&pinned);
+    store.begin_frame();
 
     let mut rerendered = 0;
     for &index in visible {
@@ -193,6 +192,59 @@ fn the_oldest_page_goes_whole_before_a_newer_one_loses_a_tile() {
         BASE_BYTES + TILES_PER_PAGE * TILE_BYTES,
         "and it kept every tile"
     );
+}
+
+#[test]
+fn a_framed_scroll_still_evicts_what_it_has_scrolled_past() {
+    // The exemption must not become a leak: a page is exempt for the frame it
+    // was painted in and the one after, and evictable once the view has moved
+    // on. Three visible pages at 2x, scrolled the length of a 200-page book.
+    let mut store = TileStore::new();
+
+    for top in 0..198 {
+        let visible: Vec<usize> = (top..top + 3).collect();
+        frame(&mut store, &visible, ZOOM);
+
+        // Tiles are composited after the frame's last sweep, so the peak is
+        // the budget plus the tiles of the page painted last.
+        assert!(
+            store.over_budget() <= TILES_PER_PAGE * TILE_BYTES,
+            "frame {top}: {} bytes over budget",
+            store.over_budget()
+        );
+        assert!(
+            store.len() <= 16,
+            "frame {top}: {} caches resident, the exemption is leaking",
+            store.len()
+        );
+    }
+    assert!(store.get(0, ZOOM).is_none(), "page 0 is long out of view");
+}
+
+#[test]
+fn the_exemption_follows_the_zoom_the_frame_painted_with() {
+    // 6.0000005 is a different f32 from 6.0, and a viewport that computes its
+    // zoom twice can land either side of that. The exemption is built from the
+    // keys `get` and `insert` are called with, so there is no second value to
+    // disagree with: a frame declaring 6.0 while painting this left both pages
+    // unpinned and re-rendered them on every one of five steady frames.
+    const ZOOM_ULP: f32 = 6.000_000_5;
+    assert_ne!(ZOOM_ULP.to_bits(), 6.0f32.to_bits(), "same f32, no probe");
+    assert!(
+        2 * page_bytes(ZOOM_ULP) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless the spread really does not fit"
+    );
+
+    let mut store = TileStore::new();
+    assert_eq!(frame(&mut store, &[0, 1], ZOOM_ULP), 2, "the first frame");
+    for _ in 0..5 {
+        assert_eq!(
+            frame(&mut store, &[0, 1], ZOOM_ULP),
+            0,
+            "a visible page was evicted and had to be rendered again"
+        );
+    }
+    assert!(store.over_budget() > 0, "and the overage is reported");
 }
 
 #[test]

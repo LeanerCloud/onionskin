@@ -216,7 +216,7 @@ fn a_degenerate_overlay_is_refused_and_never_reaches_a_composite() {
         (
             // What a selection of no characters produces.
             highlight(300.0, 300.0, 100.0, 0.0),
-            OverlayError::EmptyQuad,
+            OverlayError::DegenerateQuad,
         ),
         (
             // Collinear corners: a quad with a real bounding box and no area,
@@ -230,7 +230,7 @@ fn a_degenerate_overlay_is_refused_and_never_reaches_a_composite() {
                 ],
                 color: YELLOW,
             },
-            OverlayError::EmptyQuad,
+            OverlayError::DegenerateQuad,
         ),
     ];
 
@@ -256,6 +256,19 @@ fn a_degenerate_overlay_is_refused_and_never_reaches_a_composite() {
             assert_eq!(cache.overlays_in_tile(col, row), 0, "tile ({col}, {row})");
         }
     }
+}
+
+#[test]
+fn a_thin_quad_far_from_the_origin_is_still_a_quad() {
+    // The area test has to survive coordinates a large media box reaches: a
+    // half-point-tall selection at 10000 points is real, and cancellation in
+    // the wrong arithmetic would round it to nothing and refuse it.
+    let mut cache = cache();
+    assert_eq!(
+        cache.add_overlay(highlight(10_000.0, 10_000.0, 100.0, 0.5)),
+        Ok(0),
+        "off this page, so nothing is damaged, but it must be accepted"
+    );
 }
 
 #[test]
