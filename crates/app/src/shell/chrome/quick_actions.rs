@@ -249,11 +249,23 @@ impl QuickActionsState {
             drag.position.x + pointer.x - drag.pointer.x,
             drag.position.y + pointer.y - drag.pointer.y,
         );
-        self.position = point(
-            clamp_axis(relative.x, document.size.width - toolbar.width),
-            clamp_axis(relative.y, document.size.height - toolbar.height),
-        );
+        self.position = constrained_position(relative, document.size, toolbar);
     }
+
+    pub(super) fn constrain_to(&mut self, document: Size<Pixels>) {
+        self.position = constrained_position(self.position, document, self.toolbar_size());
+    }
+}
+
+fn constrained_position(
+    position: Point<Pixels>,
+    document: Size<Pixels>,
+    toolbar: Size<Pixels>,
+) -> Point<Pixels> {
+    point(
+        clamp_axis(position.x, document.width - toolbar.width),
+        clamp_axis(position.y, document.height - toolbar.height),
+    )
 }
 
 fn clamp_axis(value: Pixels, maximum: Pixels) -> Pixels {
@@ -666,5 +678,37 @@ mod tests {
         state.drag_to(drag, point(px(100.0), px(50.0)), bounds, toolbar_size);
         state.drag_to(drag, point(px(1_000.0), px(1_000.0)), bounds, toolbar_size);
         assert_eq!(state.position(), point(px(300.0), px(220.0)));
+    }
+
+    #[test]
+    fn opening_a_side_panel_reclamps_a_toolbar_at_the_closed_document_edge() {
+        let mut state = QuickActionsState::default();
+        let closed_document = size(px(972.0), px(784.0));
+        let open_document = size(px(732.0), px(784.0));
+        let toolbar = state.toolbar_size();
+        let drag = state.next_drag();
+        state.drag_to(
+            drag,
+            point(px(0.0), px(0.0)),
+            Bounds {
+                origin: Point::default(),
+                size: closed_document,
+            },
+            toolbar,
+        );
+        state.drag_to(
+            drag,
+            point(px(2_000.0), px(0.0)),
+            Bounds {
+                origin: Point::default(),
+                size: closed_document,
+            },
+            toolbar,
+        );
+        assert_eq!(state.position().x, px(332.0));
+
+        state.constrain_to(open_document);
+
+        assert_eq!(state.position().x, px(92.0));
     }
 }

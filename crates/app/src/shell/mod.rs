@@ -90,17 +90,7 @@ impl Canvas {
 
     fn prepare_paint(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) -> PaintList {
         let result = self
-            .model
-            .resize(
-                ViewPoint {
-                    x: f32::from(bounds.origin.x),
-                    y: f32::from(bounds.origin.y),
-                },
-                ViewSize {
-                    width: f32::from(bounds.size.width),
-                    height: f32::from(bounds.size.height),
-                },
-            )
+            .resize_for_bounds(bounds)
             .and_then(|()| self.model.update())
             .and_then(|()| self.model.paint_list());
         match result {
@@ -113,6 +103,19 @@ impl Canvas {
                 PaintList::default()
             }
         }
+    }
+
+    fn resize_for_bounds(&mut self, bounds: Bounds<Pixels>) -> Result<(), CanvasError> {
+        self.model.resize(
+            ViewPoint {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+            },
+            ViewSize {
+                width: f32::from(bounds.size.width),
+                height: f32::from(bounds.size.height),
+            },
+        )
     }
 
     fn handle_change(&mut self, result: Result<bool, CanvasError>, cx: &mut Context<Self>) {

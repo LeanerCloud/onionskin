@@ -17,6 +17,7 @@ use super::quick_actions::{
     render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
 };
 use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
+use super::side_panel::{render_side_panel, SidePanelState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
@@ -172,6 +173,7 @@ pub(in crate::shell) struct ShellFrame {
     search_feedback: Option<SearchResult>,
     rail_state: RailState,
     quick_actions_state: QuickActionsState,
+    side_panel_state: SidePanelState,
 }
 
 fn activate_tab<T>(
@@ -229,6 +231,7 @@ impl ShellFrame {
             search_feedback: None,
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),
+            side_panel_state: SidePanelState::default(),
         }
     }
 
@@ -539,16 +542,20 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         let viewport = window.viewport_size();
+        let document =
+            document_view_bounds(viewport, self.rail_state.expanded(), self.side_panel_state);
         let bounds = gpui::Bounds {
             origin: Point::default(),
-            size: gpui::size(
-                (viewport.width - rail_width(self.rail_state.expanded())).max(px(0.0)),
-                (viewport.height - px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT)).max(px(0.0)),
-            ),
+            size: document.size,
         };
         let toolbar_size = self.quick_actions_state.toolbar_size();
         self.quick_actions_state
             .drag_to(id, pointer, bounds, toolbar_size);
+        cx.notify();
+    }
+
+    pub(super) fn toggle_side_panel(&mut self, cx: &mut Context<Self>) {
+        self.side_panel_state.toggle();
         cx.notify();
     }
 
@@ -748,7 +755,13 @@ impl ShellFrame {
 }
 
 impl Render for ShellFrame {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let document_bounds = document_view_bounds(
+            window.viewport_size(),
+            self.rail_state.expanded(),
+            self.side_panel_state,
+        );
+        self.quick_actions_state.constrain_to(document_bounds.size);
         let mut tab_bar = div().flex().h(px(TAB_BAR_HEIGHT)).bg(gpui::rgb(0x202124));
         for (index, tab) in self.tabs.tabs().iter().enumerate() {
             let active = self.tabs.active_index() == Some(index);
@@ -805,13 +818,15 @@ impl Render for ShellFrame {
                 div()
                     .id("document-view")
                     .relative()
-                    .flex_1()
+                    .w(document_bounds.size.width)
+                    .flex_none()
                     .min_w_0()
                     .min_h_0()
                     .child(canvas)
                     .child(quick_actions),
             );
         }
+        body = body.child(render_side_panel(self.side_panel_state, cx));
 
         let frame = div()
             .size_full()
@@ -847,6 +862,22 @@ impl Render for ShellFrame {
             root = root.child(self.render_search_results(cx));
         }
         root
+    }
+}
+
+fn document_view_bounds(
+    viewport: gpui::Size<Pixels>,
+    rail_expanded: bool,
+    side_panel: SidePanelState,
+) -> gpui::Bounds<Pixels> {
+    let rail = rail_width(rail_expanded);
+    let header = px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT);
+    gpui::Bounds {
+        origin: Point { x: rail, y: header },
+        size: gpui::size(
+            (viewport.width - rail - side_panel.width()).max(px(0.0)),
+            (viewport.height - header).max(px(0.0)),
+        ),
     }
 }
 
@@ -913,7 +944,141 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use onionskin_core::{Document, ViewPoint, ViewSize};
+    use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
+
     use super::*;
+    use crate::shell::canvas::CanvasModel;
+
+    struct OriginRecordingTool {
+        inputs: Arc<Mutex<Vec<PointerInput>>>,
+    }
+
+    impl ToolPlugin for OriginRecordingTool {
+        fn id(&self) -> &'static str {
+            "origin-recording"
+        }
+
+        fn name(&self) -> &'static str {
+            "Origin recording"
+        }
+
+        fn icon(&self) -> &'static str {
+            "origin-recording"
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, input: PointerInput) {
+            self.inputs.lock().unwrap().push(input);
+        }
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    #[test]
+    fn rails_and_the_side_panel_adjust_document_bounds_once() {
+        let viewport = gpui::size(px(1_100.0), px(860.0));
+
+        let collapsed_closed = document_view_bounds(viewport, false, SidePanelState::Closed);
+        assert_eq!(
+            collapsed_closed.origin,
+            Point {
+                x: px(88.0),
+                y: px(76.0)
+            }
+        );
+        assert_eq!(collapsed_closed.size, gpui::size(px(972.0), px(784.0)));
+
+        let expanded_closed = document_view_bounds(viewport, true, SidePanelState::Closed);
+        assert_eq!(
+            expanded_closed.origin,
+            Point {
+                x: px(240.0),
+                y: px(76.0)
+            }
+        );
+        assert_eq!(expanded_closed.size, gpui::size(px(820.0), px(784.0)));
+
+        let collapsed_open = document_view_bounds(viewport, false, SidePanelState::OpenEmpty);
+        assert_eq!(collapsed_open.origin, collapsed_closed.origin);
+        assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(784.0)));
+
+        let expanded_open = document_view_bounds(viewport, true, SidePanelState::OpenEmpty);
+        assert_eq!(expanded_open.origin, expanded_closed.origin);
+        assert_eq!(expanded_open.size, gpui::size(px(580.0), px(784.0)));
+    }
+
+    #[test]
+    fn composite_layout_origin_reaches_canvas_pointer_mapping() {
+        let bounds = document_view_bounds(
+            gpui::size(px(1_100.0), px(860.0)),
+            false,
+            SidePanelState::OpenEmpty,
+        );
+        let inputs = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(OriginRecordingTool {
+            inputs: Arc::clone(&inputs),
+        }));
+        let document = Document::open_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf"),
+        )
+        .unwrap();
+        let model = CanvasModel::new(
+            document,
+            registry,
+            ViewSize {
+                width: f32::from(bounds.size.width),
+                height: f32::from(bounds.size.height),
+            },
+        )
+        .unwrap();
+        let mut canvas = Canvas::new(model);
+        let origin = ViewPoint {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+        };
+        canvas.resize_for_bounds(bounds).unwrap();
+        let page = canvas.model.viewport().visible_pages().unwrap()[0].rect;
+        let local_point = ViewPoint {
+            x: page.origin.x + page.size.width / 2.0,
+            y: page.origin.y + page.size.height / 2.0,
+        };
+        let expected = canvas
+            .model
+            .viewport()
+            .page_point_at(local_point)
+            .unwrap()
+            .unwrap();
+        let window_point = Point {
+            x: bounds.origin.x + px(local_point.x),
+            y: bounds.origin.y + px(local_point.y),
+        };
+
+        assert!(canvas
+            .model
+            .pointer_down(window_point, 1.0, gpui::Modifiers::default())
+            .unwrap());
+        assert_eq!(
+            inputs.lock().unwrap().as_slice(),
+            &[PointerInput {
+                at: expected,
+                pressure: 1.0,
+                modifiers: onionskin_core::Modifiers::default(),
+            }]
+        );
+        assert_eq!(canvas.model.canvas_origin(), origin);
+        assert_eq!(
+            canvas.model.viewport().size(),
+            ViewSize {
+                width: f32::from(bounds.size.width),
+                height: f32::from(bounds.size.height),
+            }
+        );
+    }
 
     #[test]
     fn switching_and_closing_tabs_keeps_a_valid_active_index() {
