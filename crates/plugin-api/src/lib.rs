@@ -48,6 +48,17 @@ pub enum Overlay {
     Circle { center: PagePoint, radius: f64 },
 }
 
+/// Features a tool contributes to shared shell surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCapability {
+    Select,
+    Comment,
+    Highlight,
+    Draw,
+    FillTextFields,
+    AddSignature,
+}
+
 /// Everything a tool may touch while handling input.
 pub struct ToolCtx<'a> {
     pub doc: &'a mut Document,
@@ -78,6 +89,11 @@ pub trait ToolPlugin: Send {
     /// not take a rail slot.
     fn in_rail(&self) -> bool {
         true
+    }
+
+    /// Typed features this tool exposes to shared shell surfaces.
+    fn capabilities(&self) -> &'static [ToolCapability] {
+        &[]
     }
 
     fn on_pointer_down(&mut self, ctx: &mut ToolCtx, input: PointerInput);
@@ -117,4 +133,88 @@ pub struct Command {
 /// A bag of commands contributed by a plugin.
 pub trait CommandPlugin: Send {
     fn commands(&self) -> Vec<Command>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct LegacyTool;
+
+    impl ToolPlugin for LegacyTool {
+        fn id(&self) -> &'static str {
+            "legacy"
+        }
+
+        fn name(&self) -> &'static str {
+            "Legacy"
+        }
+
+        fn icon(&self) -> &'static str {
+            "legacy"
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    struct QuickActionTool;
+
+    impl ToolPlugin for QuickActionTool {
+        fn id(&self) -> &'static str {
+            "quick-actions"
+        }
+
+        fn name(&self) -> &'static str {
+            "Quick Actions"
+        }
+
+        fn icon(&self) -> &'static str {
+            "quick-actions"
+        }
+
+        fn capabilities(&self) -> &'static [ToolCapability] {
+            &[
+                ToolCapability::Select,
+                ToolCapability::Comment,
+                ToolCapability::Highlight,
+                ToolCapability::Draw,
+                ToolCapability::FillTextFields,
+                ToolCapability::AddSignature,
+            ]
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    #[test]
+    fn existing_tool_implementations_default_to_no_capabilities() {
+        let tool: &dyn ToolPlugin = &LegacyTool;
+
+        assert!(tool.capabilities().is_empty());
+    }
+
+    #[test]
+    fn tools_expose_typed_quick_action_capabilities() {
+        let tool: &dyn ToolPlugin = &QuickActionTool;
+
+        assert_eq!(
+            tool.capabilities(),
+            &[
+                ToolCapability::Select,
+                ToolCapability::Comment,
+                ToolCapability::Highlight,
+                ToolCapability::Draw,
+                ToolCapability::FillTextFields,
+                ToolCapability::AddSignature,
+            ]
+        );
+    }
 }

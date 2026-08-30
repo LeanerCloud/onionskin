@@ -489,7 +489,7 @@ lands and is reviewed in three stages, each independently mergeable.
 
 **Two rows that cannot be fully live at M2, and ship disabled with a reason:**
 
-- **Quick action toolbar defaults.** Acrobat's defaults are Select, Comment, Highlight, Draw, Fill text fields, Add Sign or Initials. Only Select exists at M2; Comment, Highlight and Draw are `tools-comment` (M3), Fill and Sign are `tools-fill-sign` (M5). The bar ships with Select live and the rest **disabled with a reason naming the milestone**, driven by a registry capability query, not a hardcoded list. Its customization row (which actions show) is live, over the same set.
+- **Quick action toolbar defaults.** Acrobat's defaults are Select, Comment, Highlight, Draw, Fill text fields, Add Sign or Initials. Only Select exists at the integrated M2 gate; Comment, Highlight and Draw are `tools-comment` (M3), Fill and Sign are `tools-fill-sign` (M5). P7 derives every slot from a registry capability query, not a hardcoded enabled list, and disables missing capabilities with an explicit reason. This leaves Select honestly unavailable in P7's pre-P10 registry; P10's selection tool later exposes `ToolCapability::Select` and makes it live without a P7 application-code change. P7 owns the backward-compatible `ToolCapability` metadata and default-empty `ToolPlugin::capabilities()` contract that supplies this query. Its customization row (which actions show) is live, over the same set.
 - **Line Weights.** The fork patch it would have needed was cut in review, so this menu item ships **disabled with a reason** and the parity row moves to M3. P7c must not invent a tile-layer approximation.
 
 **Global search field (row 89) has two halves**, both here: the tool-lookup
@@ -499,7 +499,9 @@ P9's find and does no searching of its own.
 
 **Files.** New `crates/app/src/shell/chrome/{mod,global_bar,tabs,rail,
 quick_actions,side_panel,page_controls,theme}.rs`; new
-`crates/app/src/shell/chrome/tool_search.rs`.
+`crates/app/src/shell/chrome/tool_search.rs`; existing
+`crates/plugin-api/src/lib.rs` (`ToolCapability` and the default-empty
+`ToolPlugin::capabilities()` metadata contract).
 
 **Depends on.** P6b.
 
@@ -622,6 +624,9 @@ Tools: hand (pan), select text, select region, marquee zoom, snapshot.
 `ToolCtx` gains `viewport: &mut core::Viewport`. Snapshot sets a region
 selection and raises `core::SnapshotRequest`; `app` renders the region and
 puts it on the clipboard.
+
+The selection tool exposes `ToolCapability::Select`, making P7b's Select
+quick action live through the registry without a P7 application-code change.
 
 Also the page canvas and text-selection context menu. Live at M2: Copy, Copy
 With Formatting, Export Selection As (through P13), Take A Snapshot, Rotate
@@ -862,7 +867,7 @@ with P14.**
 P13 all touch shared files, so they land in a fixed order to keep conflicts
 mechanical rather than semantic:
 
-1. **P10 first.** It is the only one that changes `crates/plugin-api/src/lib.rs` (`ToolCtx`) and `crates/core/src/viewport.rs`, and a `ToolCtx` change rebased under two other branches is worse than either of them rebasing under it.
+1. **P10 first.** P7 has already added the backward-compatible `ToolCapability` metadata contract to `crates/plugin-api/src/lib.rs`. Of these three parallel packages, P10 is the only one that changes `ToolCtx` in that file and `crates/core/src/viewport.rs`, and a `ToolCtx` change rebased under two other branches is worse than either of them rebasing under it.
 2. **P9 second.** It adds `crates/core/src/search.rs` to `core`'s module list and `find_bar` to `shell/mod.rs`.
 3. **P13 third.** It touches `crates/render/Cargo.toml` (adding `hayro-svg`), which also moves `Cargo.lock`; landing it after P4's rev bump and after the other two keeps lock-file churn to one merge.
 
