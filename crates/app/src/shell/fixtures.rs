@@ -91,3 +91,19 @@ pub(in crate::shell) fn locked_layer_pdf() -> Vec<u8> {
         b"<< /Type /OCG /Name (Locked layer) >>",
     ])
 }
+
+/// Two pages carrying "alpha" twice and once, so a find has hits to list and
+/// the second page has one to click.
+pub(in crate::shell) fn text_pages_pdf() -> Vec<u8> {
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
+           /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length 44 >>\nstream\nBT /F1 12 Tf 20 40 Td (alpha alpha) Tj ET\nendstream",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
+           /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Length 38 >>\nstream\nBT /F1 12 Tf 20 40 Td (alpha) Tj ET\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ])
+}

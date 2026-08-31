@@ -841,6 +841,83 @@ mod tests {
         });
     }
 
+    /// Clicking a result makes that hit current, on the cursor the find bar
+    /// reads. Driven through the frame's own action so the whole path is
+    /// under test: the row's coordinates, the canvas call and the reveal.
+    ///
+    /// The hit clicked is on the second page and is not the first hit found,
+    /// because a click that always landed on the first hit would satisfy a
+    /// weaker test and is exactly what a broken row-to-cursor mapping does.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn clicking_a_search_result_makes_that_hit_current(cx: &mut gpui::TestAppContext) {
+        let (frame, cx) = frame_over(super::super::fixtures::text_pages_pdf(), cx);
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::SearchResults), cx);
+            });
+            let canvas = frame.read(app).active_canvas().expect("a tab").clone();
+            canvas.update(app, |canvas, _cx| {
+                canvas
+                    .model
+                    .start_search("alpha", onionskin_core::SearchOptions::default())
+                    .expect("the search worker starts");
+            });
+        });
+
+        // The walk runs on its own thread; the canvas applies what it has
+        // produced on every update.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            cx.update(|_window, app| {
+                let canvas = frame.read(app).active_canvas().expect("a tab").clone();
+                canvas.update(app, |canvas, _cx| {
+                    canvas.model.update().expect("the canvas updates");
+                });
+            });
+            cx.run_until_parked();
+            let found = cx.update(|_window, app| {
+                let canvas = frame.read(app).active_canvas().expect("a tab").read(app);
+                (
+                    canvas.model.search().len(),
+                    canvas.model.search().is_running(),
+                )
+            });
+            if found == (3, false) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the walk found {found:?} rather than three hits and a finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(PaneAction::SelectMatch(1, 0), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            let canvas = frame.read(app).active_canvas().expect("a tab").read(app);
+            assert_eq!(canvas.model.search().cursor(), Some((1, 0)));
+            assert_eq!(
+                canvas
+                    .model
+                    .search()
+                    .current()
+                    .expect("the hit is there")
+                    .page,
+                1
+            );
+            // The cursor the pane moved is the one the find bar steps from.
+            assert_eq!(canvas.model.search().current_ordinal(), Some(3));
+        });
+    }
+
     /// A toggle in the pane reaches the document and puts the pane's own
     /// pictures back in step: they were rendered under the visibility that
     /// just changed, so a pane that kept them would show the old layers
