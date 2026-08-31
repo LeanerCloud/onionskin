@@ -93,8 +93,7 @@ fn page_text_search_and_state_use_core_types() {
         .expect("the search worker starts"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while doc.search().is_running() && std::time::Instant::now() < deadline {
-        doc.poll_search()
-            .expect("the search worker keeps answering");
+        doc.poll_search();
     }
     assert_eq!(doc.search().needle(), "Onionskin");
     assert_eq!(doc.search().matches().cloned().collect::<Vec<_>>(), matches);

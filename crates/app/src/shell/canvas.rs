@@ -583,7 +583,7 @@ impl CanvasModel {
     /// page has just landed.
     fn poll_search(&mut self) -> Result<(), CanvasError> {
         let before = self.document.search().cursor();
-        if self.document.poll_search()? && self.document.search().cursor() != before {
+        if self.document.poll_search() && self.document.search().cursor() != before {
             self.reveal_current_match()?;
         }
         Ok(())

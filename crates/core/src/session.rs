@@ -372,19 +372,19 @@ impl Document {
     /// so the next query can start a fresh worker, and the caller, which is a
     /// viewer drawing pages, is not handed an error it would have to survive
     /// every frame from here on.
-    pub fn poll_search(&mut self) -> Result<bool> {
+    pub fn poll_search(&mut self) -> bool {
         let Some(worker) = &mut self.search_worker else {
-            return Ok(false);
+            return false;
         };
         let mut applied = false;
         loop {
             let update = match worker.try_update() {
                 Ok(Some(update)) => update,
-                Ok(None) => return Ok(applied),
+                Ok(None) => return applied,
                 Err(error) => {
                     self.search_worker = None;
                     self.search.record_stopped(error.to_string());
-                    return Ok(true);
+                    return true;
                 }
             };
             applied = true;

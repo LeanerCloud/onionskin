@@ -30,7 +30,7 @@ fn the_call_returns_before_the_walk_does_and_results_arrive_page_by_page() {
     let deadline = Instant::now() + DEADLINE;
     while doc.search().is_running() {
         assert!(Instant::now() < deadline, "the walk never finished");
-        doc.poll_search().expect("the worker keeps answering");
+        doc.poll_search();
         let seen = doc.search().searched_pages();
         partial |= seen > 0 && seen < PAGES;
     }
@@ -87,7 +87,7 @@ fn the_walk_starts_at_the_page_being_viewed_and_wraps_to_cover_the_rest() {
     let deadline = Instant::now() + DEADLINE;
     while doc.search().current().is_none() {
         assert!(Instant::now() < deadline, "the first hit never arrived");
-        doc.poll_search().expect("the worker keeps answering");
+        doc.poll_search();
     }
 
     assert_eq!(doc.search().current().map(|hit| hit.page), Some(7));
@@ -155,7 +155,7 @@ fn closing_the_find_bar_clears_the_query_and_its_results() {
     assert!(doc.search().current().is_none());
     assert!(!doc.search().is_running());
     // Polling after a cancel picks nothing up from the abandoned walk.
-    doc.poll_search().expect("polling after a cancel is fine");
+    doc.poll_search();
     assert_eq!(doc.search().searched_pages(), 0);
 }
 
@@ -234,7 +234,7 @@ fn drain_running(doc: &mut Document) {
     let deadline = Instant::now() + DEADLINE;
     while doc.search().is_running() {
         assert!(Instant::now() < deadline, "the walk never finished");
-        doc.poll_search().expect("the worker keeps answering");
+        doc.poll_search();
     }
 }
 
