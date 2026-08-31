@@ -87,11 +87,18 @@ referenced.
   string (a hair against no-invented-characters; tighten when touched);
   the oracle's ERROR_CATEGORIES list tracks Error::category slugs by hand
   and would silently narrow the error ceiling if they drift.
-- Search must normalize bidi text: content extraction yields Arabic as
-  visual-order presentation forms (a faithful per-glyph transcript), but a
-  user's search query arrives in logical order, so M2's find bar cannot
-  match user-typed Arabic until search folds presentation forms and
-  reorders. Surfaced by the content review's poppler comparison.
+- Search normalizes presentation forms but not order: P9 ships Unicode
+  presentation-form folding on both needle and haystack, so single-run Arabic
+  now matches a user-typed query. What remains is visual-to-logical
+  reordering, deferred per T7: extraction yields Arabic in visual order, so a
+  query spanning a reordered run still misses. Surfaced by the content
+  review's poppler comparison.
+- The P9 cancel test (a_cancel_drops_the_search_queued_behind_the_walk_it_stops)
+  has a roughly 1-in-1000 false-failure race: start() and cancel() are two
+  sends, and a worker drain landing between them legitimately emits one page
+  of the queued generation before hearing the cancel. Harden by tolerating
+  queued-generation updates that precede the cancel rather than forbidding
+  them outright.
 - One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
   proven by direct view messaging only. Role::Document currently surfaces as
   AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
