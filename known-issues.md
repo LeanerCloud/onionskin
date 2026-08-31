@@ -27,6 +27,15 @@ referenced.
 
 ## Ours - accepted debt with a deadline
 
+- B0 restored `crates/content/src/filter.rs`, `shell_spike.rs`, and
+  `a11y_spike.rs` byte-for-byte as retained historical references after earlier
+  sessions deleted them. Production decoding continues through
+  `cos::Document::decode_stream`; the content file is outside the module tree,
+  and both spike binaries require explicit opt-in features. Keep these artifacts
+  preserved without making production depend on them. Commands embedded in the
+  historical spike sources may name their former feature gates; current checks use
+  `shell-spike` and `a11y-spike` as declared in `crates/app/Cargo.toml`.
+
 - cos: the fuzz target builds on stable but needs a nightly toolchain to
   actually run - install one when wiring fuzz into CI. Until then the
   robustness suite drives the same paths on stable. The four other

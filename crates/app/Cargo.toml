@@ -8,6 +8,16 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
+[[bin]]
+name = "shell_spike"
+path = "src/bin/shell_spike.rs"
+required-features = ["shell-spike"]
+
+[[bin]]
+name = "a11y_spike"
+path = "src/bin/a11y_spike.rs"
+required-features = ["a11y-spike"]
+
 [dependencies]
 # Not optional: `plugin-api` depends on it unconditionally, so every build
 # already links it, and the preferences and recents files are expressed in
@@ -108,3 +118,5 @@ shell-test-support = ["shell", "gpui/test-support"]
 # `crates/app/tests/a11y_probe.rs`; `docs/spikes/m2-voiceover-acceptance.md`
 # says what it can and cannot prove.
 a11y-probe = ["shell", "dep:objc2"]
+shell-spike = ["shell"]
+a11y-spike = ["shell", "dep:objc2"]
