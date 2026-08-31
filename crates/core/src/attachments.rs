@@ -27,9 +27,11 @@ pub struct Attachment {
     pub size: Option<u64>,
     /// `/Subtype` on the embedded file stream, the file's own MIME type.
     pub mime: Option<String>,
-    /// The object holding the embedded file stream, which is what
-    /// [`read_bytes`] extracts.
-    stream: u32,
+    /// The object the embedded file stream lives in, which is what
+    /// [`read_bytes`] extracts. Public for the same reason every other
+    /// object in this workspace keeps its provenance: a caller that has to
+    /// say which object a file came from should not have to guess.
+    pub stream: u32,
 }
 
 impl Attachment {

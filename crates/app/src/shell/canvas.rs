@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
-    Document, FitMode, GeometryError, PageAlignment, PageGeometry, PageGeometryResponse, PageIndex,
-    PageLayoutMode, PagePlacement, PagePoint, PageQuad, PageRect, RenderRequest, RenderResponse,
-    SearchOptions, SearchState, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport,
+    Attachment, Document, FitMode, GeometryError, Layer, ObjRef, OutlineItem, PageAlignment,
+    PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement, PagePoint,
+    PageQuad, PageRect, RenderRequest, RenderResponse, SearchOptions, SearchState, SignatureField,
+    ThumbnailResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport,
     ViewportError,
 };
 use onionskin_plugin_api::{
@@ -315,6 +316,14 @@ pub struct CanvasModel {
     /// A hit waiting to be scrolled to. Set when the hit is chosen, applied
     /// once its page has been measured, which is usually a later frame.
     pending_reveal: Option<(PageIndex, Vec<PageQuad>)>,
+    /// Thumbnails the pane asked for and the worker has not answered yet.
+    /// Keeps the poll loop awake, the way an outstanding render does, so a
+    /// picture that arrives between frames still reaches the pane.
+    pending_thumbnails: BTreeSet<PageIndex>,
+    /// Thumbnails answered and not yet collected. The pane takes them,
+    /// because turning a raster into an image the window can paint is the
+    /// shell's job and not the model's.
+    ready_thumbnails: Vec<(PageIndex, BaseRaster)>,
 }
 
 impl CanvasModel {
@@ -363,6 +372,8 @@ impl CanvasModel {
             waiting: None,
             responses: 0,
             pending_reveal: None,
+            pending_thumbnails: BTreeSet::new(),
+            ready_thumbnails: Vec::new(),
         })
     }
 
@@ -413,6 +424,122 @@ impl CanvasModel {
 
     pub fn active_tool(&self) -> Option<usize> {
         self.active_tool
+    }
+
+    // ---- navigation panes ---------------------------------------------
+
+    /// The document readers the left panes list. Each is read once by the
+    /// session and handed back by value: a pane holds a snapshot rather than
+    /// a borrow of the document the canvas is drawing from.
+    pub fn outline(&mut self) -> Result<Vec<OutlineItem>, CanvasError> {
+        Ok(self.document.outline()?.to_vec())
+    }
+
+    pub fn attachments(&mut self) -> Result<Vec<Attachment>, CanvasError> {
+        Ok(self.document.attachments()?.to_vec())
+    }
+
+    pub fn attachment_bytes(&mut self, index: usize) -> Result<Vec<u8>, CanvasError> {
+        Ok(self.document.attachment_bytes(index)?)
+    }
+
+    pub fn signatures(&mut self) -> Result<Vec<SignatureField>, CanvasError> {
+        Ok(self.document.signatures()?.to_vec())
+    }
+
+    pub fn layers(&mut self) -> Result<Vec<Layer>, CanvasError> {
+        Ok(self.document.layers()?.to_vec())
+    }
+
+    /// Show or hide one optional content group, and drop every pixel that
+    /// predates the change.
+    ///
+    /// The store is keyed by page and zoom, not by the options the raster was
+    /// produced with, so nothing in it would be rebuilt on its own. Clearing
+    /// it is not enough either: `sources` holds the same rasters for
+    /// placeholders and would put the old layer state straight back on
+    /// screen, and the signature has not changed, so without resetting it the
+    /// generation would not advance and the visible pages would never be
+    /// asked for again.
+    pub fn set_layer_visible(&mut self, layer: ObjRef, visible: bool) -> Result<bool, CanvasError> {
+        if !self.document.set_layer_visible(layer, visible)? {
+            return Ok(false);
+        }
+        self.invalidate_rendered_pixels();
+        Ok(true)
+    }
+
+    /// Forget every cached raster and make the visible pages be rendered
+    /// again, because the render options they were produced with have
+    /// changed.
+    fn invalidate_rendered_pixels(&mut self) {
+        self.tiles.clear();
+        self.sources.clear();
+        self.requests.clear();
+        self.failed_renders.clear();
+        self.placeholders.clear();
+        // The next update compares the visible set against `None`, advances
+        // the generation, and re-requests every page. The advance is also
+        // what makes the answers already in flight, which were rendered with
+        // the old options, be dropped rather than painted.
+        self.signature = None;
+    }
+
+    /// Put every optional content group back to the visibility the file's
+    /// own default configuration gives it, dropping the pixels that were
+    /// produced under the overrides.
+    pub fn reset_layer_visibility(&mut self) -> Result<bool, CanvasError> {
+        if !self.document.reset_layer_visibility()? {
+            return Ok(false);
+        }
+        self.invalidate_rendered_pixels();
+        Ok(true)
+    }
+
+    /// Queue a thumbnail of `page`, unless one is already outstanding.
+    pub fn request_thumbnail(&mut self, page: PageIndex, zoom: f32) -> Result<(), CanvasError> {
+        if !self.pending_thumbnails.insert(page) {
+            return Ok(());
+        }
+        if let Err(error) = self.document.request_thumbnail(page, zoom) {
+            self.pending_thumbnails.remove(&page);
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    /// The thumbnails answered since the last call, taken rather than
+    /// borrowed: the pane converts each one to an image and owns it from
+    /// there, so the model never holds two copies of the same picture.
+    pub fn take_thumbnails(&mut self) -> Vec<(PageIndex, BaseRaster)> {
+        std::mem::take(&mut self.ready_thumbnails)
+    }
+
+    /// Whether `page` has a thumbnail on the way, so the pane does not ask
+    /// again on every frame while it waits.
+    pub fn thumbnail_pending(&self, page: PageIndex) -> bool {
+        self.pending_thumbnails.contains(&page)
+    }
+
+    fn drain_thumbnail_responses(&mut self) -> Result<(), CanvasError> {
+        while let Some(response) = self.document.try_thumbnail_response()? {
+            self.pending_thumbnails.remove(&response.page());
+            self.responses += 1;
+            match response {
+                ThumbnailResponse::Ready { page, render } => {
+                    self.ready_thumbnails.push((page, render.raster));
+                }
+                // Reported on the page it belongs to, like a failed render:
+                // a blank row with no reason is a pane that looks broken.
+                ThumbnailResponse::Failed { page, error } => {
+                    self.status = Some(CanvasStatus::Error {
+                        page: Some(page),
+                        message: format!("page {page} thumbnail: {error}"),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn view_state(&self) -> CanvasViewState {
@@ -556,6 +683,17 @@ impl CanvasModel {
         self.reveal_as_navigation()?;
         // The cursor moved even when the view did not: the hit drawn as the
         // current one changed, and that is a repaint.
+        Ok(true)
+    }
+
+    /// Make one particular hit current, which is what a click in the search
+    /// results pane does. Takes the same route as stepping to it, so
+    /// Previous View comes back from the jump.
+    pub fn select_match(&mut self, page: PageIndex, index: usize) -> Result<bool, CanvasError> {
+        if !self.document.select_match(page, index) {
+            return Ok(false);
+        }
+        self.reveal_as_navigation()?;
         Ok(true)
     }
 
@@ -740,11 +878,14 @@ impl CanvasModel {
     }
 
     pub fn has_pending_work(&self) -> bool {
-        self.has_pending_pages() || self.document.search().is_running()
+        self.has_pending_pages()
+            || self.document.search().is_running()
+            || !self.pending_thumbnails.is_empty()
     }
 
-    /// Work a page worker owes an answer for. Separate from the search, which
-    /// is pending work of its own and answers on a channel of its own.
+    /// Work a page worker owes an answer for. Separate from the search and
+    /// from the thumbnails, which are pending work of their own and answer on
+    /// channels of their own; the deadline below watches page work only.
     fn has_pending_pages(&self) -> bool {
         !self.geometry_requests.is_empty() || self.has_pending_render()
     }
@@ -933,6 +1074,7 @@ impl CanvasModel {
 
     pub fn update(&mut self) -> Result<(), CanvasError> {
         self.poll_search()?;
+        self.drain_thumbnail_responses()?;
         self.drain_geometry_responses()?;
         self.queue_visible_geometry()?;
         self.drain_geometry_responses()?;
@@ -1636,6 +1778,34 @@ fn rect_intersects_viewport(rect: ViewRect, viewport: ViewSize) -> bool {
         && rect.origin.y + rect.size.height > 0.0
 }
 
+/// A whole page raster as an image the window can paint, with the size it
+/// came out at.
+///
+/// The thumbnails pane's one step out of pixels. It goes through the same
+/// BGRA conversion the tiles do, cropping nothing and rotating nothing: a
+/// thumbnail is the whole page, and the page's own `/Rotate` is already in
+/// the raster the worker produced.
+pub(super) fn raster_image(
+    raster: &BaseRaster,
+) -> Result<(Arc<RenderImage>, u32, u32), CanvasError> {
+    let (width, height) = (raster.width(), raster.height());
+    let (width, height, bgra) = tile_bgra(
+        raster.rgba(),
+        width,
+        height,
+        width,
+        height,
+        ViewRotation::None,
+    )?;
+    let buffer = image::RgbaImage::from_raw(width, height, bgra)
+        .expect("the conversion returns exactly width*height*4 bytes");
+    Ok((
+        Arc::new(RenderImage::new(smallvec![image::Frame::new(buffer)])),
+        width,
+        height,
+    ))
+}
+
 fn tile_bgra(
     rgba: &[u8],
     source_width: u32,
@@ -2071,6 +2241,87 @@ mod tests {
         model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         *model.requests.get(&0).expect("page zero is requested")
+    }
+
+    /// The canvas half of the P4 review's layer note. The store is keyed by
+    /// page and zoom, not by the render options, so nothing in it would be
+    /// rebuilt on its own; and `sources` holds the same rasters for
+    /// placeholders, so leaving them would put the old layer state back on
+    /// screen the moment the page was scrolled.
+    #[test]
+    fn toggling_a_layer_drops_every_cached_pixel_and_asks_for_the_pages_again() {
+        let mut model = CanvasModel::new(
+            Document::open_bytes(crate::shell::fixtures::optional_content_pdf())
+                .expect("the fixture opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        let request = prepare_request(&mut model);
+        assert!(model.apply_render_response(RenderResponse::Raster {
+            request,
+            render: PageRender {
+                raster: raster(&model, request.page, request.zoom, [10, 10, 10, 255]),
+                warnings: Vec::new(),
+            },
+        }));
+        assert_eq!(model.tiles.len(), 1, "there is a cached raster to lose");
+        assert!(!model.sources.is_empty());
+        let generation = model.generation;
+        let layer = model.layers().expect("the layers read")[0].clone();
+
+        assert!(model
+            .set_layer_visible(layer.id, false)
+            .expect("an unlocked layer toggles"));
+
+        assert_eq!(model.tiles.len(), 0, "the cached composites are stale");
+        assert!(
+            model.sources.is_empty(),
+            "a placeholder built from the old raster would show the old layers again"
+        );
+        assert!(model.requests.is_empty());
+        assert!(
+            model.signature.is_none(),
+            "the visible set did not change, so only a cleared signature makes the next frame re-request it"
+        );
+
+        // The next frame advances the generation, which is what drops the
+        // answers still in flight from before the toggle, and asks for the
+        // page again.
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(model.update_signature(&visible).unwrap());
+        assert!(model.generation > generation);
+        model.tiles.begin_frame();
+        assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
+    }
+
+    /// A toggle that changes nothing costs nothing: the pixels stay, because
+    /// re-rendering them would produce the same picture.
+    #[test]
+    fn a_toggle_to_the_state_a_layer_is_in_keeps_the_cached_pixels() {
+        let mut model = CanvasModel::new(
+            Document::open_bytes(crate::shell::fixtures::optional_content_pdf())
+                .expect("the fixture opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        let request = prepare_request(&mut model);
+        assert!(model.apply_render_response(RenderResponse::Raster {
+            request,
+            render: PageRender {
+                raster: raster(&model, request.page, request.zoom, [10, 10, 10, 255]),
+                warnings: Vec::new(),
+            },
+        }));
+        let layer = model.layers().expect("the layers read")[0].clone();
+
+        assert!(!model
+            .set_layer_visible(layer.id, layer.visible)
+            .expect("a no-op toggle is not an error"));
+
+        assert_eq!(model.tiles.len(), 1);
+        assert!(model.signature.is_some());
     }
 
     fn raster(model: &CanvasModel, page: PageIndex, zoom: f32, rgba: [u8; 4]) -> BaseRaster {

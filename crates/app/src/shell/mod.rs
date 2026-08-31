@@ -26,7 +26,10 @@ pub mod canvas;
 mod chrome;
 mod context_menu;
 mod find_bar;
+#[cfg(test)]
+mod fixtures;
 pub mod input;
+mod panes;
 
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 860.0;

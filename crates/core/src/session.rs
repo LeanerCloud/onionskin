@@ -443,6 +443,23 @@ impl Document {
         Ok(true)
     }
 
+    /// Put every optional content group back to the visibility the file's
+    /// own default configuration gives it.
+    ///
+    /// Re-read rather than remembered: the initial state is a fact about the
+    /// file, and keeping a second copy of it beside the live one is a second
+    /// thing that can drift.
+    pub fn reset_layer_visibility(&mut self) -> Result<bool> {
+        let initial = layers::read(&self.cos)?;
+        if self.layers.as_ref() == Some(&initial) {
+            return Ok(false);
+        }
+        let overrides = layers::overrides(&initial);
+        self.layers = Some(initial);
+        self.render.set_layer_visibility(overrides)?;
+        Ok(true)
+    }
+
     /// Queue a thumbnail of `page` at `zoom`.
     ///
     /// Queued behind every interactive render, so a pane asking for a screen
@@ -596,6 +613,12 @@ impl Document {
 
     pub fn select_previous_match(&mut self) -> bool {
         self.search.select_previous().is_some()
+    }
+
+    /// Moves the cursor to one particular hit, by the page it sits on and its
+    /// position among that page's hits. Returns whether there was one there.
+    pub fn select_match(&mut self, page: PageIndex, index: usize) -> bool {
+        self.search.select(page, index)
     }
 }
 
@@ -851,6 +874,86 @@ mod tests {
         );
     }
 
+    /// A page carrying both an optional content group and an annotation, so
+    /// "the toggle kept the annotations" is a pixel question.
+    ///
+    /// Object 4 is the group, 5 the page description, 6 the annotation and 7
+    /// its appearance stream. The group paints black on the left, the
+    /// annotation blue on the right, and neither overlaps the other.
+    fn layer_and_annotation_document() -> Vec<u8> {
+        use crate::testpdf::{dict, pdf, stream};
+
+        pdf(&[
+            dict(
+                "<< /Type /Catalog /Pages 2 0 R /OCProperties \
+                 << /OCGs [4 0 R] /D << >> >> >>",
+            ),
+            dict("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            dict(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                 /Resources << /Properties << /MC0 4 0 R >> >> /Contents 5 0 R \
+                 /Annots [6 0 R] >>",
+            ),
+            dict("<< /Type /OCG /Name (Stamp) >>"),
+            stream("", b"/OC /MC0 BDC\n0 0 0 rg\n20 20 60 50 re f\nEMC\n"),
+            dict(
+                "<< /Type /Annot /Subtype /Square /Rect [120 20 180 80] /F 4 \
+                 /AP << /N 7 0 R >> >>",
+            ),
+            stream(
+                "/Type /XObject /Subtype /Form /BBox [0 0 60 60]",
+                b"0 0 1 rg\n0 0 60 60 re f\n",
+            ),
+        ])
+    }
+
+    fn blue_pixels(render: &PageRender) -> usize {
+        render
+            .raster
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[2] > 200 && pixel[0] < 100 && pixel[1] < 100)
+            .count()
+    }
+
+    /// The P4 review's requirement, in the terms this canvas actually holds:
+    /// a layer toggle re-renders the affected pages, and what comes back has
+    /// to carry everything the page had that the layer did not own.
+    ///
+    /// Annotations are drawn into the base raster by the interpreter, under
+    /// `RenderOptions::render_annotations`, so "re-rendered and forgot the
+    /// overlays" here is a toggle that replaces the render options rather
+    /// than changing the one field it means to. Asserted on the annotation's
+    /// own pixels, which is the thing a user would lose.
+    #[test]
+    fn hiding_a_layer_keeps_the_annotations_on_the_page() {
+        let mut doc =
+            Document::open_bytes(layer_and_annotation_document()).expect("the fixture opens");
+        let layer = doc.layers().expect("the layers read")[0].clone();
+
+        let before = doc.render_page_now(0, 1.0).expect("the page renders");
+        let annotation_before = blue_pixels(&before);
+        assert!(
+            dark_pixels(&before) > 1_000 && annotation_before > 1_000,
+            "the fixture draws both the layer and the annotation, saw {} dark and {annotation_before} blue",
+            dark_pixels(&before)
+        );
+
+        assert!(doc
+            .set_layer_visible(layer.id, false)
+            .expect("the layer toggles"));
+        let hidden = doc.render_page_now(0, 1.0).expect("the page renders again");
+
+        assert_eq!(dark_pixels(&hidden), 0, "the layer is gone");
+        assert_eq!(
+            blue_pixels(&hidden),
+            annotation_before,
+            "the annotation has to survive the re-render the toggle forced"
+        );
+    }
+
     #[test]
     fn toggling_a_layer_to_the_state_it_is_in_changes_nothing() {
         let mut doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
@@ -933,6 +1036,33 @@ mod tests {
                 .expect("the worker is alive")
                 .is_none(),
             "no page the pane did not ask for is rendered"
+        );
+    }
+
+    /// The search results pane picks a hit by page and position, and the
+    /// cursor it moves is the one the find bar's next and previous move.
+    /// A position no hit occupies moves nothing rather than clearing it,
+    /// because a row clicked after a newer walk replaced the results names a
+    /// hit that no longer exists.
+    #[test]
+    fn a_hit_can_be_made_current_by_where_it_sits() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let mut doc = Document::open_path(&path).expect("seed opens");
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("the search worker starts"));
+        drain(&mut doc);
+        assert_eq!(doc.search().len(), 1);
+
+        assert!(doc.select_match(0, 0));
+        assert_eq!(doc.search().cursor(), Some((0, 0)));
+
+        assert!(!doc.select_match(0, 7), "page zero has one hit, not eight");
+        assert!(!doc.select_match(9, 0), "there is no page ten");
+        assert_eq!(
+            doc.search().cursor(),
+            Some((0, 0)),
+            "a miss leaves the cursor where it was"
         );
     }
 
