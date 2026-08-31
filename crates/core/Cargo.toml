@@ -8,3 +8,24 @@ license.workspace = true
 onionskin-content.workspace = true
 onionskin-cos.workspace = true
 onionskin-render.workspace = true
+
+# The decision-11 budgets, as benches that assert rather than print. Each one
+# owns its own `main` (`harness = false`) because libtest's harness measures
+# throughput and these measure whether a budget was met. `test = false` keeps
+# them out of `cargo test`, where the dev profile would time an unoptimized
+# build; `cargo clippy --all-targets` still lints them, and the CI bench job
+# runs them with `cargo bench`.
+[[bench]]
+name = "open"
+harness = false
+test = false
+
+[[bench]]
+name = "paint"
+harness = false
+test = false
+
+[[bench]]
+name = "scroll"
+harness = false
+test = false
