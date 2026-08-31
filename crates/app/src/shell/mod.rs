@@ -609,6 +609,11 @@ where
         settings.preferences.recent_documents,
         settings.paths.recents.as_deref(),
     ));
+    // On the notice bar for the user, and on stderr for whoever started the
+    // app from a terminal: a keymap that did not load is worth both.
+    for notice in &settings.notices {
+        eprintln!("onionskin: {notice}");
+    }
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 

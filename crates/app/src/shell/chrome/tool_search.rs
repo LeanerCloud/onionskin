@@ -306,6 +306,13 @@ impl SearchInput {
         &self.buffer.content
     }
 
+    /// What the field has selected, for the test that checks a window-wide
+    /// binding does not take a keystroke away from a focused text field.
+    #[cfg(test)]
+    pub(super) fn selected_range(&self) -> std::ops::Range<usize> {
+        self.buffer.selected_range.clone()
+    }
+
     pub(super) fn set_query(&mut self, query: impl Into<String>, cx: &mut Context<Self>) {
         let query = query.into();
         if self.buffer.content == query {

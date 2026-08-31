@@ -661,11 +661,10 @@ impl ShellFrame {
                 canvas.handle_change(Ok(true), cx);
                 None
             }
-            Err(error) => {
-                let message = error.to_string();
-                canvas.record_error(error, cx);
-                Some(message)
-            }
+            // Reported on the notice bar rather than on the canvas status
+            // line: a command is something the user just asked for, and the
+            // status line is where the document's own trouble goes.
+            Err(error) => Some(error.to_string()),
         });
         if let Some(message) = failure {
             self.notices.push(message);
@@ -2888,6 +2887,50 @@ mod tests {
                 assert!(
                     notices.contains(&summary),
                     "the notice does not carry the repair report: {notices}"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Select All is bound window-wide, and the search field binds the same
+    /// keystroke in its own key context. The field has to win while it has
+    /// focus, or typing in the chrome would select the document instead.
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    #[gpui::test]
+    fn a_field_that_binds_a_keystroke_keeps_it_while_it_has_focus(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.update(super::super::tool_search::install_keybindings);
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .search_input
+                    .update(cx, |input, cx| input.set_query("find me".to_owned(), cx));
+                window.focus(&frame.search_input.read(cx).focus_handle(cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.select-all"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert_eq!(
+                    frame.search_input.read(cx).selected_range(),
+                    0.."find me".len(),
+                    "the field's own Select All did not run"
+                );
+                assert_eq!(
+                    frame
+                        .tabs
+                        .active()
+                        .unwrap()
+                        .canvas
+                        .read(cx)
+                        .model
+                        .selection_text(),
+                    None,
+                    "the document was selected from inside a text field"
                 );
             })
             .unwrap();
