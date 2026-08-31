@@ -296,6 +296,59 @@ impl ShellAccessibility {
 mod tests {
     use super::*;
     use accesskit::Role;
+    use onionskin_core::{ViewPoint, ViewRect, ViewSize};
+
+    /// The only transform that puts a page, and every run of words on it, on
+    /// screen. A rectangle arrives in the canvas's own coordinates and has to
+    /// leave with the canvas origin added and the zoom applied, or a screen
+    /// reader draws its cursor somewhere the document is not.
+    ///
+    /// A non-zero origin and a zoom other than 1, because both are identity
+    /// at the defaults and would hide a transform that dropped either.
+    #[test]
+    fn a_page_rectangle_takes_the_canvas_origin_and_the_zoom() {
+        let placed = Rects::view_rect(
+            ViewRect {
+                origin: ViewPoint { x: 10.0, y: 20.0 },
+                size: ViewSize {
+                    width: 30.0,
+                    height: 40.0,
+                },
+            },
+            ViewPoint { x: 5.0, y: 7.0 },
+            2.0,
+        );
+
+        assert_eq!(placed, Rect::new(30.0, 54.0, 90.0, 134.0));
+    }
+
+    /// Two rectangles that differ in the canvas have to differ on screen.
+    /// A transform that answers the same thing for everything satisfies any
+    /// single-rectangle assertion.
+    #[test]
+    fn two_rectangles_that_differ_in_the_canvas_differ_on_screen() {
+        let page = ViewRect {
+            origin: ViewPoint { x: 0.0, y: 0.0 },
+            size: ViewSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        };
+        let word = ViewRect {
+            origin: ViewPoint { x: 20.0, y: 36.0 },
+            size: ViewSize {
+                width: 130.0,
+                height: 18.0,
+            },
+        };
+        let origin = ViewPoint { x: 12.0, y: 34.0 };
+
+        let page = Rects::view_rect(page, origin, 1.5);
+        let word = Rects::view_rect(word, origin, 1.5);
+
+        assert!(word.x0 > page.x0 && word.y0 > page.y0);
+        assert!(word.x1 < page.x1 && word.y1 < page.y1);
+    }
 
     #[test]
     fn a_surface_with_no_recorded_frame_leaves_its_children_unplaced() {

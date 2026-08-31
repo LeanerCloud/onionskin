@@ -4700,6 +4700,123 @@ mod tests {
         assert_eq!(current_page(window, cx), before);
     }
 
+    /// The rectangle the tree gives the first page.
+    #[cfg(feature = "shell-test-support")]
+    fn page_bounds(
+        window: gpui::WindowHandle<ShellFrame>,
+        cx: &mut TestAppContext,
+    ) -> accesskit::Rect {
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .accessible(window, cx)
+                    .find(&("page", 0usize).into())
+                    .expect("the tree carries no page node")
+                    .bounds
+                    .expect("the page node carries no rectangle")
+            })
+            .unwrap()
+    }
+
+    /// The document's geometry, read off the tree after the view has been
+    /// turned and moved.
+    ///
+    /// `Rects::view_rect` is the only transform placing a page and the words
+    /// on it on screen, and a version of it answering one constant
+    /// window-sized rectangle for everything left every other test green: the
+    /// probe's "the words are inside the page" check is satisfied for free
+    /// when both rectangles are the same rectangle, and it looks at the left
+    /// and right edges only.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_page_and_its_words_keep_their_places_after_the_view_moves(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        // Turned and zoomed in, so the page is larger than the view and the
+        // scroll below has somewhere to go.
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::View(ViewAction::RotateClockwise), window, cx);
+                for _ in 0..4 {
+                    frame.run_activation(Activation::View(ViewAction::ZoomIn), window, cx);
+                }
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let before = page_bounds(window, cx);
+
+        let scrolled = window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame.active_canvas().cloned().expect("a document is open");
+                canvas.update(cx, |canvas, cx| {
+                    let was = canvas.model.viewport().offset();
+                    canvas
+                        .model
+                        .scroll(
+                            ViewPoint { x: 0.0, y: -40.0 },
+                            false,
+                            ViewPoint { x: 1.0, y: 1.0 },
+                        )
+                        .expect("the view scrolls");
+                    cx.notify();
+                    canvas.model.viewport().offset() != was
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(
+            scrolled,
+            "the view had nowhere to scroll, so what follows would prove nothing"
+        );
+
+        assert_ne!(
+            page_bounds(window, cx),
+            before,
+            "the page reports the same rectangle after the view scrolled"
+        );
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let page = tree
+                    .find(&("page", 0usize).into())
+                    .expect("the tree carries no page node");
+                let words = page
+                    .children
+                    .iter()
+                    .find(|child| child.label.contains("Hello Onionskin"))
+                    .expect("the page published none of its words");
+                let page = page.bounds.expect("the page node carries no rectangle");
+                let words = words.bounds.expect("the words carry no rectangle");
+
+                // All four edges. A run that reads as sitting outside the page
+                // it is on puts a screen reader's cursor off the document.
+                assert!(
+                    words.x0 > page.x0 && words.x1 < page.x1,
+                    "the words {words:?} are not inside the page {page:?} left to right"
+                );
+                assert!(
+                    words.y0 > page.y0 && words.y1 < page.y1,
+                    "the words {words:?} are not inside the page {page:?} top to bottom"
+                );
+
+                let size = window.viewport_size();
+                let factor = f64::from(window.scale_factor());
+                let whole_window = accesskit::Rect::new(
+                    0.0,
+                    0.0,
+                    f64::from(f32::from(size.width)) * factor,
+                    f64::from(f32::from(size.height)) * factor,
+                );
+                assert_ne!(
+                    page, whole_window,
+                    "the page reports the whole window as its rectangle"
+                );
+            })
+            .unwrap();
+    }
+
     /// A screen reader's press, from the queue the platform's action handler
     /// writes into all the way to the page turning.
     ///
