@@ -55,7 +55,8 @@ pub fn page(doc: &Document, index: PageIndex) -> Result<Page> {
 /// Number of pages, taken from the page tree root's `/Count`.
 pub fn page_count(doc: &Document) -> Result<usize> {
     let count = doc.page_count()?;
-    Ok(count.max(0) as usize)
+    usize::try_from(count)
+        .map_err(|_| crate::Error::from(onionskin_cos::Error::InvalidPageCount { count }))
 }
 
 /// A page with no `/MediaBox` anywhere above it. ISO 32000-2 leaves the size

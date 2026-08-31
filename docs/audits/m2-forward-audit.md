@@ -73,8 +73,8 @@ regression test and real user path pass.
 
 | Source ID | Severity | Evidence at `7413186` | Disposition | Owner | Known-issues state | Required proof |
 |---|---|---|---|---|---|---|
-| CR-001 | Medium | `crates/content/src/page.rs:56-58`; `crates/core/src/session.rs:204`; `crates/app/src/shell/canvas.rs:349` | Confirmed open | B1 | Added by this audit | Negative root `/Count` fixture returns a typed malformed/repair result, never `EmptyDocument`. |
-| CR-002 | Low | `crates/cos/src/document.rs:863` | Confirmed open | B1 | Added by this audit | Correct the stale M2 owner comment when the COS path is touched. |
+| CR-001 | Medium | `crates/content/src/page.rs`; `crates/core/src/session.rs`; focused COS/content/core fixtures | Resolved in B1.1 | B1 | Resolved; historical row retained | Negative root `/Count` returns `invalid-page-count` through COS and content, core refuses the session, and affected crate suites pass. |
+| CR-002 | Low | `crates/cos/src/document.rs` | Resolved in B1.1 | B1 | Resolved; historical row retained | The object-deletion consumer comment now assigns page organization to M3. |
 | CR-003 | Low | `crates/core/benches/scroll.rs:230` | Confirmed open | B1 | Already ledgered | Evict/reinsert mutation increments, rather than overwrites, composite totals. |
 | CR-004 | Medium | `corpus/fetch.sh:38,212` | Confirmed open | B1 | Already ledgered | Corrupted R2 object fails checksum validation. |
 | CR-005 | Low | `crates/app/tests/guarantees.rs:83` | Confirmed limitation | B6 | Already ledgered | Replace or supplement textual tripwires with verified hosted workflow policy; a configured `origin` alone is not proof. |

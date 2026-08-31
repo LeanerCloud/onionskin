@@ -102,7 +102,13 @@ fn sweep(name: &str, relative: &str, limit: Option<usize>) -> usize {
         };
         opened += 1;
         let raw_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(u64::MAX);
-        let count = page_count(&doc).unwrap_or(0).min(PAGES);
+        let count = match page_count(&doc) {
+            Ok(count) => count.min(PAGES),
+            Err(error) => {
+                *errors.entry(error.category().to_string()).or_default() += 1;
+                continue;
+            }
+        };
         for index in 0..count {
             match extract_page(&doc, index) {
                 Ok(page) => {
@@ -229,7 +235,13 @@ fn extraction_time_per_page() {
         let Ok(doc) = common::open(file) else {
             continue;
         };
-        let count = page_count(&doc).unwrap_or(0).min(50);
+        let count = match page_count(&doc) {
+            Ok(count) => count.min(50),
+            Err(error) => {
+                eprintln!("SKIPPED: {} page count: {error}", file.display());
+                continue;
+            }
+        };
         if count == 0 {
             continue;
         }

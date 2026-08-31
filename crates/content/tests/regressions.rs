@@ -22,6 +22,19 @@ fn text_of(doc: &onionskin_cos::Document) -> String {
     extract_page(doc, 0).expect("page extracts").flatten().text
 }
 
+#[test]
+fn a_negative_root_count_is_not_clamped_to_zero() {
+    let doc = open_bytes(build_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count -1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>".to_vec(),
+    ]));
+
+    let error = onionskin_content::page_count(&doc)
+        .expect_err("a negative root count must not become an empty document");
+    assert_eq!(error.category(), "invalid-page-count");
+}
+
 // ---- finding 1: no fabricated characters ------------------------------------
 
 /// A subsetter that writes `/Differences [65 /g5]` is saying code 65 draws the

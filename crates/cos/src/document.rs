@@ -536,11 +536,16 @@ impl Document {
         let pages = pages.as_dict().ok_or_else(|| Error::Unrecoverable {
             detail: "/Pages does not resolve to a dictionary".into(),
         })?;
-        self.resolve_key(pages, b"Count")?
+        let count = self
+            .resolve_key(pages, b"Count")?
             .and_then(|o| o.as_integer())
             .ok_or_else(|| Error::Unrecoverable {
                 detail: "page tree root has no /Count".into(),
-            })
+            })?;
+        if count < 0 {
+            return Err(Error::InvalidPageCount { count });
+        }
+        Ok(count)
     }
 
     /// The page [`Document::page`] gives for index 0, as the object itself
@@ -860,7 +865,7 @@ impl Document {
     /// deleted object had. The object's bytes stay where they are, under the
     /// section, as the core invariant requires.
     ///
-    /// Consumer: M2 `tools-organize`, whose page deletion has to remove the
+    /// Consumer: M3 `tools-organize`, whose page deletion has to remove the
     /// page object and its content streams.
     ///
     /// Deleting a number the document does not have, or one already deleted in

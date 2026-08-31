@@ -194,10 +194,11 @@ source IDs, severity, ownership, and required proof.
   the headless/non-viewer path instead of opening the production UI. Build/package
   with `--features shell`, mirror platform prerequisites, and smoke-launch the
   packaged viewer before calling a release usable.
-- **Malformed page-tree correctness (CR-001, owner B1):** a negative root `/Count`
-  is clamped to zero in `content::page_count`, so a malformed file with reachable
-  page kids can be reported as an empty document instead of failing or repairing
-  explicitly. Add a real negative-count fixture and typed error/repair behavior.
+- **Resolved in B1.1 (CR-001):** a negative root `/Count` now returns COS's
+  typed `invalid-page-count` error. Content propagates it, core refuses to open
+  an empty session, and corpus sweeps no longer turn page-count errors into zero
+  pages. The COS, content, and core regressions use a reachable page kid, so the
+  malformed count is the only reason the document is refused.
 - **Stale-tab asynchronous writes (APP-001, owner B4):** export and attachment-save
   completions retain a canvas while a path prompt is pending and do not prove the
   originating tab/document still exists before writing. Close/switch-before-prompt

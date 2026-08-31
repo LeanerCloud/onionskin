@@ -687,6 +687,24 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_negative_root_count_does_not_open_an_empty_session() {
+        use crate::testpdf::{dict, pdf};
+
+        let result = Document::open_bytes(pdf(&[
+            dict("<< /Type /Catalog /Pages 2 0 R >>"),
+            dict("<< /Type /Pages /Kids [3 0 R] /Count -1 >>"),
+            dict("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>"),
+        ]));
+        let Err(error) = result else {
+            panic!("a negative root count must not create a zero-page session");
+        };
+        assert!(
+            error.to_string().contains("page count"),
+            "unexpected error: {error}"
+        );
+    }
+
     fn seed() -> Document {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
         Document::open_path(&path).expect("seed opens")

@@ -31,6 +31,25 @@ const MAX_DEPTH: usize = 64;
 /// boundaries in a balanced tree.
 const PAGES_PER_END: usize = 40;
 
+#[test]
+fn a_negative_root_count_is_not_an_empty_document() {
+    let bytes = common::classic_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count -1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>",
+        ],
+        &[],
+    );
+    let document = Document::open(Box::new(onionskin_cos::BytesSource::new(bytes)))
+        .expect("the malformed page count does not damage the file structure");
+
+    let error = document
+        .page_count()
+        .expect_err("a negative root count must fail explicitly");
+    assert_eq!(error.category(), "invalid-page-count");
+}
+
 /// The indices compared for a file of `pages` pages: the first
 /// [`PAGES_PER_END`] and the last [`PAGES_PER_END`], without repeating any
 /// index when the two ranges meet.

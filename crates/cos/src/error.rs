@@ -56,6 +56,10 @@ pub enum Error {
         index: usize,
         count: usize,
     },
+    /// The page-tree root declares a count that cannot name a number of pages.
+    InvalidPageCount {
+        count: i64,
+    },
 }
 
 impl fmt::Display for Error {
@@ -86,6 +90,9 @@ impl fmt::Display for Error {
             Error::DepthExceeded { detail } => write!(f, "depth limit exceeded: {detail}"),
             Error::NoSuchPage { index, count } => {
                 write!(f, "page {index} requested, the page tree reaches {count}")
+            }
+            Error::InvalidPageCount { count } => {
+                write!(f, "page tree root has invalid page count {count}")
             }
         }
     }
@@ -122,6 +129,7 @@ impl Error {
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",
             Error::NoSuchPage { .. } => "no-such-page",
+            Error::InvalidPageCount { .. } => "invalid-page-count",
         }
     }
 }
