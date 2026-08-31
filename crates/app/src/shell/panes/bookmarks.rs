@@ -5,6 +5,7 @@
 //! still listed, and says it has nowhere to go: dropping it would hide part
 //! of the outline the document has.
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -12,13 +13,17 @@ use gpui::{
 };
 use onionskin_core::{OutlineItem, PageIndex};
 
+use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::{empty_message, error_message, list, PaneAction, ROW_HEIGHT};
+use crate::a11y::State as A11yState;
 
 /// Deeper than this and the indent would leave no room for the title. The
 /// reader already caps its own descent; this only caps the drawing.
 const MAX_INDENT: usize = 8;
 const INDENT: f32 = 12.0;
+/// Said where the list would be when the document has no outline.
+const NO_BOOKMARKS: &str = "This document has no bookmarks.";
 
 /// One drawn row: an item, flattened out of the tree with the depth it sat
 /// at.
@@ -42,6 +47,70 @@ impl BookmarkRow {
             None => MenuAvailability::Disabled("This bookmark names no destination"),
         }
     }
+
+    /// The row's text. A file may leave `/Title` out, and an empty row nobody
+    /// can see is not an empty row, so it gets a mark.
+    fn text(&self) -> String {
+        if self.title.is_empty() {
+            "(untitled)".to_owned()
+        } else {
+            self.title.clone()
+        }
+    }
+
+    /// What is heard after the name.
+    ///
+    /// The nesting is drawn as left padding and nothing else, so a reader
+    /// given the rows as drawn hears a flat list where the document has a
+    /// tree. The level is said, and a row that goes nowhere still says why.
+    fn announcement(&self) -> String {
+        let level = format!("Level {}", self.depth + 1);
+        match self.availability().reason() {
+            Some(reason) => format!("{level}. {reason}"),
+            None => level,
+        }
+    }
+}
+
+/// What the bookmarks pane tells a screen reader.
+pub(super) fn accessible(items: Result<&[OutlineItem], &String>) -> Vec<Element> {
+    let items = match items {
+        Ok(items) => items,
+        Err(message) => {
+            return vec![Element::new(
+                "bookmark-rows-error",
+                Role::Alert,
+                message.clone(),
+            )]
+        }
+    };
+    if items.is_empty() {
+        return vec![Element::new(
+            "bookmark-rows-empty",
+            Role::Label,
+            NO_BOOKMARKS,
+        )];
+    }
+
+    vec![
+        Element::new("bookmark-rows", Role::Tree, "Bookmarks").with_children(
+            rows(items)
+                .into_iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    let described =
+                        Element::new(("bookmark-row", index), Role::TreeItem, row.text())
+                            .with_state(A11yState::enabled(row.availability().is_enabled()))
+                            .with_description(row.announcement());
+                    match row.page {
+                        Some(page) => described
+                            .with_activation(Activation::Pane(PaneAction::GoToPage(page))),
+                        None => described,
+                    }
+                })
+                .collect(),
+        ),
+    ]
 }
 
 /// The outline as rows, parents before their children, which is the order
@@ -73,7 +142,7 @@ pub(super) fn render(
         Err(message) => return error_message(message, theme).into_any_element(),
     };
     if items.is_empty() {
-        return empty_message("This document has no bookmarks.", theme).into_any_element();
+        return empty_message(NO_BOOKMARKS, theme).into_any_element();
     }
 
     let mut body = list("bookmark-rows");
@@ -95,19 +164,13 @@ pub(super) fn render(
             } else {
                 theme.disabled_text
             })
-            .child(if row.title.is_empty() {
-                // A file may leave /Title out. An empty row is what it says,
-                // but an empty row nobody can see is not, so it gets a mark.
-                "(untitled)".to_owned()
-            } else {
-                row.title.clone()
-            });
+            .child(row.text());
         if let (true, Some(page)) = (enabled, page) {
             element = element
                 .cursor_pointer()
                 .hover(move |row| row.bg(theme.subtle_hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.run_pane_action(PaneAction::GoToPage(page), cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::Pane(PaneAction::GoToPage(page)), window, cx);
                 }));
         } else {
             element = element.when_some(availability.reason(), |element, reason| {
@@ -193,5 +256,89 @@ mod tests {
     #[test]
     fn an_empty_outline_produces_no_rows() {
         assert!(rows(&[]).is_empty());
+    }
+
+    /// The nesting is drawn as left padding and nothing else, so a reader
+    /// given the rows as drawn would hear a flat list where the document has
+    /// a tree. The level is said out loud instead.
+    #[test]
+    fn a_bookmarks_nesting_depth_is_announced_rather_than_left_to_the_indent() {
+        let outline = vec![item(
+            "one",
+            Some(0),
+            vec![item("one.one", Some(1), vec![item("one.one.one", Some(2), vec![])])],
+        )];
+
+        let described = accessible(Ok(&outline));
+        let rows = &described[0].children;
+
+        assert_eq!(rows[0].description.as_deref(), Some("Level 1"));
+        assert_eq!(rows[1].description.as_deref(), Some("Level 2"));
+        assert_eq!(rows[2].description.as_deref(), Some("Level 3"));
+    }
+
+    /// A bookmark the file gave no destination is announced, disabled, with
+    /// the reason it goes nowhere, and offers no page to go to.
+    #[test]
+    fn a_bookmark_with_no_destination_is_announced_as_disabled_and_says_why() {
+        let outline = vec![
+            item("nowhere", None, vec![]),
+            item("somewhere", Some(2), vec![]),
+        ];
+
+        let described = accessible(Ok(&outline));
+        let rows = &described[0].children;
+
+        assert!(rows[0].state.disabled);
+        assert_eq!(
+            rows[0].description.as_deref(),
+            Some("Level 1. This bookmark names no destination")
+        );
+        assert_eq!(rows[0].activation, None);
+        assert!(!rows[1].state.disabled);
+        assert_eq!(
+            rows[1].activation,
+            Some(Activation::Pane(PaneAction::GoToPage(2)))
+        );
+    }
+
+    /// One described row per drawn row, in the order they are drawn, with the
+    /// title the row draws. A file that left `/Title` out gets the same mark
+    /// in both places.
+    #[test]
+    fn the_described_rows_are_the_drawn_rows_in_order() {
+        let outline = vec![
+            item("one", Some(0), vec![item("", Some(1), vec![])]),
+            item("two", Some(4), vec![]),
+        ];
+
+        let described = accessible(Ok(&outline));
+        let rows = &described[0].children;
+
+        assert_eq!(described.len(), 1);
+        assert_eq!(described[0].role, Role::Tree);
+        assert_eq!(rows.len(), self::rows(&outline).len());
+        assert_eq!(
+            rows.iter().map(|row| row.label.clone()).collect::<Vec<_>>(),
+            ["one", "(untitled)", "two"]
+        );
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.role, Role::TreeItem);
+            assert_eq!(row.key, gpui::ElementId::from(("bookmark-row", index)));
+        }
+    }
+
+    /// A document with no outline says so, and a reader that failed says what
+    /// went wrong rather than leaving an empty tree that reads as no outline.
+    #[test]
+    fn an_empty_outline_and_a_failed_read_are_announced_differently() {
+        let empty = accessible(Ok(&[]));
+        assert_eq!(empty[0].role, Role::Label);
+        assert_eq!(empty[0].label, NO_BOOKMARKS);
+
+        let failure = "the outline could not be decoded".to_owned();
+        let broken = accessible(Err(&failure));
+        assert_eq!(broken[0].role, Role::Alert);
+        assert_eq!(broken[0].label, failure);
     }
 }

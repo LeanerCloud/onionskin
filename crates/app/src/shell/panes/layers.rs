@@ -10,6 +10,7 @@
 //! group, so the pane not offering one is the only thing that keeps the
 //! file's own statement true.
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
@@ -18,12 +19,17 @@ use gpui::{
 use onionskin_core::Layer;
 
 use super::super::canvas::CanvasError;
+use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::Canvas;
 use super::{
-    empty_message, error_message, list, menu_row, LayerAction, NavigationPanesState, PaneAction,
-    ROW_HEIGHT,
+    empty_message, error_message, list, menu_element, menu_row, LayerAction, NavigationPanesState,
+    PaneAction, ROW_HEIGHT,
 };
+use crate::a11y::State as A11yState;
+
+/// Said where the list would be when the document has no optional content.
+const NO_LAYERS: &str = "This document has no layers.";
 
 /// Parity row 203's menu, counted once for the whole menu. Visibility and the
 /// default-state command are the pane's own and live; properties needs a
@@ -82,6 +88,82 @@ pub(super) fn availability(layer: &Layer) -> MenuAvailability {
     } else {
         MenuAvailability::Enabled
     }
+}
+
+/// The row's text. A file may leave a group unnamed, and a row with nothing
+/// in it is a row nobody can see or hear.
+fn name(layer: &Layer) -> String {
+    if layer.name.is_empty() {
+        "(unnamed layer)".to_owned()
+    } else {
+        layer.name.clone()
+    }
+}
+
+/// What clicking a row asks for: the visibility the group does not have now.
+fn toggle(layer: &Layer) -> Activation {
+    Activation::Pane(PaneAction::Layer(LayerAction::SetVisible {
+        layer: layer.id,
+        visible: !layer.visible,
+    }))
+}
+
+fn run_command(command: LayersCommand) -> Activation {
+    Activation::Pane(PaneAction::Layer(LayerAction::Run(command)))
+}
+
+/// What the layers pane tells a screen reader.
+///
+/// The tick beside a group is the only thing that says whether it is showing,
+/// so it is carried as state rather than glued onto the name: a reader that
+/// heard "☑ Watermark" would be reading the drawing, not the setting.
+pub(super) fn accessible(items: Result<&[Layer], &String>, menu_open: bool) -> Vec<Element> {
+    let items = match items {
+        Ok(items) => items,
+        Err(message) => {
+            return vec![Element::new(
+                "layer-rows-error",
+                Role::Alert,
+                message.clone(),
+            )]
+        }
+    };
+    if items.is_empty() {
+        return vec![Element::new("layer-rows-empty", Role::Label, NO_LAYERS)];
+    }
+
+    let rows = Element::new("layer-rows", Role::List, "Layers").with_children(
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                let availability = availability(layer);
+                let row = Element::new(("layer-row", index), Role::CheckBox, name(layer))
+                    .with_state(A11yState {
+                        toggled: Some(layer.visible),
+                        selected: None,
+                        disabled: !availability.is_enabled(),
+                    })
+                    .with_activation(toggle(layer));
+                match availability.reason() {
+                    Some(reason) => row.with_description(reason),
+                    None => row,
+                }
+            })
+            .collect(),
+    );
+
+    let mut described = vec![rows];
+    if menu_open {
+        described.push(menu_element(
+            "layers-context-menu",
+            "Layers",
+            "layers-menu-entry",
+            LayersCommand::ALL
+                .map(|command| (command.label(), command.availability(), run_command(command))),
+        ));
+    }
+    described
 }
 
 pub(super) fn run(
@@ -172,7 +254,7 @@ pub(super) fn render(
         Err(message) => return error_message(message, theme).into_any_element(),
     };
     if items.is_empty() {
-        return empty_message("This document has no layers.", theme).into_any_element();
+        return empty_message(NO_LAYERS, theme).into_any_element();
     }
 
     let mut body = list("layer-rows").on_mouse_down(
@@ -184,8 +266,8 @@ pub(super) fn render(
     for (index, layer) in items.iter().enumerate() {
         let availability = availability(layer);
         let enabled = availability.is_enabled();
-        let id = layer.id;
         let visible = layer.visible;
+        let activation = toggle(layer);
         let mut row = div()
             .id(("layer-row", index))
             .min_h(px(ROW_HEIGHT))
@@ -200,23 +282,13 @@ pub(super) fn render(
                 theme.disabled_text
             })
             .child(if visible { "☑" } else { "☐" })
-            .child(if layer.name.is_empty() {
-                "(unnamed layer)".to_owned()
-            } else {
-                layer.name.clone()
-            });
+            .child(name(layer));
         if enabled {
             row = row
                 .cursor_pointer()
                 .hover(move |row| row.bg(theme.subtle_hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.run_pane_action(
-                        PaneAction::Layer(LayerAction::SetVisible {
-                            layer: id,
-                            visible: !visible,
-                        }),
-                        cx,
-                    );
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(activation.clone(), window, cx);
                 }));
         } else {
             row = row.when_some(availability.reason(), |row, reason| {
@@ -250,11 +322,9 @@ pub(super) fn render_menu(
             index,
             command.label(),
             command.availability(),
+            run_command(command),
             theme,
             cx,
-            move |frame, cx| {
-                frame.run_pane_action(PaneAction::Layer(LayerAction::Run(command)), cx);
-            },
         ));
     }
     menu
@@ -331,5 +401,162 @@ mod tests {
             let availability = command.availability();
             assert_eq!(availability.is_enabled(), availability.reason().is_none());
         }
+    }
+
+    /// The row draws "☑" or "☐" and nothing else says whether the group is
+    /// showing. A reader hears that as state, and hears a name with no tick
+    /// in it: "☑ Watermark" would be the drawing read aloud, not the setting.
+    #[test]
+    fn a_layer_row_carries_its_tick_as_state_rather_than_in_its_name() {
+        let items = [
+            layer("Watermark", true, false),
+            layer("Background", false, false),
+        ];
+
+        let described = accessible(Ok(&items), false);
+        let rows = &described[0].children;
+
+        assert_eq!(rows[0].label, "Watermark");
+        assert_eq!(rows[0].state.toggled, Some(true));
+        assert_eq!(rows[1].label, "Background");
+        assert_eq!(rows[1].state.toggled, Some(false));
+        for row in rows {
+            assert_eq!(row.role, Role::CheckBox);
+            assert!(!row.label.contains('☑'), "said {:?}", row.label);
+            assert!(!row.label.contains('☐'), "said {:?}", row.label);
+        }
+    }
+
+    /// A group the document locked is announced as unusable and says whose
+    /// decision that was. Announcing it as an ordinary checkbox would offer a
+    /// toggle the renderer must not honour.
+    #[test]
+    fn a_locked_layer_is_announced_as_disabled_and_says_why() {
+        let items = [
+            layer("Watermark", true, true),
+            layer("Background", true, false),
+        ];
+
+        let described = accessible(Ok(&items), false);
+        let rows = &described[0].children;
+
+        assert!(rows[0].state.disabled);
+        assert_eq!(
+            rows[0].description.as_deref(),
+            Some("The document locks this layer's visibility")
+        );
+        assert!(!rows[1].state.disabled);
+        assert_eq!(rows[1].description, None);
+    }
+
+    /// The click listener and the description read `toggle` from the same
+    /// table, so a screen-reader press cannot ask for a visibility the mouse
+    /// would not.
+    #[test]
+    fn every_described_row_asks_for_the_visibility_it_does_not_have() {
+        let items = [
+            layer("Watermark", true, false),
+            layer("Background", false, false),
+        ];
+
+        let described = accessible(Ok(&items), false);
+        let rows = &described[0].children;
+
+        assert_eq!(rows[0].activation.as_ref(), Some(&toggle(&items[0])));
+        assert_eq!(
+            rows[0].activation,
+            Some(Activation::Pane(PaneAction::Layer(
+                LayerAction::SetVisible {
+                    layer: items[0].id,
+                    visible: false,
+                }
+            )))
+        );
+        assert_eq!(
+            rows[1].activation,
+            Some(Activation::Pane(PaneAction::Layer(
+                LayerAction::SetVisible {
+                    layer: items[1].id,
+                    visible: true,
+                }
+            )))
+        );
+    }
+
+    /// One described row per drawn row, in the order they are drawn, because
+    /// a description that dropped or reordered one would announce a different
+    /// list from the one on screen.
+    #[test]
+    fn the_described_rows_are_the_drawn_rows_in_order() {
+        let items = [
+            layer("First", true, false),
+            layer("Second", false, true),
+            layer("", true, false),
+        ];
+
+        let described = accessible(Ok(&items), false);
+        let rows = &described[0].children;
+
+        assert_eq!(described.len(), 1, "no menu is open");
+        assert_eq!(described[0].role, Role::List);
+        assert_eq!(rows.len(), items.len());
+        assert_eq!(
+            rows.iter().map(|row| row.label.clone()).collect::<Vec<_>>(),
+            ["First", "Second", "(unnamed layer)"]
+        );
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.key, gpui::ElementId::from(("layer-row", index)));
+        }
+    }
+
+    /// An entry that cannot run yet is announced, disabled, with the reason
+    /// the menu draws beside it. Leaving it out would tell a reader the pane
+    /// has no such command.
+    #[test]
+    fn a_disabled_menu_entry_is_announced_with_the_reason_it_is_off() {
+        let described = accessible(Ok(&[layer("Background", true, false)]), true);
+
+        let menu = described
+            .iter()
+            .find(|element| element.role == Role::Menu)
+            .expect("an open menu is described");
+        assert_eq!(menu.children.len(), LayersCommand::ALL.len());
+        for (entry, command) in menu.children.iter().zip(LayersCommand::ALL) {
+            assert_eq!(entry.label, command.label());
+            assert_eq!(entry.activation, Some(run_command(command)));
+            assert_eq!(entry.state.disabled, !command.availability().is_enabled());
+            assert_eq!(
+                entry.description.as_deref(),
+                command.availability().reason()
+            );
+        }
+        let properties = &menu.children[0];
+        assert!(properties.state.disabled);
+        assert_eq!(
+            properties.description.as_deref(),
+            Some("Available in M3 with the properties dialog")
+        );
+    }
+
+    /// A closed menu is not described, so a reader is not offered a menu that
+    /// is not on screen.
+    #[test]
+    fn a_closed_menu_is_not_described() {
+        let described = accessible(Ok(&[layer("Background", true, false)]), false);
+
+        assert!(described.iter().all(|element| element.role != Role::Menu));
+    }
+
+    /// A reader that failed is said out loud rather than leaving the pane
+    /// silent, which would report a document with layers as one without.
+    #[test]
+    fn a_reader_failure_is_announced_instead_of_an_empty_list() {
+        let failure = "the layer tree could not be decoded".to_owned();
+
+        let described = accessible(Err(&failure), false);
+
+        assert_eq!(described.len(), 1);
+        assert_eq!(described[0].role, Role::Alert);
+        assert_eq!(described[0].label, failure);
     }
 }

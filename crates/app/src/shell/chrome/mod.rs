@@ -1,3 +1,4 @@
+pub(in crate::shell) mod accessible;
 mod commands;
 mod global_bar;
 mod page_controls;
@@ -8,6 +9,7 @@ mod tabs;
 mod theme;
 mod tool_search;
 
+pub(in crate::shell) use accessible::install_keybindings as install_a11y_keybindings;
 pub(in crate::shell) use commands::{command_defaults, command_for_id};
 pub(in crate::shell) use global_bar::install_native_menus;
 pub(in crate::shell) use global_bar::{MenuAvailability, MenuState, RegistryFacts, RunCommand};

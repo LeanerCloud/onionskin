@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, img, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
@@ -19,9 +20,11 @@ use gpui::{
 use onionskin_core::PageIndex;
 
 use super::super::canvas::{raster_image, CanvasError};
+use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::Canvas;
-use super::{empty_message, menu_row, NavigationPanesState, PaneAction};
+use super::{empty_message, menu_element, menu_row, NavigationPanesState, PaneAction};
+use crate::a11y::State as A11yState;
 
 /// Acrobat's Reduce and Enlarge Page Thumbnails walk a fixed set of sizes.
 /// Each is the render zoom and the row height that holds it: a US Letter
@@ -378,6 +381,81 @@ fn page_count(canvas: Option<&Entity<Canvas>>, cx: &Context<ShellFrame>) -> usiz
     canvas.map_or(0, |canvas| canvas.read(cx).model.viewport().page_count())
 }
 
+/// What running a menu entry asks for. One table for the entry's click
+/// listener and for what the entry is announced as doing.
+fn run_command(command: ThumbnailsCommand) -> Activation {
+    Activation::Pane(PaneAction::Thumbnail(ThumbnailAction::Run(command)))
+}
+
+/// What the thumbnails pane tells a screen reader.
+///
+/// A row is a picture with a page number under it, so a reader given the row
+/// as drawn hears a bare number or nothing at all. The name says which page.
+pub(super) fn accessible(
+    state: &NavigationPanesState,
+    canvas: Option<&Entity<Canvas>>,
+    cx: &Context<ShellFrame>,
+) -> Vec<Element> {
+    described(
+        &state.thumbnails,
+        state.body_height,
+        page_count(canvas, cx),
+        canvas.map(|canvas| canvas.read(cx).model.viewport().current_page()),
+    )
+}
+
+/// The description, given what the pane would draw at this height over this
+/// many pages.
+///
+/// Split from the canvas it usually reads so the rows can be checked against
+/// a band without a window: which rows are described, and what each one says,
+/// is the part that can be wrong.
+fn described(
+    thumbnails: &ThumbnailsState,
+    height: f32,
+    page_count: usize,
+    current: Option<PageIndex>,
+) -> Vec<Element> {
+    if page_count == 0 {
+        return vec![Element::new(
+            "thumbnail-rows-empty",
+            Role::Label,
+            super::NO_DOCUMENT,
+        )];
+    }
+    let rows = Element::new("thumbnail-rows", Role::List, "Page Thumbnails").with_children(
+        thumbnails
+            .visible_rows(height, page_count)
+            .map(|page| {
+                Element::new(
+                    ("thumbnail-row", page),
+                    Role::ListItem,
+                    format!("Page {}", page + 1),
+                )
+                .with_state(A11yState::selected(current == Some(page)))
+                .with_activation(Activation::Pane(PaneAction::GoToPage(page)))
+            })
+            .collect(),
+    );
+
+    let mut described = vec![rows];
+    if thumbnails.menu.is_some() {
+        described.push(menu_element(
+            "thumbnail-context-menu",
+            "Page Thumbnails",
+            "thumbnail-menu-entry",
+            ThumbnailsCommand::ALL.map(|command| {
+                (
+                    command.label(),
+                    command.availability(thumbnails),
+                    run_command(command),
+                )
+            }),
+        ));
+    }
+    described
+}
+
 pub(super) fn render(
     state: &NavigationPanesState,
     canvas: Option<&Entity<Canvas>>,
@@ -389,7 +467,7 @@ pub(super) fn render(
     if page_count == 0 {
         return div()
             .flex_1()
-            .child(empty_message("No document is open.", theme))
+            .child(empty_message(super::NO_DOCUMENT, theme))
             .into_any_element();
     }
     let current = canvas.map(|canvas| canvas.read(cx).model.viewport().current_page());
@@ -456,8 +534,8 @@ pub(super) fn render(
                 .cursor_pointer()
                 .when(current == Some(page), |row| row.bg(theme.selected))
                 .hover(move |row| row.bg(theme.subtle_hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.run_pane_action(PaneAction::GoToPage(page), cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::Pane(PaneAction::GoToPage(page)), window, cx);
                 }))
                 .child(match picture {
                     Some(picture) => img(picture.image)
@@ -518,11 +596,9 @@ fn render_menu(
             index,
             command.label(),
             command.availability(state),
+            run_command(command),
             theme,
             cx,
-            move |frame, cx| {
-                frame.run_pane_action(PaneAction::Thumbnail(ThumbnailAction::Run(command)), cx);
-            },
         ));
     }
     menu
@@ -731,6 +807,100 @@ mod tests {
         // that dropped by key order would have taken page 0.
         assert!(!pane.images.contains_key(&1_240), "the furthest page went");
         assert!(pane.images.contains_key(&0), "the nearer end stayed");
+    }
+
+    /// The rows described are the rows drawn, in order, and each one says
+    /// which page it is. The row draws a picture with a bare number under it,
+    /// which a reader would announce as a number or as nothing at all.
+    #[test]
+    fn every_described_row_is_a_drawn_row_and_says_which_page_it_is() {
+        let pane = state(DEFAULT_SIZE, 0.0);
+        let band = pane.visible_rows(700.0, 1_000);
+
+        let described = described(&pane, 700.0, 1_000, Some(2));
+        let rows = &described[0].children;
+
+        assert_eq!(described.len(), 1, "no menu is open");
+        assert_eq!(described[0].role, Role::List);
+        assert_eq!(rows.len(), band.len());
+        for (row, page) in rows.iter().zip(band) {
+            assert_eq!(row.key, gpui::ElementId::from(("thumbnail-row", page)));
+            assert_eq!(row.label, format!("Page {}", page + 1));
+            assert_eq!(
+                row.activation,
+                Some(Activation::Pane(PaneAction::GoToPage(page)))
+            );
+            assert_eq!(row.state.selected, Some(page == 2));
+        }
+    }
+
+    /// A scrolled pane describes the band it draws rather than the top of the
+    /// document, so a reader is told about the rows that are on screen.
+    #[test]
+    fn a_scrolled_pane_describes_the_band_it_draws() {
+        let pane = state(DEFAULT_SIZE, 148.0 * 40.0);
+
+        let described = described(&pane, 700.0, 1_000, None);
+        let rows = &described[0].children;
+
+        assert_eq!(rows[0].label, "Page 40", "the band starts at row 39");
+        assert_eq!(rows.len(), pane.visible_rows(700.0, 1_000).len());
+        assert!(rows.iter().all(|row| row.state.selected == Some(false)));
+    }
+
+    /// With no document the pane says so rather than describing an empty list
+    /// of pages.
+    #[test]
+    fn a_pane_with_no_document_says_so_instead_of_describing_no_rows() {
+        let described = described(&state(DEFAULT_SIZE, 0.0), 700.0, 0, None);
+
+        assert_eq!(described.len(), 1);
+        assert_eq!(described[0].role, Role::Label);
+        assert_eq!(described[0].label, super::super::NO_DOCUMENT);
+    }
+
+    /// The open menu is described whole, every entry carrying what it runs
+    /// and every disabled one the reason it is off. A closed menu is not
+    /// described at all.
+    #[test]
+    fn an_open_menu_is_described_whole_and_a_closed_one_is_not() {
+        let mut pane = state(0, 0.0);
+        pane.menu = Some(gpui::Point::new(px(0.0), px(12.0)));
+
+        let open = described(&pane, 700.0, 3, None);
+        let menu = open
+            .iter()
+            .find(|element| element.role == Role::Menu)
+            .expect("an open menu is described");
+
+        assert_eq!(menu.children.len(), ThumbnailsCommand::ALL.len());
+        for (entry, command) in menu.children.iter().zip(ThumbnailsCommand::ALL) {
+            assert_eq!(entry.label, command.label());
+            assert_eq!(entry.activation, Some(run_command(command)));
+            assert_eq!(
+                entry.state.disabled,
+                !command.availability(&pane).is_enabled()
+            );
+            assert_eq!(
+                entry.description.as_deref(),
+                command.availability(&pane).reason()
+            );
+        }
+        let reduce = menu
+            .children
+            .iter()
+            .find(|entry| entry.label == ThumbnailsCommand::ReduceThumbnails.label())
+            .expect("the size commands are listed");
+        assert!(reduce.state.disabled, "the pane is at the smallest size");
+        assert_eq!(
+            reduce.description.as_deref(),
+            Some("Already at the smallest thumbnail size")
+        );
+
+        pane.menu = None;
+        assert!(described(&pane, 700.0, 3, None)
+            .iter()
+            .all(|element| element.role != Role::Menu));
     }
 
     fn thumbnail() -> Thumbnail {

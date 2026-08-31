@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, img, px, Context, InteractiveElement as _, IntoElement, ParentElement as _, RenderImage,
@@ -29,13 +30,20 @@ use gpui::{
 use onionskin_core::{BaseRaster, Document};
 use smallvec::smallvec;
 
+use super::chrome::accessible::{Activation, Element, Rects, Surface};
 use super::chrome::{ShellFrame, ThemeTokens};
+use crate::a11y::State as A11yState;
 use crate::recents::Recents;
 
 /// How wide a thumbnail card's page is, in pixels. The render is done at the
 /// scale that produces this width so the card is not resampling a raster
 /// many times its size.
 const THUMBNAIL_WIDTH: f32 = 132.0;
+
+/// What the Open button says, and what stands in for an empty list. Named here
+/// so the pixels and the node describing them cannot say different things.
+const OPEN_LABEL: &str = "Open File…";
+const EMPTY_MESSAGE: &str = "No documents yet. Open one, and it will be here next time.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::shell) enum HomeView {
@@ -161,10 +169,69 @@ fn image_for(raster: &BaseRaster) -> Thumbnail {
     )])))
 }
 
+/// What Home tells a screen reader.
+///
+/// The recents are a list rather than the flat run of buttons they are drawn
+/// as, so a screen reader can say how many there are and step through them.
+pub(in crate::shell) fn accessible(
+    state: &HomeState,
+    recents: &Recents,
+    home: Option<&Path>,
+    rects: &Rects,
+) -> Element {
+    // The toggles are wrapped rather than left loose: AccessKit gives a tab
+    // its tab-group semantics from its `TabList` parent, and without one they
+    // read as bare radio buttons.
+    let mut views = Element::new("home-views", Role::TabList, "Recents View");
+    for (index, view) in HomeView::ALL.into_iter().enumerate() {
+        views = views.child(
+            Element::new(("home-view", index), Role::Tab, view.label())
+                .with_state(A11yState::selected(state.view() == view))
+                .with_activation(Activation::SetHomeView(view)),
+        );
+    }
+    let mut root = Element::new("home", Role::Main, "Home").child(views);
+    root = root.child(
+        Element::new("home-open", Role::Button, OPEN_LABEL)
+            .with_activation(Activation::OpenFromHome),
+    );
+
+    let thumbnail_view = state.view() == HomeView::Thumbnail;
+    let mut list = Element::new("home-recents", Role::List, "Recents");
+    for (index, recent) in recents.documents().iter().enumerate() {
+        let key = if thumbnail_view {
+            ("home-thumbnail", index)
+        } else {
+            ("home-recent", index)
+        };
+        // A card that could not be rendered shows the reason where the page
+        // would be, so that is what it says instead of the path.
+        let description = match state.thumbnail(&recent.path) {
+            Some(Err(reason)) if thumbnail_view => reason.clone(),
+            _ => recent.display_path(home),
+        };
+        list = list.child(
+            Element::new(key, Role::ListItem, recent.title())
+                .with_description(description)
+                .with_activation(Activation::OpenRecent(index)),
+        );
+    }
+    rects.place(Surface::Home, &mut list);
+
+    root = root.child(list);
+    if recents.is_empty() {
+        // The message is drawn where the rows would be, and stays out of the
+        // list so that no stale rectangle can be paired with it.
+        root = root.child(Element::new("home-empty", Role::Label, EMPTY_MESSAGE));
+    }
+    root
+}
+
 pub(in crate::shell) fn render_home(
     state: &HomeState,
     recents: &Recents,
     home: Option<&Path>,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -180,8 +247,8 @@ pub(in crate::shell) fn render_home(
                 .cursor_pointer()
                 .when(selected, |button| button.bg(theme.selected))
                 .hover(move |button| button.bg(theme.subtle_hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.set_home_view(view, cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::SetHomeView(view), window, cx);
                 }))
                 .child(view.label()),
         );
@@ -204,21 +271,21 @@ pub(in crate::shell) fn render_home(
                     .bg(theme.selected)
                     .hover(move |button| button.bg(theme.hover))
                     .on_click(cx.listener(|frame, _event, window, cx| {
-                        frame.open_from_home(window, cx);
+                        frame.run_activation(Activation::OpenFromHome, window, cx);
                     }))
-                    .child("Open File…"),
+                    .child(OPEN_LABEL),
             ),
         );
 
     let body = if recents.is_empty() {
         div()
             .text_color(theme.secondary_text)
-            .child("No documents yet. Open one, and it will be here next time.")
+            .child(EMPTY_MESSAGE)
             .into_any_element()
     } else {
         match state.view() {
-            HomeView::List => list(recents, home, theme, cx).into_any_element(),
-            HomeView::Thumbnail => thumbnails(state, recents, theme, cx).into_any_element(),
+            HomeView::List => list(recents, home, rects, theme, cx).into_any_element(),
+            HomeView::Thumbnail => thumbnails(state, recents, rects, theme, cx).into_any_element(),
         }
     };
 
@@ -237,10 +304,18 @@ pub(in crate::shell) fn render_home(
 fn list(
     recents: &Recents,
     home: Option<&Path>,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> gpui::Div {
-    let mut rows = div().flex().flex_col().gap_1();
+    let mut rows =
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .on_children_prepainted(move |bounds, window, _cx| {
+                rects.record(Surface::Home, &bounds, window);
+            });
     for (index, recent) in recents.documents().iter().enumerate() {
         rows = rows.child(
             div()
@@ -254,8 +329,8 @@ fn list(
                 .rounded_sm()
                 .cursor_pointer()
                 .hover(move |row| row.bg(theme.selected))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.open_recent(index, cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::OpenRecent(index), window, cx);
                 }))
                 .child(div().flex_none().child(recent.title()))
                 .child(
@@ -274,10 +349,18 @@ fn list(
 fn thumbnails(
     state: &HomeState,
     recents: &Recents,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> gpui::Div {
-    let mut grid = div().flex().flex_wrap().gap_3();
+    let mut grid =
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_3()
+            .on_children_prepainted(move |bounds, window, _cx| {
+                rects.record(Surface::Home, &bounds, window);
+            });
     for (index, recent) in recents.documents().iter().enumerate() {
         let page = match state.thumbnail(&recent.path) {
             Some(Ok(image)) => img(Arc::clone(image))
@@ -309,8 +392,8 @@ fn thumbnails(
                 .cursor_pointer()
                 .bg(theme.raised)
                 .hover(move |card| card.bg(theme.selected))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.open_recent(index, cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::OpenRecent(index), window, cx);
                 }))
                 .child(page)
                 .child(div().text_xs().child(recent.title())),
@@ -413,6 +496,117 @@ mod tests {
             .as_ref()
             .expect_err("the file does not exist");
         assert!(failure.contains("cannot be opened"), "{failure}");
+    }
+
+    /// The row draws the name on the left and the path on the right, and a
+    /// screen reader reaching only one of the two cannot tell two files with
+    /// the same name apart.
+    #[test]
+    fn a_recent_row_announces_both_its_title_and_its_path() {
+        let mut recents = Recents::default();
+        recents
+            .record(&seed("hello.pdf"), UNIX_EPOCH, 10)
+            .expect("the seed path records");
+        let state = HomeState::default();
+
+        let described = accessible(&state, &recents, None, &Rects::default());
+
+        let row = described.find(&("home-recent", 0usize).into()).unwrap();
+        assert_eq!(row.role, Role::ListItem);
+        assert_eq!(row.label, "hello.pdf");
+        assert_eq!(
+            row.description.as_deref(),
+            Some(seed("hello.pdf").display().to_string().as_str())
+        );
+        assert_eq!(row.activation, Some(Activation::OpenRecent(0)));
+    }
+
+    /// The rows are keyed by the view that drew them, so the rectangles that
+    /// view reported after prepaint cannot be paired with the other view's
+    /// nodes.
+    #[test]
+    fn the_described_rows_are_keyed_as_the_view_that_drew_them() {
+        let mut recents = Recents::default();
+        recents
+            .record(&seed("hello.pdf"), UNIX_EPOCH, 10)
+            .expect("the seed path records");
+        let mut state = HomeState::default();
+
+        let listed = accessible(&state, &recents, None, &Rects::default());
+        state.set_view(HomeView::Thumbnail, &recents);
+        let carded = accessible(&state, &recents, None, &Rects::default());
+
+        assert!(listed.find(&("home-recent", 0usize).into()).is_some());
+        assert!(listed.find(&("home-thumbnail", 0usize).into()).is_none());
+        assert!(carded.find(&("home-thumbnail", 0usize).into()).is_some());
+        assert!(carded.find(&("home-recent", 0usize).into()).is_none());
+    }
+
+    /// The card shows the reason where the page would be, so that is what it
+    /// says. Announcing the path instead would leave the failure invisible.
+    #[test]
+    fn a_card_that_could_not_be_rendered_says_why_instead_of_where_it_is() {
+        let mut recents = Recents::default();
+        recents
+            .record(&seed("not-here.pdf"), UNIX_EPOCH, 10)
+            .expect("the path records even though the file is missing");
+        let mut state = HomeState::default();
+        state.set_view(HomeView::Thumbnail, &recents);
+
+        let described = accessible(&state, &recents, None, &Rects::default());
+
+        let description = described
+            .find(&("home-thumbnail", 0usize).into())
+            .unwrap()
+            .description
+            .clone()
+            .expect("the card says something");
+        assert!(description.contains("cannot be opened"), "{description}");
+    }
+
+    /// The toggle shows which view is on with a background colour, which is
+    /// nothing at all to a screen reader.
+    #[test]
+    fn the_view_toggle_carries_which_view_is_showing_as_state() {
+        let recents = Recents::default();
+        let mut state = HomeState::default();
+        state.set_view(HomeView::Thumbnail, &recents);
+
+        let described = accessible(&state, &recents, None, &Rects::default());
+
+        let list = described.find(&("home-view", 0usize).into()).unwrap();
+        let thumbnails = described.find(&("home-view", 1usize).into()).unwrap();
+        assert_eq!(list.label, "List");
+        assert_eq!(list.state.selected, Some(false));
+        assert_eq!(thumbnails.label, "Thumbnails");
+        assert_eq!(thumbnails.state.selected, Some(true));
+        assert_eq!(
+            thumbnails.activation,
+            Some(Activation::SetHomeView(HomeView::Thumbnail))
+        );
+    }
+
+    #[test]
+    fn an_empty_home_says_so_and_still_offers_the_way_to_open_a_document() {
+        let described = accessible(
+            &HomeState::default(),
+            &Recents::default(),
+            None,
+            &Rects::default(),
+        );
+
+        assert_eq!(
+            described.find(&"home-empty".into()).map(|node| &node.label),
+            Some(&EMPTY_MESSAGE.to_owned())
+        );
+        assert!(described
+            .find(&"home-recents".into())
+            .unwrap()
+            .children
+            .is_empty());
+        let open = described.find(&"home-open".into()).unwrap();
+        assert_eq!(open.label, OPEN_LABEL);
+        assert_eq!(open.activation, Some(Activation::OpenFromHome));
     }
 
     /// The list view asks for nothing, so opening the app on Home costs no

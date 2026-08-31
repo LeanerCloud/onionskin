@@ -9,6 +9,7 @@ use gpui::{
     PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
     WindowHandle,
 };
+use accesskit::Role;
 use onionskin_core::{Document, ViewSize};
 use onionskin_plugin_api::{ExportedFile, PageIndex, ToolCapability};
 
@@ -18,8 +19,8 @@ use super::super::context_menu::{
 };
 use super::super::dialog::{render_dialog, ShellDialog};
 use super::super::find_bar::{
-    render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
-    FindPreviousMatch, FindSummary,
+    render_find_bar, Dismiss, FindBarState, FindDirection, FindNextMatch, FindOption,
+    FindPreviousMatch, FindSummary, FIND_INPUT_ID, FIND_PLACEHOLDER,
 };
 use super::super::home::{render_home, HomeState, HomeView};
 use super::super::panes::{self, NavigationPanesState, PaneAction};
@@ -31,17 +32,23 @@ use super::global_bar::{
     RegistryFacts, NO_SNAPSHOT_TOOL,
 };
 use super::page_controls::{
-    parse_page_entry, render_page_controls, PageControlsState, PageEntryError, PAGE_CONTROLS_HEIGHT,
+    self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
+    PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
 };
 use super::quick_actions::{
-    render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
+    self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
 };
-use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
-use super::side_panel::{render_side_panel, SidePanelState};
+use super::accessible::{
+    ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusPrevious,
+    ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
+};
+use super::rail::{self, apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
+use super::side_panel::{self, render_side_panel, SidePanelState};
 use super::theme::{ShellViewAction, ShellViewState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
+use crate::a11y::{Request as A11yRequest, State as A11yState, Step as A11yStep};
 use crate::preferences::{PreferenceCategory, Preferences, ThemePreference};
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
@@ -90,7 +97,7 @@ struct DocumentTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TabCommand {
+pub(in crate::shell) enum TabCommand {
     Close,
     CloseOthers,
     CloseAll,
@@ -244,6 +251,9 @@ pub(in crate::shell) struct ShellFrame {
     dialog: Option<ShellDialog>,
     recent_menu_open: bool,
     home: HomeState,
+    /// The accessibility tree the window publishes, its tab order, and the
+    /// rectangles the last frame measured.
+    a11y: ShellAccessibility,
 }
 
 fn activate_tab<T>(
@@ -289,10 +299,14 @@ impl ShellFrame {
         shell_view_state.set_fullscreen(window.is_fullscreen());
         let theme = shell_view_state.tokens();
         let search_input = cx.new(|cx| SearchInput::new(theme, cx));
-        let find_input =
-            cx.new(|cx| SearchInput::with_placeholder("find-input", "Find in document", theme, cx));
+        // Named from the same constants the accessible description names,
+        // so a field and the node describing it cannot be given different
+        // identities.
+        let find_input = cx.new(|cx| {
+            SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx)
+        });
         let page_input =
-            cx.new(|cx| SearchInput::with_placeholder("page-entry-input", "Page", theme, cx));
+            cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
             frame.search_feedback = None;
             cx.notify();
@@ -352,9 +366,479 @@ impl ShellFrame {
             dialog: None,
             recent_menu_open: false,
             home: HomeState::default(),
+            a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);
+        // The chrome takes keyboard focus at launch. Without it GPUI has no
+        // focus path to dispatch along, so the shell's own keys, Escape
+        // included, would reach nothing until the user clicked a text field.
+        window.focus(frame.a11y.focus_handle());
         frame
+    }
+
+    /// What the whole window tells a screen reader.
+    ///
+    /// Assembled from each surface's own `accessible`, gated by the same
+    /// booleans `render` gates the surfaces by, so the tree never describes
+    /// something that is not on screen. A modal dialog replaces the chrome
+    /// rather than joining it: that is what makes it modal to a screen reader
+    /// as well as to a mouse.
+    fn accessible(&self, window: &Window, cx: &mut Context<Self>) -> A11yElement {
+        let scale = window.scale_factor();
+        let title = self
+            .tabs
+            .active()
+            .map_or("Onionskin", |tab| tab.title());
+        let mut root = A11yElement::new("window", Role::Window, format!("Onionskin, {title}"));
+
+        if let Some(dialog) = self.dialog {
+            return root.child(crate::shell::dialog::accessible(self, dialog, cx));
+        }
+
+        root = root.child(self.accessible_global_bar(cx));
+        if !self.notices.is_empty() {
+            root = root.child(
+                A11yElement::new("notices", Role::List, "Notices").with_children(
+                    self.notices
+                        .iter()
+                        .enumerate()
+                        .map(|(index, notice)| {
+                            A11yElement::new(("notice", index), Role::ListItem, notice.clone())
+                                .child(
+                                    A11yElement::new(
+                                        ("notice-dismiss", index),
+                                        Role::Button,
+                                        "Dismiss",
+                                    )
+                                    .with_activation(Activation::DismissNotice(index)),
+                                )
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        root = root.child(self.accessible_tabs());
+
+        let visibility = self.shell_view_state.visibility();
+        if visibility.rail {
+            let mut described = rail::accessible(&self.rail_entries(cx), self.rail_state.expanded());
+            self.a11y.rects.place(Surface::Rail, &mut described);
+            root = root.child(described);
+        }
+        if visibility.navigation_pane {
+            root = root.child(panes::accessible(
+                &self.navigation,
+                self.tabs.active().map(|tab| &tab.canvas),
+                &self.a11y.rects,
+                cx,
+            ));
+        }
+        if let Some(tab) = self.tabs.active() {
+            let canvas = tab.canvas.clone();
+            let title = tab.title().to_owned();
+            root = root.child(canvas.update(cx, |canvas, _cx| canvas.accessible(&title, scale)));
+            if visibility.quick_actions {
+                let mut described = quick_actions::accessible(
+                    &self.quick_action_entries(cx),
+                    &self.all_quick_action_entries(cx),
+                    &self.quick_actions_state,
+                );
+                self.a11y.rects.place(Surface::QuickActions, &mut described);
+                root = root.child(described);
+            }
+            if self.find.is_open() {
+                let summary = FindSummary::new(
+                    tab.canvas.read(cx).model.search(),
+                    tab.canvas.read(cx).model.viewport().page_count(),
+                );
+                root = root.child(crate::shell::find_bar::accessible(
+                    self.find,
+                    &summary,
+                    self.find_input.read(cx).query(),
+                    &self.a11y.rects,
+                ));
+            }
+            if visibility.page_controls {
+                let mut controls = page_controls::accessible(
+                    PageControlsState::from_view(tab.canvas.read(cx).model.view_state()),
+                    self.page_entry_error.as_ref(),
+                    self.page_input.read(cx).query(),
+                );
+                self.a11y.rects.place(Surface::PageControls, &mut controls);
+                root = root.child(controls);
+            }
+        } else {
+            root = root.child(crate::shell::home::accessible(
+                &self.home,
+                &self.settings.recents,
+                self.settings.paths.home.as_deref(),
+                &self.a11y.rects,
+            ));
+        }
+        if visibility.side_panel {
+            root = root.child(side_panel::accessible(self.side_panel_state));
+        }
+        if self.main_menu_open {
+            root = root.child(self.accessible_main_menu(cx));
+        }
+        if self.recent_menu_open {
+            root = root.child(self.accessible_recent_menu());
+        }
+        if let Some(menu) = self.tab_context_menu {
+            root = root.child(self.accessible_tab_context_menu(menu));
+        }
+        if self.canvas_context_menu.is_some() {
+            root = root.child(self.accessible_canvas_context_menu(cx));
+        }
+        if self.search_panel_visible(cx) {
+            root = root.child(self.accessible_search_results(cx));
+        }
+        root
+    }
+
+    fn accessible_global_bar(&self, cx: &App) -> A11yElement {
+        A11yElement::new("global-bar", Role::Toolbar, "Global Bar")
+            .child(
+                A11yElement::new("main-menu-button", Role::Button, "Main Menu")
+                    .with_state(A11yState::toggled(self.main_menu_open))
+                    .with_activation(Activation::ToggleMainMenu),
+            )
+            .child(
+                self.search_input
+                    .read(cx)
+                    .accessible("Search Tools Or Document", TextField::Search),
+            )
+    }
+
+    fn accessible_tabs(&self) -> A11yElement {
+        A11yElement::new("tab-bar", Role::TabList, "Open Documents").with_children(
+            self.tabs
+                .tabs()
+                .iter()
+                .enumerate()
+                .map(|(index, tab)| {
+                    A11yElement::new(tab_element_id(&tab.source), Role::Tab, tab.title().to_owned())
+                        .with_state(A11yState::selected(self.tabs.active_index() == Some(index)))
+                        .with_activation(Activation::ActivateTab(index))
+                })
+                .collect(),
+        )
+    }
+
+    fn accessible_main_menu(&self, cx: &App) -> A11yElement {
+        let mut rows = Vec::new();
+        // Two counters, because the panel's children are section headings and
+        // entries interleaved while a row's element id counts entries only.
+        // The children are described in the panel's order so the rectangles
+        // it reports line up, and keyed with the entry counter so the node
+        // and the row it describes carry one identity.
+        let mut entry_index = 0_usize;
+        for (section_index, section) in main_menu_schema(self.menu_state(cx))
+            .into_iter()
+            .enumerate()
+        {
+            rows.push(A11yElement::new(
+                ("main-menu-section", section_index),
+                Role::Label,
+                section.id.label(),
+            ));
+            for entry in section.entries {
+                // The rendered row spells a ticked entry "✓ {label}". The
+                // node carries the tick as state and the label as a label,
+                // so a screen reader says "checked" rather than reading a
+                // check mark.
+                let mut node = A11yElement::new(
+                    ("main-menu-entry", entry_index),
+                    Role::MenuItemCheckBox,
+                    entry.label,
+                )
+                .with_state(A11yState {
+                    toggled: Some(entry.selected),
+                    selected: None,
+                    disabled: !entry.availability.is_enabled(),
+                })
+                .with_activation(Activation::MainMenu(entry.command));
+                entry_index += 1;
+                if let Some(reason) = entry.availability.reason() {
+                    node = node.with_description(reason);
+                }
+                rows.push(node);
+            }
+        }
+        let mut menu = A11yElement::new("main-menu-panel", Role::Menu, "Main Menu")
+            .with_children(rows);
+        self.a11y.rects.place(Surface::MainMenu, &mut menu);
+        menu
+    }
+
+    fn accessible_recent_menu(&self) -> A11yElement {
+        A11yElement::new("recent-menu", Role::Menu, "Open Recent").with_children(
+            self.settings
+                .recents
+                .documents()
+                .iter()
+                .enumerate()
+                .map(|(index, recent)| {
+                    A11yElement::new(("recent-entry", index), Role::MenuItem, recent.title())
+                        .with_description(
+                            recent.display_path(self.settings.paths.home.as_deref()),
+                        )
+                        .with_activation(Activation::OpenRecent(index))
+                })
+                .collect(),
+        )
+    }
+
+    fn accessible_tab_context_menu(&self, menu: TabContextMenu) -> A11yElement {
+        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len())
+            .expect("context-menu targets are validated when opened");
+        A11yElement::new("tab-context-menu", Role::Menu, "Tab Commands").with_children(
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    let mut node =
+                        A11yElement::new(("tab-context-entry", index), Role::MenuItem, entry.label)
+                            .with_state(A11yState::enabled(entry.availability.is_enabled()))
+                            .with_activation(Activation::TabCommand(entry.command, entry.tab_index));
+                    if let Some(reason) = entry.availability.reason() {
+                        node = node.with_description(reason);
+                    }
+                    node
+                })
+                .collect(),
+        )
+    }
+
+    fn accessible_canvas_context_menu(&self, cx: &App) -> A11yElement {
+        A11yElement::new("canvas-context-menu", Role::Menu, "Page Commands").with_children(
+            self.canvas_context_menu_entries(cx)
+                .into_iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    let mut node = A11yElement::new(
+                        ("canvas-context-entry", index),
+                        Role::MenuItem,
+                        entry.label,
+                    )
+                    .with_state(A11yState::enabled(entry.availability.is_enabled()))
+                    .with_activation(Activation::CanvasContext(entry.command));
+                    if let Some(reason) = entry.availability.reason() {
+                        node = node.with_description(reason);
+                    }
+                    node
+                })
+                .collect(),
+        )
+    }
+
+    fn accessible_search_results(&self, cx: &App) -> A11yElement {
+        let mut panel = A11yElement::new("global-search-results", Role::List, "Search Results")
+            .with_children(
+                self.search_results(cx)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, result)| {
+                        A11yElement::new(
+                            ("global-search-result", index),
+                            Role::ListItem,
+                            result.label(),
+                        )
+                        .with_description(result.detail())
+                        .with_activation(Activation::ChooseSearchResult(result))
+                    })
+                    .collect(),
+            );
+        if let Some(feedback) = self.search_feedback.as_ref() {
+            panel = panel.child(A11yElement::new(
+                "global-search-feedback",
+                Role::Alert,
+                feedback.detail(),
+            ));
+        }
+        panel
+    }
+
+    /// Run what activating a control does, whether the control was clicked,
+    /// reached with Tab and pressed, or pressed by a screen reader.
+    ///
+    /// Every click listener in the chrome routes through here and every
+    /// accessible node carries the value its listener passes, so the three
+    /// paths cannot run different things.
+    pub(in crate::shell) fn run_activation(
+        &mut self,
+        activation: Activation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match activation {
+            Activation::ToggleMainMenu => self.toggle_main_menu(cx),
+            Activation::MainMenu(command) => {
+                if let Err(error) = self.run_main_menu_command(command, window, cx) {
+                    eprintln!("onionskin: {error}");
+                }
+            }
+            Activation::ActivateTab(index) => self.activate(index, cx),
+            Activation::TabCommand(command, index) => {
+                if let Err(error) = self.run_tab_command(command, index, cx) {
+                    eprintln!("onionskin: {error}");
+                }
+            }
+            Activation::CanvasContext(command) => self.run_canvas_context_command(command, cx),
+            Activation::DismissNotice(index) => self.dismiss_notice(index, cx),
+            Activation::OpenRecent(index) => self.open_recent(index, cx),
+            Activation::ChooseSearchResult(result) => {
+                self.choose_search_result(result, window, cx);
+            }
+            Activation::Rail(entry) => self.select_rail_entry(entry, cx),
+            Activation::ToggleRailExpanded => self.toggle_rail_expanded(cx),
+            Activation::QuickAction(entry) => self.select_quick_action(entry, cx),
+            Activation::ToggleQuickActionCustomization => {
+                self.toggle_quick_action_customization(cx);
+            }
+            Activation::ToggleQuickActionVisibility(action) => {
+                self.toggle_quick_action_visibility(action, cx);
+            }
+            Activation::ToggleSidePanel => self.toggle_side_panel(cx),
+            Activation::View(action) => self.run_view_action(action, cx),
+            Activation::SubmitPageEntry => self.submit_page_entry(cx),
+            Activation::Pane(action) => self.run_pane_action(action, cx),
+            Activation::StepFind(direction) => self.step_find(direction, cx),
+            Activation::ApplyFindOption(option) => self.apply_find_option(option, cx),
+            Activation::DismissFindBar => self.dismiss_find_bar(cx),
+            Activation::SetHomeView(view) => self.set_home_view(view, cx),
+            Activation::OpenFromHome => self.open_from_home(window, cx),
+            Activation::ShowPreferences(category) => self.show_preferences(category, cx),
+            Activation::ChangePreference(change) => self.change_preference(change, cx),
+            Activation::CloseDialog => self.close_dialog(cx),
+            Activation::Focus(field) => {
+                let input = match field {
+                    TextField::Search => &self.search_input,
+                    TextField::Find => &self.find_input,
+                    TextField::Page => &self.page_input,
+                };
+                window.focus(&input.read(cx).focus_handle(cx));
+            }
+            // The page keys are bound window-wide, so landing on the
+            // document is about where the ring is, not about a focus handle
+            // of the canvas's own. Returning focus to the chrome is what
+            // makes those keys arrive.
+            Activation::FocusDocument => {
+                window.focus(self.a11y.focus_handle());
+                cx.notify();
+            }
+        }
+    }
+
+    /// Tab: move keyboard focus to the next control in reading order.
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_focus(A11yStep::Next, window, cx);
+    }
+
+    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_focus(A11yStep::Previous, window, cx);
+    }
+
+    /// Moves GPUI's focus as well as the ring's.
+    ///
+    /// Tabbing out of a text field has to take the field's focus with it, or
+    /// the ring lands on a control while the field keeps the keys, and Enter
+    /// runs the field's command rather than the focused control.
+    fn step_focus(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.a11y.step(step) {
+            cx.propagate();
+            return;
+        }
+        window.focus(self.a11y.focus_handle());
+        cx.notify();
+    }
+
+    /// Enter or Space: run what clicking the focused control would run.
+    ///
+    /// Propagates when a text field has focus, so Enter still submits a find
+    /// or a page number instead of being eaten by the focus ring.
+    fn activate_focused(&mut self, _: &ActivateFocused, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_field_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
+        let Some(activation) = self.a11y.focused_activation() else {
+            cx.propagate();
+            return;
+        };
+        self.run_activation(activation, window, cx);
+    }
+
+    fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
+        [&self.search_input, &self.find_input, &self.page_input]
+            .into_iter()
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    /// Run what a screen reader asked for.
+    ///
+    /// Drained on the frame after the request arrives: the AccessKit handler
+    /// runs inside an `NSAccessibility` message, with no `App` in reach, so
+    /// it can only record what was asked.
+    fn run_accessibility_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (key, request) in self.a11y.take_requests() {
+            match request {
+                A11yRequest::Focus => {
+                    if self.a11y.focus_key(&key) {
+                        cx.notify();
+                    }
+                }
+                A11yRequest::Activate => {
+                    if let Some(activation) = self.a11y.activation_for(&key) {
+                        self.run_activation(activation, window, cx);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Escape: close the topmost thing that is open.
+    ///
+    /// In the order a user would expect to peel them off, and propagating
+    /// when nothing is open so the keystroke is not swallowed.
+    pub(in crate::shell) fn dismiss_overlay(
+        &mut self,
+        _: &Dismiss,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // In the order the frame stacks them, topmost first, so Escape always
+        // closes the thing the user is looking at.
+        if self.dialog.is_some() {
+            self.close_dialog(cx);
+            return;
+        }
+        // The panel is open because the search field has something in it, so
+        // emptying the field is what closes it. It never shows at the same
+        // time as a menu, so where it sits relative to them does not matter.
+        if self.search_panel_visible(cx) {
+            self.search_input
+                .update(cx, |input, cx| input.set_query("", cx));
+            cx.notify();
+            return;
+        }
+        if self.tab_context_menu.is_some() || self.canvas_context_menu.is_some() {
+            self.tab_context_menu = None;
+            self.canvas_context_menu = None;
+            cx.notify();
+            return;
+        }
+        if self.main_menu_open || self.recent_menu_open {
+            self.main_menu_open = false;
+            self.recent_menu_open = false;
+            cx.notify();
+            return;
+        }
+        if self.find.is_open() {
+            self.dismiss_find_bar(cx);
+            return;
+        }
+        cx.propagate();
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1136,19 +1620,6 @@ impl ShellFrame {
 
     /// Escape is bound window-wide so it closes the bar from wherever focus
     /// sits, which means a closed bar has to hand the key back.
-    pub(in crate::shell) fn close_find_bar(
-        &mut self,
-        _: &CloseFindBar,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.find.is_open() {
-            cx.propagate();
-            return;
-        }
-        self.dismiss_find_bar(cx);
-    }
-
     pub(in crate::shell) fn find_next_match(
         &mut self,
         _: &FindNextMatch,
@@ -1778,7 +2249,11 @@ impl ShellFrame {
                     .cursor_pointer()
                     .hover(move |row| row.bg(theme.selected))
                     .on_click(cx.listener(move |frame, _event, window, cx| {
-                        frame.choose_search_result(selection.clone(), window, cx);
+                        frame.run_activation(
+                            Activation::ChooseSearchResult(selection.clone()),
+                            window,
+                            cx,
+                        );
                     }))
                     .child(result.label())
                     .child(
@@ -1809,7 +2284,11 @@ impl ShellFrame {
     fn render_main_menu(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.shell_view_state.tokens();
         let max_height = (window.viewport_size().height - px(GLOBAL_BAR_HEIGHT + 8.0)).max(px(0.0));
+        let rects = self.a11y.rects.clone();
         let mut panel = div()
+            .on_children_prepainted(move |bounds, window, _cx| {
+                rects.record(Surface::MainMenu, &bounds, window);
+            })
             .id("main-menu-panel")
             .absolute()
             .top(px(GLOBAL_BAR_HEIGHT))
@@ -1858,10 +2337,7 @@ impl ShellFrame {
                         })
                         .on_click(cx.listener(move |frame, _event, window, cx| {
                             if enabled {
-                                if let Err(error) = frame.run_main_menu_command(command, window, cx)
-                                {
-                                    eprintln!("onionskin: {error}");
-                                }
+                                frame.run_activation(Activation::MainMenu(command), window, cx);
                             }
                         }))
                         .child(div().flex_none().child(if entry.selected {
@@ -1932,11 +2408,13 @@ impl ShellFrame {
                         row.cursor_pointer()
                             .hover(move |row| row.bg(theme.selected))
                     })
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
                         if enabled {
-                            if let Err(error) = frame.run_tab_command(command, tab_index, cx) {
-                                eprintln!("onionskin: {error}");
-                            }
+                            frame.run_activation(
+                                Activation::TabCommand(command, tab_index),
+                                window,
+                                cx,
+                            );
                         }
                     }))
                     .child(entry.label)
@@ -2033,6 +2511,7 @@ impl Render for ShellFrame {
             visibility.page_controls,
         );
         self.quick_actions_state.constrain_to(document_bounds.size);
+        let rects = self.a11y.rects.clone();
         let mut tab_bar = div().flex().h(px(TAB_BAR_HEIGHT)).bg(theme.surface);
         for (index, tab) in self.tabs.tabs().iter().enumerate() {
             let active = self.tabs.active_index() == Some(index);
@@ -2047,9 +2526,9 @@ impl Render for ShellFrame {
                     .bg(if active { theme.selected } else { theme.raised })
                     .text_color(theme.text)
                     .on_click(
-                        cx.listener(move |frame, event: &gpui::ClickEvent, _window, cx| {
+                        cx.listener(move |frame, event: &gpui::ClickEvent, window, cx| {
                             if !event.is_right_click() {
-                                frame.activate(index, cx);
+                                frame.run_activation(Activation::ActivateTab(index), window, cx);
                             }
                         }),
                     )
@@ -2070,7 +2549,7 @@ impl Render for ShellFrame {
             .min_h_0()
             .flex()
             .when(visibility.rail, |body| {
-                body.child(render_rail(rail_entries, rail_expanded, theme, cx))
+                body.child(render_rail(rail_entries, rail_expanded, rects.clone(), theme, cx))
             });
         if visibility.navigation_pane {
             // The column is as tall as the body it sits in, which is the one
@@ -2083,6 +2562,7 @@ impl Render for ShellFrame {
                 &mut self.navigation,
                 active_canvas.as_ref(),
                 height,
+                rects.clone(),
                 theme,
                 cx,
             ));
@@ -2098,6 +2578,7 @@ impl Render for ShellFrame {
                 all_quick_action_entries,
                 &self.quick_actions_state,
                 document_bounds.size,
+                rects.clone(),
                 theme,
                 cx,
             );
@@ -2126,7 +2607,7 @@ impl Render for ShellFrame {
                 .child(canvas)
                 .when(visibility.quick_actions, |view| view.child(quick_actions))
                 .when_some(find_summary, |view, summary| {
-                    view.child(render_find_bar(find_state, find_input, &summary, theme, cx))
+                    view.child(render_find_bar(find_state, find_input, &summary, rects.clone(), theme, cx))
                 });
             let document_column = div()
                 .w(document_bounds.size.width)
@@ -2141,6 +2622,7 @@ impl Render for ShellFrame {
                         self.page_input.clone(),
                         self.page_entry_error.as_ref(),
                         document_bounds.size.width,
+                        rects.clone(),
                         theme,
                         cx,
                     ))
@@ -2151,6 +2633,7 @@ impl Render for ShellFrame {
                 &self.home,
                 &self.settings.recents,
                 self.settings.paths.home.as_deref(),
+                rects.clone(),
                 theme,
                 cx,
             ));
@@ -2172,7 +2655,15 @@ impl Render for ShellFrame {
         let mut root = div()
             .size_full()
             .relative()
-            .on_action(cx.listener(Self::close_find_bar))
+            // The chrome has one focus handle, and the ring inside it decides
+            // which control the keys apply to. A text field binds its own,
+            // more specific, key context and keeps the keys it needs.
+            .track_focus(self.a11y.focus_handle())
+            .key_context(SHELL_KEY_CONTEXT)
+            .on_action(cx.listener(Self::dismiss_overlay))
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_previous))
+            .on_action(cx.listener(Self::activate_focused))
             .child(frame);
         if self.main_menu_open
             || self.recent_menu_open
@@ -2208,7 +2699,26 @@ impl Render for ShellFrame {
             root = root.child(self.render_search_results(cx));
         }
         if let Some(dialog) = self.dialog {
-            root = root.child(render_dialog(self, dialog, theme, cx));
+            root = root.child(render_dialog(
+                self,
+                dialog,
+                self.a11y.rects.clone(),
+                theme,
+                cx,
+            ));
+        }
+
+        // Published after the surfaces are built, so the description is of
+        // this frame, and using the rectangles the previous frame measured,
+        // which is the only frame that has any. Everything a screen reader
+        // asked for since then runs here too, because its handler had no
+        // `App` to run it in.
+        let described = self.accessible(window, cx);
+        self.a11y.publish(&described, window);
+        if self.a11y.has_requests() {
+            cx.defer_in(window, |frame, window, cx| {
+                frame.run_accessibility_requests(window, cx);
+            });
         }
         root
     }
@@ -2779,6 +3289,7 @@ mod tests {
         let installed = bindings.clone();
         cx.update(|cx| {
             crate::shell::find_bar::install_keybindings(cx);
+            crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);
             super::super::global_bar::install_native_menus(cx, window, state);
         });
@@ -3407,7 +3918,7 @@ mod tests {
 
         cx.update(|window, app| {
             frame.update(app, |frame, cx| {
-                frame.close_find_bar(&CloseFindBar, window, cx);
+                frame.dismiss_overlay(&Dismiss, window, cx);
             });
         });
         cx.run_until_parked();
@@ -4073,5 +4584,438 @@ mod tests {
                 "the rail dropped the activation error"
             );
         });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn focused_key(
+        window: gpui::WindowHandle<ShellFrame>,
+        cx: &mut TestAppContext,
+    ) -> Option<String> {
+        window
+            .update(cx, |frame, _window, _cx| {
+                frame.a11y.focused().map(ToString::to_string)
+            })
+            .unwrap()
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn current_page(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> usize {
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .active_canvas()
+                    .unwrap()
+                    .read(cx)
+                    .model
+                    .view_state()
+                    .current_page
+            })
+            .unwrap()
+    }
+
+    /// Tab is the whole keyboard story: before P12 the chrome had one focus
+    /// handle and no tab order at all.
+    ///
+    /// Driven with the real keystroke rather than by calling the handler,
+    /// which is how two dead find-bar routes shipped.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn tab_walks_the_chrome_in_reading_order_and_shift_tab_walks_back(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), "tab");
+        cx.run_until_parked();
+        let first = focused_key(window, cx);
+        assert_eq!(first.as_deref(), Some("main-menu-button"));
+
+        cx.simulate_keystrokes(window.into(), "tab");
+        cx.run_until_parked();
+        let second = focused_key(window, cx);
+        assert!(second.is_some());
+        assert_ne!(second, first);
+
+        cx.simulate_keystrokes(window.into(), "shift-tab");
+        cx.run_until_parked();
+        assert_eq!(focused_key(window, cx), first);
+    }
+
+    /// Enter on a focused control runs the same thing a click on it runs.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn enter_on_a_focused_control_runs_what_clicking_it_runs(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+
+        let before = current_page(window, cx);
+        assert!(before > 0, "the fixture opens on the first page");
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.a11y.focus_key(&"previous-page".into()),
+                    "Previous Page is not in the tab order"
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            current_page(window, cx),
+            before - 1,
+            "Enter on Previous Page did not turn the page"
+        );
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn enter_with_nothing_focused_changes_nothing(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        let before = current_page(window, cx);
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        assert_eq!(current_page(window, cx), before);
+    }
+
+    /// Escape peels overlays off one at a time, topmost first. Before P12 the
+    /// only thing it closed was the find bar, and menus were dismissed by
+    /// clicking an invisible layer no keyboard could reach.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn escape_closes_the_menu_first_and_then_the_find_bar(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(None, window, cx);
+                frame.toggle_main_menu(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(!frame.main_menu_open, "escape left the menu open");
+                assert!(frame.find.is_open(), "escape closed two things at once");
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(!frame.find.is_open(), "escape left the find bar open");
+            })
+            .unwrap();
+    }
+
+    /// The global search panel had no keyboard way out: it is open because
+    /// the field has something in it, and only the mouse could empty it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn escape_closes_the_search_panel_before_the_find_bar(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(None, window, cx);
+                frame
+                    .search_input
+                    .update(cx, |input, cx| input.set_query("zoom", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(frame.search_panel_visible(cx), "the panel did not open");
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(!frame.search_panel_visible(cx), "the panel is still open");
+                assert!(frame.find.is_open(), "escape closed two things at once");
+            })
+            .unwrap();
+    }
+
+    /// A dialog had no keyboard way out at all before P12: it closed by
+    /// clicking outside it or by clicking its Close button.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn escape_closes_a_dialog(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.show_preferences(PreferenceCategory::General, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| assert!(frame.dialog.is_none()))
+            .unwrap();
+    }
+
+    /// Tab out of a text field has to take the field's focus with it. Without
+    /// that the ring lands on a control while the field keeps the keys, and
+    /// the user is on something Enter cannot operate with no way back.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn tab_out_of_a_text_field_takes_the_keys_with_it(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        let before = current_page(window, cx);
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), "tab");
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(
+                    !frame.text_field_focused(window, cx),
+                    "tab left the keys with the find field"
+                );
+                assert!(frame.a11y.focus_key(&"previous-page".into()));
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            current_page(window, cx),
+            before - 1,
+            "Enter after tabbing out of the field did not run the focused control"
+        );
+    }
+
+    /// The find field binds its own key context, which has to beat the
+    /// shell's: Enter there finds the next match rather than pressing
+    /// whatever the focus ring is on.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn enter_in_the_find_field_finds_rather_than_pressing_the_focused_control(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        let before = current_page(window, cx);
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(Some("page".to_owned()), window, cx);
+                assert!(frame.a11y.focus_key(&"previous-page".into()));
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            current_page(window, cx),
+            before,
+            "Enter in the find field turned the page"
+        );
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(
+                    frame
+                        .active_canvas()
+                        .unwrap()
+                        .read(cx)
+                        .model
+                        .search()
+                        .current_ordinal()
+                        .is_some(),
+                    "Enter in the find field did not step the search"
+                );
+            })
+            .unwrap();
+    }
+
+    /// A modal dialog replaces the chrome in the tree rather than joining it,
+    /// which is what makes it modal to a screen reader as well as to a mouse.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn an_open_dialog_is_the_only_thing_the_tree_offers(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        let chrome = window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .accessible(window, cx)
+                    .find(&"page-controls".into())
+                    .is_some()
+            })
+            .unwrap();
+        assert!(chrome, "the page controls were not in the tree to begin with");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.show_preferences(PreferenceCategory::General, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                assert!(
+                    tree.find(&"dialog".into()).is_some(),
+                    "the dialog is not in the tree"
+                );
+                assert!(
+                    tree.find(&"page-controls".into()).is_none(),
+                    "the chrome is still reachable behind a modal dialog"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The document is a tab stop of its own, so a keyboard user can land on
+    /// the page rather than tabbing past it, and it announces as a document
+    /// rather than as the group AccessKit's role mapping would otherwise
+    /// leave it as.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_document_is_in_the_tree_and_in_the_tab_order(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let document = tree.find(&"document".into()).expect("no document node");
+                assert_eq!(document.role, Role::Document);
+                assert_eq!(document.role_description, Some("document"));
+                assert!(document.label.contains("hello.pdf"));
+                assert!(document.is_tab_stop());
+                let page = tree.find(&("page", 0usize).into()).expect("no page node");
+                assert_eq!(page.label, "Page 1 of 1");
+                assert_eq!(page.role_description, Some("page"));
+                assert!(page.bounds.is_some(), "the page node carries no rectangle");
+            })
+            .unwrap();
+    }
+
+    /// Every tab stop has to have something to run, or Tab lands somewhere
+    /// Enter cannot leave.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn every_tab_stop_carries_an_activation(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let stops: Vec<&A11yElement> =
+                    tree.walk().filter(|element| element.is_tab_stop()).collect();
+                assert!(stops.len() > 10, "the tab order is {} long", stops.len());
+                for stop in stops {
+                    assert!(
+                        stop.activation.is_some(),
+                        "{} is a tab stop with nothing to run",
+                        stop.key
+                    );
+                }
+            })
+            .unwrap();
+    }
+
+    /// Two nodes sharing a key would share an AccessKit id, and a screen
+    /// reader would lose its place between them.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn no_two_nodes_in_the_published_tree_share_a_key(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let mut keys: Vec<String> =
+                    tree.walk().map(|element| element.key.to_string()).collect();
+                let count = keys.len();
+                keys.sort();
+                keys.dedup();
+                assert_eq!(keys.len(), count, "the tree published a duplicate key");
+            })
+            .unwrap();
+    }
+
+    /// The other half of the tab-order contract: anything the shell says can
+    /// be activated has to be reachable to activate it.
+    ///
+    /// A role missing from `a11y::tree::is_focusable` fails here, which is
+    /// how a whole pane of bookmarks was found carrying activations nothing
+    /// could run.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn everything_with_an_action_is_reachable_or_disabled(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        // Open every pane in turn, so their rows are in the tree to check.
+        for pane in crate::shell::panes::NavigationPane::ALL {
+            window
+                .update(cx, |frame, _window, cx| {
+                    frame.run_pane_action(PaneAction::Select(pane), cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            window
+                .update(cx, |frame, window, cx| {
+                    for element in frame.accessible(window, cx).walk() {
+                        if element.activation.is_none() || element.state.disabled {
+                            continue;
+                        }
+                        assert!(
+                            element.is_tab_stop(),
+                            "{} can be activated but nothing can reach it; its role {:?} is not in is_focusable",
+                            element.key,
+                            element.role
+                        );
+                    }
+                })
+                .unwrap();
+        }
+    }
+
+    /// A node with no name is a node a screen reader announces as its role
+    /// and nothing else.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn nothing_in_the_tree_is_announced_without_a_name(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                for element in frame.accessible(window, cx).walk() {
+                    assert!(
+                        !element.label.trim().is_empty(),
+                        "{} is published with no name",
+                        element.key
+                    );
+                }
+            })
+            .unwrap();
     }
 }

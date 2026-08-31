@@ -12,15 +12,21 @@
 
 use std::path::PathBuf;
 
+use accesskit::Role;
 use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_core::Attachment;
 
+use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::Canvas;
 use super::{empty_message, error_message, list, NavigationPanesState, PaneAction};
+use crate::a11y::State as A11yState;
+
+/// Said where the list would be when the document embeds no files.
+const NO_ATTACHMENTS: &str = "This document has no attachments.";
 
 /// The two per-row commands parity row 195 names at M2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +58,85 @@ impl AttachmentCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum AttachmentAction {
     Save(usize),
+}
+
+/// The element id one row's command button renders with, unique across the
+/// pane so no two buttons are given the same identity.
+fn command_id(index: usize, command: AttachmentCommand) -> (&'static str, usize) {
+    (
+        "attachment-command",
+        index * AttachmentCommand::ALL.len() + command as usize,
+    )
+}
+
+/// What a row's command button runs. Open is listed and does nothing until
+/// M5 brings the trust list, so it has nothing to run.
+fn command_activation(index: usize, command: AttachmentCommand) -> Option<Activation> {
+    match command {
+        AttachmentCommand::Save => Some(Activation::Pane(PaneAction::Attachment(
+            AttachmentAction::Save(index),
+        ))),
+        AttachmentCommand::Open => None,
+    }
+}
+
+/// What the attachments pane tells a screen reader.
+pub(super) fn accessible(items: Result<&[Attachment], &String>) -> Vec<Element> {
+    let items = match items {
+        Ok(items) => items,
+        Err(message) => {
+            return vec![Element::new(
+                "attachment-rows-error",
+                Role::Alert,
+                message.clone(),
+            )]
+        }
+    };
+    if items.is_empty() {
+        return vec![Element::new(
+            "attachment-rows-empty",
+            Role::Label,
+            NO_ATTACHMENTS,
+        )];
+    }
+
+    vec![
+        Element::new("attachment-rows", Role::List, "Attachments").with_children(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, attachment)| {
+                    Element::new(
+                        ("attachment-row", index),
+                        Role::ListItem,
+                        attachment.name.clone(),
+                    )
+                    .with_description(detail(attachment))
+                    .with_children(
+                        AttachmentCommand::ALL
+                            .into_iter()
+                            .map(|command| {
+                                let availability = command.availability();
+                                let mut button = Element::new(
+                                    command_id(index, command),
+                                    Role::Button,
+                                    command.label(),
+                                )
+                                .with_state(A11yState::enabled(availability.is_enabled()));
+                                if let Some(activation) = command_activation(index, command) {
+                                    button = button.with_activation(activation);
+                                }
+                                match availability.reason() {
+                                    Some(reason) => button.with_description(reason),
+                                    None => button,
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ),
+    ]
 }
 
 pub(super) fn run(
@@ -104,7 +189,7 @@ pub(super) fn render(
         Err(message) => return error_message(message, theme).into_any_element(),
     };
     if items.is_empty() {
-        return empty_message("This document has no attachments.", theme).into_any_element();
+        return empty_message(NO_ATTACHMENTS, theme).into_any_element();
     }
 
     let mut body = list("attachment-rows");
@@ -130,10 +215,7 @@ pub(super) fn render(
             let availability = command.availability();
             let enabled = availability.is_enabled();
             let mut button = div()
-                .id((
-                    "attachment-command",
-                    index * AttachmentCommand::ALL.len() + command as usize,
-                ))
+                .id(command_id(index, command))
                 .px_2()
                 .py(px(2.0))
                 .rounded_sm()
@@ -147,14 +229,13 @@ pub(super) fn render(
                 .child(command.label());
             match (enabled, availability.reason()) {
                 (true, _) => {
+                    let activation = command_activation(index, command)
+                        .expect("an enabled command has something to run");
                     button = button
                         .cursor_pointer()
                         .hover(move |button| button.bg(theme.hover))
-                        .on_click(cx.listener(move |frame, _event, _window, cx| {
-                            frame.run_pane_action(
-                                PaneAction::Attachment(AttachmentAction::Save(index)),
-                                cx,
-                            );
+                        .on_click(cx.listener(move |frame, _event, window, cx| {
+                            frame.run_activation(activation.clone(), window, cx);
                         }));
                 }
                 // The reason reads as its own muted line rather than as
@@ -289,5 +370,84 @@ mod tests {
             detail(&attachment("a.bin", None, None)),
             "The document states nothing about this file"
         );
+    }
+
+    /// One described row per drawn row, each carrying the name and the line
+    /// the row draws under it, so a reader hears what the file states about
+    /// the attachment rather than only its name.
+    #[test]
+    fn the_described_rows_are_the_drawn_rows_with_the_detail_line() {
+        let items = [
+            attachment("data.csv", Some(33), Some("text/csv")),
+            attachment("notes.bin", None, None),
+        ];
+
+        let described = accessible(Ok(&items));
+        let rows = &described[0].children;
+
+        assert_eq!(described.len(), 1);
+        assert_eq!(described[0].role, Role::List);
+        assert_eq!(rows.len(), items.len());
+        for (index, (row, item)) in rows.iter().zip(items.iter()).enumerate() {
+            assert_eq!(row.key, gpui::ElementId::from(("attachment-row", index)));
+            assert_eq!(row.label, item.name);
+            assert_eq!(row.description.as_deref(), Some(detail(item).as_str()));
+        }
+    }
+
+    /// Save runs on the row it was drawn beside, and Open is announced as off
+    /// with the reason it waits on M5 rather than being left out of the tree.
+    #[test]
+    fn each_rows_buttons_are_announced_with_the_action_the_row_runs() {
+        let items = [attachment("a.csv", None, None), attachment("b.csv", None, None)];
+
+        let described = accessible(Ok(&items));
+        let rows = &described[0].children;
+
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.children.len(), AttachmentCommand::ALL.len());
+            for (button, command) in row.children.iter().zip(AttachmentCommand::ALL) {
+                assert_eq!(button.role, Role::Button);
+                assert_eq!(button.label, command.label());
+                assert_eq!(button.key, gpui::ElementId::from(command_id(index, command)));
+                assert_eq!(button.state.disabled, !command.availability().is_enabled());
+                assert_eq!(button.description.as_deref(), command.availability().reason());
+            }
+        }
+
+        let second_save = rows[1]
+            .children
+            .iter()
+            .find(|button| button.label == AttachmentCommand::Save.label())
+            .expect("every row offers Save");
+        assert_eq!(
+            second_save.activation,
+            Some(Activation::Pane(PaneAction::Attachment(
+                AttachmentAction::Save(1)
+            ))),
+            "the button saves the attachment it was drawn beside"
+        );
+
+        let open = rows[0]
+            .children
+            .iter()
+            .find(|button| button.label == AttachmentCommand::Open.label())
+            .expect("every row lists Open");
+        assert!(open.state.disabled);
+        assert_eq!(open.activation, None, "a listed command that cannot run yet runs nothing");
+    }
+
+    /// A document with no attachments says so, and a reader that failed says
+    /// what went wrong rather than reading as a document with none.
+    #[test]
+    fn an_empty_list_and_a_failed_read_are_announced_differently() {
+        let empty = accessible(Ok(&[]));
+        assert_eq!(empty[0].role, Role::Label);
+        assert_eq!(empty[0].label, NO_ATTACHMENTS);
+
+        let failure = "the embedded file tree could not be decoded".to_owned();
+        let broken = accessible(Err(&failure));
+        assert_eq!(broken[0].role, Role::Alert);
+        assert_eq!(broken[0].label, failure);
     }
 }

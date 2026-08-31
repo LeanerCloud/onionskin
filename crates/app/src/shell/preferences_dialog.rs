@@ -7,13 +7,16 @@
 //! Page Display decides how the next document opens, Search seeds the find
 //! bar's options.
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
 };
 
+use super::chrome::accessible::{Activation, Element};
 use super::chrome::{ShellFrame, ThemeTokens};
+use crate::a11y::State as A11yState;
 use crate::preferences::{
     layout_label, PreferenceCategory, Preferences, ThemePreference, ZoomPreference,
     MAX_RECENT_DOCUMENTS,
@@ -188,6 +191,57 @@ const MODES: [(&str, MatchMode); 3] = [
     ("All Of The Words", MatchMode::AllWords),
 ];
 
+/// The element id a choice renders with. Built here so the button and the
+/// node describing it cannot be given different identities.
+fn choice_id(row: usize, choice: usize) -> gpui::ElementId {
+    gpui::ElementId::NamedInteger(format!("preference-choice-{row}").into(), choice as u64)
+}
+
+/// What the Preferences body tells a screen reader.
+///
+/// A chosen category and a chosen value are a background colour on screen and
+/// nothing else, so the selected state is the whole point of these nodes.
+pub(in crate::shell) fn accessible(
+    preferences: &Preferences,
+    category: PreferenceCategory,
+) -> Element {
+    let categories = Element::new("preference-categories", Role::TabList, "Categories")
+        .with_children(
+            PreferenceCategory::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    Element::new(("preference-category", index), Role::Tab, entry.label())
+                        .with_state(A11yState::selected(entry == category))
+                        .with_activation(Activation::ShowPreferences(entry))
+                })
+                .collect(),
+        );
+
+    let mut described =
+        Element::new("preferences", Role::Group, category.label()).child(categories);
+    for (index, row) in category_rows(preferences, category).into_iter().enumerate() {
+        described = described.child(
+            Element::new(("preference-row", index), Role::RadioGroup, row.label).with_children(
+                row.choices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(choice_index, choice)| {
+                        Element::new(
+                            choice_id(index, choice_index),
+                            Role::RadioButton,
+                            choice.label,
+                        )
+                        .with_state(A11yState::selected(choice.selected))
+                        .with_activation(Activation::ChangePreference(choice.change))
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    described
+}
+
 pub(in crate::shell) fn render_preferences(
     frame: &ShellFrame,
     category: PreferenceCategory,
@@ -206,8 +260,8 @@ pub(in crate::shell) fn render_preferences(
                 .cursor_pointer()
                 .when(selected, |row| row.bg(theme.selected))
                 .hover(move |row| row.bg(theme.subtle_hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.show_preferences(entry, cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::ShowPreferences(entry), window, cx);
                 }))
                 .child(entry.label()),
         );
@@ -223,18 +277,15 @@ pub(in crate::shell) fn render_preferences(
             let change = choice.change;
             choices = choices.child(
                 div()
-                    .id(gpui::ElementId::NamedInteger(
-                        format!("preference-choice-{index}").into(),
-                        choice_index as u64,
-                    ))
+                    .id(choice_id(index, choice_index))
                     .px_2()
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
                     .when(choice.selected, |button| button.bg(theme.selected))
                     .hover(move |button| button.bg(theme.subtle_hover))
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
-                        frame.change_preference(change, cx);
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                        frame.run_activation(Activation::ChangePreference(change), window, cx);
                     }))
                     .child(choice.label),
             );
@@ -328,5 +379,87 @@ mod tests {
             selected.change,
             PreferenceChange::Theme(ThemePreference::Dark)
         );
+    }
+
+    /// A chosen value is a background colour and nothing else on screen, so
+    /// the state is the only thing that tells a screen reader which one is in
+    /// force.
+    #[test]
+    fn a_preference_choice_carries_the_value_in_force_as_state() {
+        let preferences = Preferences {
+            theme: ThemePreference::Dark,
+            ..Preferences::default()
+        };
+
+        let described = accessible(&preferences, PreferenceCategory::General);
+
+        let row = described.find(&("preference-row", 0usize).into()).unwrap();
+        assert_eq!(row.role, Role::RadioGroup);
+        assert_eq!(row.label, "Display theme");
+        let chosen: Vec<&str> = row
+            .children
+            .iter()
+            .filter(|choice| choice.state.selected == Some(true))
+            .map(|choice| choice.label.as_str())
+            .collect();
+        assert_eq!(chosen, vec![ThemePreference::Dark.label()]);
+        assert!(row
+            .children
+            .iter()
+            .all(|choice| choice.state.selected.is_some()));
+        let dark = row
+            .children
+            .iter()
+            .find(|choice| choice.label == ThemePreference::Dark.label())
+            .unwrap();
+        assert_eq!(
+            dark.activation,
+            Some(Activation::ChangePreference(PreferenceChange::Theme(
+                ThemePreference::Dark
+            )))
+        );
+    }
+
+    /// Every choice is described under the id it renders with, so a screen
+    /// reader pressing one presses the button the mouse would.
+    #[test]
+    fn every_described_choice_is_keyed_as_the_button_it_describes() {
+        let preferences = Preferences::default();
+
+        let described = accessible(&preferences, PreferenceCategory::PageDisplay);
+
+        for (index, row) in category_rows(&preferences, PreferenceCategory::PageDisplay)
+            .into_iter()
+            .enumerate()
+        {
+            for choice_index in 0..row.choices.len() {
+                assert!(
+                    described.find(&choice_id(index, choice_index)).is_some(),
+                    "row {index} choice {choice_index} is not described"
+                );
+            }
+        }
+        assert!(described.find(&choice_id(0, 99)).is_none());
+    }
+
+    #[test]
+    fn the_category_list_says_which_category_is_showing() {
+        let described = accessible(&Preferences::default(), PreferenceCategory::Search);
+
+        let categories = described.find(&"preference-categories".into()).unwrap();
+        assert_eq!(categories.role, Role::TabList);
+        assert_eq!(categories.children.len(), PreferenceCategory::ALL.len());
+        for (index, entry) in PreferenceCategory::ALL.into_iter().enumerate() {
+            let tab = described
+                .find(&("preference-category", index).into())
+                .unwrap();
+            assert_eq!(tab.role, Role::Tab);
+            assert_eq!(tab.label, entry.label());
+            assert_eq!(
+                tab.state.selected,
+                Some(entry == PreferenceCategory::Search)
+            );
+            assert_eq!(tab.activation, Some(Activation::ShowPreferences(entry)));
+        }
     }
 }
