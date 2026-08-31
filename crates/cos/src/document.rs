@@ -25,15 +25,21 @@ use crate::xref::{self, Xref, XrefEntry};
 const TAIL_WINDOW: usize = 2048;
 /// Depth limit for `/Length` chains and page-tree descent.
 const MAX_INDIRECTION: usize = 64;
-/// Nodes one page-tree descent may visit.
+/// Visits a page-tree descent gets on top of one per object in the file.
 ///
-/// It only binds when `/Count` is unusable, because a tree whose counts are
-/// good is walked in a handful of nodes however many pages it has. Without them
-/// the walk degrades to a scan of every leaf before the target, so the budget
-/// has to clear the largest documents anyone ships, which run to six figures of
-/// pages. It is a separate bound from `MAX_INDIRECTION` because depth does not
-/// limit breadth: see the note in `descend_pages`.
-const MAX_PAGE_TREE_NODES: usize = 200_000;
+/// The bound has to terminate a hostile tree without failing an honest one, and
+/// the file's own object count separates them: a walk that never repeats a node
+/// visits each of them once, so a flat 200,000-page tree needs 200,001 visits
+/// out of the 200,002 objects it takes to write one. A tree that costs more
+/// than the file has objects is revisiting, which is what the budget is for -
+/// `seen` is a path set, so a node listed twice under one parent is descended
+/// twice and a tree of those costs 2^depth visits out of a handful of objects.
+///
+/// The constant on top is room for the one honest shape that does revisit, a
+/// `/Kids` array listing the same page object more than once, and it is what
+/// caps the hostile case. It is a separate bound from `MAX_INDIRECTION`
+/// because depth does not limit breadth: see the note in `descend_pages`.
+const PAGE_TREE_VISIT_SLACK: usize = 200_000;
 /// How much of the original a save copies at a time. The copy loop is what
 /// this bounds, and it is the part that scales with the file: a 4 GB document
 /// copies through in the same memory a 4 KB one does. The section a save
@@ -76,15 +82,17 @@ struct Inherited {
 }
 
 /// The mutable state of one page-tree descent: which page is wanted, how many
-/// leaves have gone by, the nodes on the current path, and what is left of the
-/// visit budget. `seen` is a path set rather than a visited set - a node is
-/// removed on the way back out - so a tree that legitimately shares a node
-/// between two branches still walks, while a cycle terminates.
+/// leaves have gone by, the nodes on the current path, and how many nodes the
+/// walk has visited against the budget it was given. `seen` is a path set
+/// rather than a visited set - a node is removed on the way back out - so a
+/// tree that legitimately shares a node between two branches still walks, while
+/// a cycle terminates.
 struct PageWalk {
     target: usize,
     found: usize,
     seen: BTreeSet<u32>,
-    budget: usize,
+    visits: usize,
+    limit: usize,
 }
 
 pub struct Document {
@@ -573,7 +581,8 @@ impl Document {
             target: index,
             found: 0,
             seen: BTreeSet::new(),
-            budget: MAX_PAGE_TREE_NODES,
+            visits: 0,
+            limit: PAGE_TREE_VISIT_SLACK.saturating_add(self.xref.len()),
         };
         match self.descend_pages(root, &Inherited::default(), &mut walk, 0)? {
             Some(page) => Ok(page),
@@ -595,12 +604,12 @@ impl Document {
         // a node listed twice under the same parent is descended twice, and a
         // tree of such nodes costs 2^depth visits while never repeating a node
         // on any one path. The budget is what makes that terminate.
-        let Some(remaining) = walk.budget.checked_sub(1) else {
+        walk.visits += 1;
+        if walk.visits > walk.limit {
             return Err(Error::DepthExceeded {
-                detail: format!("page tree visits more than {MAX_PAGE_TREE_NODES} nodes"),
+                detail: format!("page tree visits more than {} nodes", walk.limit),
             });
-        };
-        walk.budget = remaining;
+        }
         if depth >= MAX_INDIRECTION || !walk.seen.insert(node.number) {
             return Ok(None);
         }

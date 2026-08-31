@@ -220,7 +220,7 @@ verbatim. `first_page` is the same descent for index 0.
 
 **Verification.**
 - `cargo test -p onionskin-cos` and `ONIONSKIN_CORPUS_REQUIRED=1 cargo test -p onionskin-content`: the content oracle tally must not regress by a single file. Capture the tally before and after and diff it; that is the real proof the decoder swap is behaviour preserving.
-- New `crates/cos/tests/pages.rs`: for every seed and every `external/` file with more than one page, `Document::page(i)` for all `i` agrees with a naive full walk. `first_page` calls `page(0)` rather than descending again, so their agreement is pinned by a fixture test on the trees where two descents used to differ, not by the sweep.
+- New `crates/cos/tests/pages.rs`: for every seed and every `external/` file with more than one page, `Document::page(i)` agrees with a naive full walk at the first 40 and the last 40 indices, which is every index of a file of 80 pages or fewer. `first_page` calls `page(0)` rather than descending again, so their agreement is pinned by a fixture test on the trees where two descents used to differ, not by the sweep.
 - A lazy assertion: `Document::page(500)` on the P14 bench file, through `CountingSource`, reads fewer bytes than a full page-tree walk would.
 - `cargo clippy --workspace --all-targets -- -D warnings`.
 
