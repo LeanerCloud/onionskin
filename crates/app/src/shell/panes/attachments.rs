@@ -157,7 +157,16 @@ pub(super) fn render(
                             );
                         }));
                 }
-                (false, Some(reason)) => button = button.child(format!(" — {reason}")),
+                // The reason reads as its own muted line rather than as
+                // more of the button's label.
+                (false, Some(reason)) => {
+                    button = button.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_text)
+                            .child(format!("({reason})")),
+                    );
+                }
                 (false, None) => {}
             }
             actions = actions.child(button);

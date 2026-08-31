@@ -82,6 +82,11 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Layer>> {
         if layers.iter().any(|layer: &Layer| layer.id == id) {
             continue;
         }
+        // A group the renderer cannot be told about is one the pane must not
+        // offer a control for: the toggle would be dropped on its way out.
+        if identifier(id).is_none() {
+            continue;
+        }
         let Some(dict) = doc.get(id.number)?.object.as_dict().cloned() else {
             continue;
         };
@@ -118,18 +123,24 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Layer>> {
 pub(crate) fn overrides(layers: &[Layer]) -> HashMap<ObjectIdentifier, bool> {
     layers
         .iter()
-        .map(|layer| (identifier(layer.id), layer.visible))
+        .filter_map(|layer| Some((identifier(layer.id)?, layer.visible)))
         .collect()
 }
 
 /// A layer's id in the renderer's terms. Both sides name an optional content
 /// group by the object its dictionary lives in, so this is a rename and not a
 /// mapping that could be wrong.
-fn identifier(id: ObjRef) -> ObjectIdentifier {
-    ObjectIdentifier::new(
-        i32::try_from(id.number).unwrap_or(-1),
+///
+/// `None` for an object number the renderer cannot express. Such an object is
+/// beyond what a cross-reference table can address in the first place; what
+/// matters is that it is left out rather than folded onto one sentinel, which
+/// two of them would have shared, and toggling either would then have moved
+/// the other.
+fn identifier(id: ObjRef) -> Option<ObjectIdentifier> {
+    Some(ObjectIdentifier::new(
+        i32::try_from(id.number).ok()?,
         i32::from(id.generation),
-    )
+    ))
 }
 
 /// The object references in an array-valued entry, ignoring anything else it
@@ -258,6 +269,29 @@ mod tests {
         let doc = open(document("<< /Type /Catalog /Pages 2 0 R >>", &[]));
 
         assert!(read(&doc).expect("the layers read").is_empty());
+    }
+
+    /// An object number the renderer has no room for is left out of the map
+    /// rather than shortened to fit. Two of them shortened the same way
+    /// would be one key, and toggling either would have moved the other.
+    #[test]
+    fn a_layer_the_renderer_cannot_name_is_left_out_of_the_map() {
+        let unnameable = |number| Layer {
+            id: ObjRef::new(number, 0),
+            name: "beyond the table".to_owned(),
+            visible: true,
+            locked: false,
+        };
+
+        assert_eq!(identifier(ObjRef::new(u32::MAX, 0)), None);
+        assert_eq!(
+            identifier(ObjRef::new(7, 0)),
+            Some(ObjectIdentifier::new(7, 0))
+        );
+
+        let map = overrides(&[unnameable(u32::MAX), unnameable(u32::MAX - 1)]);
+
+        assert!(map.is_empty(), "neither can be named, so neither is sent");
     }
 
     /// The override map is what the renderer is told. It has to name every

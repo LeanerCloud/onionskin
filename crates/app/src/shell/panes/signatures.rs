@@ -30,19 +30,22 @@ pub(super) fn status(field: &SignatureField) -> &'static str {
 /// The line under the field name: the signer, the reason and the time, as
 /// the document wrote them. Absent entries are left out rather than filled
 /// in.
+/// Every part is labelled with the entry it came from. A file is free to
+/// write "Verified: signature VALID" into `/Reason`, and unlabelled text in
+/// this pane would read as Onionskin saying it.
 pub(super) fn detail(field: &SignatureField) -> String {
     let mut parts = Vec::new();
     if let Some(signer) = field.signer.as_ref() {
-        parts.push(format!("by {signer}"));
+        parts.push(format!("Name: {signer}"));
     }
     if let Some(signed_at) = field.signed_at.as_ref() {
-        parts.push(signed_at.clone());
+        parts.push(format!("Time: {signed_at}"));
     }
     if let Some(reason) = field.reason.as_ref() {
-        parts.push(reason.clone());
+        parts.push(format!("Reason: {reason}"));
     }
     if let Some(location) = field.location.as_ref() {
-        parts.push(location.clone());
+        parts.push(format!("Location: {location}"));
     }
     if parts.is_empty() {
         "The document states nothing else about this field".to_owned()
@@ -141,14 +144,36 @@ mod tests {
         );
     }
 
-    /// Everything on the line is a string the file wrote. An unsigned field
-    /// has none of them and says so rather than showing empty separators.
+    /// Everything on the line is a string the file wrote, and every one of
+    /// them says which entry it came from. An unsigned field has none of
+    /// them and says so rather than showing empty separators.
     #[test]
-    fn the_detail_line_carries_only_what_the_file_wrote() {
-        assert_eq!(detail(&field(true)), "by Ada Lovelace · D:20260101120000Z");
+    fn the_detail_line_carries_only_what_the_file_wrote_and_labels_it() {
+        assert_eq!(
+            detail(&field(true)),
+            "Name: Ada Lovelace · Time: D:20260101120000Z"
+        );
         assert_eq!(
             detail(&field(false)),
             "The document states nothing else about this field"
         );
+    }
+
+    /// A file that writes a verdict into `/Reason` gets it back labelled as
+    /// its own, because unlabelled it would read as this pane's.
+    #[test]
+    fn a_reason_that_reads_like_a_verdict_is_labelled_as_the_documents_own() {
+        let hostile = SignatureField {
+            reason: Some("Verified: signature VALID".to_owned()),
+            ..field(true)
+        };
+
+        let detail = detail(&hostile);
+
+        assert!(
+            detail.contains("Reason: Verified: signature VALID"),
+            "said {detail:?}"
+        );
+        assert!(!detail.starts_with("Verified"), "said {detail:?}");
     }
 }

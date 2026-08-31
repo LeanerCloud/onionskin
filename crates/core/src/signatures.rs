@@ -59,65 +59,101 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<SignatureField>> {
         return Ok(Vec::new());
     };
 
-    let mut found = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut walk = Walk {
+        doc,
+        seen: BTreeSet::new(),
+        found: Vec::new(),
+    };
     for field in fields {
-        walk(doc, &field, "", None, 0, &mut seen, &mut found)?;
+        walk.field(&field, "", None, 0, true)?;
     }
-    Ok(found)
+    Ok(walk.found)
 }
 
-/// One node of the field tree. `inherited` carries `/FT` down, because a
-/// parent may declare the type its kids share.
-fn walk(
-    doc: &CosDocument,
-    field: &Object,
-    prefix: &str,
-    inherited: Option<&[u8]>,
-    depth: usize,
-    seen: &mut BTreeSet<u32>,
-    found: &mut Vec<SignatureField>,
-) -> Result<()> {
-    if depth >= MAX_DEPTH || found.len() >= MAX_FIELDS {
-        return Ok(());
-    }
-    if let Some(reference) = field.as_reference() {
-        if !seen.insert(reference.number) {
+/// The field-tree walk's own state: the document it reads, the objects it
+/// has already been through, and what it has found.
+struct Walk<'a> {
+    doc: &'a CosDocument,
+    seen: BTreeSet<u32>,
+    found: Vec<SignatureField>,
+}
+
+impl Walk<'_> {
+    /// One node of the field tree. `inherited` carries `/FT` down, because a
+    /// parent may declare the type its kids share.
+    fn field(
+        &mut self,
+        field: &Object,
+        prefix: &str,
+        inherited: Option<&[u8]>,
+        depth: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        let doc = self.doc;
+        if depth >= MAX_DEPTH || self.found.len() >= MAX_FIELDS {
             return Ok(());
         }
-    }
-    let field = doc.resolve(field)?;
-    let Some(dict) = field.as_dict().cloned() else {
-        return Ok(());
-    };
+        if let Some(reference) = field.as_reference() {
+            if !self.seen.insert(reference.number) {
+                return Ok(());
+            }
+        }
+        let field = doc.resolve(field)?;
+        let Some(dict) = field.as_dict().cloned() else {
+            return Ok(());
+        };
 
-    let partial = text(doc, &dict, b"T")?;
-    let name = match (prefix.is_empty(), partial) {
-        (_, None) => prefix.to_owned(),
-        (true, Some(partial)) => partial,
-        (false, Some(partial)) => format!("{prefix}.{partial}"),
-    };
-    let owned_type = dict
-        .get(b"FT")
-        .and_then(Object::as_name)
-        .map(|name| name.as_bytes().to_vec());
-    let field_type = owned_type.as_deref().or(inherited);
+        let partial = text(doc, &dict, b"T")?;
+        let name = match (prefix.is_empty(), partial) {
+            (_, None) => prefix.to_owned(),
+            (true, Some(partial)) => partial,
+            (false, Some(partial)) => format!("{prefix}.{partial}"),
+        };
+        let owned_type = dict
+            .get(b"FT")
+            .and_then(Object::as_name)
+            .map(|name| name.as_bytes().to_vec());
+        let field_type = owned_type.as_deref().or(inherited);
 
-    if field_type == Some(b"Sig".as_slice()) {
-        found.push(signature(doc, &dict, name.clone())?);
+        let kids = match dict.get(b"Kids") {
+            Some(kids) => doc
+                .resolve(kids)?
+                .as_array()
+                .map(<[Object]>::to_vec)
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        // Only a terminal field is a signature field, and only a field is: a
+        // node with child fields under it is the branch above them, and the
+        // widget annotations a terminal field carries as kids are appearances
+        // of it rather than fields of their own. A partial name is what tells
+        // the two apart (ISO 32000-2 12.7.4.2); an entry of `/AcroForm
+        // /Fields` is a field whether or not it named itself.
+        let terminal = !kids
+            .iter()
+            .any(|kid| self.is_child_field(kid).unwrap_or(false));
+        let is_field_node = is_root || dict.contains(b"T");
+        if terminal && is_field_node && field_type == Some(b"Sig".as_slice()) {
+            let found = signature(doc, &dict, name.clone())?;
+            self.found.push(found);
+        }
+
+        for kid in kids {
+            self.field(&kid, &name, field_type, depth + 1, false)?;
+        }
+        Ok(())
     }
 
-    let Some(kids) = dict.get(b"Kids") else {
-        return Ok(());
-    };
-    let kids = doc.resolve(kids)?;
-    let Some(kids) = kids.as_array().map(<[Object]>::to_vec) else {
-        return Ok(());
-    };
-    for kid in kids {
-        walk(doc, &kid, &name, field_type, depth + 1, seen, found)?;
+    /// Whether a `/Kids` entry is a child field rather than one of the
+    /// terminal field's own widget annotations. A partial name is what makes
+    /// it one.
+    fn is_child_field(&self, kid: &Object) -> Result<bool> {
+        Ok(self
+            .doc
+            .resolve(kid)?
+            .as_dict()
+            .is_some_and(|kid| kid.contains(b"T")))
     }
-    Ok(())
 }
 
 fn signature(doc: &CosDocument, field: &Dict, name: String) -> Result<SignatureField> {
@@ -213,10 +249,12 @@ mod tests {
         assert_eq!(fields[0].signed_at, None);
     }
 
-    /// `/FT` is inheritable, and the qualified name is built from the parents.
-    /// A reader that only looked at leaf dictionaries would list nothing here.
+    /// `/FT` is inheritable and the qualified name is built from the
+    /// parents, but only the leaf is a field. A reader that listed every
+    /// node would show two branches that are not signature fields beside the
+    /// one that is, both of them "not signed".
     #[test]
-    fn an_inherited_field_type_is_found_under_its_qualified_name() {
+    fn an_inherited_field_type_is_found_on_the_leaf_under_its_qualified_name() {
         let doc = open(document(
             "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
             &[
@@ -232,7 +270,29 @@ mod tests {
             .map(|field| field.name)
             .collect();
 
-        assert_eq!(names, ["form", "form.inner", "form.inner.leaf"]);
+        assert_eq!(names, ["form.inner.leaf"]);
+    }
+
+    /// A terminal field merges its widget annotation into itself, or carries
+    /// several of them as kids without partial names. Those are appearances
+    /// of one field, not fields, so the field is still listed once.
+    #[test]
+    fn a_field_whose_kids_are_widgets_is_still_one_field() {
+        let doc = open(document(
+            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+            &[
+                "<< /T (Approval) /FT /Sig /V 7 0 R /Kids [5 0 R 6 0 R] >>",
+                "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] >>",
+                "<< /Type /Annot /Subtype /Widget /Rect [20 0 30 10] >>",
+                "<< /Type /Sig /Name (Ada Lovelace) >>",
+            ],
+        ));
+
+        let fields = read(&doc).expect("the signature fields read");
+
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "Approval");
+        assert!(fields[0].signed);
     }
 
     /// Only `/FT /Sig` fields belong in this pane. A text field under the
@@ -250,13 +310,16 @@ mod tests {
         assert_eq!(fields[0].name, "Signature");
     }
 
+    /// A `/Kids` chain that points back at an ancestor terminates, and the
+    /// terminal field beside the cycle is still found.
     #[test]
-    fn a_kids_cycle_terminates() {
+    fn a_kids_cycle_terminates_without_losing_the_field_beside_it() {
         let doc = open(document(
             "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
             &[
-                "<< /T (root) /FT /Sig /Kids [5 0 R] >>",
-                "<< /T (child) /Kids [4 0 R] >>",
+                "<< /T (root) /FT /Sig /Kids [5 0 R 6 0 R] >>",
+                "<< /T (leaf) >>",
+                "<< /T (loop) /Kids [4 0 R] >>",
             ],
         ));
 
@@ -266,7 +329,7 @@ mod tests {
             .map(|field| field.name)
             .collect();
 
-        assert_eq!(names, ["root", "root.child"]);
+        assert_eq!(names, ["root.leaf"]);
     }
 
     #[test]
