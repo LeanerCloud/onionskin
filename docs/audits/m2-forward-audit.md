@@ -110,8 +110,8 @@ The entry is retained but marked resolved pending the package review.
 | REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Resolved in Audit Task 2 | B7 | Added and resolved by this audit | All 403 rows are reviewed and the summary totals mechanically match the rows; B7 retains REPO-010 and final acceptance. |
 | REPO-004 | High | `docs/plans/m2-viewer.md:3` at baseline | Resolved in this task | B7 | Added and resolved by this audit | M2 plan header now matches live merge history and open gates. |
 | REPO-005 | High | retained P10/agent branches and worktrees | Preserve, no cleanup | B0 | Added by this audit | Inventory remains reproducible; useful work reconciles additively only. |
-| REPO-006 | Medium | `~/.claude/projects.md` | Confirmed status defect | B7 | Added by this audit | External project registry describes the live Rust viewer state. |
-| REPO-007 | Medium | no root README, project index, or editor config | Partially accepted | B6 | Added by this audit | Add minimal README/project index/editor settings; do not invent a Makefile. |
+| REPO-006 | Medium | `~/.claude/projects.md` | Resolved in Audit Task 3 | B7 | Added and resolved by this audit | External project registry now describes the live Rust viewer and open hardening gates. |
+| REPO-007 | Medium | root `README.md`, `.project-docs/INDEX.md`, `.editorconfig` | Resolved in Audit Task 3 | B6 | Added and resolved by this audit | Minimal build, status, documentation, and editor entry points exist without a Makefile or task runner; B6 retains its separate release and packaging-doc work. |
 | REPO-008 | High | `.github/workflows/ci.yml`; no checked-in policy | Confirmed open | B6 | Added by this audit | Checked-in advisory/license/secret/dependency policy passes with reviewed exceptions. |
 | REPO-009 | High | `corpus/fetch.sh:212-215` | Confirmed open | B1 | Existing corpus entry | Required R2 assets have enforced SHA-256 values. |
 | REPO-010 | High | `PLAN.md:100-102,497`; no private corpus evidence | Confirmed acceptance blocker | B7 | Existing parity screenshot entry | Private reference corpus and first Onionskin comparison are captured and ledgered. |
@@ -232,3 +232,9 @@ shared main target directories, but the filesystem had only 140 MiB available an
 Rust failed with `No space left on device`. No pass is inferred from those failed
 runs; their last green P12/B0 results remain recorded in the corresponding package
 plans, and final acceptance must rerun them after space is available.
+
+Audit Task 3 verified `cargo fmt --all -- --check`, Cargo workspace metadata, every
+new repository documentation link, package-merge ancestry, and the external project
+registry update. The README's workspace, headless, shell-test, and run commands were
+not recompiled in this task because only 137 MiB remained after the earlier ENOSPC
+failures. Their prior package results stay cited, but no fresh pass is inferred.
