@@ -163,7 +163,7 @@ impl FindSummary {
 
     /// A page whose text could not be read is reported here rather than
     /// dropped from the count, so a find that missed something says so.
-    fn failure_label(&self) -> Option<String> {
+    pub(in crate::shell) fn failure_label(&self) -> Option<String> {
         let first = self.first_failure.as_ref()?;
         Some(match self.failed_pages {
             1 => format!("1 page could not be read: {first}"),

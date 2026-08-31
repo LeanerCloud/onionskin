@@ -601,6 +601,10 @@ impl CanvasModel {
     /// see the hit already; only a hit somewhere else is worth the jump, and
     /// the pan onto it then waits for that page to be measured.
     ///
+    /// A hit with no quads, which is what a match on the separator between two
+    /// runs is, takes the same route: it has no bounds, so it goes to its page
+    /// and the pan onto it finds nothing to do.
+    ///
     /// Nothing here records view history. Whether the view ended up somewhere
     /// worth returning to is the caller's question, and only the caller knows
     /// whether the user asked for the move.
@@ -611,12 +615,6 @@ impl CanvasModel {
         };
         let page = hit.page;
         let quads = hit.quads.clone();
-        if quads.is_empty() {
-            // A hit whose glyphs could not be placed still names a page, and
-            // going there beats a Next that only moves the count.
-            self.viewport.go_to_page(page, PageAlignment::Start)?;
-            return Ok(());
-        }
         if let Some(bounds) = self.hit_bounds(page, &quads)? {
             return self.pan_onto(bounds);
         }
@@ -3017,6 +3015,38 @@ mod tests {
         assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT * 4));
     }
 
+    /// A walk keeps the poll loop awake, and the loop's deadline is the render
+    /// worker's. Watching the search with it reported "no answer for [] after
+    /// 30 seconds", stopped the loop, and froze the results mid-stream on any
+    /// document big enough to take that long.
+    #[test]
+    fn a_long_walk_keeps_the_loop_awake_without_tripping_the_render_deadline() {
+        let mut model = search_model();
+        settle_geometry(&mut model);
+        // Nothing is owed by a page worker, which is the state a fully drawn
+        // view sits in while a find walks the rest of the document.
+        model.geometry_requests.clear();
+        model.requests.clear();
+        assert!(!model.has_pending_pages());
+
+        model
+            .start_search("Page", SearchOptions::default())
+            .expect("the search starts");
+        assert!(model.search().is_running());
+        assert!(model.has_pending_work());
+
+        let start = Instant::now();
+        assert!(model.poll_again(start));
+        assert!(
+            model.poll_again(start + PENDING_WORK_TIMEOUT * 4),
+            "the walk still has pages to report"
+        );
+        assert!(
+            model.status().is_none(),
+            "a walk in progress is not a silent render worker"
+        );
+    }
+
     /// `paint_source` and `collect_tiles` used to take the raster's size from
     /// different places for the same `(page, zoom)`: the first from `sources`,
     /// the second from the tile store. The store's `cols` and `rows` come from
@@ -3559,6 +3589,72 @@ mod tests {
         }
     }
 
+    /// A PDF assembled from content streams, for the two states the corpus
+    /// seeds cannot reach: a page tree that promises a page it does not have,
+    /// and a page whose runs sit far enough apart for the flattener to put a
+    /// separator between them.
+    ///
+    /// `crates/core/src/search.rs` and `crates/core/tests/search.rs` build the
+    /// same shape for core's own tests. Neither is visible from another crate,
+    /// and a fixture crate for three call sites is more machinery than the
+    /// duplication costs, so each copy names the others.
+    fn assembled_pdf(streams: &[&str], counted: usize) -> Vec<u8> {
+        let mut objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            Vec::new(), // 2: the page tree, once the kids are numbered
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut kids = Vec::new();
+        for stream in streams {
+            kids.push(format!("{} 0 R", objects.len() + 1));
+            objects.push(
+                format!(
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+                     /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
+                    objects.len() + 2
+                )
+                .into_bytes(),
+            );
+            let mut body = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
+            body.extend_from_slice(stream.as_bytes());
+            body.extend_from_slice(b"\nendstream");
+            objects.push(body);
+        }
+        objects[1] = format!(
+            "<< /Type /Pages /Kids [{}] /Count {counted} >>",
+            kids.join(" ")
+        )
+        .into_bytes();
+
+        let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        let size = objects.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
+        out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    fn model_from(bytes: Vec<u8>) -> CanvasModel {
+        CanvasModel::new(
+            Document::open_bytes(bytes).expect("fixture opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts")
+    }
+
     fn search_model() -> CanvasModel {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
@@ -3676,6 +3772,68 @@ mod tests {
         );
     }
 
+    /// The page the tree promises and does not have fails extraction, and the
+    /// find bar has to name it. The mapping from the search state to what the
+    /// bar renders was the one link in that chain no test crossed.
+    #[test]
+    fn a_page_that_cannot_be_read_reaches_the_find_bar_by_name() {
+        let mut model = model_from(assembled_pdf(
+            &["BT /F1 12 Tf 20 100 Td (alpha) Tj ET"],
+            2, // one kid, and a /Count that claims two
+        ));
+        find(&mut model, "alpha", SearchOptions::default());
+
+        assert_eq!(
+            model.search().len(),
+            1,
+            "the page that is there is searched"
+        );
+        assert_eq!(model.search().failures().len(), 1);
+
+        let summary =
+            crate::shell::find_bar::FindSummary::new(model.search(), model.viewport.page_count());
+        let label = summary
+            .failure_label()
+            .expect("a page that could not be read is reported");
+        assert!(
+            label.contains("page 2"),
+            "the label does not name the page: {label}"
+        );
+    }
+
+    /// A hit whose match is entirely the separator the flattener puts between
+    /// two runs owns no glyphs, so it has no quads to scroll to. It still
+    /// names a page, and going there beats a Next that only moves the count.
+    #[test]
+    fn a_hit_with_no_quads_still_goes_to_its_page() {
+        let mut model = model_from(assembled_pdf(
+            &[
+                "BT /F1 12 Tf 20 100 Td (alpha) Tj ET",
+                "BT /F1 12 Tf 20 150 Td (beta) Tj 0 -40 Td (gamma) Tj ET",
+            ],
+            2,
+        ));
+        settle_geometry(&mut model);
+        model.go_to_page(0).expect("the fixture has a first page");
+        assert_eq!(model.viewport.current_page(), 0);
+
+        // Only the second page has two runs, and only between them is there a
+        // separator to match.
+        find(&mut model, "\n", SearchOptions::default());
+
+        let hit = model.search().current().expect("the separator is a hit");
+        assert_eq!(hit.page, 1);
+        assert!(
+            hit.quads.is_empty(),
+            "a separator belongs to no run, so it has no glyphs"
+        );
+        assert_eq!(
+            model.viewport.current_page(),
+            1,
+            "the reveal left the reader on the page the hit is not drawn on"
+        );
+    }
+
     #[test]
     fn a_closed_find_leaves_no_highlights_behind() {
         let mut model = search_model();
@@ -3774,18 +3932,29 @@ mod tests {
     fn stepping_to_a_hit_is_a_view_to_come_back_from() {
         let mut model = search_model();
         settle_geometry(&mut model);
+        let before_navigating = model.viewport.snapshot();
         model.go_to_page(0).expect("the seed has a first page");
         find(&mut model, "two", SearchOptions::default());
         let on_the_hit = model.viewport.snapshot();
+        assert_ne!(
+            on_the_hit, before_navigating,
+            "the reveal has to land somewhere else for the depth check to mean anything"
+        );
 
         // One hit, so next wraps back onto it and moves nothing.
         assert!(model.select_next_match().unwrap());
         assert_eq!(model.viewport.snapshot(), on_the_hit);
-        assert!(
-            !model.can_next_view(),
-            "a step that moved nothing records nothing"
+        // Depth, not presence: a step that moved nothing recording the view it
+        // did not move from would leave an entry that returns to where the
+        // user already is, and one Previous View would spend itself on it.
+        assert!(model.previous_view().unwrap());
+        assert_eq!(
+            model.viewport.snapshot(),
+            before_navigating,
+            "Previous View landed on an entry the reveal or the step left behind"
         );
 
+        model.go_to_page(0).expect("the seed has a first page");
         find(&mut model, "Page", SearchOptions::default());
         let before_step = model.viewport.snapshot();
         assert!(model.select_next_match().unwrap());
