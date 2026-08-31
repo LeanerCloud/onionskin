@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     canvas as gpui_canvas, div, fill, point, px, size, App, AppContext as _, Application, Bounds,
@@ -196,7 +196,7 @@ impl Canvas {
             let keep_polling = entity
                 .update(cx, |canvas, cx| match canvas.model.update() {
                     Ok(()) => {
-                        let pending = canvas.model.has_pending_work();
+                        let pending = canvas.model.poll_again(Instant::now());
                         if !pending {
                             canvas.polling = false;
                         }

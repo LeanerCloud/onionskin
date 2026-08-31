@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
@@ -21,6 +22,14 @@ use super::input::{
 
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+/// How long the canvas keeps polling a request nothing has answered.
+///
+/// The worker answers a page in milliseconds, and every answer restarts the
+/// clock, so this only expires on a request that will never be answered: a
+/// stopped worker, or a response the canvas dropped. Without it the poll had
+/// no exit but an answer, and a request that never came back left the app
+/// waking every 16 ms for the rest of the process.
+const PENDING_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct CanvasViewState {
@@ -93,6 +102,10 @@ pub enum CanvasError {
     /// the plugin that owns it was compiled out.
     UnknownCodec(&'static str),
     Export(ExportError),
+    WorkerSilent {
+        pages: Vec<PageIndex>,
+        waited: Duration,
+    },
 }
 
 impl fmt::Display for CanvasError {
@@ -121,6 +134,11 @@ impl fmt::Display for CanvasError {
             }
             Self::UnknownCodec(id) => write!(f, "no {id} codec is installed"),
             Self::Export(error) => write!(f, "{error}"),
+            Self::WorkerSilent { pages, waited } => write!(
+                f,
+                "no answer for {pages:?} after {} seconds; the render worker stopped answering",
+                waited.as_secs()
+            ),
         }
     }
 }
@@ -138,7 +156,8 @@ impl std::error::Error for CanvasError {
             | Self::InvalidImageBuffer { .. }
             | Self::InvalidImageCrop { .. }
             | Self::ToolOutOfRange { .. }
-            | Self::UnknownCodec(_) => None,
+            | Self::UnknownCodec(_)
+            | Self::WorkerSilent { .. } => None,
         }
     }
 }
@@ -236,6 +255,12 @@ pub struct CanvasModel {
     canvas_origin: ViewPoint,
     image_cache: TileImageCache,
     status: Option<CanvasStatus>,
+    /// How many responses had been applied when the current wait started, and
+    /// when that was. Only [`CanvasModel::poll_again`] reads it.
+    waiting: Option<(u64, Instant)>,
+    /// Responses applied since the canvas opened. Read only as "did this
+    /// change", which is what separates a slow answer from no answer.
+    responses: u64,
 }
 
 impl CanvasModel {
@@ -278,6 +303,8 @@ impl CanvasModel {
             canvas_origin: ViewPoint::default(),
             image_cache: TileImageCache::default(),
             status: None,
+            waiting: None,
+            responses: 0,
         })
     }
 
@@ -502,6 +529,39 @@ impl CanvasModel {
     pub fn has_pending_work(&self) -> bool {
         !self.geometry_requests.is_empty() || self.has_pending_render()
     }
+
+    /// Whether the poll loop should wake again, given the clock.
+    ///
+    /// False once there is nothing outstanding, and false again once the
+    /// outstanding set has gone [`PENDING_WORK_TIMEOUT`] without a single
+    /// response, which is recorded as a [`CanvasStatus::Error`] naming the
+    /// pages nobody answered. Any response restarts the wait, so a document
+    /// that keeps the worker busy for hours never trips it.
+    pub fn poll_again(&mut self, now: Instant) -> bool {
+        if !self.has_pending_work() {
+            self.waiting = None;
+            return false;
+        }
+        let (responses, since) = *self.waiting.get_or_insert((self.responses, now));
+        if responses != self.responses {
+            self.waiting = Some((self.responses, now));
+            return true;
+        }
+        let waited = now.saturating_duration_since(since);
+        if waited < PENDING_WORK_TIMEOUT {
+            return true;
+        }
+        self.waiting = None;
+        let pages = self
+            .geometry_requests
+            .iter()
+            .copied()
+            .chain(self.requests.keys().copied())
+            .collect();
+        self.record_error(CanvasError::WorkerSilent { pages, waited });
+        false
+    }
+
     pub fn resize(&mut self, origin: ViewPoint, size: ViewSize) -> Result<(), CanvasError> {
         self.canvas_origin = origin;
         if self.viewport.size() != size {
@@ -752,14 +812,25 @@ impl CanvasModel {
         true
     }
 
+    /// Requests geometry for every visible page that has none, and records
+    /// what it waits on.
+    ///
+    /// A page is recorded only when the session says the request went out.
+    /// `false` means the session is already holding one, so either this canvas
+    /// already recorded it or the two disagree; inventing a wait in the second
+    /// case is what left `has_pending_work` true with nothing on the way.
     fn queue_visible_geometry(&mut self) -> Result<usize, CanvasError> {
         let mut queued = 0;
         for placement in self.viewport.visible_pages()? {
-            if !placement.measured && !self.failed_geometry.contains(&placement.page) {
-                if self.document.request_page_geometry(placement.page)? {
-                    queued += 1;
-                }
+            if placement.measured
+                || self.failed_geometry.contains(&placement.page)
+                || self.geometry_requests.contains(&placement.page)
+            {
+                continue;
+            }
+            if self.document.request_page_geometry(placement.page)? {
                 self.geometry_requests.insert(placement.page);
+                queued += 1;
             }
         }
         Ok(queued)
@@ -770,6 +841,7 @@ impl CanvasModel {
         response: PageGeometryResponse,
     ) -> Result<(), CanvasError> {
         self.geometry_requests.remove(&response.page());
+        self.responses += 1;
         match response {
             PageGeometryResponse::Ready(geometry) => {
                 self.failed_geometry.remove(&geometry.index);
@@ -857,6 +929,7 @@ impl CanvasModel {
         if self.requests.get(&request.page) != Some(&request) {
             return false;
         }
+        self.responses += 1;
 
         match response {
             RenderResponse::Placeholder(placeholder) => {
@@ -2023,6 +2096,70 @@ mod tests {
 
         assert!(!model.failed_geometry.contains(&1));
         assert_eq!(model.queue_visible_geometry().unwrap(), 1);
+    }
+
+    /// `request_page_geometry` answers `false` when the session already holds
+    /// a request for that page. Recording a wait anyway means recording one
+    /// this canvas did not issue, and `has_pending_work` then reports work
+    /// that no response will ever clear, which is a 60 Hz poll with no end.
+    #[test]
+    fn only_a_geometry_request_that_went_out_is_waited_on() {
+        let mut model = model();
+        model.viewport.go_to_page(1, PageAlignment::Start).unwrap();
+        assert_eq!(model.queue_visible_geometry().unwrap(), 1);
+        assert!(model.geometry_requests.contains(&1));
+
+        // The two records disagreeing is the state to survive, so make them.
+        model.geometry_requests.clear();
+
+        assert_eq!(model.queue_visible_geometry().unwrap(), 0);
+        assert!(
+            model.geometry_requests.is_empty(),
+            "the canvas is waiting on a request it did not issue"
+        );
+        assert!(!model.has_pending_work());
+    }
+
+    /// The poll loop's only exit used to be an answer, so a request nobody
+    /// answers woke the app every 16 ms for the rest of the process.
+    #[test]
+    fn a_wait_nothing_answers_ends_in_an_error_rather_than_a_permanent_poll() {
+        let mut model = model();
+        model.geometry_requests.insert(1);
+        let start = Instant::now();
+
+        assert!(model.poll_again(start));
+        assert!(model.poll_again(start + PENDING_WORK_TIMEOUT / 2));
+        assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT));
+        assert!(matches!(
+            model.status(),
+            Some(CanvasStatus::Error { page: None, message })
+                if message.contains("[1]") && message.contains("stopped answering")
+        ));
+    }
+
+    /// A worker that keeps answering is not a worker that has stopped, however
+    /// long the queue stays occupied.
+    #[test]
+    fn a_wait_that_keeps_getting_answers_never_times_out() {
+        let mut model = model();
+        let start = Instant::now();
+        for step in 0..4 {
+            model.geometry_requests.insert(step);
+            let now = start + PENDING_WORK_TIMEOUT * step as u32;
+            assert!(model.poll_again(now), "gave up at step {step}");
+            model
+                .apply_geometry_response(PageGeometryResponse::Failed {
+                    page: step,
+                    error: CoreError::NoSuchPage {
+                        page: step,
+                        count: 1,
+                    },
+                })
+                .unwrap();
+        }
+        assert!(!model.has_pending_work());
+        assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT * 4));
     }
 
     /// `paint_source` and `collect_tiles` used to take the raster's size from
