@@ -8,10 +8,11 @@ use std::time::Duration;
 
 use gpui::{
     canvas as gpui_canvas, div, fill, outline, point, px, size, App, AppContext as _, Application,
-    BorderStyle, Bounds, Context, DispatchPhase, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase,
-    Window, WindowBounds, WindowOptions,
+    BorderStyle, Bounds, ClipboardItem, Context, DispatchPhase, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point, Render,
+    ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase, Window, WindowBounds,
+    WindowOptions,
 };
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
@@ -141,6 +142,26 @@ impl Canvas {
                 }
                 Err(error) => self.record_error(error, cx),
             },
+            Err(error) => self.record_error(error, cx),
+        }
+        self.copy_pending_snapshot(cx);
+    }
+
+    /// The snapshot tool raises a request rather than holding a render
+    /// handle, so producing the pixels and reaching the clipboard is the
+    /// shell's half of the contract.
+    ///
+    /// Drained here because a request can only come out of a tool's
+    /// pointer handlers, and every pointer path routes through
+    /// `handle_change`. On the frames that raise nothing this costs one
+    /// `Option::take`.
+    fn copy_pending_snapshot(&mut self, cx: &mut Context<Self>) {
+        match self.model.take_snapshot_png() {
+            Ok(None) => {}
+            Ok(Some(png)) => cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
+                ImageFormat::Png,
+                png,
+            ))),
             Err(error) => self.record_error(error, cx),
         }
     }

@@ -5,9 +5,9 @@ use std::sync::{Arc, Weak};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
-    Document, FitMode, PageAlignment, PageGeometryResponse, PageIndex, PageLayoutMode,
-    PagePlacement, PagePoint, PageQuad, RenderRequest, RenderResponse, ViewHistory, ViewPoint,
-    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    Document, FitMode, GeometryError, PageAlignment, PageGeometry, PageGeometryResponse, PageIndex,
+    PageLayoutMode, PagePlacement, PagePoint, PageQuad, PageRect, RenderRequest, RenderResponse,
+    ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{Overlay, PluginRegistry, PointerInput, ToolCtx};
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
@@ -87,6 +87,14 @@ pub enum CanvasError {
         index: usize,
         count: usize,
     },
+    Geometry(GeometryError),
+    SnapshotUnrendered {
+        page: PageIndex,
+    },
+    SnapshotEmpty {
+        page: PageIndex,
+    },
+    SnapshotEncode(String),
 }
 
 impl fmt::Display for CanvasError {
@@ -110,6 +118,17 @@ impl fmt::Display for CanvasError {
                 f,
                 "tile crop {crop_width}x{crop_height} is outside {width}x{height}"
             ),
+            Self::Geometry(error) => write!(f, "{error}"),
+            Self::SnapshotUnrendered { page } => {
+                write!(
+                    f,
+                    "page {page} is not on screen yet, so it cannot be copied"
+                )
+            }
+            Self::SnapshotEmpty { page } => {
+                write!(f, "the snapshot region on page {page} covers no pixels")
+            }
+            Self::SnapshotEncode(error) => write!(f, "cannot encode the snapshot: {error}"),
             Self::ToolOutOfRange { index, count } => {
                 write!(f, "tool {index} is outside a {count}-tool registry")
             }
@@ -124,11 +143,15 @@ impl std::error::Error for CanvasError {
             Self::Viewport(error) => Some(error),
             Self::Input(error) => Some(error),
             Self::Render(error) => Some(error),
+            Self::Geometry(error) => Some(error),
             Self::EmptyDocument
             | Self::GenerationExhausted
             | Self::InvalidImageBuffer { .. }
             | Self::InvalidImageCrop { .. }
-            | Self::ToolOutOfRange { .. } => None,
+            | Self::ToolOutOfRange { .. }
+            | Self::SnapshotUnrendered { .. }
+            | Self::SnapshotEmpty { .. }
+            | Self::SnapshotEncode(_) => None,
         }
     }
 }
@@ -148,6 +171,12 @@ impl From<ViewportError> for CanvasError {
 impl From<InputError> for CanvasError {
     fn from(error: InputError) -> Self {
         Self::Input(error)
+    }
+}
+
+impl From<GeometryError> for CanvasError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 
@@ -709,6 +738,30 @@ impl CanvasModel {
         Ok(paint)
     }
 
+    /// Fulfil a pending snapshot request, as PNG bytes ready for the
+    /// clipboard, or `Ok(None)` when no tool has raised one.
+    ///
+    /// This crops the page raster the canvas is already painting, at the
+    /// zoom it was rasterized at, and turns it by the rotation it is shown
+    /// under, rather than asking the renderer for the region again: the
+    /// point of a snapshot is the pixels the user drew a marquee around.
+    /// Overlays are painted separately and are not in that raster, so the
+    /// snapshot is the page alone. Acrobat's includes annotations, which is
+    /// a gap to close when there are annotations to include.
+    pub fn take_snapshot_png(&mut self) -> Result<Option<Vec<u8>>, CanvasError> {
+        let Some(request) = self.document.take_snapshot_request() else {
+            return Ok(None);
+        };
+        let page = request.region.page;
+        let (Some(source), Some(geometry)) =
+            (self.sources.get(&page), self.viewport.page_geometry(page))
+        else {
+            return Err(CanvasError::SnapshotUnrendered { page });
+        };
+        let crop = raster_crop(geometry, request.region, source)?;
+        encode_snapshot(source, crop, self.viewport.rotation()).map(Some)
+    }
+
     pub fn record_error(&mut self, error: impl fmt::Display) -> bool {
         let status = CanvasStatus::Error {
             page: None,
@@ -1123,6 +1176,18 @@ struct TileRegion {
     height: u32,
 }
 
+/// A rectangle of raster *pixels*, unlike `TileRegion` next to it whose
+/// `col` and `row` are tile-grid indices that `tile_rect` multiplies by
+/// `TILE_SIZE`. Separate types because the two are otherwise identical
+/// and mixing them up is silent.
+#[derive(Clone, Copy)]
+struct RasterCrop {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
 #[derive(Clone, Copy)]
 struct RasterPaintSource {
     page: PageIndex,
@@ -1254,17 +1319,97 @@ fn atlas_tile_bgra(
 }
 
 fn unpremultiplied_bgra(rgba: &[u8]) -> [u8; 4] {
+    let [red, green, blue, alpha] = unpremultiplied_rgba(rgba);
+    [blue, green, red, alpha]
+}
+
+/// The rasters are premultiplied; PNG is not, and neither is what a paste
+/// target expects.
+fn unpremultiplied_rgba(rgba: &[u8]) -> [u8; 4] {
     let alpha = rgba[3];
     if alpha == 0 {
         return [0, 0, 0, 0];
     }
     let straight = |channel: u8| ((u16::from(channel) * 255 / u16::from(alpha)).min(255)) as u8;
     [
-        straight(rgba[2]),
-        straight(rgba[1]),
         straight(rgba[0]),
+        straight(rgba[1]),
+        straight(rgba[2]),
         alpha,
     ]
+}
+
+/// Where a page-space region lands in a raster's pixels, clipped to it.
+///
+/// The transform is exact but the drag is not, so a corner may sit a
+/// fraction outside the page; the region is rounded outwards first so a
+/// thin selection still covers the pixels it touches.
+fn raster_crop(
+    geometry: &PageGeometry,
+    region: PageRect,
+    source: &BaseRaster,
+) -> Result<RasterCrop, CanvasError> {
+    let quad = geometry.user_to_device(region.into(), source.zoom())?;
+    // `f64::min` and `f64::max` ignore a NaN operand, so a partly non-finite
+    // quad would silently crop from whichever corners survived.
+    if quad
+        .corners
+        .iter()
+        .any(|(x, y)| !x.is_finite() || !y.is_finite())
+    {
+        return Err(CanvasError::SnapshotEmpty { page: region.page });
+    }
+    let (left, right) = device_span(quad.corners.map(|(x, _)| x), source.width());
+    let (top, bottom) = device_span(quad.corners.map(|(_, y)| y), source.height());
+    if right <= left || bottom <= top {
+        return Err(CanvasError::SnapshotEmpty { page: region.page });
+    }
+    Ok(RasterCrop {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
+fn device_span(values: [f64; 4], limit: u32) -> (u32, u32) {
+    let (min, max) = values
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), value| {
+            (min.min(*value), max.max(*value))
+        });
+    let clamp = |value: f64| value.clamp(0.0, f64::from(limit)) as u32;
+    (clamp(min.floor()), clamp(max.ceil()))
+}
+
+/// The cropped region, turned by the view rotation and encoded as PNG: the
+/// one image format gpui's clipboard entry and every paste target agree on.
+fn encode_snapshot(
+    source: &BaseRaster,
+    crop: RasterCrop,
+    rotation: ViewRotation,
+) -> Result<Vec<u8>, CanvasError> {
+    let (width, height) = rotated_size(crop.width, crop.height, rotation);
+    let mut pixels = vec![0; width as usize * height as usize * 4];
+    let rgba = source.rgba();
+    let stride = source.width() as usize;
+    for y in 0..crop.height {
+        for x in 0..crop.width {
+            let read = ((crop.y + y) as usize * stride + (crop.x + x) as usize) * 4;
+            let pixel = unpremultiplied_rgba(&rgba[read..read + 4]);
+            let (dx, dy) = rotate_pixel(x, y, crop.width, crop.height, rotation);
+            let write = (dy as usize * width as usize + dx as usize) * 4;
+            pixels[write..write + 4].copy_from_slice(&pixel);
+        }
+    }
+
+    let image = image::RgbaImage::from_raw(width, height, pixels)
+        .expect("the snapshot buffer is width * height * 4 bytes");
+    let mut png = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|error| CanvasError::SnapshotEncode(error.to_string()))?;
+    Ok(png.into_inner())
 }
 
 fn rotate_pixel(x: u32, y: u32, width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
@@ -1353,7 +1498,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode, PageRect};
+    use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode};
     use onionskin_plugin_api::{ToolCtx, ToolPlugin};
     use onionskin_render::{InterpreterWarning, PageRender, RenderError};
 
@@ -1737,6 +1882,161 @@ mod tests {
             [OverlayPaint::Quads(quads)] => bounding_rect(quads[0]),
             other => panic!("expected one selection overlay, got {other:?}"),
         }
+    }
+
+    /// A model with page zero rendered and painted once, which is what puts
+    /// a raster in `sources` for the snapshot path to crop.
+    fn painted_model(rgba: [u8; 4]) -> CanvasModel {
+        let mut model = model();
+        let request = prepare_request(&mut model);
+        let rendered = raster(&model, request.page, request.zoom, rgba);
+        assert!(model.apply_render_response(raster_response(request, rendered)));
+        model.paint_list().expect("the frame paints");
+        model
+    }
+
+    /// Well inside the seed's 200x100 pt page, and wider than it is tall so
+    /// a quarter turn is visible in the encoded dimensions.
+    fn snapshot_region() -> PageRect {
+        PageRect {
+            page: 0,
+            x0: 20.0,
+            y0: 20.0,
+            x1: 120.0,
+            y1: 60.0,
+        }
+    }
+
+    fn decode(png: &[u8]) -> image::RgbaImage {
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .expect("the snapshot is a PNG")
+            .to_rgba8()
+    }
+
+    #[test]
+    fn a_snapshot_request_crops_the_raster_the_canvas_is_painting() {
+        let mut model = painted_model([128, 0, 0, 128]);
+        model.document.request_snapshot(snapshot_region());
+
+        let png = model
+            .take_snapshot_png()
+            .expect("the snapshot is produced")
+            .expect("a request was pending");
+
+        let source = model.sources.get(&0).expect("page zero is rendered");
+        let geometry = model.viewport.page_geometry(0).unwrap().clone();
+        let expected = raster_crop(&geometry, snapshot_region(), source).unwrap();
+        let decoded = decode(&png);
+        assert_eq!(decoded.dimensions(), (expected.width, expected.height));
+        // The rasters are premultiplied and PNG is not, so a half-opaque
+        // dark red comes back as the colour it was drawn in.
+        assert_eq!(decoded.get_pixel(0, 0).0, [255, 0, 0, 128]);
+    }
+
+    /// Acrobat's snapshot copies the page as it is displayed, so a quarter
+    /// turn has to reach the clipboard as a turned image.
+    #[test]
+    fn a_snapshot_turns_with_the_view() {
+        let mut model = painted_model([255, 255, 255, 255]);
+        model.document.request_snapshot(snapshot_region());
+        let upright = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+
+        model.set_rotation(ViewRotation::Clockwise90).unwrap();
+        model.update().expect("the rotated frame runs");
+        model.document.request_snapshot(snapshot_region());
+        let turned = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+
+        assert_eq!(turned, (upright.1, upright.0));
+        assert!(upright.0 > upright.1);
+    }
+
+    #[test]
+    fn a_snapshot_of_a_page_that_is_not_on_screen_fails_loudly() {
+        let mut model = painted_model([255, 255, 255, 255]);
+        model.document.request_snapshot(PageRect {
+            page: 1,
+            ..snapshot_region()
+        });
+
+        assert!(matches!(
+            model.take_snapshot_png(),
+            Err(CanvasError::SnapshotUnrendered { page: 1 })
+        ));
+    }
+
+    /// Half off the page is the case a real drag produces most often, and
+    /// the only one that exercises the clamp: what survives is the part
+    /// that covers pixels, not an error and not the whole region.
+    #[test]
+    fn a_snapshot_region_hanging_off_the_page_keeps_the_part_that_covers_pixels() {
+        let mut model = painted_model([255, 255, 255, 255]);
+        let inside = decode(&{
+            model.document.request_snapshot(snapshot_region());
+            model.take_snapshot_png().unwrap().unwrap()
+        })
+        .dimensions();
+
+        // The same rectangle slid left so its left half hangs off the page.
+        model.document.request_snapshot(PageRect {
+            x0: -50.0,
+            x1: 50.0,
+            ..snapshot_region()
+        });
+        let clipped = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+
+        assert_eq!(clipped.1, inside.1, "the vertical span is untouched");
+        assert!(clipped.0 < inside.0, "the overhanging half is dropped");
+        assert!(clipped.0 > 0);
+    }
+
+    /// A region entirely off the page would crop nothing, and an empty PNG
+    /// on the clipboard is worse than a message saying why there is none.
+    #[test]
+    fn a_snapshot_region_off_the_page_fails_loudly() {
+        let mut model = painted_model([255, 255, 255, 255]);
+        model.document.request_snapshot(PageRect {
+            page: 0,
+            x0: -400.0,
+            y0: 20.0,
+            x1: -300.0,
+            y1: 60.0,
+        });
+
+        assert!(matches!(
+            model.take_snapshot_png(),
+            Err(CanvasError::SnapshotEmpty { page: 0 })
+        ));
+    }
+
+    #[test]
+    fn a_frame_with_no_pending_request_produces_no_snapshot() {
+        let mut model = painted_model([255, 255, 255, 255]);
+
+        assert!(model.take_snapshot_png().unwrap().is_none());
+    }
+
+    #[test]
+    fn the_snapshot_tool_reaches_the_canvas_through_the_snapshot_request() {
+        let mut model = painted_model([255, 255, 255, 255]);
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(onionskin_tools_basic::SnapshotTool::new()));
+        model.registry = registry;
+        model.activate_tool(0).expect("the snapshot tool activates");
+
+        let start = page_center(&model);
+        model
+            .pointer_down(start, 1.0, GpuiModifiers::default())
+            .unwrap();
+        let end = point(start.x + px(60.0), start.y + px(40.0));
+        model
+            .pointer_move(end, 1.0, GpuiModifiers::default(), true)
+            .unwrap();
+        model
+            .pointer_up(end, 1.0, GpuiModifiers::default())
+            .unwrap();
+
+        assert!(model.document.selection().region().is_some());
+        assert!(model.take_snapshot_png().unwrap().is_some());
     }
 
     #[test]

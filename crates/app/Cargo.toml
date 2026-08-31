@@ -28,7 +28,9 @@ onionskin-render = { workspace = true, optional = true }
 # Fork of gpui 0.2.2 adding PinchEvent/on_pinch and stylus pressure, pinned
 # by rev exactly as Schist pins it (PLAN.md key decision 5).
 gpui = { git = "https://github.com/IAmJSD/gpui", rev = "84bdb01b29887ca09b6c437dad9a0ae838fe48e8", optional = true }
-image = { version = "0.25", default-features = false, optional = true }
+# `png` is the clipboard format for Take A Snapshot; the tile path needs
+# only the buffer types.
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 smallvec = { version = "1.13", optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 accesskit = { version = "0.24", optional = true }
