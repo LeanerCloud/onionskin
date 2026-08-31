@@ -35,6 +35,23 @@ impl RecentDocument {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.path.display().to_string())
     }
+
+    /// Where it is, as a person reads it. The home directory is written
+    /// `~`: the list is on screen whenever Home is, and an absolute path
+    /// spells out the account name to anyone looking at the screen.
+    pub fn display_path(&self) -> String {
+        abbreviate(
+            &self.path,
+            std::env::var_os("HOME").as_deref().map(Path::new),
+        )
+    }
+}
+
+fn abbreviate(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 #[derive(Debug)]
@@ -227,6 +244,28 @@ mod tests {
             vec!["b.pdf", "a.pdf"]
         );
         assert_eq!(recents.get(0).unwrap().opened_at, 20);
+    }
+
+    #[test]
+    fn a_path_under_the_home_directory_reads_as_a_tilde() {
+        assert_eq!(
+            abbreviate(
+                Path::new("/home/someone/papers/report.pdf"),
+                Some(Path::new("/home/someone"))
+            ),
+            "~/papers/report.pdf"
+        );
+        assert_eq!(
+            abbreviate(
+                Path::new("/srv/shared/report.pdf"),
+                Some(Path::new("/home/someone"))
+            ),
+            "/srv/shared/report.pdf"
+        );
+        assert_eq!(
+            abbreviate(Path::new("/srv/report.pdf"), None),
+            "/srv/report.pdf"
+        );
     }
 
     #[test]

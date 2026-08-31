@@ -1328,7 +1328,7 @@ impl ShellFrame {
             .occlude();
         for (index, recent) in self.settings.recents.documents().iter().enumerate() {
             let title = recent.title();
-            let path = recent.path.display().to_string();
+            let path = recent.display_path();
             panel = panel.child(
                 div()
                     .id(("recent-entry", index))
@@ -2995,9 +2995,11 @@ mod tests {
                 assert!(frame.tabs.is_empty());
                 assert!(frame.active_view_state(cx).is_none());
                 // And the menus follow: the document commands say so rather
-                // than pointing at a document that is not there.
+                // than pointing at a document that is not there. Close is
+                // the one to ask, because its reason does not depend on
+                // which plugins this build compiled in.
                 assert_eq!(
-                    frame.command_unavailable(MenuCommand::SelectAll, cx),
+                    frame.command_unavailable(MenuCommand::CloseTab, cx),
                     Some("No document is open")
                 );
                 assert_eq!(frame.command_unavailable(MenuCommand::Open, cx), None);

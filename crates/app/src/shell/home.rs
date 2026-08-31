@@ -232,7 +232,7 @@ fn list(recents: &Recents, theme: ThemeTokens, cx: &mut Context<ShellFrame>) -> 
                         .text_right()
                         .text_xs()
                         .text_color(theme.muted_text)
-                        .child(recent.path.display().to_string()),
+                        .child(recent.display_path()),
                 ),
         );
     }
