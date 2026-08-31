@@ -190,6 +190,10 @@ comment/literal refactors that would add churn without behavior.
 
 ## Previously encountered resolved defects
 
+- The content oracle previously inferred extraction errors from a hand-maintained
+  subset of category slugs and treated page-count errors as empty documents.
+  B1.2 records error events at their call sites, rejects nonzero `pdftotext`
+  exits, and pins new-category, mismatch, negative-count, and tool-failure cases.
 - The black horizontal/vertical lines seen inside rendered PDF pages were tile-atlas
   sampling seams, not PDF content corruption. Commit `fdaf657` replicated one-pixel
   tile gutters and clipped sampling at atlas allocation edges. The focused seam

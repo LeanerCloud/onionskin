@@ -139,11 +139,13 @@ source IDs, severity, ownership, and required proof.
   --workspace --all-targets and the app under shell,shell-test-support, so
   they are unlinted today; fix the cfg shapes if CI ever adds that
   configuration, so "clippy is clean" stays honest.
-- content residual nits from review: the UTF-8 BOM path in pdf_text_string
+- Content residual nit from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
-  string (a hair against no-invented-characters; tighten when touched);
-  the oracle's ERROR_CATEGORIES list tracks Error::category slugs by hand
-  and would silently narrow the error ceiling if they drift.
+  string (a hair against no-invented-characters; tighten when touched).
+- **Resolved in B1.2:** the content oracle records page-count, extraction, and
+  `pdftotext` failures explicitly. Its error-rate ceiling no longer depends on
+  a duplicated `ERROR_CATEGORIES` slug list, and nonzero `pdftotext` exits are
+  errors carrying their status and diagnostic output.
 - Search normalizes presentation forms but not order: P9 ships Unicode
   presentation-form folding on both needle and haystack, so single-run Arabic
   now matches a user-typed query. What remains is visual-to-logical

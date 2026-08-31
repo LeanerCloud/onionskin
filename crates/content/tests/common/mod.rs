@@ -286,6 +286,7 @@ pub struct Oracle {
     pub name: String,
     pub scores: Vec<(String, f64)>,
     pub overlaps: Vec<f64>,
+    pub errors: usize,
     pub skipped: BTreeMap<String, Vec<String>>,
     pub failed: BTreeMap<String, Vec<String>>,
 }
@@ -322,6 +323,11 @@ impl Oracle {
             .entry(category.to_string())
             .or_default()
             .push(format!("{}: {detail}", short(file)));
+    }
+
+    pub fn error(&mut self, file: &Path, category: &str, detail: &str) {
+        self.errors += 1;
+        self.fail(file, category, detail);
     }
 
     pub fn bucket(&self, low: f64, high: f64) -> usize {
@@ -381,7 +387,18 @@ impl Oracle {
 /// Runs poppler's `pdftotext` over a file. `None` when the tool is absent,
 /// which the caller must report as a skip rather than a pass.
 pub fn pdftotext(path: &Path, first: usize, last: usize) -> Option<Result<String, String>> {
-    let output = std::process::Command::new("pdftotext")
+    pdftotext_with(Path::new("pdftotext"), path, first, last)
+}
+
+const MAX_TOOL_DIAGNOSTIC_CHARS: usize = 512;
+
+pub fn pdftotext_with(
+    executable: &Path,
+    path: &Path,
+    first: usize,
+    last: usize,
+) -> Option<Result<String, String>> {
+    let output = std::process::Command::new(executable)
         .arg("-q")
         .arg("-f")
         .arg(first.to_string())
@@ -393,7 +410,24 @@ pub fn pdftotext(path: &Path, first: usize, last: usize) -> Option<Result<String
         .arg("-")
         .output();
     match output {
-        Ok(out) => Some(Ok(String::from_utf8_lossy(&out.stdout).into_owned())),
+        Ok(out) if out.status.success() => {
+            Some(Ok(String::from_utf8_lossy(&out.stdout).into_owned()))
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr = stderr.trim();
+            let detail = if stderr.is_empty() {
+                format!("stderr empty; stdout was {} bytes", out.stdout.len())
+            } else {
+                let mut chars = stderr.chars();
+                let mut detail: String = chars.by_ref().take(MAX_TOOL_DIAGNOSTIC_CHARS).collect();
+                if chars.next().is_some() {
+                    detail.push_str(" (truncated)");
+                }
+                detail
+            };
+            Some(Err(format!("exited with {}: {detail}", out.status)))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => Some(Err(e.to_string())),
     }

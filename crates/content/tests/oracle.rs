@@ -37,6 +37,14 @@ const PAGES: usize = 3;
 /// Scores one file and returns its similarity, or records why it could not be
 /// scored.
 fn score_file(oracle: &mut Oracle, path: &Path) {
+    score_file_with(oracle, path, common::pdftotext);
+}
+
+fn score_file_with(
+    oracle: &mut Oracle,
+    path: &Path,
+    run_pdftotext: impl FnOnce(&Path, usize, usize) -> Option<Result<String, String>>,
+) {
     let doc = match common::open(path) {
         Ok(doc) => doc,
         Err(category) => {
@@ -45,8 +53,12 @@ fn score_file(oracle: &mut Oracle, path: &Path) {
         }
     };
     let count = match page_count(&doc) {
-        Ok(0) | Err(_) => {
+        Ok(0) => {
             oracle.skip(path, "no-pages");
+            return;
+        }
+        Err(error) => {
+            oracle.error(path, error.category(), &error.to_string());
             return;
         }
         Ok(n) => n.min(PAGES),
@@ -62,20 +74,20 @@ fn score_file(oracle: &mut Oracle, path: &Path) {
                 warnings.extend(page.warnings);
             }
             Err(e) => {
-                oracle.fail(path, e.category(), &e.to_string());
+                oracle.error(path, e.category(), &e.to_string());
                 return;
             }
         }
     }
 
-    let Some(theirs) = common::pdftotext(path, 1, count) else {
+    let Some(theirs) = run_pdftotext(path, 1, count) else {
         oracle.skip(path, "no-pdftotext");
         return;
     };
     let theirs = match theirs {
         Ok(text) => text,
         Err(detail) => {
-            oracle.fail(path, "pdftotext", &detail);
+            oracle.error(path, "pdftotext", &detail);
             return;
         }
     };
@@ -165,37 +177,131 @@ fn category(ours: &str, theirs: &str, warnings: &[Warning]) -> &'static str {
 /// cannot drag it down. Without this, extraction could start throwing on a
 /// tenth of a corpus and every similarity assertion would still pass.
 fn error_rate(oracle: &Oracle) -> f64 {
-    let errors: usize = oracle
-        .failed
-        .iter()
-        .filter(|(category, _)| ERROR_CATEGORIES.contains(&category.as_str()))
-        .map(|(_, files)| files.len())
-        .sum();
-    let attempted = oracle.scores.len() + errors;
+    let attempted = oracle.scores.len() + oracle.errors;
     if attempted == 0 {
         return 0.0;
     }
-    errors as f64 / attempted as f64
+    oracle.errors as f64 / attempted as f64
 }
 
-/// The `Error::category` slugs, as opposed to the mismatch buckets.
-///
-/// Most of them are `cos`'s: it owns the page walk and the filter chain, so a
-/// page that cannot be reached or a stream that cannot be decoded arrives here
-/// under its slug. What used to be content's own `structure` slug is `cos`'s
-/// `unrecoverable`, and its `filter` slug is `filter-failed` for a payload
-/// that would not decode and `unsupported-filter` for a codec this build does
-/// not carry.
-const ERROR_CATEGORIES: &[&str] = &[
-    "filter-failed",
-    "unsupported-filter",
-    "syntax",
-    "no-such-page",
-    "missing-object",
-    "unrecoverable",
-    "depth-exceeded",
-    "pdftotext",
-];
+fn temporary_path(stem: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "onionskin-oracle-{stem}-{}-{nonce}",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn a_page_count_error_contributes_to_the_error_rate() {
+    let path = temporary_path("negative-count.pdf");
+    let bytes = common::build_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count -1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>".to_vec(),
+    ]);
+    let mut fixture = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .expect("the temporary fixture is new and writable");
+    std::io::Write::write_all(&mut fixture, &bytes).expect("the fixture bytes are writable");
+    drop(fixture);
+
+    let mut oracle = Oracle::new("negative page count");
+    score_file(&mut oracle, &path);
+    std::fs::remove_file(&path).expect("the temporary fixture is removable");
+
+    assert_eq!(error_rate(&oracle), 1.0);
+    assert!(!oracle.skipped.contains_key("no-pages"));
+}
+
+#[test]
+fn a_similarity_mismatch_is_not_an_extraction_error() {
+    let mut oracle = Oracle::new("mismatch");
+    let path = Path::new("mismatch.pdf");
+    oracle.score(path, 0.5, 1.0);
+    oracle.fail(path, "future-mismatch-category", "the text differs");
+
+    assert_eq!(error_rate(&oracle), 0.0);
+}
+
+#[test]
+fn an_explicit_error_needs_no_category_allowlist() {
+    let mut oracle = Oracle::new("new category");
+    oracle.score(Path::new("good.pdf"), 1.0, 1.0);
+    oracle.error(
+        Path::new("bad.pdf"),
+        "category-added-tomorrow",
+        "the extractor stopped",
+    );
+
+    assert_eq!(error_rate(&oracle), 0.5);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_nonzero_pdftotext_exit_is_an_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary_path("pdftotext");
+    std::fs::create_dir(&directory).expect("the temporary directory is new and writable");
+    let executable = directory.join("pdftotext");
+    let input = directory.join("input.pdf");
+    std::fs::write(
+        &executable,
+        b"#!/bin/sh\necho private document text\necho tool exploded >&2\nexit 7\n",
+    )
+    .expect("the fake tool is writable");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .expect("the fake tool is executable");
+    let bytes = common::build_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>".to_vec(),
+    ]);
+    std::fs::write(&input, bytes).expect("the fake input is writable");
+
+    let mut oracle = Oracle::new("failed pdftotext");
+    score_file_with(&mut oracle, &input, |path, first, last| {
+        common::pdftotext_with(&executable, path, first, last)
+    });
+    let detail = oracle.failed["pdftotext"][0].clone();
+
+    std::fs::write(
+        &executable,
+        b"#!/bin/sh\necho private document text\nexit 8\n",
+    )
+    .expect("the stdout-only fake tool is writable");
+    let mut stdout_only = Oracle::new("failed pdftotext with stdout");
+    score_file_with(&mut stdout_only, &input, |path, first, last| {
+        common::pdftotext_with(&executable, path, first, last)
+    });
+    let stdout_detail = stdout_only.failed["pdftotext"][0].clone();
+    std::fs::remove_dir_all(&directory).expect("the test-owned directory is removable");
+
+    assert_eq!(oracle.errors, 1);
+    assert_eq!(error_rate(&oracle), 1.0);
+    assert!(detail.contains("status: 7"), "missing status: {detail}");
+    assert!(detail.contains("tool exploded"), "missing stderr: {detail}");
+    assert!(
+        !detail.contains("private document text"),
+        "document stdout leaked into the diagnostic: {detail}"
+    );
+    assert_eq!(stdout_only.errors, 1);
+    assert_eq!(error_rate(&stdout_only), 1.0);
+    assert!(
+        stdout_detail.contains("status: 8") && stdout_detail.contains("stdout was 22 bytes"),
+        "missing status or byte count: {stdout_detail}"
+    );
+    assert!(
+        !stdout_detail.contains("private document text"),
+        "document stdout leaked into the empty-stderr diagnostic: {stdout_detail}"
+    );
+}
 
 fn run_corpus(name: &str, relative: &str, limit: Option<usize>) -> Option<Oracle> {
     if !common::have_pdftotext() {
