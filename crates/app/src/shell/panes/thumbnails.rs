@@ -55,8 +55,9 @@ pub(in crate::shell) enum ThumbnailAction {
 /// change the document are disabled until `tools-organize` at M3, rather than
 /// hidden, because a missing entry reads as "Onionskin does not have this".
 ///
-/// Ten entries for the row's nine names: the row counts Reduce and Enlarge
-/// Page Thumbnails as one item, and they are two commands.
+/// Eleven entries for the row's nine names: the row counts Embed / Remove
+/// All Page Thumbnails as one item and Reduce / Enlarge Page Thumbnails as
+/// another, and each of those is two commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum ThumbnailsCommand {
     InsertPages,
@@ -67,12 +68,13 @@ pub(in crate::shell) enum ThumbnailsCommand {
     CropPages,
     PageProperties,
     EmbedThumbnails,
+    RemoveThumbnails,
     ReduceThumbnails,
     EnlargeThumbnails,
 }
 
 impl ThumbnailsCommand {
-    pub(in crate::shell) const ALL: [Self; 10] = [
+    pub(in crate::shell) const ALL: [Self; 11] = [
         Self::InsertPages,
         Self::ExtractPages,
         Self::ReplacePages,
@@ -81,6 +83,7 @@ impl ThumbnailsCommand {
         Self::CropPages,
         Self::PageProperties,
         Self::EmbedThumbnails,
+        Self::RemoveThumbnails,
         Self::ReduceThumbnails,
         Self::EnlargeThumbnails,
     ];
@@ -95,6 +98,7 @@ impl ThumbnailsCommand {
             Self::CropPages => "Crop Pages",
             Self::PageProperties => "Page Properties",
             Self::EmbedThumbnails => "Embed All Page Thumbnails",
+            Self::RemoveThumbnails => "Remove All Page Thumbnails",
             Self::ReduceThumbnails => "Reduce Page Thumbnails",
             Self::EnlargeThumbnails => "Enlarge Page Thumbnails",
         }
@@ -357,9 +361,10 @@ fn request_band(
         .collect();
     let outcome = canvas.update(cx, |canvas, _cx| {
         for page in missing {
-            if canvas.model.thumbnail_pending(page) {
-                continue;
-            }
+            // Asked for unconditionally: the canvas skips a request that is
+            // already outstanding at this size and epoch, and skipping here
+            // instead would leave a page waiting on a picture the canvas has
+            // since decided to drop.
             canvas.model.request_thumbnail(page, zoom)?;
         }
         Ok::<(), CanvasError>(())
@@ -622,14 +627,14 @@ mod tests {
         assert!(small.visible_rows(700.0, 1_000).len() > large.visible_rows(700.0, 1_000).len());
     }
 
-    /// Parity row 192 names nine items; the size item is two commands, so ten
-    /// entries carry them. Every one is present, and every disabled one says
-    /// why.
+    /// Parity row 192 names nine items; two of them are a pair of commands
+    /// each, so eleven entries carry them. Every one is present, and every
+    /// disabled one says why.
     #[test]
     fn every_menu_entry_is_present_and_every_disabled_one_says_why() {
         let pane = state(DEFAULT_SIZE, 0.0);
 
-        assert_eq!(ThumbnailsCommand::ALL.len(), 10);
+        assert_eq!(ThumbnailsCommand::ALL.len(), 11);
         for command in ThumbnailsCommand::ALL {
             assert!(!command.label().is_empty());
             let availability = command.availability(&pane);
@@ -660,6 +665,7 @@ mod tests {
             ThumbnailsCommand::CropPages,
             ThumbnailsCommand::PageProperties,
             ThumbnailsCommand::EmbedThumbnails,
+            ThumbnailsCommand::RemoveThumbnails,
         ] {
             let reason = command
                 .availability(&pane)

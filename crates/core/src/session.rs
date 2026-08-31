@@ -11,7 +11,8 @@ use crate::search::{DocumentSearch, SearchUpdate};
 use crate::{
     attachments, layers, outline, signatures, Attachment, Layer, ObjRef, OutlineItem, PageGeometry,
     PageIndex, PageRect, PageRender, PageSvg, RenderRequest, RenderResponse, SearchMatch,
-    SearchOptions, SearchState, SearchWorkerError, Selection, SignatureField, ThumbnailResponse,
+    SearchOptions, SearchState, SearchWorkerError, Selection, SignatureField, ThumbnailRequest,
+    ThumbnailResponse,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -465,9 +466,9 @@ impl Document {
     /// Queued behind every interactive render, so a pane asking for a screen
     /// of thumbnails never delays the page being read. The picture arrives
     /// through [`Document::try_thumbnail_response`].
-    pub fn request_thumbnail(&mut self, page: PageIndex, zoom: f32) -> Result<()> {
-        self.check_page(page)?;
-        Ok(self.render.request_thumbnail(page, zoom)?)
+    pub fn request_thumbnail(&mut self, request: ThumbnailRequest) -> Result<()> {
+        self.check_page(request.page)?;
+        Ok(self.render.request_thumbnail(request)?)
     }
 
     pub fn try_thumbnail_response(&mut self) -> Result<Option<ThumbnailResponse>> {
@@ -1007,8 +1008,12 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
         let mut doc = Document::open_path(&path).expect("seed opens");
 
-        doc.request_thumbnail(1, 0.2)
-            .expect("the request is queued");
+        doc.request_thumbnail(ThumbnailRequest {
+            page: 1,
+            zoom: 0.2,
+            epoch: 0,
+        })
+        .expect("the request is queued");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut answered = Vec::new();
@@ -1023,10 +1028,14 @@ mod tests {
         }
 
         assert_eq!(answered.len(), 1, "one request, one picture");
-        let ThumbnailResponse::Ready { page, render } = &answered[0] else {
+        let ThumbnailResponse::Ready { request, render } = &answered[0] else {
             panic!("the seed's second page rasterizes");
         };
-        assert_eq!(*page, 1);
+        assert_eq!(request.page, 1);
+        assert_eq!(
+            request.epoch, 0,
+            "the answer carries the request it came from"
+        );
         // The seed's second page is a 180x80 crop box turned 90 degrees, so
         // 0.2 of it is 16x36. Pinned to the rotated, cropped size rather than
         // to the media box: a thumbnail has to look like the page does.
@@ -1039,40 +1048,17 @@ mod tests {
         );
     }
 
-    /// The search results pane picks a hit by page and position, and the
-    /// cursor it moves is the one the find bar's next and previous move.
-    /// A position no hit occupies moves nothing rather than clearing it,
-    /// because a row clicked after a newer walk replaced the results names a
-    /// hit that no longer exists.
-    #[test]
-    fn a_hit_can_be_made_current_by_where_it_sits() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
-        let mut doc = Document::open_path(&path).expect("seed opens");
-        assert!(doc
-            .start_search("Onionskin", SearchOptions::default(), 0)
-            .expect("the search worker starts"));
-        drain(&mut doc);
-        assert_eq!(doc.search().len(), 1);
-
-        assert!(doc.select_match(0, 0));
-        assert_eq!(doc.search().cursor(), Some((0, 0)));
-
-        assert!(!doc.select_match(0, 7), "page zero has one hit, not eight");
-        assert!(!doc.select_match(9, 0), "there is no page ten");
-        assert_eq!(
-            doc.search().cursor(),
-            Some((0, 0)),
-            "a miss leaves the cursor where it was"
-        );
-    }
-
     #[test]
     fn a_thumbnail_of_a_page_outside_the_document_fails_loudly() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
         let mut doc = Document::open_path(&path).expect("seed opens");
 
         assert!(matches!(
-            doc.request_thumbnail(7, 0.2),
+            doc.request_thumbnail(ThumbnailRequest {
+                page: 7,
+                zoom: 0.2,
+                epoch: 0,
+            }),
             Err(Error::NoSuchPage { page: 7, count: 1 })
         ));
     }

@@ -38,7 +38,10 @@ pub use outline::OutlineItem;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
-pub use render::{PagePlaceholder, RenderRequest, RenderResponse, ThumbnailResponse, WorkerError};
+pub use render::{
+    PagePlaceholder, RenderRequest, RenderResponse, ThumbnailRequest, ThumbnailResponse,
+    WorkerError,
+};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, PageGeometryResponse, Result, SnapshotRequest};

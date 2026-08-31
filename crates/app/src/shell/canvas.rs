@@ -9,8 +9,8 @@ use onionskin_core::{
     Attachment, Document, FitMode, GeometryError, Layer, ObjRef, OutlineItem, PageAlignment,
     PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement, PagePoint,
     PageQuad, PageRect, RenderRequest, RenderResponse, SearchOptions, SearchState, SignatureField,
-    ThumbnailResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport,
-    ViewportError,
+    ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize,
+    Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
     ExportError, ExportRequest, ExportedFile, Overlay, PageRange, PluginRegistry, PointerInput,
@@ -316,10 +316,16 @@ pub struct CanvasModel {
     /// A hit waiting to be scrolled to. Set when the hit is chosen, applied
     /// once its page has been measured, which is usually a later frame.
     pending_reveal: Option<(PageIndex, Vec<PageQuad>)>,
-    /// Thumbnails the pane asked for and the worker has not answered yet.
-    /// Keeps the poll loop awake, the way an outstanding render does, so a
-    /// picture that arrives between frames still reaches the pane.
-    pending_thumbnails: BTreeSet<PageIndex>,
+    /// The thumbnail outstanding for each page, exactly as it was asked
+    /// for. Keeps the poll loop awake the way an outstanding render does,
+    /// and is what an answer is matched against: a picture nothing is
+    /// waiting for is a picture of a document that has since changed.
+    pending_thumbnails: BTreeMap<PageIndex, ThumbnailRequest>,
+    /// How many times the render options every page goes through have
+    /// changed. Carried on a thumbnail request and back on its answer,
+    /// because a thumbnail is not part of the interactive queue's generation
+    /// and would otherwise have nothing to be stale against.
+    thumbnail_epoch: u64,
     /// Thumbnails answered and not yet collected. The pane takes them,
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
@@ -372,7 +378,8 @@ impl CanvasModel {
             waiting: None,
             responses: 0,
             pending_reveal: None,
-            pending_thumbnails: BTreeSet::new(),
+            pending_thumbnails: BTreeMap::new(),
+            thumbnail_epoch: 0,
             ready_thumbnails: Vec::new(),
         })
     }
@@ -473,6 +480,14 @@ impl CanvasModel {
     /// again, because the render options they were produced with have
     /// changed.
     fn invalidate_rendered_pixels(&mut self) {
+        // Every thumbnail asked for under the old options is now a picture
+        // of a document nobody is showing. Advancing the epoch is what makes
+        // the answers already in flight be dropped when they arrive; wrapping
+        // is harmless, since it would take an epoch's worth of toggles to
+        // reach a number still outstanding.
+        self.thumbnail_epoch = self.thumbnail_epoch.wrapping_add(1);
+        self.pending_thumbnails.clear();
+        self.ready_thumbnails.clear();
         self.tiles.clear();
         self.sources.clear();
         self.requests.clear();
@@ -496,13 +511,28 @@ impl CanvasModel {
         Ok(true)
     }
 
-    /// Queue a thumbnail of `page`, unless one is already outstanding.
+    /// Queue a thumbnail of `page` at `zoom`, unless the same picture is
+    /// already outstanding.
+    ///
+    /// "The same picture" is the page, the size and the options epoch
+    /// together. A request that differs in any of them replaces the
+    /// outstanding one, which is what makes the answer to the old one
+    /// arrive to nothing waiting for it and be dropped.
     pub fn request_thumbnail(&mut self, page: PageIndex, zoom: f32) -> Result<(), CanvasError> {
-        if !self.pending_thumbnails.insert(page) {
+        let request = ThumbnailRequest {
+            page,
+            zoom,
+            epoch: self.thumbnail_epoch,
+        };
+        if self.pending_thumbnails.get(&page) == Some(&request) {
             return Ok(());
         }
-        if let Err(error) = self.document.request_thumbnail(page, zoom) {
-            self.pending_thumbnails.remove(&page);
+        let replaced = self.pending_thumbnails.insert(page, request);
+        if let Err(error) = self.document.request_thumbnail(request) {
+            match replaced {
+                Some(previous) => self.pending_thumbnails.insert(page, previous),
+                None => self.pending_thumbnails.remove(&page),
+            };
             return Err(error.into());
         }
         Ok(())
@@ -515,29 +545,44 @@ impl CanvasModel {
         std::mem::take(&mut self.ready_thumbnails)
     }
 
-    /// Whether `page` has a thumbnail on the way, so the pane does not ask
-    /// again on every frame while it waits.
+    /// Whether a thumbnail is on the way for `page`.
     pub fn thumbnail_pending(&self, page: PageIndex) -> bool {
-        self.pending_thumbnails.contains(&page)
+        self.pending_thumbnails.contains_key(&page)
+    }
+
+    /// Take one answer, if it is still the answer to something outstanding.
+    ///
+    /// An answer that does not match what is pending was rendered under
+    /// options or at a size this canvas has moved on from, and keeping it
+    /// would show the document as it was: the pane has already dropped its
+    /// pictures, and a picture it did not ask for would stop it asking
+    /// again. Returns whether it was kept.
+    fn accept_thumbnail(&mut self, response: ThumbnailResponse) -> bool {
+        let request = response.request();
+        if self.pending_thumbnails.get(&request.page) != Some(&request) {
+            return false;
+        }
+        self.pending_thumbnails.remove(&request.page);
+        self.responses += 1;
+        match response {
+            ThumbnailResponse::Ready { render, .. } => {
+                self.ready_thumbnails.push((request.page, render.raster));
+            }
+            // Reported on the page it belongs to, like a failed render: a
+            // blank row with no reason is a pane that looks broken.
+            ThumbnailResponse::Failed { error, .. } => {
+                self.status = Some(CanvasStatus::Error {
+                    page: Some(request.page),
+                    message: format!("page {} thumbnail: {error}", request.page),
+                });
+            }
+        }
+        true
     }
 
     fn drain_thumbnail_responses(&mut self) -> Result<(), CanvasError> {
         while let Some(response) = self.document.try_thumbnail_response()? {
-            self.pending_thumbnails.remove(&response.page());
-            self.responses += 1;
-            match response {
-                ThumbnailResponse::Ready { page, render } => {
-                    self.ready_thumbnails.push((page, render.raster));
-                }
-                // Reported on the page it belongs to, like a failed render:
-                // a blank row with no reason is a pane that looks broken.
-                ThumbnailResponse::Failed { page, error } => {
-                    self.status = Some(CanvasStatus::Error {
-                        page: Some(page),
-                        message: format!("page {page} thumbnail: {error}"),
-                    });
-                }
-            }
+            self.accept_thumbnail(response);
         }
         Ok(())
     }
@@ -2243,6 +2288,16 @@ mod tests {
         *model.requests.get(&0).expect("page zero is requested")
     }
 
+    fn optional_content_model() -> CanvasModel {
+        CanvasModel::new(
+            Document::open_bytes(crate::shell::fixtures::optional_content_pdf())
+                .expect("the fixture opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts")
+    }
+
     /// The canvas half of the P4 review's layer note. The store is keyed by
     /// page and zoom, not by the render options, so nothing in it would be
     /// rebuilt on its own; and `sources` holds the same rasters for
@@ -2250,13 +2305,7 @@ mod tests {
     /// screen the moment the page was scrolled.
     #[test]
     fn toggling_a_layer_drops_every_cached_pixel_and_asks_for_the_pages_again() {
-        let mut model = CanvasModel::new(
-            Document::open_bytes(crate::shell::fixtures::optional_content_pdf())
-                .expect("the fixture opens"),
-            PluginRegistry::new(),
-            VIEWPORT,
-        )
-        .expect("canvas starts");
+        let mut model = optional_content_model();
         let request = prepare_request(&mut model);
         assert!(model.apply_render_response(RenderResponse::Raster {
             request,
@@ -2295,17 +2344,115 @@ mod tests {
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
     }
 
+    fn thumbnail_response(model: &CanvasModel, page: PageIndex, zoom: f32) -> ThumbnailResponse {
+        ThumbnailResponse::Ready {
+            request: *model
+                .pending_thumbnails
+                .get(&page)
+                .expect("the page has a thumbnail outstanding"),
+            render: PageRender {
+                raster: raster(model, page, zoom, [40, 40, 40, 255]),
+                warnings: Vec::new(),
+            },
+        }
+    }
+
+    /// A thumbnail rendered before a layer toggle must not become the
+    /// picture after it.
+    ///
+    /// The sequence that leaked: the pane drops its pictures on the toggle,
+    /// the raster already in flight arrives, and because a picture now
+    /// exists the page is never asked for again. The row would show the old
+    /// layers for as long as the document stayed open.
+    #[test]
+    fn a_thumbnail_rendered_before_a_layer_toggle_is_dropped_when_it_arrives() {
+        let mut model = optional_content_model();
+        model
+            .request_thumbnail(0, 0.18)
+            .expect("the thumbnail is queued");
+        let in_flight = thumbnail_response(&model, 0, 0.18);
+        let layer = model.layers().expect("the layers read")[0].clone();
+
+        assert!(model
+            .set_layer_visible(layer.id, false)
+            .expect("an unlocked layer toggles"));
+
+        assert!(
+            !model.accept_thumbnail(in_flight),
+            "the picture predates the toggle and has to be dropped"
+        );
+        assert!(
+            model.take_thumbnails().is_empty(),
+            "nothing stale reaches the pane"
+        );
+        assert!(
+            !model.thumbnail_pending(0),
+            "the toggle dropped what was outstanding, so the pane asks again"
+        );
+
+        // Asking again under the new options is a fresh request, and its
+        // answer is the one that is kept.
+        model
+            .request_thumbnail(0, 0.18)
+            .expect("the thumbnail is queued again");
+        let after = thumbnail_response(&model, 0, 0.18);
+        assert!(model.accept_thumbnail(after));
+        assert_eq!(model.take_thumbnails().len(), 1);
+    }
+
+    /// The same mechanism at a different size: Reduce and Enlarge Page
+    /// Thumbnails change the zoom every row is rendered at, and the answer to
+    /// the size before must not be kept as the picture of the size now.
+    #[test]
+    fn a_thumbnail_rendered_at_the_previous_size_is_dropped_when_it_arrives() {
+        let mut model = optional_content_model();
+        model
+            .request_thumbnail(0, 0.18)
+            .expect("the thumbnail is queued");
+        let smaller = thumbnail_response(&model, 0, 0.18);
+
+        model
+            .request_thumbnail(0, 0.36)
+            .expect("the larger thumbnail is queued");
+
+        assert!(
+            !model.accept_thumbnail(smaller),
+            "the picture is of the size the pane no longer shows"
+        );
+        assert!(
+            model.thumbnail_pending(0),
+            "the request at the new size is still outstanding"
+        );
+        let larger = thumbnail_response(&model, 0, 0.36);
+        assert!(model.accept_thumbnail(larger));
+        assert_eq!(model.take_thumbnails().len(), 1);
+    }
+
+    /// Asking for a picture already outstanding costs nothing, which is what
+    /// lets the pane ask on every frame without queueing a render each time.
+    #[test]
+    fn asking_again_for_the_thumbnail_already_outstanding_queues_nothing() {
+        let mut model = optional_content_model();
+        model
+            .request_thumbnail(0, 0.18)
+            .expect("the thumbnail is queued");
+        let outstanding = *model
+            .pending_thumbnails
+            .get(&0)
+            .expect("the page has one outstanding");
+
+        model
+            .request_thumbnail(0, 0.18)
+            .expect("asking again is not an error");
+
+        assert_eq!(model.pending_thumbnails.get(&0), Some(&outstanding));
+    }
+
     /// A toggle that changes nothing costs nothing: the pixels stay, because
     /// re-rendering them would produce the same picture.
     #[test]
     fn a_toggle_to_the_state_a_layer_is_in_keeps_the_cached_pixels() {
-        let mut model = CanvasModel::new(
-            Document::open_bytes(crate::shell::fixtures::optional_content_pdf())
-                .expect("the fixture opens"),
-            PluginRegistry::new(),
-            VIEWPORT,
-        )
-        .expect("canvas starts");
+        let mut model = optional_content_model();
         let request = prepare_request(&mut model);
         assert!(model.apply_render_response(RenderResponse::Raster {
             request,

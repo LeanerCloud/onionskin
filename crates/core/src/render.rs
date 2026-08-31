@@ -41,27 +41,50 @@ impl RenderResponse {
     }
 }
 
+/// One thumbnail asked for: which page, at what size, and under which set
+/// of render options.
+///
+/// `epoch` is the caller's own count of how many times it has changed the
+/// options every render goes through. It never reaches the renderer; it
+/// comes back on the answer, so the caller can tell a picture of the
+/// document it is showing from a picture of the document it was showing. A
+/// layer toggle is exactly that change, and without this the raster already
+/// in flight when the toggle happened would arrive, be kept, and never be
+/// asked for again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThumbnailRequest {
+    pub page: PageIndex,
+    pub zoom: f32,
+    pub epoch: u64,
+}
+
 /// One thumbnail the worker produced, or the reason it could not.
 ///
-/// Separate from [`RenderResponse`] because a thumbnail carries no
-/// generation: it is a fixed-size picture of a page that nothing on the
-/// canvas invalidates, so there is no staleness for the handle to filter.
+/// Separate from [`RenderResponse`] because a thumbnail is not part of the
+/// canvas's generation bookkeeping: the interactive queue's staleness is
+/// about which pages are on screen, and a thumbnail's is about which options
+/// drew it. Both answers carry the request that produced them, so neither
+/// makes the receiver remember what it asked for.
 pub enum ThumbnailResponse {
     Ready {
-        page: PageIndex,
+        request: ThumbnailRequest,
         render: PageRender,
     },
     Failed {
-        page: PageIndex,
+        request: ThumbnailRequest,
         error: onionskin_render::RenderError,
     },
 }
 
 impl ThumbnailResponse {
-    pub fn page(&self) -> PageIndex {
+    pub fn request(&self) -> ThumbnailRequest {
         match self {
-            Self::Ready { page, .. } | Self::Failed { page, .. } => *page,
+            Self::Ready { request, .. } | Self::Failed { request, .. } => *request,
         }
+    }
+
+    pub fn page(&self) -> PageIndex {
+        self.request().page
     }
 }
 
@@ -127,10 +150,7 @@ enum Request {
     /// One page rasterized small, for the thumbnails pane. Queued behind
     /// every interactive render so a pane full of thumbnails never delays
     /// the page the user is looking at.
-    Thumbnail {
-        page: PageIndex,
-        zoom: f32,
-    },
+    Thumbnail(ThumbnailRequest),
     /// Replace the optional content overrides every later render uses.
     ///
     /// The whole map, not a difference: it is merged onto the file's own
@@ -252,12 +272,12 @@ impl WorkerHandle {
 
     /// Queue one thumbnail. Returns as soon as the worker has the request;
     /// the picture arrives through [`Self::try_thumbnail_response`].
-    pub(crate) fn request_thumbnail(&self, page: PageIndex, zoom: f32) -> Result<(), WorkerError> {
-        if !zoom.is_finite() || zoom <= 0.0 {
-            return Err(WorkerError::InvalidZoom(zoom));
+    pub(crate) fn request_thumbnail(&self, request: ThumbnailRequest) -> Result<(), WorkerError> {
+        if !request.zoom.is_finite() || request.zoom <= 0.0 {
+            return Err(WorkerError::InvalidZoom(request.zoom));
         }
         self.requests
-            .send(Request::Thumbnail { page, zoom })
+            .send(Request::Thumbnail(request))
             .map_err(|_| WorkerError::Stopped)
     }
 
@@ -375,7 +395,19 @@ struct PendingRequests {
     /// Thumbnails, oldest first. Kept apart from `requests` so they never
     /// take a turn ahead of a page on screen, and deduplicated by page so a
     /// pane that asks twice for a row costs one render.
-    thumbnails: VecDeque<(PageIndex, f32)>,
+    thumbnails: VecDeque<ThumbnailRequest>,
+}
+
+/// One unit of work the worker took off its queues.
+///
+/// The service order lives here rather than in the loop that drains it:
+/// "interactive first, a thumbnail only when nothing interactive is waiting"
+/// is the rule the pane's laziness rests on, and a rule expressed as control
+/// flow inside `worker_loop` is a rule no test can see.
+#[derive(Debug, PartialEq)]
+enum Work {
+    Interactive(RenderRequest),
+    Thumbnail(ThumbnailRequest),
 }
 
 impl PendingRequests {
@@ -383,19 +415,31 @@ impl PendingRequests {
         self.requests.is_empty() && self.thumbnails.is_empty()
     }
 
-    fn push_thumbnail(&mut self, page: PageIndex, zoom: f32) {
+    fn push_thumbnail(&mut self, request: ThumbnailRequest) {
         match self
             .thumbnails
             .iter()
-            .position(|(queued, _)| *queued == page)
+            .position(|queued| queued.page == request.page)
         {
-            Some(position) => self.thumbnails[position] = (page, zoom),
-            None => self.thumbnails.push_back((page, zoom)),
+            Some(position) => self.thumbnails[position] = request,
+            None => self.thumbnails.push_back(request),
         }
     }
 
-    fn pop_thumbnail(&mut self) -> Option<(PageIndex, f32)> {
+    fn pop_thumbnail(&mut self) -> Option<ThumbnailRequest> {
         self.thumbnails.pop_front()
+    }
+
+    /// The next thing to render: every interactive request first, and a
+    /// thumbnail only once none is left.
+    ///
+    /// A pane can queue a screenful of thumbnails in one frame, and the page
+    /// the user just scrolled to must not wait behind them.
+    fn next(&mut self) -> Option<Work> {
+        match self.pop_front() {
+            Some(request) => Some(Work::Interactive(request)),
+            None => self.pop_thumbnail().map(Work::Thumbnail),
+        }
     }
 
     fn push(&mut self, request: RenderRequest) {
@@ -475,27 +519,34 @@ fn worker_loop(
         if drain_requests(document, renderer, options, pending, incoming, outgoing) {
             return;
         }
-        let Some(request) = pending.pop_front() else {
-            // Nothing on screen is waiting, so the pane's turn comes round.
-            if render_one_thumbnail(document, renderer, options, pending, incoming, outgoing) {
-                return;
+        // Which queue gets served is `PendingRequests`' decision, not this
+        // loop's, so it is a decision a test can watch being made.
+        match pending.next() {
+            None => continue,
+            Some(Work::Thumbnail(request)) => {
+                if render_one_thumbnail(
+                    document, renderer, options, pending, incoming, outgoing, request,
+                ) {
+                    return;
+                }
             }
-            continue;
-        };
-        let rendered = renderer.render_page(request.page, request.zoom, options);
-        if drain_requests(document, renderer, options, pending, incoming, outgoing) {
-            return;
-        }
-        if !pending.should_publish(request) {
-            continue;
-        }
+            Some(Work::Interactive(request)) => {
+                let rendered = renderer.render_page(request.page, request.zoom, options);
+                if drain_requests(document, renderer, options, pending, incoming, outgoing) {
+                    return;
+                }
+                if !pending.should_publish(request) {
+                    continue;
+                }
 
-        let response = match rendered {
-            Ok(render) => RenderResponse::Raster { request, render },
-            Err(error) => RenderResponse::Failed { request, error },
-        };
-        if outgoing.renders.send(response).is_err() {
-            return;
+                let response = match rendered {
+                    Ok(render) => RenderResponse::Raster { request, render },
+                    Err(error) => RenderResponse::Failed { request, error },
+                };
+                if outgoing.renders.send(response).is_err() {
+                    return;
+                }
+            }
         }
     }
 }
@@ -513,17 +564,15 @@ fn render_one_thumbnail(
     pending: &mut PendingRequests,
     incoming: &mpsc::Receiver<Request>,
     outgoing: &Outgoing<'_>,
+    request: ThumbnailRequest,
 ) -> bool {
-    let Some((page, zoom)) = pending.pop_thumbnail() else {
-        return false;
-    };
-    let rendered = renderer.render_page(page, zoom, options);
+    let rendered = renderer.render_page(request.page, request.zoom, options);
     if drain_requests(document, renderer, options, pending, incoming, outgoing) {
         return true;
     }
     let response = match rendered {
-        Ok(render) => ThumbnailResponse::Ready { page, render },
-        Err(error) => ThumbnailResponse::Failed { page, error },
+        Ok(render) => ThumbnailResponse::Ready { request, render },
+        Err(error) => ThumbnailResponse::Failed { request, error },
     };
     outgoing.thumbnails.send(response).is_err()
 }
@@ -590,8 +639,8 @@ fn handle_request(
             let _ = response.send(result);
             false
         }
-        Request::Thumbnail { page, zoom } => {
-            pending.push_thumbnail(page, zoom);
+        Request::Thumbnail(request) => {
+            pending.push_thumbnail(request);
             false
         }
         Request::SetLayerVisibility(overrides) => {
@@ -711,58 +760,80 @@ mod tests {
         assert_eq!(pending.pop_front(), None);
     }
 
-    /// Thumbnails are a queue of their own, so a pane full of them cannot
-    /// take a turn ahead of the page on screen. A queue that pushed them in
-    /// with the interactive requests would still answer both, which is why
-    /// this asserts where they came out and not only that they did.
+    fn thumbnail(page: usize, zoom: f32, epoch: u64) -> ThumbnailRequest {
+        ThumbnailRequest { page, zoom, epoch }
+    }
+
+    /// The rule the thumbnails pane's laziness rests on: the page the user
+    /// is looking at is rendered before any thumbnail, however many the pane
+    /// has queued.
+    ///
+    /// Asserted on what comes out of `next`, which is where the decision is
+    /// made. Asserting only that both queues answer would pass a worker that
+    /// served the pane first and left the page blank behind a screenful of
+    /// thumbnails.
     #[test]
-    fn a_thumbnail_waits_behind_every_interactive_render() {
+    fn every_interactive_render_is_served_before_any_thumbnail() {
         let mut pending = PendingRequests::default();
-        pending.push_thumbnail(5, 0.2);
+        pending.push_thumbnail(thumbnail(5, 0.2, 0));
+        pending.push_thumbnail(thumbnail(6, 0.2, 0));
         assert!(!pending.is_idle(), "a queued thumbnail is work to do");
 
         pending.push(request(1, 1.0, 7));
+        pending.push(request(2, 1.0, 7));
 
-        assert_eq!(pending.pop_front(), Some(request(1, 1.0, 7)));
-        assert_eq!(
-            pending.pop_front(),
-            None,
-            "the thumbnail is not in the interactive queue"
-        );
-        assert_eq!(pending.pop_thumbnail(), Some((5, 0.2)));
+        assert_eq!(pending.next(), Some(Work::Interactive(request(1, 1.0, 7))));
+        assert_eq!(pending.next(), Some(Work::Interactive(request(2, 1.0, 7))));
+        assert_eq!(pending.next(), Some(Work::Thumbnail(thumbnail(5, 0.2, 0))));
+        assert_eq!(pending.next(), Some(Work::Thumbnail(thumbnail(6, 0.2, 0))));
+        assert_eq!(pending.next(), None);
         assert!(pending.is_idle());
     }
 
-    /// A pane that asks twice for a row costs one render, and the size it
-    /// asked for last is the one it gets: scrolling back over a row it has
-    /// already asked for must not queue it again, and a size change must not
-    /// leave the old zoom queued in front of the new one.
+    /// An interactive request that arrives while thumbnails are queued goes
+    /// first, which is the case that matters: the pane fills its queue on
+    /// one frame and the user scrolls on the next.
     #[test]
-    fn asking_twice_for_a_row_queues_it_once_at_the_latest_size() {
+    fn a_render_queued_after_a_thumbnail_still_overtakes_it() {
+        let mut pending = PendingRequests::default();
+        pending.push_thumbnail(thumbnail(5, 0.2, 0));
+
+        pending.push(request(1, 1.0, 1));
+
+        assert_eq!(pending.next(), Some(Work::Interactive(request(1, 1.0, 1))));
+        assert_eq!(pending.next(), Some(Work::Thumbnail(thumbnail(5, 0.2, 0))));
+    }
+
+    /// A pane that asks twice for a row costs one render, and the request it
+    /// asked with last is the one served: scrolling back over a row already
+    /// queued must not queue it again, and a size change or a layer toggle
+    /// must not leave the superseded request in front of its replacement.
+    #[test]
+    fn asking_twice_for_a_row_queues_it_once_at_the_latest_request() {
         let mut pending = PendingRequests::default();
 
-        pending.push_thumbnail(5, 0.2);
-        pending.push_thumbnail(6, 0.2);
-        pending.push_thumbnail(5, 0.36);
+        pending.push_thumbnail(thumbnail(5, 0.2, 0));
+        pending.push_thumbnail(thumbnail(6, 0.2, 0));
+        pending.push_thumbnail(thumbnail(5, 0.36, 1));
 
-        assert_eq!(pending.pop_thumbnail(), Some((5, 0.36)));
-        assert_eq!(pending.pop_thumbnail(), Some((6, 0.2)));
+        assert_eq!(pending.pop_thumbnail(), Some(thumbnail(5, 0.36, 1)));
+        assert_eq!(pending.pop_thumbnail(), Some(thumbnail(6, 0.2, 0)));
         assert_eq!(pending.pop_thumbnail(), None);
     }
 
-    /// A new generation replaces the interactive queue, which is the page on
-    /// screen changing. The thumbnails are pictures of pages, not of a view,
-    /// so nothing about scrolling the document invalidates them.
+    /// A new generation replaces the interactive queue, which is the pages on
+    /// screen changing. Thumbnails are pictures of pages, not of a view, so
+    /// scrolling the document invalidates none of them.
     #[test]
     fn advancing_the_generation_leaves_the_thumbnail_queue_alone() {
         let mut pending = PendingRequests::default();
-        pending.push_thumbnail(5, 0.2);
+        pending.push_thumbnail(thumbnail(5, 0.2, 0));
         pending.push(request(1, 1.0, 1));
 
         pending.push(request(2, 1.0, 2));
 
-        assert_eq!(pending.pop_front(), Some(request(2, 1.0, 2)));
-        assert_eq!(pending.pop_thumbnail(), Some((5, 0.2)));
+        assert_eq!(pending.next(), Some(Work::Interactive(request(2, 1.0, 2))));
+        assert_eq!(pending.next(), Some(Work::Thumbnail(thumbnail(5, 0.2, 0))));
     }
 
     #[test]
