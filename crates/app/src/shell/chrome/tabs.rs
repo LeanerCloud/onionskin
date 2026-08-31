@@ -5112,6 +5112,47 @@ mod tests {
             .unwrap();
     }
 
+    /// The page's own words, in the tree the shell builds.
+    ///
+    /// The headline of the whole package: a document a screen reader can read
+    /// rather than a rectangle it announces the name of. Publishing no text
+    /// nodes at all survived the entire lib suite, and only the probe noticed,
+    /// which is a job the probe runs with `continue-on-error` in CI. So it is
+    /// asserted here as well, inside the gate that fails the build.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_page_publishes_its_own_words_under_the_page_they_are_on(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let page = tree
+                    .find(&("page", 0usize).into())
+                    .expect("the tree carries no page node");
+                let runs: Vec<(String, &str)> = page
+                    .children
+                    .iter()
+                    .filter(|child| child.role == Role::Label)
+                    .map(|child| (child.key.to_string(), child.label.as_str()))
+                    .collect();
+
+                assert!(
+                    runs.iter()
+                        .any(|(_, text)| text.contains("Hello Onionskin")),
+                    "the page published none of its own words; it published {runs:?}"
+                );
+                // Keyed by the page they sit under, so the identifier a screen
+                // reader reads back names the page it is looking at.
+                assert!(
+                    runs.iter().all(|(key, _)| key.starts_with("page-0-text-")),
+                    "a run of text is keyed away from its page: {runs:?}"
+                );
+            })
+            .unwrap();
+    }
+
     /// Every tab stop has to have something to run, or Tab lands somewhere
     /// Enter cannot leave.
     #[cfg(feature = "shell-test-support")]

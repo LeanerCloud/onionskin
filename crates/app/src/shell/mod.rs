@@ -440,8 +440,12 @@ impl Canvas {
                 Ok(runs) => {
                     for (index, run) in runs.into_iter().enumerate() {
                         let mut node = A11yElement::new(
+                            // Keyed by the page's own index, so a run reads
+                            // as belonging to the `page-N` node above it.
+                            // The label is what carries the human page
+                            // number.
                             gpui::ElementId::NamedInteger(
-                                format!("page-{number}-text").into(),
+                                format!("page-{}-text", outline.page).into(),
                                 index as u64,
                             ),
                             Role::Label,
