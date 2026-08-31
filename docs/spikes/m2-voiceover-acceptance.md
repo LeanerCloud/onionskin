@@ -101,12 +101,23 @@ Find the "Actual Size" button in the page controls (it draws as "1:1").
 - **Failure** sounds like: "1:1 check mark", or "Actual Size, button" with no
   checked state at all.
 
-Then open the left navigation panes (the icon strip on the left) and select
-Layers on a document that has them.
+Then open a document with optional content, because the seeds have none:
 
-- **Pass**: each layer reads "…, checkbox, checked" or "unchecked".
-- **Failure**: the tick is read as a character ("ballot box with check"), or
-  there is no state.
+```
+./target/debug/onionskin corpus/external/hayro/pdfs/custom/issue175.pdf
+```
+
+That file has one page and seven named layers: Visible, Hidden, BORDER,
+TITLEBLOCK, Smart Centers, FD_Dimensions and Hole Notes. It comes with the
+default corpus fetch, so run `./corpus/fetch.sh` first if `corpus/external/`
+is not on this machine.
+
+Open the left navigation panes (the icon strip on the left) and select Layers.
+
+- **Pass**: each of the seven reads by name, then ", checkbox, checked" or
+  "unchecked", and Ctrl-Option-Space flips what it says.
+- **Failure**: the tick is read as a character ("ballot box with check"), there
+  is no state, or the pane reports no layers at all.
 
 ### Step 4: a control that is off says why
 
