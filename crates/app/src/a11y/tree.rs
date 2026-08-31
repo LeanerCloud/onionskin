@@ -400,9 +400,6 @@ mod tests {
         assert!(!node.supports_action(accesskit::Action::Click));
     }
 
-    /// The M1 spike's finding: AccessKit maps `Role::Document` to
-    /// `NSAccessibilityGroupRole`, so without a role description of our own
-    /// AppKit answers "group" and VoiceOver announces a page as a group.
     /// A screen reader announces an alert only if the node says it is a live
     /// region, so every error the shell raises would otherwise be silent.
     #[test]
@@ -422,6 +419,9 @@ mod tests {
         assert_eq!(node.live(), None);
     }
 
+    /// The M1 spike's finding: AccessKit maps `Role::Document` to
+    /// `NSAccessibilityGroupRole`, so without a role description of our own
+    /// AppKit answers "group" and VoiceOver announces a page as a group.
     #[test]
     fn the_document_node_carries_a_role_description_so_it_is_not_announced_as_a_group() {
         let mut ids = Ids::default();
