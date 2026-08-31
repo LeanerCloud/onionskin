@@ -2831,6 +2831,26 @@ mod tests {
             .unwrap();
     }
 
+    /// Quit runs inside the same deferred window update every other command
+    /// does, and it is the one that tears the application down while it is
+    /// there. Pressed rather than called, because that is the route.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_quit_keystroke_reaches_the_application(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.quit"));
+        cx.run_until_parked();
+
+        // The window is still addressable in a test context, which is what
+        // says the update that quit did not leave the frame mid-flight.
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(frame.tabs.tabs().len(), 1);
+            })
+            .expect("quitting left the window in a state it can be read in");
+    }
+
     /// Select All is a plugin's command reached by a keystroke: the keymap
     /// binds the id the plugin published, the menu entry names the same id,
     /// and the shell runs whatever the registry holds for it.
