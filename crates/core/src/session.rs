@@ -9,8 +9,9 @@ use onionskin_cos::{BytesSource, Provenance};
 use crate::render::WorkerHandle;
 use crate::search::{DocumentSearch, SearchUpdate};
 use crate::{
-    PageGeometry, PageIndex, PageRect, PageRender, PageSvg, RenderRequest, RenderResponse,
-    SearchMatch, SearchOptions, SearchState, SearchWorkerError, Selection,
+    attachments, layers, outline, signatures, Attachment, Layer, ObjRef, OutlineItem, PageGeometry,
+    PageIndex, PageRect, PageRender, PageSvg, RenderRequest, RenderResponse, SearchMatch,
+    SearchOptions, SearchState, SearchWorkerError, Selection, SignatureField, ThumbnailResponse,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -22,6 +23,16 @@ pub enum Error {
     NoSuchPage {
         page: PageIndex,
         count: usize,
+    },
+    NoSuchAttachment {
+        index: usize,
+        count: usize,
+    },
+    NoSuchLayer {
+        layer: ObjRef,
+    },
+    LayerLocked {
+        name: String,
     },
     GeometryPageMismatch {
         request: PageIndex,
@@ -43,6 +54,19 @@ impl fmt::Display for Error {
             Error::NoSuchPage { page, count } => {
                 write!(f, "page {page} is outside a {count}-page document")
             }
+            Error::NoSuchAttachment { index, count } => write!(
+                f,
+                "attachment {index} is outside a document with {count} attachments"
+            ),
+            Error::NoSuchLayer { layer } => write!(
+                f,
+                "object {} {} is not an optional content group in this document",
+                layer.number, layer.generation
+            ),
+            Error::LayerLocked { name } => write!(
+                f,
+                "layer {name:?} is locked by the document's default configuration"
+            ),
             Error::GeometryPageMismatch { request, geometry } => write!(
                 f,
                 "render request is for page {request}, but its geometry is for page {geometry}"
@@ -65,6 +89,9 @@ impl std::error::Error for Error {
             Error::SearchWorker(e) => Some(e),
             Error::EncryptedUnsupported
             | Error::NoSuchPage { .. }
+            | Error::NoSuchAttachment { .. }
+            | Error::NoSuchLayer { .. }
+            | Error::LayerLocked { .. }
             | Error::GeometryPageMismatch { .. } => None,
         }
     }
@@ -149,6 +176,15 @@ pub struct Document {
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
+    /// The navigation panes' readers, each run at most once per document.
+    /// `None` is "nobody has opened that pane", which is the state most
+    /// documents stay in: no pane, no walk.
+    outline: Option<Vec<OutlineItem>>,
+    attachments: Option<Vec<Attachment>>,
+    signatures: Option<Vec<SignatureField>>,
+    /// Kept rather than re-read, because a toggle lives here: this is what
+    /// the pane shows and what the render worker was last told.
+    layers: Option<Vec<Layer>>,
 }
 
 impl Document {
@@ -179,6 +215,10 @@ impl Document {
             search: SearchState::default(),
             snapshot: None,
             search_worker: None,
+            outline: None,
+            attachments: None,
+            signatures: None,
+            layers: None,
         })
     }
 
@@ -311,6 +351,110 @@ impl Document {
             });
         }
         Ok(())
+    }
+
+    /// The document outline, read once and kept.
+    pub fn outline(&mut self) -> Result<&[OutlineItem]> {
+        if self.outline.is_none() {
+            self.outline = Some(outline::read(&self.cos, self.page_count)?);
+        }
+        Ok(self.outline.as_deref().expect("the outline was just read"))
+    }
+
+    /// The embedded files, read once and kept.
+    pub fn attachments(&mut self) -> Result<&[Attachment]> {
+        if self.attachments.is_none() {
+            self.attachments = Some(attachments::read(&self.cos)?);
+        }
+        Ok(self
+            .attachments
+            .as_deref()
+            .expect("the attachments were just read"))
+    }
+
+    /// The decoded bytes of one attachment, by its position in
+    /// [`Document::attachments`].
+    ///
+    /// By position rather than by name, because names repeat: two entries in
+    /// one name tree may both be `notes.txt`, and extracting "the one called
+    /// notes.txt" would then be a coin toss. Nothing is written here; the
+    /// caller decides where the bytes go.
+    pub fn attachment_bytes(&mut self, index: usize) -> Result<Vec<u8>> {
+        let count = self.attachments()?.len();
+        let attachment = self
+            .attachments
+            .as_ref()
+            .expect("the attachments were just read")
+            .get(index)
+            .ok_or(Error::NoSuchAttachment { index, count })?
+            .clone();
+        attachments::read_bytes(&self.cos, &attachment)
+    }
+
+    /// The signature fields, read once and kept. Listing only: nothing here
+    /// says whether a signature is valid, which is M6's answer to give.
+    pub fn signatures(&mut self) -> Result<&[SignatureField]> {
+        if self.signatures.is_none() {
+            self.signatures = Some(signatures::read(&self.cos)?);
+        }
+        Ok(self
+            .signatures
+            .as_deref()
+            .expect("the signature fields were just read"))
+    }
+
+    /// The optional content groups, at the visibility the session is showing
+    /// them: the file's default configuration until something toggles one.
+    pub fn layers(&mut self) -> Result<&[Layer]> {
+        if self.layers.is_none() {
+            self.layers = Some(layers::read(&self.cos)?);
+        }
+        Ok(self.layers.as_deref().expect("the layers were just read"))
+    }
+
+    /// Show or hide one optional content group.
+    ///
+    /// Returns whether the visibility changed, so a caller that has to
+    /// re-render can tell a real toggle from a click on the state it was
+    /// already in. A group the document locked is refused rather than
+    /// silently ignored: the renderer would honour the override, and the
+    /// file said the user may not set one.
+    ///
+    /// Every later render uses the new map. The rasters already cached do
+    /// not, so the caller owns dropping them; `Document` holds no pixels.
+    pub fn set_layer_visible(&mut self, layer: ObjRef, visible: bool) -> Result<bool> {
+        self.layers()?;
+        let layers = self.layers.as_mut().expect("the layers were just read");
+        let found = layers
+            .iter_mut()
+            .find(|candidate| candidate.id == layer)
+            .ok_or(Error::NoSuchLayer { layer })?;
+        if found.locked {
+            return Err(Error::LayerLocked {
+                name: found.name.clone(),
+            });
+        }
+        if found.visible == visible {
+            return Ok(false);
+        }
+        found.visible = visible;
+        let overrides = layers::overrides(layers);
+        self.render.set_layer_visibility(overrides)?;
+        Ok(true)
+    }
+
+    /// Queue a thumbnail of `page` at `zoom`.
+    ///
+    /// Queued behind every interactive render, so a pane asking for a screen
+    /// of thumbnails never delays the page being read. The picture arrives
+    /// through [`Document::try_thumbnail_response`].
+    pub fn request_thumbnail(&mut self, page: PageIndex, zoom: f32) -> Result<()> {
+        self.check_page(page)?;
+        Ok(self.render.request_thumbnail(page, zoom)?)
+    }
+
+    pub fn try_thumbnail_response(&mut self) -> Result<Option<ThumbnailResponse>> {
+        Ok(self.render.try_thumbnail_response()?)
     }
 
     pub fn search_page(
@@ -629,5 +773,204 @@ mod tests {
     fn load(loads: &mut usize, value: i32) -> std::result::Result<i32, ()> {
         *loads += 1;
         Ok(value)
+    }
+
+    /// One page whose only mark is a filled black rectangle inside an
+    /// optional content group, so "is the layer drawn" is a pixel question
+    /// with a yes-or-no answer rather than a judgement about a rendering.
+    ///
+    /// Object 4 is the group; object 5 is the content stream.
+    fn optional_content_document() -> Vec<u8> {
+        use crate::testpdf::{dict, pdf, stream};
+
+        pdf(&[
+            dict(
+                "<< /Type /Catalog /Pages 2 0 R /OCProperties \
+                 << /OCGs [4 0 R] /D << >> >> >>",
+            ),
+            dict("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            dict(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                 /Resources << /Properties << /MC0 4 0 R >> >> /Contents 5 0 R >>",
+            ),
+            dict("<< /Type /OCG /Name (Stamp) >>"),
+            stream("", b"/OC /MC0 BDC\n0 0 0 rg\n20 20 100 50 re f\nEMC\n"),
+        ])
+    }
+
+    fn dark_pixels(render: &PageRender) -> usize {
+        render
+            .raster
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[0] < 128 && pixel[1] < 128 && pixel[2] < 128)
+            .count()
+    }
+
+    /// The whole chain the layers pane depends on: the reader finds the
+    /// group, the toggle reaches the render worker's options, and the next
+    /// render of the page actually stops drawing it.
+    ///
+    /// Asserted on pixels rather than on the map that was sent, because the
+    /// map being right and the renderer ignoring it is exactly the failure
+    /// the fork patch exists to prevent.
+    #[test]
+    fn hiding_a_layer_removes_its_marks_from_the_next_render() {
+        let mut doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
+        let layer = doc.layers().expect("the layers read")[0].clone();
+        assert!(layer.visible, "the file's default configuration shows it");
+
+        let before = doc.render_page_now(0, 1.0).expect("the page renders");
+        assert!(
+            dark_pixels(&before) > 1_000,
+            "the visible layer paints a filled rectangle, saw {} dark pixels",
+            dark_pixels(&before)
+        );
+
+        assert!(doc
+            .set_layer_visible(layer.id, false)
+            .expect("the layer toggles"));
+        let hidden = doc.render_page_now(0, 1.0).expect("the page renders again");
+
+        assert_eq!(
+            dark_pixels(&hidden),
+            0,
+            "hiding the layer has to stop it being drawn"
+        );
+        assert_eq!(hidden.raster.width(), before.raster.width());
+
+        // And back: the override is a value, not a one-way door.
+        assert!(doc
+            .set_layer_visible(layer.id, true)
+            .expect("the layer toggles back"));
+        assert_eq!(
+            dark_pixels(&doc.render_page_now(0, 1.0).expect("the page renders")),
+            dark_pixels(&before)
+        );
+    }
+
+    #[test]
+    fn toggling_a_layer_to_the_state_it_is_in_changes_nothing() {
+        let mut doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
+        let layer = doc.layers().expect("the layers read")[0].clone();
+
+        assert!(!doc
+            .set_layer_visible(layer.id, true)
+            .expect("a no-op toggle is not an error"));
+    }
+
+    /// A locked group is refused rather than quietly ignored: the renderer
+    /// would honour the override, so accepting it would show the user a
+    /// visibility the document said they may not set.
+    #[test]
+    fn a_locked_layer_refuses_to_toggle_and_an_unknown_one_fails_loudly() {
+        use crate::testpdf::{dict, pdf};
+
+        let mut doc = Document::open_bytes(pdf(&[
+            dict(
+                "<< /Type /Catalog /Pages 2 0 R /OCProperties \
+                 << /OCGs [4 0 R] /D << /Locked [4 0 R] >> >> >>",
+            ),
+            dict("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            dict("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>"),
+            dict("<< /Type /OCG /Name (Locked layer) >>"),
+        ]))
+        .expect("the fixture opens");
+        let layer = doc.layers().expect("the layers read")[0].clone();
+        assert!(layer.locked);
+
+        assert!(matches!(
+            doc.set_layer_visible(layer.id, false),
+            Err(Error::LayerLocked { name }) if name == "Locked layer"
+        ));
+        assert!(matches!(
+            doc.set_layer_visible(ObjRef::new(9_999, 0), false),
+            Err(Error::NoSuchLayer { .. })
+        ));
+        assert!(
+            doc.layers().expect("the layers still read")[0].visible,
+            "a refused toggle leaves the visibility it refused to change"
+        );
+    }
+
+    /// The thumbnails pane asks for the rows it is showing and no others, so
+    /// a long document costs a screenful of renders rather than a document's
+    /// worth. Proven against the worker rather than against a plan to call
+    /// it: the pictures that come back are exactly the pages asked for.
+    #[test]
+    fn only_the_requested_pages_come_back_as_thumbnails() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
+        let mut doc = Document::open_path(&path).expect("seed opens");
+
+        doc.request_thumbnail(1, 0.2)
+            .expect("the request is queued");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut answered = Vec::new();
+        while answered.is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the thumbnail never arrived"
+            );
+            while let Some(response) = doc.try_thumbnail_response().expect("the worker is alive") {
+                answered.push(response);
+            }
+        }
+
+        assert_eq!(answered.len(), 1, "one request, one picture");
+        let ThumbnailResponse::Ready { page, render } = &answered[0] else {
+            panic!("the seed's second page rasterizes");
+        };
+        assert_eq!(*page, 1);
+        // The seed's second page is a 180x80 crop box turned 90 degrees, so
+        // 0.2 of it is 16x36. Pinned to the rotated, cropped size rather than
+        // to the media box: a thumbnail has to look like the page does.
+        assert_eq!((render.raster.width(), render.raster.height()), (16, 36));
+        assert!(
+            doc.try_thumbnail_response()
+                .expect("the worker is alive")
+                .is_none(),
+            "no page the pane did not ask for is rendered"
+        );
+    }
+
+    #[test]
+    fn a_thumbnail_of_a_page_outside_the_document_fails_loudly() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let mut doc = Document::open_path(&path).expect("seed opens");
+
+        assert!(matches!(
+            doc.request_thumbnail(7, 0.2),
+            Err(Error::NoSuchPage { page: 7, count: 1 })
+        ));
+    }
+
+    /// Attachments are extracted by position, so the bound has to be the
+    /// list's own length rather than anything the file says.
+    #[test]
+    fn extracting_an_attachment_that_is_not_listed_fails_loudly() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let mut doc = Document::open_path(&path).expect("seed opens");
+
+        assert!(doc.attachments().expect("the attachments read").is_empty());
+        assert!(matches!(
+            doc.attachment_bytes(0),
+            Err(Error::NoSuchAttachment { index: 0, count: 0 })
+        ));
+    }
+
+    /// Every pane reads something from a document that has none of it, and
+    /// none of them treats "the file says nothing" as an error.
+    #[test]
+    fn a_plain_document_reads_as_empty_in_every_pane() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
+        let mut doc = Document::open_path(&path).expect("seed opens");
+
+        assert!(doc.outline().expect("the outline reads").is_empty());
+        assert!(doc.attachments().expect("the attachments read").is_empty());
+        assert!(doc.layers().expect("the layers read").is_empty());
+        assert!(doc.signatures().expect("the signatures read").is_empty());
     }
 }

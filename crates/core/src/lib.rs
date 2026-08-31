@@ -4,31 +4,43 @@
 //! provenance, bounded page caches, selection, and find state. Edit graph,
 //! history, save, and shell integration land in later milestones.
 
+mod attachments;
 mod history;
+mod layers;
 mod layout;
+mod outline;
 mod page;
 mod render;
 mod search;
 mod selection;
 mod session;
+mod signatures;
+#[cfg(test)]
+mod testpdf;
 mod viewport;
 
+pub use attachments::Attachment;
 pub use history::{ViewHistory, ViewState};
+pub use layers::Layer;
 pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,
     ViewRotation, ViewSize,
 };
 pub use onionskin_content::{Glyph, Mapping, MatchMode, PageText, SearchOptions, TextRun};
-pub use onionskin_cos::Provenance;
+/// Re-exported because a [`Layer`] is named by the object its dictionary
+/// lives in, and the shell has to be able to name one back.
+pub use onionskin_cos::{ObjRef, Provenance};
 /// Re-exported because [`Document::render_page_now`] and
 /// [`Document::page_svg`] hand these back: a caller outside `core` has to be
 /// able to name what it received.
 pub use onionskin_render::{BaseRaster, PageRender, PageSvg};
+pub use outline::OutlineItem;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
-pub use render::{PagePlaceholder, RenderRequest, RenderResponse, WorkerError};
+pub use render::{PagePlaceholder, RenderRequest, RenderResponse, ThumbnailResponse, WorkerError};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, PageGeometryResponse, Result, SnapshotRequest};
+pub use signatures::SignatureField;
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy};

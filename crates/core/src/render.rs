@@ -1,11 +1,13 @@
 mod placeholder;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 
-use onionskin_render::{BaseRaster, PageRender, PageRenderGeometry, PageSvg, RenderOptions};
+use onionskin_render::{
+    BaseRaster, ObjectIdentifier, PageRender, PageRenderGeometry, PageSvg, RenderOptions,
+};
 
 use crate::{PageGeometry, PageIndex};
 
@@ -35,6 +37,30 @@ impl RenderResponse {
         match self {
             Self::Placeholder(placeholder) => placeholder.request,
             Self::Raster { request, .. } | Self::Failed { request, .. } => *request,
+        }
+    }
+}
+
+/// One thumbnail the worker produced, or the reason it could not.
+///
+/// Separate from [`RenderResponse`] because a thumbnail carries no
+/// generation: it is a fixed-size picture of a page that nothing on the
+/// canvas invalidates, so there is no staleness for the handle to filter.
+pub enum ThumbnailResponse {
+    Ready {
+        page: PageIndex,
+        render: PageRender,
+    },
+    Failed {
+        page: PageIndex,
+        error: onionskin_render::RenderError,
+    },
+}
+
+impl ThumbnailResponse {
+    pub fn page(&self) -> PageIndex {
+        match self {
+            Self::Ready { page, .. } | Self::Failed { page, .. } => *page,
         }
     }
 }
@@ -98,6 +124,20 @@ enum Request {
         page: PageIndex,
         response: mpsc::SyncSender<Result<PageSvg, WorkerError>>,
     },
+    /// One page rasterized small, for the thumbnails pane. Queued behind
+    /// every interactive render so a pane full of thumbnails never delays
+    /// the page the user is looking at.
+    Thumbnail {
+        page: PageIndex,
+        zoom: f32,
+    },
+    /// Replace the optional content overrides every later render uses.
+    ///
+    /// The whole map, not a difference: it is merged onto the file's own
+    /// default configuration inside the interpreter, so a partial map would
+    /// leave the untouched groups following the file while the pane showed
+    /// something else.
+    SetLayerVisibility(HashMap<ObjectIdentifier, bool>),
     Shutdown,
 }
 
@@ -107,6 +147,7 @@ pub(crate) struct WorkerHandle {
     requests: mpsc::Sender<Request>,
     responses: mpsc::Receiver<RenderResponse>,
     geometry_responses: mpsc::Receiver<GeometryResponse>,
+    thumbnail_responses: mpsc::Receiver<ThumbnailResponse>,
     placeholders: VecDeque<PagePlaceholder>,
     generation: Option<u64>,
     latest: BTreeMap<PageIndex, RenderRequest>,
@@ -118,6 +159,7 @@ impl WorkerHandle {
         let (requests, incoming) = mpsc::channel();
         let (outgoing, responses) = mpsc::channel();
         let (geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (thumbnail_outgoing, thumbnail_responses) = mpsc::channel();
         let (ready, initialized) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("onionskin-render".into())
@@ -134,16 +176,19 @@ impl WorkerHandle {
                 };
 
                 let mut pending = PendingRequests::default();
-                let options = RenderOptions::default();
+                let mut options = RenderOptions::default();
                 document.with_render_session(|renderer| {
                     worker_loop(
                         &document,
                         renderer,
                         &incoming,
-                        &outgoing,
-                        &geometry_outgoing,
+                        &Outgoing {
+                            renders: &outgoing,
+                            geometry: &geometry_outgoing,
+                            thumbnails: &thumbnail_outgoing,
+                        },
                         &mut pending,
-                        &options,
+                        &mut options,
                     );
                 });
             })
@@ -154,6 +199,7 @@ impl WorkerHandle {
                 requests,
                 responses,
                 geometry_responses,
+                thumbnail_responses,
                 placeholders: VecDeque::new(),
                 generation: None,
                 latest: BTreeMap::new(),
@@ -202,6 +248,37 @@ impl WorkerHandle {
             .send(Request::Svg { page, response })
             .map_err(|_| WorkerError::Stopped)?;
         result.recv().map_err(|_| WorkerError::Stopped)?
+    }
+
+    /// Queue one thumbnail. Returns as soon as the worker has the request;
+    /// the picture arrives through [`Self::try_thumbnail_response`].
+    pub(crate) fn request_thumbnail(&self, page: PageIndex, zoom: f32) -> Result<(), WorkerError> {
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(WorkerError::InvalidZoom(zoom));
+        }
+        self.requests
+            .send(Request::Thumbnail { page, zoom })
+            .map_err(|_| WorkerError::Stopped)
+    }
+
+    pub(crate) fn try_thumbnail_response(&self) -> Result<Option<ThumbnailResponse>, WorkerError> {
+        match self.thumbnail_responses.try_recv() {
+            Ok(response) => Ok(Some(response)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err(WorkerError::Stopped),
+        }
+    }
+
+    /// Replace the optional content overrides. Renders already queued behind
+    /// this call use the new map; the ones already in flight do not, which is
+    /// why the caller invalidates its cached rasters as well.
+    pub(crate) fn set_layer_visibility(
+        &self,
+        overrides: HashMap<ObjectIdentifier, bool>,
+    ) -> Result<(), WorkerError> {
+        self.requests
+            .send(Request::SetLayerVisibility(overrides))
+            .map_err(|_| WorkerError::Stopped)
     }
 
     pub(crate) fn request_page_geometry(&self, page: PageIndex) -> Result<(), WorkerError> {
@@ -295,9 +372,32 @@ impl WorkerHandle {
 struct PendingRequests {
     generation: Option<u64>,
     requests: VecDeque<RenderRequest>,
+    /// Thumbnails, oldest first. Kept apart from `requests` so they never
+    /// take a turn ahead of a page on screen, and deduplicated by page so a
+    /// pane that asks twice for a row costs one render.
+    thumbnails: VecDeque<(PageIndex, f32)>,
 }
 
 impl PendingRequests {
+    fn is_idle(&self) -> bool {
+        self.requests.is_empty() && self.thumbnails.is_empty()
+    }
+
+    fn push_thumbnail(&mut self, page: PageIndex, zoom: f32) {
+        match self
+            .thumbnails
+            .iter()
+            .position(|(queued, _)| *queued == page)
+        {
+            Some(position) => self.thumbnails[position] = (page, zoom),
+            None => self.thumbnails.push_back((page, zoom)),
+        }
+    }
+
+    fn pop_thumbnail(&mut self) -> Option<(PageIndex, f32)> {
+        self.thumbnails.pop_front()
+    }
+
     fn push(&mut self, request: RenderRequest) {
         match self.generation {
             Some(generation) if request.generation < generation => return,
@@ -346,54 +446,44 @@ impl PendingRequests {
     }
 }
 
+/// The three channels the worker answers on, bundled so the loop and its
+/// helpers pass one argument rather than three that have to stay in order.
+struct Outgoing<'a> {
+    renders: &'a mpsc::Sender<RenderResponse>,
+    geometry: &'a mpsc::Sender<GeometryResponse>,
+    thumbnails: &'a mpsc::Sender<ThumbnailResponse>,
+}
+
 fn worker_loop(
     document: &onionskin_render::Document,
     renderer: &mut onionskin_render::RenderSession<'_>,
     incoming: &mpsc::Receiver<Request>,
-    outgoing: &mpsc::Sender<RenderResponse>,
-    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
+    outgoing: &Outgoing<'_>,
     pending: &mut PendingRequests,
-    options: &RenderOptions,
+    options: &mut RenderOptions,
 ) {
     loop {
-        if pending.requests.is_empty() {
+        if pending.is_idle() {
             let Ok(request) = incoming.recv() else {
                 return;
             };
-            if handle_request(
-                document,
-                renderer,
-                options,
-                pending,
-                geometry_outgoing,
-                request,
-            ) {
+            if handle_request(document, renderer, options, pending, outgoing, request) {
                 return;
             }
         }
 
-        if drain_requests(
-            document,
-            renderer,
-            options,
-            pending,
-            incoming,
-            geometry_outgoing,
-        ) {
+        if drain_requests(document, renderer, options, pending, incoming, outgoing) {
             return;
         }
         let Some(request) = pending.pop_front() else {
+            // Nothing on screen is waiting, so the pane's turn comes round.
+            if render_one_thumbnail(document, renderer, options, pending, incoming, outgoing) {
+                return;
+            }
             continue;
         };
         let rendered = renderer.render_page(request.page, request.zoom, options);
-        if drain_requests(
-            document,
-            renderer,
-            options,
-            pending,
-            incoming,
-            geometry_outgoing,
-        ) {
+        if drain_requests(document, renderer, options, pending, incoming, outgoing) {
             return;
         }
         if !pending.should_publish(request) {
@@ -404,31 +494,52 @@ fn worker_loop(
             Ok(render) => RenderResponse::Raster { request, render },
             Err(error) => RenderResponse::Failed { request, error },
         };
-        if outgoing.send(response).is_err() {
+        if outgoing.renders.send(response).is_err() {
             return;
         }
     }
 }
 
+/// Rasterize the oldest queued thumbnail, if there is one. Returns true when
+/// the loop should end.
+///
+/// Requests that arrived while it rendered are drained before the answer is
+/// sent, so a page that became visible during a thumbnail render is already
+/// queued ahead of the next thumbnail.
+fn render_one_thumbnail(
+    document: &onionskin_render::Document,
+    renderer: &mut onionskin_render::RenderSession<'_>,
+    options: &mut RenderOptions,
+    pending: &mut PendingRequests,
+    incoming: &mpsc::Receiver<Request>,
+    outgoing: &Outgoing<'_>,
+) -> bool {
+    let Some((page, zoom)) = pending.pop_thumbnail() else {
+        return false;
+    };
+    let rendered = renderer.render_page(page, zoom, options);
+    if drain_requests(document, renderer, options, pending, incoming, outgoing) {
+        return true;
+    }
+    let response = match rendered {
+        Ok(render) => ThumbnailResponse::Ready { page, render },
+        Err(error) => ThumbnailResponse::Failed { page, error },
+    };
+    outgoing.thumbnails.send(response).is_err()
+}
+
 fn drain_requests(
     document: &onionskin_render::Document,
     renderer: &mut onionskin_render::RenderSession<'_>,
-    options: &RenderOptions,
+    options: &mut RenderOptions,
     pending: &mut PendingRequests,
     incoming: &mpsc::Receiver<Request>,
-    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
+    outgoing: &Outgoing<'_>,
 ) -> bool {
     loop {
         match incoming.try_recv() {
             Ok(request) => {
-                if handle_request(
-                    document,
-                    renderer,
-                    options,
-                    pending,
-                    geometry_outgoing,
-                    request,
-                ) {
+                if handle_request(document, renderer, options, pending, outgoing, request) {
                     return true;
                 }
             }
@@ -441,9 +552,9 @@ fn drain_requests(
 fn handle_request(
     document: &onionskin_render::Document,
     renderer: &mut onionskin_render::RenderSession<'_>,
-    options: &RenderOptions,
+    options: &mut RenderOptions,
     pending: &mut PendingRequests,
-    geometry_outgoing: &mpsc::Sender<GeometryResponse>,
+    outgoing: &Outgoing<'_>,
     request: Request,
 ) -> bool {
     match request {
@@ -454,7 +565,7 @@ fn handle_request(
         }
         Request::GeometryAsync { page } => {
             let result = document.page_geometry(page).map_err(WorkerError::Render);
-            let _ = geometry_outgoing.send((page, result));
+            let _ = outgoing.geometry.send((page, result));
             false
         }
         Request::Render(request) => {
@@ -477,6 +588,14 @@ fn handle_request(
                 .render_page_svg(page, options)
                 .map_err(WorkerError::Render);
             let _ = response.send(result);
+            false
+        }
+        Request::Thumbnail { page, zoom } => {
+            pending.push_thumbnail(page, zoom);
+            false
+        }
+        Request::SetLayerVisibility(overrides) => {
+            options.layer_visibility = overrides;
             false
         }
         Request::Shutdown => true,
@@ -528,11 +647,13 @@ mod tests {
         let (requests, _incoming) = mpsc::channel();
         let (outgoing, responses) = mpsc::channel();
         let (geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (_thumbnail_outgoing, thumbnail_responses) = mpsc::channel();
         (
             WorkerHandle {
                 requests,
                 responses,
                 geometry_responses,
+                thumbnail_responses,
                 placeholders: VecDeque::new(),
                 generation: None,
                 latest: BTreeMap::new(),
@@ -629,10 +750,12 @@ mod tests {
         drop(incoming);
         let (_outgoing, responses) = mpsc::channel();
         let (_geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (_thumbnail_outgoing, thumbnail_responses) = mpsc::channel();
         let mut handle = WorkerHandle {
             requests,
             responses,
             geometry_responses,
+            thumbnail_responses,
             placeholders: VecDeque::new(),
             generation: None,
             latest: BTreeMap::new(),
@@ -654,10 +777,12 @@ mod tests {
         let (requests, incoming) = mpsc::channel();
         let (_outgoing, responses) = mpsc::channel();
         let (_geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (_thumbnail_outgoing, thumbnail_responses) = mpsc::channel();
         let handle = WorkerHandle {
             requests,
             responses,
             geometry_responses,
+            thumbnail_responses,
             placeholders: VecDeque::new(),
             generation: None,
             latest: BTreeMap::new(),
@@ -678,6 +803,7 @@ mod tests {
         let (requests, incoming) = mpsc::channel();
         let (_outgoing, responses) = mpsc::channel();
         let (geometry_outgoing, geometry_responses) = mpsc::channel();
+        let (_thumbnail_outgoing, thumbnail_responses) = mpsc::channel();
         let (started, worker_started) = mpsc::sync_channel(1);
         let (release, worker_release) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
@@ -695,6 +821,7 @@ mod tests {
             requests,
             responses,
             geometry_responses,
+            thumbnail_responses,
             placeholders: VecDeque::new(),
             generation: None,
             latest: BTreeMap::new(),
