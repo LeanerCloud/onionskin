@@ -102,6 +102,14 @@ behind decision 11's time-to-first-page budget. Absent, those two tests skip;
 under `ONIONSKIN_CORPUS_REQUIRED=1` they fail instead, rather than reporting a
 pass they did not earn.
 
+`crates/core/benches/` reads it through the same door, and every one of
+decision 11's four budgets is stated over it: `open.rs` times the first page
+and counts the bytes that reach it, `paint.rs` paints page 1000 of it cold,
+and `scroll.rs` scrolls across two hundred of its pages for both the frame
+budget and the memory one. The CI bench job generates it with
+`make-bench.py` and sets `ONIONSKIN_CORPUS_REQUIRED=1`, so a run that cannot
+find it fails instead of quietly measuring nothing.
+
 ### `external/hayro` (360 PDFs, 28 MB, default)
 
 Upstream: `LaurenzV/hayro` at `5a5f0e247c970df948505ee0bb36e2df2504bf86`, the
@@ -188,7 +196,7 @@ Guarantee test numbers refer to [`PLAN.md`](../PLAN.md), "Guarantee tests".
 | 6, repair | all of `malformed/`, plus `hayro/pdfs/load/` for real-world damage |
 | 7, forms compute | `js-forms/`, not built yet |
 | 8, tag integrity | `tagged/`, not built yet; `verapdf/PDF_UA-1` and `PDF_UA-2` are the raw material |
-| 9, performance budgets | `bench/pages-1000.pdf` for the thousand-page budgets in decision 11; `hayro-corpus` for large real-world files, where the 67 MB scan is the natural worst case |
+| 9, performance budgets | `bench/pages-1000.pdf` for the thousand-page budgets in decision 11, plus `hayro-corpus/0041790.pdf`, whose first page is the heaviest to rasterize and therefore the one the first-paint budget is stated against; `hayro-corpus` also carries the large real-world files, where the 67 MB scan is the natural worst case |
 
 Tests 1, 2 and 6 walk directories, so a set added to `external/` is picked up
 without touching test code. Tests 3, 7 and 8 need per-file expectations and
