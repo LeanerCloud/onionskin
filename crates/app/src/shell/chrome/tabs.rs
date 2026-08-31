@@ -4700,6 +4700,63 @@ mod tests {
         assert_eq!(current_page(window, cx), before);
     }
 
+    /// A screen reader's press, from the queue the platform's action handler
+    /// writes into all the way to the page turning.
+    ///
+    /// This is how a VoiceOver user operates a control, and it is the only
+    /// path with no keyboard and no mouse in it. The unit tests in
+    /// `crate::a11y` say which element a request resolves to; this says that
+    /// resolving it is followed by running it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_screen_reader_press_runs_the_control_it_named(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        let before = current_page(window, cx);
+        assert!(before > 0, "the fixture opens on the first page");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .a11y
+                    .deliver(&"previous-page".into(), accesskit::Action::Click);
+                // The queue is drained by the frame after the request, so ask
+                // for that frame.
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            current_page(window, cx),
+            before - 1,
+            "a screen reader's press on Previous Page did not turn the page"
+        );
+    }
+
+    /// The other half of what a screen reader asks for: moving its cursor
+    /// onto a control has to move the shell's own focus, or the next Enter
+    /// runs whatever the ring was left on.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_screen_reader_cursor_moves_the_shell_s_focus(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        assert_ne!(focused_key(window, cx).as_deref(), Some("zoom-in"));
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .a11y
+                    .deliver(&"zoom-in".into(), accesskit::Action::Focus);
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(focused_key(window, cx).as_deref(), Some("zoom-in"));
+    }
+
     /// Escape peels overlays off one at a time, topmost first. Before P12 the
     /// only thing it closed was the find bar, and menus were dismissed by
     /// clicking an invisible layer no keyboard could reach.

@@ -237,6 +237,16 @@ impl ShellAccessibility {
         self.ring.focused()
     }
 
+    /// Ask the shell for something as a screen reader asks for it, through
+    /// the same queue the platform's action handler writes to.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn deliver(&mut self, key: &gpui::ElementId, action: accesskit::Action) {
+        self.adapter
+            .as_mut()
+            .expect("the adapter is attached on the first frame")
+            .deliver(key, action);
+    }
+
     pub(in crate::shell) fn step(&mut self, step: crate::a11y::Step) -> bool {
         self.ring.step(step)
     }

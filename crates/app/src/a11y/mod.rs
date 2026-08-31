@@ -53,6 +53,14 @@ struct Shared {
     requests: RefCell<Vec<ActionRequest>>,
 }
 
+impl Shared {
+    /// Record what a screen reader asked for. The platform's action handler
+    /// does nothing else, and the tests come through the same door.
+    fn record(&self, request: ActionRequest) {
+        self.requests.borrow_mut().push(request);
+    }
+}
+
 impl Adapter {
     /// Attach to the window's native view.
     ///
@@ -68,6 +76,36 @@ impl Adapter {
             shared,
             platform,
         }
+    }
+
+    /// An adapter with the id map and the request queue but no platform
+    /// behind it.
+    ///
+    /// GPUI's test platform has no native window to attach to, so a test
+    /// about which element a request resolves to cannot go through
+    /// [`Adapter::attach`].
+    #[cfg(test)]
+    pub(crate) fn detached() -> Self {
+        Self {
+            ids: Ids::default(),
+            shared: Rc::new(Shared::default()),
+            platform: platform::Adapter::detached(),
+        }
+    }
+
+    /// Deliver an action request the way the platform's handler delivers one.
+    ///
+    /// Named by element rather than by node id, because the id is this
+    /// adapter's own and a caller has no other way to learn it.
+    #[cfg(test)]
+    pub(crate) fn deliver(&mut self, key: &ElementId, action: accesskit::Action) {
+        let target_node = self.ids.id_for(key);
+        self.shared.record(ActionRequest {
+            action,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node,
+            data: None,
+        });
     }
 
     /// Publish a freshly built description.
@@ -140,11 +178,16 @@ mod platform {
 
     impl ActionHandler for Actions {
         fn do_action(&mut self, request: ActionRequest) {
-            self.0.requests.borrow_mut().push(request);
+            self.0.record(request);
         }
     }
 
     impl Adapter {
+        #[cfg(test)]
+        pub(super) fn detached() -> Self {
+            Self { inner: None }
+        }
+
         pub(super) fn attach(window: &Window, shared: Rc<Shared>) -> Self {
             // GPUI's test platform has no native window and answers the
             // question by panicking, so a unit-test build attaches nothing.
@@ -223,6 +266,11 @@ mod platform {
     pub(super) struct Adapter;
 
     impl Adapter {
+        #[cfg(test)]
+        pub(super) fn detached() -> Self {
+            Self
+        }
+
         pub(super) fn attach(_window: &Window, _shared: Rc<Shared>) -> Self {
             Self
         }
@@ -230,5 +278,92 @@ mod platform {
         pub(super) fn update(&mut self, _update: TreeUpdate) {}
 
         pub(super) fn set_view_focused(&mut self, _focused: bool) {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use accesskit::{Action, Role};
+
+    use super::*;
+
+    /// A chrome-shaped tree: two controls a screen reader can press.
+    fn tree() -> Element<()> {
+        Element::new("window", Role::Window, "Onionskin").with_children(vec![
+            Element::new("previous-page", Role::Button, "Previous Page").with_activation(()),
+            Element::new("zoom-in", Role::Button, "Zoom In").with_activation(()),
+        ])
+    }
+
+    /// The whole operate half of the contract: a press has to come back out
+    /// naming the element it was aimed at and the thing the shell does about
+    /// it. Nothing else in the shell converts an `ActionRequest` into a
+    /// `Request`.
+    #[test]
+    fn a_request_resolves_to_the_element_it_named_and_the_thing_to_do_to_it() {
+        let mut adapter = Adapter::detached();
+        adapter.publish(&tree(), None);
+
+        adapter.deliver(&"previous-page".into(), Action::Click);
+        adapter.deliver(&"zoom-in".into(), Action::Focus);
+
+        assert_eq!(
+            adapter.take_requests(),
+            vec![
+                ("previous-page".into(), Request::Activate),
+                ("zoom-in".into(), Request::Focus),
+            ]
+        );
+    }
+
+    /// The queue is drained, not read: a press the shell has already run must
+    /// not run again on the next frame.
+    #[test]
+    fn taking_the_requests_empties_the_queue() {
+        let mut adapter = Adapter::detached();
+        adapter.publish(&tree(), None);
+        adapter.deliver(&"zoom-in".into(), Action::Click);
+
+        assert!(adapter.has_requests());
+        assert_eq!(adapter.take_requests().len(), 1);
+        assert!(!adapter.has_requests());
+        assert_eq!(adapter.take_requests(), Vec::new());
+    }
+
+    /// The tree moved on between the query and the press: the node the
+    /// request names is not published any more, so there is nothing to run
+    /// and running the element that took its place would be worse than
+    /// running nothing.
+    #[test]
+    fn a_request_naming_a_node_the_tree_has_dropped_is_not_run() {
+        let mut adapter = Adapter::detached();
+        adapter.publish(&tree(), None);
+        let stale = adapter.ids.id_for(&"zoom-in".into());
+
+        let smaller: Element<()> = Element::new("window", Role::Window, "Onionskin").child(
+            Element::new("previous-page", Role::Button, "Previous Page").with_activation(()),
+        );
+        adapter.publish(&smaller, None);
+        adapter.shared.record(ActionRequest {
+            action: Action::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: stale,
+            data: None,
+        });
+
+        assert!(adapter.has_requests());
+        assert_eq!(adapter.take_requests(), Vec::new());
+    }
+
+    /// AccessKit's action set is much wider than the two the shell publishes.
+    /// Anything else is dropped rather than guessed at.
+    #[test]
+    fn an_action_the_shell_never_offered_is_dropped() {
+        let mut adapter = Adapter::detached();
+        adapter.publish(&tree(), None);
+
+        adapter.deliver(&"zoom-in".into(), Action::ScrollIntoView);
+
+        assert_eq!(adapter.take_requests(), Vec::new());
     }
 }
