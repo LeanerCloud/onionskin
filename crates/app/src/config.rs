@@ -126,7 +126,9 @@ const KEPT_COPIES: u32 = 9;
 /// their file is about to be replaced.
 pub fn keep_unreadable(path: &Path) -> String {
     let mut kept = path.with_extension("bak");
-    for attempt in 1..=KEPT_COPIES {
+    // One more turn than there are numbered names, because the first turn
+    // tries the unnumbered one.
+    for attempt in 1..=KEPT_COPIES + 1 {
         match copy_new(path, &kept) {
             Ok(()) => return format!(" (a copy of it is kept at {})", kept.display()),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -140,20 +142,28 @@ pub fn keep_unreadable(path: &Path) -> String {
         }
     }
     format!(
-        " (it could not be copied aside: {} and {KEPT_COPIES} numbered copies already exist, \
-         so the next save replaces it)",
+        " (it could not be copied aside: {} and its {KEPT_COPIES} numbered copies already \
+         exist, so the next save replaces it)",
         path.with_extension("bak").display()
     )
 }
 
-/// Copy `from` to `to` only when `to` does not exist yet.
+/// Copy `from` to `to` only when `to` does not exist yet, owner-only.
+///
+/// The mode matters as much here as in [`write_private`]: the file most
+/// likely to need rescuing is the recents list, and a copy of it is the same
+/// list of document paths. `std::fs::copy` would carry the source's mode
+/// instead, and this copy is never replaced, so a wide one would stay wide.
 fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
     let contents = std::fs::read(from)?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(to)?;
-    file.write_all(&contents)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options.open(to)?.write_all(&contents)
 }
 
 /// A directory this test process owns, for the modules whose subject is a
@@ -242,28 +252,69 @@ mod tests {
     /// A `.bak` may be the user's own, or the rescue copy from the previous
     /// bad edit. Neither is this code's to overwrite, and losing the first
     /// of two bad edits is exactly how a rescue copy becomes useless.
+    ///
+    /// Run past the last numbered name, so the count in the give-up message
+    /// has to be the count of names this really tries.
     #[test]
-    fn a_second_rescue_copy_does_not_replace_the_first() {
-        let dir = test_dir("config-preserve-twice");
+    fn every_rescue_copy_keeps_its_own_contents_until_the_names_run_out() {
+        let dir = test_dir("config-preserve-many");
         let path = dir.join("preferences.json");
-        for name in ["bak", "bak.1"] {
+        let names: Vec<String> = std::iter::once("bak".to_owned())
+            .chain((1..=KEPT_COPIES).map(|index| format!("bak.{index}")))
+            .collect();
+        for name in &names {
             let _ = std::fs::remove_file(path.with_extension(name));
         }
-        std::fs::write(&path, "first bad edit").expect("the test writes its file");
-        keep_unreadable(&path);
-        std::fs::write(&path, "second bad edit").expect("the test rewrites its file");
 
+        for (index, name) in names.iter().enumerate() {
+            std::fs::write(&path, format!("bad edit {index}")).expect("the test writes its file");
+            let note = keep_unreadable(&path);
+            assert!(
+                note.contains(&path.with_extension(name).display().to_string()),
+                "copy {index} went somewhere else: {note}"
+            );
+        }
+        // Every earlier copy still holds what it held.
+        for (index, name) in names.iter().enumerate() {
+            assert_eq!(
+                std::fs::read_to_string(path.with_extension(name)).expect("the copy reads"),
+                format!("bad edit {index}")
+            );
+        }
+
+        std::fs::write(&path, "one edit too many").expect("the test writes its file");
         let note = keep_unreadable(&path);
 
-        assert_eq!(
-            std::fs::read_to_string(path.with_extension("bak")).expect("the first copy reads"),
-            "first bad edit"
+        assert!(note.contains("could not be copied aside"), "{note}");
+        assert!(
+            note.contains(&format!("{KEPT_COPIES} numbered copies")),
+            "{note}"
         );
+    }
+
+    /// The file most likely to need rescuing is the recents list, and a copy
+    /// of it is the same list of document paths.
+    #[cfg(unix)]
+    #[test]
+    fn a_rescue_copy_is_owner_only_like_the_file_it_copies() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = test_dir("config-preserve-mode");
+        let path = dir.join("recents.json");
+        let kept = path.with_extension("bak");
+        let _ = std::fs::remove_file(&kept);
+        std::fs::write(&path, "{ not json").expect("the test writes its file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("the test can widen its own file");
+
+        keep_unreadable(&path);
+
+        let mode = std::fs::metadata(&kept).unwrap().permissions().mode();
         assert_eq!(
-            std::fs::read_to_string(path.with_extension("bak.1")).expect("the second copy reads"),
-            "second bad edit"
+            mode & 0o077,
+            0,
+            "the copy of a private list is readable by other accounts"
         );
-        assert!(note.contains("bak.1"), "{note}");
     }
 
     /// The note is the only warning that the file is about to be replaced,

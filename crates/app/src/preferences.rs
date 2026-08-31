@@ -327,10 +327,13 @@ impl Preferences {
         (preferences, errors)
     }
 
-    /// Write every setting this build has.
+    /// Write every setting this build has, keeping the keys it does not.
     ///
-    /// A key it does not have is not written back: it cannot be kept in step
-    /// with the rest of the file, and the load that reported it said so.
+    /// A key from another version is reported when the file is read, and
+    /// that report is not consent to delete it: the notice may have been
+    /// dismissed, and the file may be shared with the build that wrote it.
+    /// Read back here rather than carried in memory, so a file edited by
+    /// hand between the two keeps whatever was added.
     pub fn save(&self, path: &Path) -> Result<(), PreferencesError> {
         let mut file = serde_json::Map::new();
         file.insert("theme".into(), self.theme.key().into());
@@ -343,6 +346,17 @@ impl Preferences {
         );
         file.insert("search_whole_word".into(), self.search.whole_word.into());
         file.insert("search_mode".into(), mode_key(self.search.mode).into());
+        // Whatever is already in the file and is not one of the settings
+        // above. `or_insert` keeps this build's value for the keys it wrote.
+        if let Ok(Some(source)) = crate::config::read(path) {
+            if let Ok(existing) =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&source)
+            {
+                for (setting, value) in existing {
+                    file.entry(setting).or_insert(value);
+                }
+            }
+        }
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
         crate::config::write_private(path, &json).map_err(|source| PreferencesError::Unwritable {
@@ -620,6 +634,32 @@ mod tests {
         for zoom in ZoomPreference::ALL {
             assert_eq!(parse_zoom(zoom.key()), Some(zoom));
         }
+    }
+
+    /// A setting from another version survives a save. Reporting it is not
+    /// permission to delete it, and the first click in the dialog saves.
+    #[test]
+    fn a_setting_this_build_does_not_have_survives_a_save() {
+        let path = crate::config::test_dir("preferences-unknown").join("preferences.json");
+        std::fs::write(&path, r#"{"commenting_author": "me", "theme": "dark"}"#)
+            .expect("the test writes its file");
+        let (preferences, errors) = Preferences::load(Some(&path));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(preferences.theme, ThemePreference::Dark);
+
+        Preferences {
+            theme: ThemePreference::Light,
+            ..preferences
+        }
+        .save(&path)
+        .expect("preferences save");
+
+        let written = std::fs::read_to_string(&path).expect("the file reads back");
+        assert!(
+            written.contains("commenting_author"),
+            "the save dropped a setting this build does not have: {written}"
+        );
+        assert!(written.contains("\"light\""), "{written}");
     }
 
     #[test]

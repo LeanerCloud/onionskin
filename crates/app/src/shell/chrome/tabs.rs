@@ -503,9 +503,18 @@ impl ShellFrame {
             // the display theme is a setting, so choosing it in the View
             // menu has to survive a restart and has to be what the
             // Preferences dialog shows.
-            MenuCommand::ThemeSystem => self.set_theme(ThemePreference::System, cx),
-            MenuCommand::ThemeLight => self.set_theme(ThemePreference::Light, cx),
-            MenuCommand::ThemeDark => self.set_theme(ThemePreference::Dark, cx),
+            MenuCommand::ThemeSystem => {
+                self.set_theme(ThemePreference::System, cx);
+                Ok(())
+            }
+            MenuCommand::ThemeLight => {
+                self.set_theme(ThemePreference::Light, cx);
+                Ok(())
+            }
+            MenuCommand::ThemeDark => {
+                self.set_theme(ThemePreference::Dark, cx);
+                Ok(())
+            }
             command @ (MenuCommand::ToggleNavigationPane
             | MenuCommand::TogglePageControls
             | MenuCommand::ReadMode) => {
@@ -721,14 +730,9 @@ impl ShellFrame {
         &self.settings.preferences
     }
 
-    fn set_theme(
-        &mut self,
-        theme: ThemePreference,
-        cx: &mut Context<Self>,
-    ) -> Result<(), TabError> {
+    fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) {
         self.dismiss_menus(cx);
         self.change_preference(PreferenceChange::Theme(theme), cx);
-        Ok(())
     }
 
     pub(in crate::shell) fn show_preferences(
@@ -763,7 +767,7 @@ impl ShellFrame {
         match change {
             PreferenceChange::Theme(theme) => {
                 preferences.theme = theme;
-                self.run_shell_view_action(ShellViewAction::SetTheme(theme), cx);
+                self.apply_shell_view_action(ShellViewAction::SetTheme(theme), cx);
             }
             PreferenceChange::RecentDocuments(count) => {
                 preferences.recent_documents = count;
@@ -1018,15 +1022,28 @@ impl ShellFrame {
     }
 
     fn run_shell_view_action(&mut self, action: ShellViewAction, cx: &mut Context<Self>) {
+        if self.apply_shell_view_action(action, cx) {
+            refresh_native_menus(cx, self.menu_state(cx));
+            cx.notify();
+        }
+    }
+
+    /// Apply a view-state change and repaint what it changed, without
+    /// rebuilding the menus.
+    ///
+    /// Separate because a preference change ends by rebuilding them anyway,
+    /// and the theme is both: going through the whole of
+    /// `run_shell_view_action` rebuilt the native menu bar twice per click.
+    /// Returns whether anything changed.
+    fn apply_shell_view_action(&mut self, action: ShellViewAction, cx: &mut Context<Self>) -> bool {
         let previous_theme = self.shell_view_state.resolved_theme();
         if !self.shell_view_state.apply(action) {
-            return;
+            return false;
         }
         if previous_theme != self.shell_view_state.resolved_theme() {
             self.apply_theme(cx);
         }
-        refresh_native_menus(cx, self.menu_state(cx));
-        cx.notify();
+        true
     }
 
     fn toggle_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
