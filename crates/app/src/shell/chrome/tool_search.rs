@@ -836,13 +836,13 @@ mod tests {
                     id: "pages.rotate",
                     title: "Rotate Clockwise",
                     keybind: None,
-                    run: Box::new(|_: &mut CommandCtx| {}),
+                    run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
                 Command {
                     id: "document.properties",
                     title: "Document Properties",
                     keybind: None,
-                    run: Box::new(|_: &mut CommandCtx| {}),
+                    run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
             ]
         }

@@ -19,7 +19,7 @@ pub use codec::{CodecPlugin, ExportError, ExportRequest, ExportedFile, PageRange
 /// page-render types for what a codec gets back when it asks for a page.
 pub use onionskin_core::{
     BaseRaster, Document, Modifiers, PageIndex, PagePoint, PageQuad, PageRect, PageRender, PageSvg,
-    Viewport,
+    TextSelection, Viewport,
 };
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
 
@@ -132,9 +132,49 @@ pub trait ToolPlugin: Send {
 }
 
 /// Context handed to commands (menu items and keybound actions).
+///
+/// `page` is the page the viewport is on, which is what "the current page"
+/// means to Acrobat's Edit menu. The viewport itself is not here because no
+/// command changes view state: panning and zooming are tools, and they have
+/// [`ToolCtx`].
 pub struct CommandCtx<'a> {
     pub doc: &'a mut Document,
+    pub page: PageIndex,
 }
+
+/// Why a command could not do what it was asked.
+///
+/// A command reports instead of returning nothing because the work behind
+/// one fails on real documents: a page whose text will not extract makes
+/// Select All select nothing, and a caller that cannot tell that apart from
+/// a page with no text has nothing to put on the status line.
+#[derive(Debug)]
+pub enum CommandError {
+    /// A page the command needed could not be read.
+    Page {
+        page: PageIndex,
+        source: onionskin_core::Error,
+    },
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Page { page, source } => write!(f, "page {}: {source}", page + 1),
+        }
+    }
+}
+
+impl std::error::Error for CommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Page { source, .. } => Some(source),
+        }
+    }
+}
+
+/// What a command does when it is run.
+pub type CommandBody = Box<dyn Fn(&mut CommandCtx) -> Result<(), CommandError> + Send>;
 
 /// A named, keybindable command. `id` is namespaced like "pages.rotate".
 pub struct Command {
@@ -143,7 +183,7 @@ pub struct Command {
     /// Default keybinding in GPUI keystroke syntax, e.g. "cmd-shift-r"
     /// ("cmd" is mapped to ctrl on Linux and Windows by the app shell).
     pub keybind: Option<&'static str>,
-    pub run: Box<dyn Fn(&mut CommandCtx) + Send>,
+    pub run: CommandBody,
 }
 
 /// A bag of commands contributed by a plugin.
@@ -208,6 +248,23 @@ mod tests {
         fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
 
         fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    /// One-based, like every other page number a user reads. A command's
+    /// failure lands on the canvas status line beside the export failures,
+    /// which already count from one.
+    #[test]
+    fn a_command_failure_names_the_page_the_way_the_user_counts_pages() {
+        let error = CommandError::Page {
+            page: 4,
+            source: onionskin_core::Error::NoSuchPage { page: 4, count: 2 },
+        };
+
+        assert!(
+            error.to_string().starts_with("page 5: "),
+            "{}",
+            error.to_string()
+        );
     }
 
     #[test]
