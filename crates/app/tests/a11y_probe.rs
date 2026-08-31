@@ -66,6 +66,13 @@ impl Tree {
         node[key].as_str().unwrap_or_default()
     }
 
+    /// Whether the platform reports the node as usable.
+    fn enabled(&self, node: &Node) -> bool {
+        node["enabled"]
+            .as_bool()
+            .expect("every node reports whether it is enabled")
+    }
+
     /// The node's rectangle on screen: x, y, width, height.
     fn frame(&self, node: &Node) -> [f64; 4] {
         let frame = node["frame"]
@@ -361,6 +368,12 @@ fn a_control_that_cannot_be_used_says_why_instead_of_disappearing() {
 
     assert_eq!(tree.field(node, "title"), "Previous Page");
     assert_eq!(tree.field(node, "help"), "This is the first page");
+    // The state, not just the words about it: a control announced as dimmed
+    // but reported usable is one a screen reader will let a user press.
+    assert!(
+        !tree.enabled(node),
+        "a disabled control reached the platform enabled"
+    );
 }
 
 /// The press: how a VoiceOver user operates a control, and the one path with
