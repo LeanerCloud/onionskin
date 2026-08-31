@@ -7,15 +7,15 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    canvas as gpui_canvas, div, fill, point, px, size, App, AppContext as _, Application, Bounds,
-    Context, DispatchPhase, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point,
-    Render, ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase, Window,
-    WindowBounds, WindowOptions,
+    canvas as gpui_canvas, div, fill, outline, point, px, size, App, AppContext as _, Application,
+    BorderStyle, Bounds, Context, DispatchPhase, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent,
+    Pixels, Point, Render, ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase,
+    Window, WindowBounds, WindowOptions,
 };
 use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
 
-use self::canvas::{CanvasError, CanvasModel, CanvasStatus, PaintList, ViewAction};
+use self::canvas::{CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList, ViewAction};
 use self::chrome::{
     install_native_menus, install_search_keybindings, MenuState, ShellFrame, ShellViewState,
     ThemeTokens,
@@ -303,6 +303,7 @@ impl Render for Canvas {
         let prepare_entity = cx.entity();
         let exit_entity = cx.entity();
         let status = self.model.status().map(status_text);
+        let theme = self.theme;
         let mut root = div()
             .id("canvas")
             .size_full()
@@ -351,7 +352,7 @@ impl Render for Canvas {
                                 gpui::white(),
                             ));
                         }
-                        for tile in paint.tiles {
+                        for tile in &paint.tiles {
                             window
                                 .with_content_mask(
                                     Some(gpui::ContentMask {
@@ -361,7 +362,7 @@ impl Render for Canvas {
                                         window.paint_image(
                                             window_bounds(bounds.origin, tile.rect),
                                             gpui::Corners::default(),
-                                            tile.image,
+                                            tile.image.clone(),
                                             0,
                                             false,
                                         )
@@ -369,6 +370,7 @@ impl Render for Canvas {
                                 )
                                 .expect("canvas tile image is valid");
                         }
+                        paint_overlays(&paint.overlays, bounds.origin, theme, window);
                     },
                 )
                 .size_full(),
@@ -492,6 +494,46 @@ where
 
 fn should_quit_after_window_closed(open_window_count: usize) -> bool {
     open_window_count == 0
+}
+
+/// Paint what the active tool asked for, over the page rasters.
+///
+/// A text selection is a filled polygon rather than a rectangle because a
+/// rotated view, or a page that draws its text on a slant, turns a glyph's
+/// quad into one; a marquee is the dashed rectangle Acrobat draws.
+fn paint_overlays(
+    overlays: &[OverlayPaint],
+    origin: Point<Pixels>,
+    theme: ThemeTokens,
+    window: &mut Window,
+) {
+    for overlay in overlays {
+        match overlay {
+            OverlayPaint::Quads(quads) => {
+                for corners in quads {
+                    // `/QuadPoints` order is upper-left, upper-right,
+                    // lower-left, lower-right; a path has to walk the
+                    // perimeter, so the last two swap.
+                    let [top_left, top_right, bottom_left, bottom_right] =
+                        corners.map(|corner| window_point_at(origin, corner));
+                    let mut path = gpui::Path::new(top_left);
+                    path.line_to(top_right);
+                    path.line_to(bottom_right);
+                    path.line_to(bottom_left);
+                    window.paint_path(path, theme.selection);
+                }
+            }
+            OverlayPaint::AntsRect(rect) => window.paint_quad(outline(
+                window_bounds(origin, *rect),
+                theme.drag_preview,
+                BorderStyle::Dashed,
+            )),
+        }
+    }
+}
+
+fn window_point_at(origin: Point<Pixels>, at: ViewPoint) -> Point<Pixels> {
+    point(origin.x + px(at.x), origin.y + px(at.y))
 }
 
 fn window_bounds(origin: Point<Pixels>, rect: ViewRect) -> Bounds<Pixels> {

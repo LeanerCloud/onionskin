@@ -1,8 +1,8 @@
 //! Marquee zoom, with Acrobat's click semantics.
 
 use onionskin_core::{
-    Document, FitMode, PageAlignment, PageGeometry, PageQuad, PageRect, PageRenderRect, ViewPoint,
-    ViewSize, Viewport,
+    Document, FitMode, PageAlignment, PageGeometry, PageRect, PageRenderRect, ViewPoint, ViewSize,
+    Viewport,
 };
 use onionskin_plugin_api::{Modifiers, Overlay, PointerInput, ToolCtx, ToolPlugin};
 
@@ -92,20 +92,7 @@ fn fit_region(viewport: &mut Viewport, region: PageRect) {
 /// The region as a rectangle of the page's unrotated render space, which is
 /// what `FitMode::Visible` is expressed in.
 fn render_rect(geometry: &PageGeometry, region: PageRect) -> Option<PageRenderRect> {
-    let quad = geometry
-        .user_to_device(
-            PageQuad {
-                page: region.page,
-                corners: [
-                    (region.x0, region.y1),
-                    (region.x1, region.y1),
-                    (region.x0, region.y0),
-                    (region.x1, region.y0),
-                ],
-            },
-            1.0,
-        )
-        .ok()?;
+    let quad = geometry.user_to_device(region.into(), 1.0).ok()?;
     let page = ViewSize {
         width: geometry.render_size.0 as f32,
         height: geometry.render_size.1 as f32,

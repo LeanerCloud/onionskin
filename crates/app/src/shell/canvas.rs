@@ -6,10 +6,10 @@ use std::sync::{Arc, Weak};
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Document, FitMode, PageAlignment, PageGeometryResponse, PageIndex, PageLayoutMode,
-    PagePlacement, RenderRequest, RenderResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation,
-    ViewSize, Viewport, ViewportError,
+    PagePlacement, PagePoint, PageQuad, RenderRequest, RenderResponse, ViewHistory, ViewPoint,
+    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
-use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx};
+use onionskin_plugin_api::{Overlay, PluginRegistry, PointerInput, ToolCtx};
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
@@ -182,10 +182,20 @@ pub struct TilePaint {
     pub image: Arc<RenderImage>,
 }
 
+/// A tool overlay in canvas coordinates, ready to paint.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OverlayPaint {
+    /// Filled translucent polygons: a text selection.
+    Quads(Vec<[ViewPoint; 4]>),
+    /// Dashed outline: a marquee in progress.
+    AntsRect(ViewRect),
+}
+
 #[derive(Default)]
 pub struct PaintList {
     pub pages: Vec<PagePaint>,
     pub tiles: Vec<TilePaint>,
+    pub overlays: Vec<OverlayPaint>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -645,6 +655,7 @@ impl CanvasModel {
                 })
                 .collect(),
             tiles: Vec::new(),
+            overlays: Vec::new(),
         };
         let rotation = self.viewport.rotation();
         let exact_zoom = self.viewport.zoom();
@@ -694,6 +705,7 @@ impl CanvasModel {
         }
         self.image_cache.retain_keys(&displayed_images);
         self.tiles.end_frame();
+        paint.overlays = self.overlay_paints();
         Ok(paint)
     }
 
@@ -879,6 +891,74 @@ impl CanvasModel {
         Ok(Some((source_zoom, size.0, size.1)))
     }
 
+    /// What the active tool wants drawn this frame, in canvas coordinates.
+    ///
+    /// An overlay this canvas cannot draw yet is reported rather than
+    /// dropped: a tool that asks for one is asking for something the user
+    /// would otherwise never see.
+    fn overlay_paints(&mut self) -> Vec<OverlayPaint> {
+        let overlays = match self
+            .active_tool
+            .and_then(|index| self.registry.tools().nth(index))
+        {
+            Some(tool) => tool.overlays(&self.document),
+            None => return Vec::new(),
+        };
+        let mut paints = Vec::new();
+        let mut unpaintable = None;
+        for overlay in overlays {
+            match self.map_overlay(&overlay) {
+                Ok(Some(paint)) => paints.push(paint),
+                Ok(None) => {}
+                Err(kind) => unpaintable = unpaintable.or(Some(kind)),
+            }
+        }
+        if let Some(kind) = unpaintable {
+            self.record_error(format!("the canvas cannot draw a {kind} overlay yet"));
+        }
+        paints
+    }
+
+    /// `Ok(None)` for an overlay the viewport cannot place; `Err` names an
+    /// overlay shape with no painter yet.
+    fn map_overlay(&self, overlay: &Overlay) -> Result<Option<OverlayPaint>, &'static str> {
+        match overlay {
+            Overlay::Quads(quads) => {
+                let mapped: Vec<[ViewPoint; 4]> = quads
+                    .iter()
+                    .filter_map(|quad| self.map_quad(*quad))
+                    .collect();
+                Ok((!mapped.is_empty()).then_some(OverlayPaint::Quads(mapped)))
+            }
+            Overlay::AntsRect(rect) => Ok(self
+                .map_quad((*rect).into())
+                .map(|corners| OverlayPaint::AntsRect(bounding_rect(corners)))),
+            Overlay::Rect(_) => Err("rectangle"),
+            Overlay::Polyline(_) => Err("polyline"),
+            Overlay::Line { .. } => Err("line"),
+            Overlay::Circle { .. } => Err("circle"),
+        }
+    }
+
+    /// `None` when any corner cannot be placed: the page is not laid out in
+    /// the current mode, or has not been measured yet. Both are ordinary
+    /// frames, so neither is worth a status the user has to read.
+    fn map_quad(&self, quad: PageQuad) -> Option<[ViewPoint; 4]> {
+        let mut corners = [ViewPoint::default(); 4];
+        for (corner, (x, y)) in corners.iter_mut().zip(quad.corners) {
+            *corner = self
+                .viewport
+                .view_point_for(PagePoint {
+                    page: quad.page,
+                    x,
+                    y,
+                })
+                .ok()
+                .flatten()?;
+        }
+        Some(corners)
+    }
+
     fn map_pointer(
         &self,
         position: Point<Pixels>,
@@ -936,6 +1016,28 @@ fn window_point(point: Point<Pixels>) -> ViewPoint {
     ViewPoint {
         x: f32::from(point.x),
         y: f32::from(point.y),
+    }
+}
+
+/// The axis-aligned extent of four mapped corners. A marquee is dragged
+/// axis-aligned in the viewport, but it is carried as a page rectangle, so
+/// under a rotated view its corners come back in a different order than
+/// they went in.
+fn bounding_rect(corners: [ViewPoint; 4]) -> ViewRect {
+    let (mut left, mut top) = (f32::MAX, f32::MAX);
+    let (mut right, mut bottom) = (f32::MIN, f32::MIN);
+    for corner in corners {
+        left = left.min(corner.x);
+        right = right.max(corner.x);
+        top = top.min(corner.y);
+        bottom = bottom.max(corner.y);
+    }
+    ViewRect {
+        origin: ViewPoint { x: left, y: top },
+        size: ViewSize {
+            width: right - left,
+            height: bottom - top,
+        },
     }
 }
 
@@ -1251,7 +1353,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode};
+    use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode, PageRect};
     use onionskin_plugin_api::{ToolCtx, ToolPlugin};
     use onionskin_render::{InterpreterWarning, PageRender, RenderError};
 
@@ -1454,6 +1556,186 @@ mod tests {
                 raster,
                 warnings: Vec::new(),
             },
+        }
+    }
+
+    struct OverlayTool {
+        overlays: Vec<Overlay>,
+    }
+
+    impl ToolPlugin for OverlayTool {
+        fn id(&self) -> &'static str {
+            "overlay"
+        }
+
+        fn name(&self) -> &'static str {
+            "Overlay"
+        }
+
+        fn icon(&self) -> &'static str {
+            "overlay"
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+
+        fn overlays(&self, _doc: &Document) -> Vec<Overlay> {
+            self.overlays.clone()
+        }
+    }
+
+    fn overlay_model(overlays: Vec<Overlay>) -> CanvasModel {
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(OverlayTool { overlays }));
+        let mut model = model_with_registry(registry);
+        model.update().expect("the first frame runs");
+        model
+    }
+
+    fn selection_quad() -> PageQuad {
+        PageQuad {
+            page: 0,
+            corners: [(72.0, 720.0), (144.0, 720.0), (72.0, 700.0), (144.0, 700.0)],
+        }
+    }
+
+    #[test]
+    fn a_text_selection_overlay_is_mapped_corner_by_corner_through_the_page_transform() {
+        let mut model = overlay_model(vec![Overlay::Quads(vec![selection_quad()])]);
+
+        let overlays = model.paint_list().expect("the frame paints").overlays;
+
+        let expected: Vec<ViewPoint> = selection_quad()
+            .corners
+            .iter()
+            .map(|&(x, y)| {
+                model
+                    .viewport
+                    .view_point_for(PagePoint { page: 0, x, y })
+                    .expect("page zero is measured")
+                    .expect("page zero is laid out")
+            })
+            .collect();
+        assert_eq!(
+            overlays,
+            vec![OverlayPaint::Quads(vec![[
+                expected[0],
+                expected[1],
+                expected[2],
+                expected[3]
+            ]])]
+        );
+        assert!(model.status().is_none());
+    }
+
+    /// The quad is axis-aligned in page space, so a quarter turn has to swap
+    /// the extent it covers on screen. Painting the page-space extent under a
+    /// rotated view would leave the highlight off the glyphs it selects.
+    #[test]
+    fn a_selection_overlay_follows_the_view_rotation() {
+        let mut model = overlay_model(vec![Overlay::Quads(vec![selection_quad()])]);
+        let upright = overlay_bounds(&mut model);
+
+        model
+            .set_rotation(ViewRotation::Clockwise90)
+            .expect("the view rotates");
+        model.update().expect("the rotated frame runs");
+        let turned = overlay_bounds(&mut model);
+
+        // The quarter turn refits the page, so the overlay changes size as
+        // well as orientation; what has to invert is its aspect.
+        let upright_aspect = upright.size.width / upright.size.height;
+        let turned_aspect = turned.size.height / turned.size.width;
+        assert!(
+            upright_aspect > 1.0,
+            "the selection is wider than it is tall"
+        );
+        assert!((upright_aspect - turned_aspect).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_marquee_overlay_becomes_the_bounding_rectangle_of_its_mapped_corners() {
+        let region = PageRect {
+            page: 0,
+            x0: 72.0,
+            y0: 700.0,
+            x1: 144.0,
+            y1: 720.0,
+        };
+        let mut model = overlay_model(vec![Overlay::AntsRect(region)]);
+        model
+            .set_rotation(ViewRotation::Clockwise90)
+            .expect("the view rotates");
+        model.update().expect("the rotated frame runs");
+
+        let overlays = model.paint_list().expect("the frame paints").overlays;
+
+        let corners: Vec<ViewPoint> = PageQuad::from(region)
+            .corners
+            .iter()
+            .map(|&(x, y)| {
+                model
+                    .viewport
+                    .view_point_for(PagePoint { page: 0, x, y })
+                    .expect("page zero is measured")
+                    .expect("page zero is laid out")
+            })
+            .collect();
+        let expected = bounding_rect([corners[0], corners[1], corners[2], corners[3]]);
+        assert_eq!(overlays, vec![OverlayPaint::AntsRect(expected)]);
+        assert!(expected.size.width > 0.0 && expected.size.height > 0.0);
+    }
+
+    /// Pages measure lazily and a layout mode shows only some of them, so an
+    /// overlay the viewport cannot place yet is a normal frame, not an error.
+    #[test]
+    fn an_overlay_on_a_page_the_layout_cannot_place_is_dropped_quietly() {
+        let mut model = overlay_model(vec![Overlay::Quads(vec![PageQuad {
+            page: 9,
+            corners: [(0.0, 1.0), (1.0, 1.0), (0.0, 0.0), (1.0, 0.0)],
+        }])]);
+
+        let overlays = model.paint_list().expect("the frame paints").overlays;
+
+        assert!(overlays.is_empty());
+        assert!(model.status().is_none());
+    }
+
+    /// The plugin API has six overlay shapes and this canvas paints two. The
+    /// four with no painter are reported, because a tool asking for one is
+    /// asking for something the user would otherwise never see.
+    #[test]
+    fn an_overlay_shape_the_canvas_cannot_paint_is_reported() {
+        let mut model = overlay_model(vec![Overlay::Circle {
+            center: PagePoint {
+                page: 0,
+                x: 100.0,
+                y: 700.0,
+            },
+            radius: 4.0,
+        }]);
+
+        let overlays = model.paint_list().expect("the frame paints").overlays;
+
+        assert!(overlays.is_empty());
+        assert!(matches!(
+            model.status(),
+            Some(CanvasStatus::Error { message, .. }) if message.contains("circle")
+        ));
+    }
+
+    fn overlay_bounds(model: &mut CanvasModel) -> ViewRect {
+        match model
+            .paint_list()
+            .expect("the frame paints")
+            .overlays
+            .as_slice()
+        {
+            [OverlayPaint::Quads(quads)] => bounding_rect(quads[0]),
+            other => panic!("expected one selection overlay, got {other:?}"),
         }
     }
 

@@ -31,6 +31,23 @@ pub struct PageRect {
     pub y1: f64,
 }
 
+impl From<PageRect> for PageQuad {
+    /// The rectangle's corners in `/QuadPoints` order, so a rectangle can go
+    /// through the same user-to-device and viewport mappings a text quad
+    /// does instead of each caller spelling out the corner order.
+    fn from(rect: PageRect) -> Self {
+        PageQuad {
+            page: rect.page,
+            corners: [
+                (rect.x0, rect.y1),
+                (rect.x1, rect.y1),
+                (rect.x0, rect.y0),
+                (rect.x1, rect.y0),
+            ],
+        }
+    }
+}
+
 /// Geometry loaded lazily from the page tree.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PageGeometry {
