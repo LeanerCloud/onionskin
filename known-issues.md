@@ -3,6 +3,11 @@
 Living ledger; remove entries when resolved. Details in docs/spikes/ where
 referenced.
 
+The first sentence's removal instruction is superseded from the 2026-08-31 forward
+audit onward: resolved entries are retained with an explicit resolution note so
+their history is not erased. See `docs/audits/m2-forward-audit.md` for stable
+source IDs, severity, ownership, and required proof.
+
 ## Upstream (hayro) - blocking or shaping our work
 
 - Appearance-state rendering (/AP dict + /AS): FIXED on hayro's unreleased
@@ -47,7 +52,8 @@ referenced.
   reference. M3's tools-organize (per PLAN.md's milestone map) has to fix up
   the page tree itself.
 
-- Export runs on the UI thread and buffers every page in memory: a
+- Historical P13 audit wording retained, with current disposition below. Export
+  runs on the UI thread and buffers every page in memory: a
   whole-document PNG export of a large file freezes the shell for the full
   render and holds all pages' bytes at once. The memory cost is documented on
   the codec contract; the UI blocking is not. M3's export dialog should move
@@ -57,6 +63,10 @@ referenced.
   dialog is swallowed like a cancel; numbered export files pad to {:03} so
   above 999 pages they stop sorting in page order; derived numbered files
   overwrite without the prompt the base name gets.
+  **2026-08-31 disposition:** export prompt failures are no longer swallowed;
+  `start_export` handles `Ok(Err(error))`. Attachment save still swallows prompt
+  failure and is tracked separately as APP-009. The remaining export UI-thread,
+  memory, numbering, and derived-overwrite findings stay open.
 - P10/foundation review follow-ups (app shell): a snapshot error can
   overwrite a pointer error in the single status slot (keep-first or queue);
   PNG snapshot encode is synchronous on the UI thread with no size cap; a
@@ -74,7 +84,8 @@ referenced.
   WorkerSilent; SearchResult::Unavailable::reason is &'static str so the
   tool palette shows a fixed pointer to the status line rather than the
   actual activation error - widen it after P9 lands, since P9 owns that file.
-- Global action listeners run synchronously inside a window update, during
+- **Resolved at `7413186`; historical finding retained:** Global action listeners
+  run synchronously inside a window update, during
   which gpui takes the window off cx.windows, so any listener body calling
   window_handle.update() fails with "window not found" and drops the command
   with only an eprintln. P9 hit this on Ctrl+F and fixes its own listener with
@@ -82,6 +93,9 @@ referenced.
   native-menu path have the same latent shape and want the same treatment plus
   a keystroke-dispatch test. Found by executing a real ctrl-f in a gpui test,
   not by reading the code.
+  Current `RunCommand`, close-tab, and view-menu paths defer correctly, and shell
+  tests cover the real find/close/view keystrokes. No code change is justified
+  unless B2 re-verification disproves that evidence.
 - P8/P14 follow-ups: the outline destination map sweeps cos::Document::page(i)
   once to resolve bookmarks that name a page by reference, which is O(pages)
   walks on a large outlined document; attachment save writes on the UI thread
@@ -141,6 +155,48 @@ referenced.
   mouse-up.
 - parity/reference/ screenshot corpus not yet captured (needs Acrobat driven
   on-screen; local-only per Legal posture rule 4).
+
+## 2026-08-31 forward-audit additions
+
+- **Release blocker (REPO-001, owner B6):** `.github/workflows/release.yml`
+  builds `onionskin-app` without the `shell` feature. A produced artifact can take
+  the headless/non-viewer path instead of opening the production UI. Build/package
+  with `--features shell`, mirror platform prerequisites, and smoke-launch the
+  packaged viewer before calling a release usable.
+- **Malformed page-tree correctness (CR-001, owner B1):** a negative root `/Count`
+  is clamped to zero in `content::page_count`, so a malformed file with reachable
+  page kids can be reported as an empty document instead of failing or repairing
+  explicitly. Add a real negative-count fixture and typed error/repair behavior.
+- **Stale-tab asynchronous writes (APP-001, owner B4):** export and attachment-save
+  completions retain a canvas while a path prompt is pending and do not prove the
+  originating tab/document still exists before writing. Close/switch-before-prompt
+  regression tests must prove no stale write occurs.
+- **Attachment prompt errors (APP-009, owner B4):** attachment save treats a prompt
+  failure like cancel, unlike export. Surface the typed prompt error and test it.
+- **M2 parity acceptance (REPO-003/010; REPO-004 resolved):** this audit corrected
+  the M2 plan header. The Acrobat matrix still reports zero implemented rows, and
+  private reference screenshot evidence is absent. Audit Task 2 reconciles the
+  matrix as a B7 prerequisite; B7 owns final acceptance and private comparison.
+- **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
+  license, secret, and dependency-update policy is missing; repository guarantee
+  stubs and packaging docs do not yet match landed behavior and release needs.
+- **Retained prior deletions (owner B0):** `crates/content/src/filter.rs` and
+  `crates/app/src/bin/shell_spike.rs` were deleted in prior sessions. Restore their
+  exact blobs additively without selecting obsolete code in normal builds.
+- **Active P12 spike preservation (owner B5):** main retains `a11y_spike.rs`; the
+  active P12 owner must remove its pending deletion before handoff.
+- **Resolved dispatch report retained:** the prior global-action-listener warning
+  is stale at `7413186`. Current `RunCommand`, close-tab, and view-menu paths defer
+  correctly and shell tests cover real find/close/view keystrokes. No code change
+  is justified unless B2 re-verification disproves this evidence.
+- **Current-session retained duplicate (owner B0):** source-report freezing accidentally
+  created an untracked main-checkout copy of
+  `docs/audits/source-reports/2026-08-31-repo-docs-ci.md`. It is byte-identical to
+  the audit-worktree copy (SHA-256
+  `7ddb97efad7d554ebfbfc67b94a003248e9357d38e6a214b61cab170c8daf0a7`) and is
+  preserved. Before feature integration, track those exact existing bytes in an
+  additive main commit and rebase the audit package, so no removal or move is
+  needed.
 
 ## Environment
 

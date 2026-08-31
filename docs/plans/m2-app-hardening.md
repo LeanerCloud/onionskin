@@ -1,11 +1,10 @@
 # M2 app hardening backlog
 
-Status: backlog, opened 2026-08-31 from the post-merge adversarial audit of
-P2-P7 (which another session landed on main without the review gate). The
-CRITICAL/HIGH correctness items went straight into a foundation-fix package;
-the items below are refactors and parity gaps that would collide with the
-P10/P9/P13 wave's canvas and chrome edits, so they land as one package after
-that wave integrates. Each item cites the audit finding it came from.
+Status: retained source backlog, line-by-line revalidation in progress under the
+2026-08-31 forward audit. P8-P11, P13, and P14 have since integrated, so this file
+is evidence rather than current package order. Live dispositions and B2/B3/B5
+owners are recorded in `docs/audits/m2-forward-audit.md`; no bullet is deleted when
+superseded or resolved.
 
 ## Canvas (crates/app/src/shell)
 

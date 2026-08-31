@@ -1,6 +1,10 @@
 # M2 implementation plan: the viewer
 
-Status: approved after two adversarial review rounds (2026-08-27). Implementation in progress as of 2026-08-30: P1, P4 (final commit 78fbc50 pending), P2, P3, P5, P6a, P6b and P7a/b/c are merged to main; P9, P10 and P13 are the next parallel wave, then P8, P11, P12, P14.
+Status: implementation hardening as of 2026-08-31. P1-P11, P13, and P14 are
+represented on main; P12 accessibility is active but unmerged. M2 remains open for
+the forward-audit fixes, real VoiceOver acceptance, release-shell correction, the
+private parity screenshot comparison, and final three-pass acceptance. Live merge
+evidence and finding ownership are in `docs/audits/m2-forward-audit.md`.
 
 M2 turns three isolated M1 spikes into one application: open a PDF (repaired
 if needed), render it, navigate it, search it, select text in it, wearing the
@@ -15,10 +19,12 @@ later and get no code here. `cargo test -p onionskin-app --no-default-features`
 
 ---
 
-## 1. Ground truth: what exists today
+## 1. Historical ground truth at plan approval
 
-Read before reviewing the packages. Every claim below was checked against the
-tree, not against PLAN.md.
+This section records the repository state used to author and approve the package
+plan on 2026-08-27. It is historical, not the current implementation ledger.
+Current package state and live findings are in
+`docs/audits/m2-forward-audit.md`.
 
 | Component | State | The part that matters for M2 |
 |---|---|---|
