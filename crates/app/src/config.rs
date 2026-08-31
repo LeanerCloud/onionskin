@@ -108,16 +108,19 @@ pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     std::fs::rename(&temporary, path)
 }
 
-/// Keep a file this build could not read, before something overwrites it.
+/// Keep a file this build could not read, and say where.
 ///
 /// A user who mistypes their keymap gets one notice; without this the next
-/// save would take the rest of the file with it. Returns where the copy
-/// went, for the notice to name.
-pub fn preserve_unreadable(path: &Path) -> Option<PathBuf> {
+/// save would take the rest of the file with it. The note goes on the end
+/// of the message that reports the file, so the two cannot be separated.
+///
+/// A copy that fails adds nothing: the message it would join is already
+/// telling the user their file is unreadable.
+pub fn keep_unreadable(path: &Path) -> String {
     let kept = path.with_extension("bak");
     match std::fs::copy(path, &kept) {
-        Ok(_) => Some(kept),
-        Err(_) => None,
+        Ok(_) => format!(" (a copy of it is kept at {})", kept.display()),
+        Err(_) => String::new(),
     }
 }
 
@@ -191,13 +194,14 @@ mod tests {
         let path = test_dir("config-preserve").join("keymap.json");
         std::fs::write(&path, "not json").expect("the test writes its file");
 
-        let kept = preserve_unreadable(&path).expect("the copy is made");
+        let note = keep_unreadable(&path);
 
+        let kept = path.with_extension("bak");
+        assert!(note.contains(&kept.display().to_string()), "{note}");
         assert_eq!(
             std::fs::read_to_string(&kept).expect("the copy reads"),
             "not json"
         );
-        assert_eq!(kept, path.with_extension("bak"));
     }
 
     #[test]

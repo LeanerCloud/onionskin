@@ -132,7 +132,11 @@ impl Keymap {
             return Self::resolve(defaults, None, Path::new(crate::config::KEYMAP_FILE), macos);
         };
         match crate::config::read(path) {
-            Ok(source) => Self::resolve(defaults, source.as_deref(), path, macos),
+            Ok(source) => {
+                let mut keymap = Self::resolve(defaults, source.as_deref(), path, macos);
+                keymap.keep_if_malformed(path);
+                keymap
+            }
             Err(source) => {
                 let mut keymap = Self::resolve(defaults, None, path, macos);
                 keymap.errors.push(KeymapError::Unreadable {
@@ -194,6 +198,16 @@ impl Keymap {
         }
 
         Self { bindings, errors }
+    }
+
+    /// Copy the file aside when this build could not parse it, so the next
+    /// save does not take the user's only copy with it.
+    fn keep_if_malformed(&mut self, path: &Path) {
+        for error in &mut self.errors {
+            if let KeymapError::Malformed { message, .. } = error {
+                message.push_str(&crate::config::keep_unreadable(path));
+            }
+        }
     }
 
     pub fn bindings(&self) -> &[Binding] {
@@ -426,6 +440,31 @@ mod tests {
         );
         assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
         assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-w"));
+    }
+
+    /// The message that reports an unreadable file also says where its
+    /// contents were kept, because the next save overwrites the original.
+    #[test]
+    fn an_unreadable_file_is_kept_and_the_message_says_where() {
+        let dir = crate::config::test_dir("keymap-kept");
+        let path = dir.join("keymap.json");
+        let kept = path.with_extension("bak");
+        let _ = std::fs::remove_file(&kept);
+        std::fs::write(&path, "{ not json").expect("the test writes its file");
+
+        let keymap = Keymap::load(&DEFAULTS, Some(&path), true);
+
+        let messages = messages(&keymap);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].contains(&kept.display().to_string()),
+            "{messages:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&kept).expect("the copy exists"),
+            "{ not json"
+        );
+        assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
     }
 
     #[test]

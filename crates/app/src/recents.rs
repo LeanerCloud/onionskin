@@ -119,7 +119,7 @@ impl Recents {
                     Self::default(),
                     vec![RecentsError::Malformed {
                         path: path.to_path_buf(),
-                        message: error.to_string(),
+                        message: error.to_string() + &crate::config::keep_unreadable(path),
                     }],
                 ),
             },

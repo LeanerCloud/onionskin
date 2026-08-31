@@ -277,7 +277,15 @@ impl Preferences {
         };
         match crate::config::read(path) {
             Ok(None) => (Self::default(), Vec::new()),
-            Ok(Some(source)) => Self::parse(&source, path),
+            Ok(Some(source)) => {
+                let (preferences, mut errors) = Self::parse(&source, path);
+                for error in &mut errors {
+                    if let PreferencesError::Malformed { message, .. } = error {
+                        message.push_str(&crate::config::keep_unreadable(path));
+                    }
+                }
+                (preferences, errors)
+            }
             Err(source) => (
                 Self::default(),
                 vec![PreferencesError::Unreadable {

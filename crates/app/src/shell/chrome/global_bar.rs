@@ -150,11 +150,7 @@ impl RegisteredCommands {
         // on every menu refresh, and an entry added to REGISTRY_BACKED by
         // mistake should read as "no plugin provides it" rather than take
         // the window down.
-        Self(REGISTRY_BACKED.map(|command| {
-            command
-                .registry_command_id()
-                .is_some_and(&has_command)
-        }))
+        Self(REGISTRY_BACKED.map(|command| command.registry_command_id().is_some_and(&has_command)))
     }
 
     fn has(self, command: MenuCommand) -> bool {
