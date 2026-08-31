@@ -178,12 +178,16 @@ pub fn search_flattened(
     needle: &str,
     options: SearchOptions,
 ) -> Vec<Match> {
+    // The page folds once however many words are searched for: the fold walks
+    // every character of the page, and a three-word search would otherwise
+    // walk it three times.
+    let folded = fold(&flat.text, options.case_sensitive);
     match options.mode {
-        MatchMode::Phrase => find_all(page, flat, needle, options),
+        MatchMode::Phrase => find_all(page, flat, &folded, needle, options),
         MatchMode::AnyWord | MatchMode::AllWords => {
             let mut out = Vec::new();
             for word in needle.split_whitespace() {
-                let hits = find_all(page, flat, word, options);
+                let hits = find_all(page, flat, &folded, word, options);
                 if hits.is_empty() && options.mode == MatchMode::AllWords {
                     return Vec::new();
                 }
@@ -196,12 +200,19 @@ pub fn search_flattened(
     }
 }
 
-/// Every occurrence of one literal needle, in document order.
-fn find_all(page: &PageText, flat: &Flattened, needle: &str, options: SearchOptions) -> Vec<Match> {
+/// Every occurrence of one literal needle, in document order, against the
+/// page folded once by the caller.
+fn find_all(
+    page: &PageText,
+    flat: &Flattened,
+    folded: &(String, Vec<usize>),
+    needle: &str,
+    options: SearchOptions,
+) -> Vec<Match> {
     if needle.is_empty() {
         return Vec::new();
     }
-    let (haystack, offsets) = fold(&flat.text, options.case_sensitive);
+    let (haystack, offsets) = folded;
     let pattern = fold(needle, options.case_sensitive).0;
     if pattern.is_empty() {
         return Vec::new();
@@ -215,7 +226,7 @@ fn find_all(page: &PageText, flat: &Flattened, needle: &str, options: SearchOpti
         // Advance by one byte-boundary so overlapping occurrences are all
         // found; `find` on a UTF-8 boundary guarantees `start + 1` is safe to
         // clamp up to the next boundary.
-        from = next_boundary(&haystack, start + 1);
+        from = next_boundary(haystack, start + 1);
 
         // Folding is not length preserving and not even character preserving:
         // the Turkish dotted capital I folds to two code points, so a needle
