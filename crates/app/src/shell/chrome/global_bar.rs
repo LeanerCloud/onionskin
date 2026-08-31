@@ -5,7 +5,7 @@ use super::quick_actions::QuickAction;
 use super::theme::{ShellViewAction, ShellViewState, ThemePreference};
 use super::ShellFrame;
 use crate::shell::canvas::{CanvasViewState, ViewAction};
-use crate::shell::find_bar::ToggleFindBar;
+use crate::shell::find_bar::OpenFindBar;
 
 actions!(onionskin_shell, [CloseTab, CloseOtherTabs, CloseAllTabs]);
 
@@ -668,6 +668,12 @@ pub(in crate::shell) fn install_native_menus(
     cx.on_action(move |action: &RunViewMenu, cx| {
         ShellFrame::run_native_command(window, action.command, cx);
     });
+    // Ctrl+F and Edit > Find arrive here rather than at an element listener:
+    // action dispatch walks the focus path, and until the find bar opens
+    // nothing in the shell holds focus for it to walk to.
+    cx.on_action(move |_: &OpenFindBar, cx| {
+        ShellFrame::run_native_command(window, MenuCommand::Find, cx);
+    });
 
     refresh_native_menus(cx, state);
 }
@@ -732,7 +738,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         MenuCommand::CloseTab => Some(Box::new(CloseTab)),
         MenuCommand::CloseOtherTabs => Some(Box::new(CloseOtherTabs)),
         MenuCommand::CloseAllTabs => Some(Box::new(CloseAllTabs)),
-        MenuCommand::Find => Some(Box::new(ToggleFindBar)),
+        MenuCommand::Find => Some(Box::new(OpenFindBar)),
         MenuCommand::PreviousView
         | MenuCommand::NextView
         | MenuCommand::FirstPage

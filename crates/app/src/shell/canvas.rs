@@ -261,7 +261,6 @@ pub enum OverlayPaint {
 /// painted over the tiles rather than rendered into them, so highlighting
 /// costs no re-render.
 pub struct HighlightPaint {
-    pub page: PageIndex,
     pub rect: ViewRect,
     /// The hit next/previous last landed on, drawn differently from the rest.
     pub current: bool,
@@ -551,48 +550,72 @@ impl CanvasModel {
     }
 
     pub fn select_next_match(&mut self) -> Result<bool, CanvasError> {
-        if self.document.search_mut().select_next().is_none() {
+        if !self.document.select_next_match() {
             return Ok(false);
         }
-        self.reveal_current_match()
+        self.reveal_as_navigation()
     }
 
     pub fn select_previous_match(&mut self) -> Result<bool, CanvasError> {
-        if self.document.search_mut().select_previous().is_none() {
+        if !self.document.select_previous_match() {
             return Ok(false);
         }
-        self.reveal_current_match()
+        self.reveal_as_navigation()
+    }
+
+    /// Stepping to a hit is a navigation the user asked for, so Previous View
+    /// comes back from it, and the whole reveal counts as the one entry. The
+    /// reveal a streaming result triggers records nothing: a walk restarts on
+    /// every keystroke, and those would bury the view the user typed from
+    /// under one entry per character.
+    fn reveal_as_navigation(&mut self) -> Result<bool, CanvasError> {
+        let before = self.viewport.snapshot();
+        let moved = self.reveal_current_match()?;
+        if moved {
+            self.view_history.record(before);
+        }
+        Ok(moved)
     }
 
     /// Applies whatever the search worker produced, and scrolls to the first
     /// hit of a fresh walk as soon as it arrives. Only the first page to
     /// report a hit places the cursor, so a cursor that moved here means that
     /// page has just landed.
-    fn poll_search(&mut self) -> Result<bool, CanvasError> {
+    fn poll_search(&mut self) -> Result<(), CanvasError> {
         let before = self.document.search().cursor();
-        if !self.document.poll_search()? {
-            return Ok(false);
-        }
-        if self.document.search().cursor() != before {
+        if self.document.poll_search()? && self.document.search().cursor() != before {
             self.reveal_current_match()?;
         }
-        Ok(true)
+        Ok(())
     }
 
-    /// Puts the current hit on screen: its page now, the hit itself once that
-    /// page has been measured.
+    /// Puts the current hit on screen. A hit on a page the viewport is already
+    /// showing is panned to, so the page does not jump under a user who can
+    /// see the hit already; only a hit somewhere else is worth the jump, and
+    /// the pan onto it then waits for that page to be measured.
     fn reveal_current_match(&mut self) -> Result<bool, CanvasError> {
+        self.pending_reveal = None;
         let Some(hit) = self.document.search().current() else {
             return Ok(false);
         };
         let page = hit.page;
         let quads = hit.quads.clone();
-        self.pending_reveal = (!quads.is_empty()).then_some((page, quads));
-        let moved =
-            self.apply_view_change(|viewport| viewport.go_to_page(page, PageAlignment::Start))?;
+        if quads.is_empty() {
+            return Ok(false);
+        }
+        if let Some(bounds) = self.hit_bounds(page, &quads)? {
+            return self.pan_onto(bounds);
+        }
+        self.pending_reveal = Some((page, quads));
+        let before = self.viewport.snapshot();
+        self.viewport.go_to_page(page, PageAlignment::Start)?;
+        let moved = self.viewport.snapshot() != before;
         Ok(self.apply_pending_reveal()? || moved)
     }
 
+    /// The pan the jump above could not do yet, once the page it jumped to has
+    /// been measured. Dropped rather than held when the page failed to measure
+    /// or the user has scrolled it off screen in the meantime.
     fn apply_pending_reveal(&mut self) -> Result<bool, CanvasError> {
         let Some((page, quads)) = self.pending_reveal.take() else {
             return Ok(false);
@@ -601,20 +624,49 @@ impl CanvasModel {
             return Ok(false);
         }
         if self.viewport.page_geometry(page).is_none() {
-            self.pending_reveal = Some((page, quads));
+            if self.is_visible(page)? {
+                self.pending_reveal = Some((page, quads));
+            }
             return Ok(false);
         }
-        let Some(bounds) = union_rect(&self.viewport.page_quad_rects(page, &quads)?) else {
+        let Some(bounds) = self.hit_bounds(page, &quads)? else {
             return Ok(false);
         };
+        // The same navigation as the go_to_page that queued this, so it
+        // records no view-history entry of its own.
         let delta = scroll_delta_into_view(bounds, self.viewport.size());
         if delta == ViewPoint::default() {
             return Ok(false);
         }
-        // The same navigation as the go_to_page that queued this, so it does
-        // not record a second view-history entry of its own.
         self.viewport.pan_by(delta)?;
         Ok(true)
+    }
+
+    /// Where a hit's quads sit in the viewport, or `None` when the page is not
+    /// laid out or not measured and the hit has nowhere to land yet.
+    fn hit_bounds(
+        &self,
+        page: PageIndex,
+        quads: &[PageQuad],
+    ) -> Result<Option<ViewRect>, CanvasError> {
+        Ok(union_rect(&self.viewport.page_quad_rects(page, quads)?))
+    }
+
+    fn pan_onto(&mut self, bounds: ViewRect) -> Result<bool, CanvasError> {
+        let delta = scroll_delta_into_view(bounds, self.viewport.size());
+        if delta == ViewPoint::default() {
+            return Ok(false);
+        }
+        self.viewport.pan_by(delta)?;
+        Ok(true)
+    }
+
+    fn is_visible(&self, page: PageIndex) -> Result<bool, CanvasError> {
+        Ok(self
+            .viewport
+            .visible_pages()?
+            .iter()
+            .any(|placement| placement.page == page))
     }
 
     fn apply_view_change(
@@ -1010,18 +1062,25 @@ impl CanvasModel {
     fn highlights(&self, visible: &[PagePlacement]) -> Result<Vec<HighlightPaint>, CanvasError> {
         let cursor = self.document.search().cursor();
         let mut highlights = Vec::new();
+        // One mapping call per page, not per hit: each one re-walks the
+        // layout, and a page can carry hundreds of hits.
+        let mut quads: Vec<PageQuad> = Vec::new();
+        let mut is_current: Vec<bool> = Vec::new();
         for placement in visible.iter().filter(|placement| placement.measured) {
             let page = placement.page;
+            quads.clear();
+            is_current.clear();
             for (index, hit) in self.document.search().matches_on(page).iter().enumerate() {
-                let current = cursor == Some((page, index));
-                for rect in self.viewport.page_quad_rects(page, &hit.quads)? {
-                    highlights.push(HighlightPaint {
-                        page,
-                        rect,
-                        current,
-                    });
-                }
+                quads.extend(hit.quads.iter().copied());
+                is_current.resize(quads.len(), cursor == Some((page, index)));
             }
+            highlights.extend(
+                self.viewport
+                    .page_quad_rects(page, &quads)?
+                    .into_iter()
+                    .zip(is_current.iter().copied())
+                    .map(|(rect, current)| HighlightPaint { rect, current }),
+            );
         }
         Ok(highlights)
     }
@@ -3474,6 +3533,16 @@ mod tests {
         );
     }
 
+    /// Highlights are drawn in the same space as the page they sit on, so one
+    /// that escapes its page is a transform error rather than a stray glyph.
+    fn encloses(page: ViewRect, hit: ViewRect) -> bool {
+        const SLACK: f32 = 0.5;
+        hit.origin.x >= page.origin.x - SLACK
+            && hit.origin.y >= page.origin.y - SLACK
+            && hit.origin.x + hit.size.width <= page.origin.x + page.size.width + SLACK
+            && hit.origin.y + hit.size.height <= page.origin.y + page.size.height + SLACK
+    }
+
     fn assert_rect_close(actual: ViewRect, expected: ViewRect) {
         for (actual, expected) in [
             (actual.origin.x, expected.origin.x),
@@ -3545,10 +3614,24 @@ mod tests {
         assert_eq!(model.search().len(), 2, "one hit per page of the seed");
         assert!(expected > 0, "the visible pages carry hits to highlight");
         assert_eq!(paint.highlights.len(), expected);
-        assert!(paint
-            .highlights
-            .iter()
-            .all(|highlight| visible.contains(&highlight.page)));
+        let placements = model
+            .viewport
+            .visible_pages()
+            .expect("the viewport is laid out");
+        for highlight in &paint.highlights {
+            assert!(
+                highlight.rect.size.width > 0.0 && highlight.rect.size.height > 0.0,
+                "a highlight with no area highlights nothing: {:?}",
+                highlight.rect
+            );
+            assert!(
+                placements
+                    .iter()
+                    .any(|placement| encloses(placement.rect, highlight.rect)),
+                "a highlight landed off every page: {:?}",
+                highlight.rect
+            );
+        }
         let current = model
             .search()
             .current()
@@ -3601,6 +3684,42 @@ mod tests {
         assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
         assert!(model.select_previous_match().unwrap());
         assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+    }
+
+    #[test]
+    fn a_hit_already_on_screen_leaves_the_view_where_it_was() {
+        let mut model = search_model();
+        model.go_to_page(0).expect("the seed has a first page");
+        model.update().expect("update succeeds");
+        let before = model.viewport.snapshot();
+
+        // The hit on page 0 is on screen already, so revealing it must not
+        // scroll the page to its top under a user who can see it.
+        find(&mut model, "Page", SearchOptions::default());
+
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
+        assert_eq!(model.viewport.snapshot(), before);
+    }
+
+    #[test]
+    fn streaming_results_leave_no_view_history_but_stepping_to_a_hit_does() {
+        let mut model = search_model();
+        model.update().expect("update succeeds");
+        // Typing restarts the walk on every keystroke, so the reveals those
+        // streamed results trigger must not record anything.
+        for needle in ["P", "Pa", "Page"] {
+            find(&mut model, needle, SearchOptions::default());
+        }
+
+        assert!(
+            !model.can_previous_view(),
+            "a reveal the user did not ask for is not a view to come back from"
+        );
+        assert!(model.select_next_match().unwrap());
+        assert!(
+            model.can_previous_view(),
+            "stepping to a hit is a navigation to come back from"
+        );
     }
 
     #[test]

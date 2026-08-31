@@ -16,12 +16,7 @@ use super::chrome::{SearchInput, ShellFrame, ThemeTokens};
 
 actions!(
     onionskin_find,
-    [
-        ToggleFindBar,
-        CloseFindBar,
-        FindNextMatch,
-        FindPreviousMatch
-    ]
+    [OpenFindBar, CloseFindBar, FindNextMatch, FindPreviousMatch]
 );
 
 /// Only the bar's own subtree carries this, so Enter means "next hit" while
@@ -33,8 +28,8 @@ const COMMENTS_DEFERRED: &str = "Comments arrive with the comment tools in M3";
 
 pub(in crate::shell) fn install_keybindings(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-f", ToggleFindBar, None),
-        KeyBinding::new("cmd-f", ToggleFindBar, None),
+        KeyBinding::new("ctrl-f", OpenFindBar, None),
+        KeyBinding::new("cmd-f", OpenFindBar, None),
         // Escape closes the bar from wherever focus sits, so it is bound
         // window-wide; the handler propagates when the bar is already closed.
         KeyBinding::new("escape", CloseFindBar, None),
@@ -73,14 +68,12 @@ impl FindBarState {
         self.options
     }
 
-    /// Returns whether this opened a closed bar, which is what decides if the
-    /// find field needs focus.
-    pub(in crate::shell) fn open(&mut self) -> bool {
-        !std::mem::replace(&mut self.open, true)
+    pub(in crate::shell) fn open(&mut self) {
+        self.open = true;
     }
 
-    pub(in crate::shell) fn close(&mut self) -> bool {
-        std::mem::replace(&mut self.open, false)
+    pub(in crate::shell) fn close(&mut self) {
+        self.open = false;
     }
 
     /// Returns whether the options changed, which is what decides if the
@@ -118,6 +111,7 @@ pub(in crate::shell) struct FindSummary {
     page_count: usize,
     failed_pages: usize,
     first_failure: Option<String>,
+    stopped: Option<String>,
 }
 
 impl FindSummary {
@@ -131,19 +125,21 @@ impl FindSummary {
             page_count,
             failed_pages: state.failures().len(),
             first_failure: state.failures().first().map(ToString::to_string),
+            stopped: state.stopped().map(str::to_owned),
         }
     }
 
-    /// The count, or the state that stands in for one.
+    /// The count, or the state that stands in for one. A hit found is always
+    /// a hit in hand: the first page to report one places the cursor, so there
+    /// is no counted-but-unselected state to print.
     fn count_label(&self) -> Option<String> {
         if !self.has_query {
             return None;
         }
-        Some(match (self.matches, self.current) {
-            (0, _) if self.running => "Searching".to_owned(),
-            (0, _) => "No results".to_owned(),
-            (total, Some(current)) => format!("{current} of {total}"),
-            (total, None) => format!("{total} found"),
+        Some(match self.current {
+            Some(current) => format!("{current} of {}", self.matches),
+            None if self.running => "Searching".to_owned(),
+            None => "No results".to_owned(),
         })
     }
 
@@ -155,6 +151,14 @@ impl FindSummary {
                 self.searched_pages, self.page_count
             )
         })
+    }
+
+    /// The walk died before it finished. Said plainly: the hits on screen are
+    /// not the whole document, and the next query starts a new worker.
+    fn stopped_label(&self) -> Option<String> {
+        self.stopped
+            .as_ref()
+            .map(|error| format!("The search stopped: {error}"))
     }
 
     /// A page whose text could not be read is reported here rather than
@@ -300,16 +304,22 @@ pub(in crate::shell) fn render_find_bar(
                 .progress_label()
                 .map(|progress| div().text_xs().text_color(theme.muted_text).child(progress)),
         )
-        .children(summary.failure_label().map(|failure| {
-            div()
-                .px_1()
-                .py_1()
-                .rounded_sm()
-                .bg(theme.error_surface)
-                .text_xs()
-                .text_color(theme.error_text)
-                .child(failure)
-        }))
+        .children(
+            summary
+                .stopped_label()
+                .into_iter()
+                .chain(summary.failure_label())
+                .map(|problem| {
+                    div()
+                        .px_1()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(theme.error_surface)
+                        .text_xs()
+                        .text_color(theme.error_text)
+                        .child(problem)
+                }),
+        )
 }
 
 fn step_button(
@@ -393,6 +403,7 @@ mod tests {
             page_count: 10,
             failed_pages: 0,
             first_failure: None,
+            stopped: None,
         }
     }
 
@@ -403,8 +414,8 @@ mod tests {
             Some("3 of 12")
         );
         assert_eq!(
-            summary(12, None, false).count_label().as_deref(),
-            Some("12 found")
+            summary(1, Some(1), false).count_label().as_deref(),
+            Some("1 of 1")
         );
     }
 
@@ -436,6 +447,18 @@ mod tests {
             Some("3 of 10 pages searched")
         );
         assert_eq!(summary(1, Some(1), false).progress_label(), None);
+    }
+
+    #[test]
+    fn a_walk_that_died_says_so_beside_the_hits_it_did_find() {
+        let mut summary = summary(2, Some(1), false);
+        summary.stopped = Some("search worker stopped before answering".to_owned());
+
+        assert_eq!(
+            summary.stopped_label().as_deref(),
+            Some("The search stopped: search worker stopped before answering")
+        );
+        assert_eq!(summary.count_label().as_deref(), Some("1 of 2"));
     }
 
     #[test]
@@ -472,15 +495,17 @@ mod tests {
     }
 
     #[test]
-    fn opening_reports_only_the_transition_that_needs_focus() {
+    fn the_bar_opens_and_closes_without_touching_its_options() {
         let mut state = FindBarState::default();
+        state.apply(FindOption::WholeWord);
 
-        assert!(state.open());
+        state.open();
         assert!(state.is_open());
-        assert!(!state.open());
-        assert!(state.close());
-        assert!(!state.close());
+        state.close();
         assert!(!state.is_open());
+        // Closing keeps the options, so reopening searches the way the user
+        // last asked rather than resetting under them.
+        assert!(state.options().whole_word);
     }
 
     #[test]

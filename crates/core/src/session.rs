@@ -362,12 +362,27 @@ impl Document {
 
     /// Applies whatever the search worker has produced since the last call.
     /// Returns whether anything was applied, so a caller can decide to repaint.
+    ///
+    /// A worker that died takes the find down with it and nothing else: the
+    /// loss is recorded on the state the find bar reads, the handle is dropped
+    /// so the next query can start a fresh worker, and the caller, which is a
+    /// viewer drawing pages, is not handed an error it would have to survive
+    /// every frame from here on.
     pub fn poll_search(&mut self) -> Result<bool> {
         let Some(worker) = &mut self.search_worker else {
             return Ok(false);
         };
         let mut applied = false;
-        while let Some(update) = worker.try_update()? {
+        loop {
+            let update = match worker.try_update() {
+                Ok(Some(update)) => update,
+                Ok(None) => return Ok(applied),
+                Err(error) => {
+                    self.search_worker = None;
+                    self.search.record_stopped(error.to_string());
+                    return Ok(true);
+                }
+            };
             applied = true;
             match update {
                 SearchUpdate::Page { page, matches } => {
@@ -379,7 +394,6 @@ impl Document {
                 SearchUpdate::Finished => self.search.finish(),
             }
         }
-        Ok(applied)
     }
 
     /// Abandons the walk in flight and forgets the query, which is what closing
@@ -415,8 +429,18 @@ impl Document {
         &self.search
     }
 
-    pub fn search_mut(&mut self) -> &mut SearchState {
-        &mut self.search
+    /// Moves the cursor to the next hit found so far, wrapping. Returns
+    /// whether there was one to move to.
+    ///
+    /// The state is handed out immutably: a caller with `&mut SearchState`
+    /// could reset the query the worker is still filling, and the results of
+    /// the walk in flight would land under the new needle.
+    pub fn select_next_match(&mut self) -> bool {
+        self.search.select_next().is_some()
+    }
+
+    pub fn select_previous_match(&mut self) -> bool {
+        self.search.select_previous().is_some()
     }
 }
 

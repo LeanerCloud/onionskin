@@ -16,7 +16,7 @@ use super::super::context_menu::{
 };
 use super::super::find_bar::{
     render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
-    FindPreviousMatch, FindSummary, ToggleFindBar,
+    FindPreviousMatch, FindSummary,
 };
 use super::super::Canvas;
 use super::global_bar::{
@@ -665,19 +665,6 @@ impl ShellFrame {
         }
     }
 
-    pub(in crate::shell) fn toggle_find_bar(
-        &mut self,
-        _: &ToggleFindBar,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.find.is_open() {
-            self.dismiss_find_bar(cx);
-        } else {
-            self.open_find_bar(None, window, cx);
-        }
-    }
-
     /// Escape is bound window-wide so it closes the bar from wherever focus
     /// sits, which means a closed bar has to hand the key back.
     pub(in crate::shell) fn close_find_bar(
@@ -712,9 +699,9 @@ impl ShellFrame {
     }
 
     /// Opens the bar with the find field focused. A query replaces whatever
-    /// was typed before; `None` keeps it, so Ctrl+F on an open bar's query
-    /// repeats rather than clears it.
-    fn open_find_bar(
+    /// was typed before; `None` keeps it, so Ctrl+F on an open bar refocuses
+    /// the query it is already showing rather than clearing it.
+    pub(super) fn open_find_bar(
         &mut self,
         query: Option<String>,
         window: &mut Window,
@@ -732,16 +719,14 @@ impl ShellFrame {
         cx.notify();
     }
 
+    /// Closes the bar and drops every walk it started. Every tab, not just the
+    /// active one: a walk left running on a tab the user switched away from
+    /// would keep polling and keep highlighting.
     pub(in crate::shell) fn dismiss_find_bar(&mut self, cx: &mut Context<Self>) {
         self.find.close();
-        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
-            cx.notify();
-            return;
-        };
-        canvas.update(cx, |canvas, cx| {
-            canvas.model.cancel_search();
-            canvas.handle_change(Ok(true), cx);
-        });
+        for canvas in self.canvases() {
+            cancel_find_on(&canvas, cx);
+        }
         cx.notify();
     }
 
@@ -788,6 +773,8 @@ impl ShellFrame {
         }
     }
 
+    /// Runs the query on the document on screen, and only on it: the walk the
+    /// user left behind on another tab is cancelled rather than left running.
     fn run_find_query(&mut self, cx: &mut Context<Self>) {
         let typed = self.find_input.read(cx).query().to_owned();
         // Blank input searches nothing, but a needle the user typed spaces
@@ -798,13 +785,25 @@ impl ShellFrame {
             typed
         };
         let options = self.find.options();
-        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
-            return;
-        };
-        canvas.update(cx, |canvas, cx| {
-            let result = canvas.model.start_search(&needle, options);
-            canvas.handle_change(result, cx);
-        });
+        let active = self.tabs.active_index();
+        for (index, canvas) in self.canvases().into_iter().enumerate() {
+            if Some(index) != active {
+                cancel_find_on(&canvas, cx);
+                continue;
+            }
+            canvas.update(cx, |canvas, cx| {
+                let result = canvas.model.start_search(&needle, options);
+                canvas.handle_change(result, cx);
+            });
+        }
+    }
+
+    fn canvases(&self) -> Vec<Entity<Canvas>> {
+        self.tabs
+            .tabs()
+            .iter()
+            .map(|tab| tab.canvas.clone())
+            .collect()
     }
 
     fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
@@ -1473,11 +1472,13 @@ impl Render for ShellFrame {
                 theme,
                 cx,
             );
-            let find_summary = FindSummary::new(
-                tab.canvas.read(cx).model.search(),
-                tab.canvas.read(cx).model.viewport().page_count(),
-            );
-            let find_open = self.find.is_open();
+            // Summarised only when the bar is on screen to read it.
+            let find_summary = self.find.is_open().then(|| {
+                FindSummary::new(
+                    tab.canvas.read(cx).model.search(),
+                    tab.canvas.read(cx).model.viewport().page_count(),
+                )
+            });
             let find_state = self.find;
             let find_input = self.find_input.clone();
             let canvas_view = div()
@@ -1495,14 +1496,8 @@ impl Render for ShellFrame {
                 )
                 .child(canvas)
                 .when(visibility.quick_actions, |view| view.child(quick_actions))
-                .when(find_open, |view| {
-                    view.child(render_find_bar(
-                        find_state,
-                        find_input,
-                        &find_summary,
-                        theme,
-                        cx,
-                    ))
+                .when_some(find_summary, |view, summary| {
+                    view.child(render_find_bar(find_state, find_input, &summary, theme, cx))
                 });
             let document_column = div()
                 .w(document_bounds.size.width)
@@ -1539,7 +1534,6 @@ impl Render for ShellFrame {
         let mut root = div()
             .size_full()
             .relative()
-            .on_action(cx.listener(Self::toggle_find_bar))
             .on_action(cx.listener(Self::close_find_bar))
             .child(frame);
         if self.main_menu_open
@@ -1573,6 +1567,18 @@ impl Render for ShellFrame {
         }
         root
     }
+}
+
+/// Drops a tab's walk, if it has one. Silent when it does not: cancelling a
+/// search nobody started would repaint every tab on every keystroke.
+fn cancel_find_on(canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) {
+    canvas.update(cx, |canvas, cx| {
+        if canvas.model.search().needle().is_empty() {
+            return;
+        }
+        canvas.model.cancel_search();
+        canvas.handle_change(Ok(true), cx);
+    });
 }
 
 fn document_view_bounds(

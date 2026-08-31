@@ -74,6 +74,9 @@ pub struct SearchState {
     pages: BTreeMap<PageIndex, Vec<SearchMatch>>,
     searched: usize,
     failures: Vec<PageFailure>,
+    /// The walk died rather than a page failing: the worker is gone and what
+    /// was found so far is all there is.
+    stopped: Option<String>,
     cursor: Option<(PageIndex, usize)>,
     running: bool,
 }
@@ -81,10 +84,6 @@ pub struct SearchState {
 impl SearchState {
     pub fn needle(&self) -> &str {
         &self.needle
-    }
-
-    pub fn options(&self) -> SearchOptions {
-        self.options
     }
 
     /// Every hit found so far, in document order.
@@ -131,6 +130,12 @@ impl SearchState {
 
     pub fn failures(&self) -> &[PageFailure] {
         &self.failures
+    }
+
+    /// Why the walk ended early, when it did. Reported beside the hits it did
+    /// find rather than left to look like a finished search.
+    pub fn stopped(&self) -> Option<&str> {
+        self.stopped.as_deref()
     }
 
     /// How many pages the walk has reported on, including pages with no hits
@@ -185,6 +190,12 @@ impl SearchState {
         self.failures.push(PageFailure { page, message });
     }
 
+    /// The worker is gone. The walk is over wherever it got to, and says so.
+    pub(crate) fn record_stopped(&mut self, message: String) {
+        self.stopped = Some(message);
+        self.running = false;
+    }
+
     /// Moves to the next hit in document order, wrapping at the end.
     pub fn select_next(&mut self) -> Option<&SearchMatch> {
         self.step(Direction::Forward)
@@ -224,6 +235,7 @@ impl SearchState {
     fn clear_results(&mut self) {
         self.pages.clear();
         self.failures.clear();
+        self.stopped = None;
         self.searched = 0;
         self.cursor = None;
         self.running = false;
@@ -286,6 +298,9 @@ struct Job {
 
 enum Request {
     Search(Box<Job>),
+    /// Stop the walk in flight. Without it the worker would read every
+    /// remaining page of a thousand-page document and throw the text away.
+    Cancel,
     Shutdown,
 }
 
@@ -357,10 +372,11 @@ impl DocumentSearch {
             .map_err(|_| SearchWorkerError::Stopped)
     }
 
-    /// Stops caring about the walk in flight. The worker finishes the page it
-    /// is on and its results are dropped here.
+    /// Stops the walk in flight. The worker abandons it after the page it is
+    /// on, and anything already in the channel is dropped here by generation.
     pub(crate) fn cancel(&mut self) {
         self.generation += 1;
+        let _ = self.requests.send(Request::Cancel);
     }
 
     pub(crate) fn try_update(&mut self) -> Result<Option<SearchUpdate>, SearchWorkerError> {
@@ -397,6 +413,8 @@ fn worker_loop(
             Some(job) => job,
             None => match incoming.recv() {
                 Ok(Request::Search(job)) => job,
+                // A cancel for a walk that already ended has nothing to stop.
+                Ok(Request::Cancel) => continue,
                 Ok(Request::Shutdown) | Err(_) => return,
             },
         };
@@ -404,7 +422,7 @@ fn worker_loop(
         for offset in 0..job.page_count {
             match drain(incoming, &mut queued) {
                 Drained::Empty => {}
-                Drained::Superseded => {
+                Drained::Abandoned => {
                     abandoned = true;
                     break;
                 }
@@ -442,20 +460,21 @@ fn worker_loop(
 
 enum Drained {
     Empty,
-    Superseded,
+    Abandoned,
     Stop,
 }
 
 fn drain(incoming: &mpsc::Receiver<Request>, queued: &mut Option<Box<Job>>) -> Drained {
-    let mut superseded = false;
+    let mut abandoned = false;
     loop {
         match incoming.try_recv() {
             Ok(Request::Search(job)) => {
                 *queued = Some(job);
-                superseded = true;
+                abandoned = true;
             }
+            Ok(Request::Cancel) => abandoned = true,
             Ok(Request::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => return Drained::Stop,
-            Err(mpsc::TryRecvError::Empty) if superseded => return Drained::Superseded,
+            Err(mpsc::TryRecvError::Empty) if abandoned => return Drained::Abandoned,
             Err(mpsc::TryRecvError::Empty) => return Drained::Empty,
         }
     }
@@ -559,6 +578,24 @@ mod tests {
         assert_eq!(state.searched_pages(), 0);
         assert!(state.current().is_none());
         assert!(!state.set_query("other", SearchOptions::default()));
+    }
+
+    #[test]
+    fn a_walk_whose_worker_died_stops_and_says_why() {
+        let mut state = state_with(&[(0, 1)]);
+
+        state.record_stopped("search worker stopped before answering".into());
+
+        assert!(!state.is_running());
+        assert_eq!(
+            state.stopped(),
+            Some("search worker stopped before answering")
+        );
+        // What it did find before dying is still there to read.
+        assert_eq!(state.len(), 1);
+        // A new query starts clean rather than inheriting the dead walk.
+        assert!(state.set_query("other", SearchOptions::default()));
+        assert_eq!(state.stopped(), None);
     }
 
     #[test]
