@@ -74,6 +74,14 @@ referenced.
   WorkerSilent; SearchResult::Unavailable::reason is &'static str so the
   tool palette shows a fixed pointer to the status line rather than the
   actual activation error - widen it after P9 lands, since P9 owns that file.
+- Global action listeners run synchronously inside a window update, during
+  which gpui takes the window off cx.windows, so any listener body calling
+  window_handle.update() fails with "window not found" and drops the command
+  with only an eprintln. P9 hit this on Ctrl+F and fixes its own listener with
+  cx.defer; main's pre-existing CloseTab and RunViewMenu listeners on the
+  native-menu path have the same latent shape and want the same treatment plus
+  a keystroke-dispatch test. Found by executing a real ctrl-f in a gpui test,
+  not by reading the code.
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
   string (a hair against no-invented-characters; tighten when touched);
