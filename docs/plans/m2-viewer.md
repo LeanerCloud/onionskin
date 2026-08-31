@@ -1,10 +1,11 @@
 # M2 implementation plan: the viewer
 
-Status: implementation hardening as of 2026-08-31. P1-P11, P13, and P14 are
-represented on main; P12 accessibility is active but unmerged. M2 remains open for
-the forward-audit fixes, real VoiceOver acceptance, release-shell correction, the
-private parity screenshot comparison, and final three-pass acceptance. Live merge
-evidence and finding ownership are in `docs/audits/m2-forward-audit.md`.
+Status: implementation hardening as of 2026-08-31. P1-P14 are represented on
+main; P12 merged at `07ebc93`, with real VoiceOver acceptance and documented
+accessibility residuals still open. M2 remains open for the forward-audit fixes,
+release-shell correction, private parity screenshot comparison, and final
+three-pass acceptance. Live merge evidence and finding ownership are in
+`docs/audits/m2-forward-audit.md`.
 
 M2 turns three isolated M1 spikes into one application: open a PDF (repaired
 if needed), render it, navigate it, search it, select text in it, wearing the
@@ -651,8 +652,8 @@ and `Image` variants, `TextSelection` carries no font data, and P13's
 `ExportRequest` takes a page range with no selection input, so there is no
 honest query to write. Add Bookmark is **not** live (bookmark authoring is
 `commands-core`, M3). **Print is not live either**: File > Print is parity row
-139, M3, and needs `crates/print`, which does not exist. Every non-live entry
-ships disabled with a reason naming its milestone.
+139, M3, and needs the M3 implementation in the existing `crates/print` stub.
+Every non-live entry ships disabled with a reason naming its milestone.
 
 **Files.** `crates/plugin-api/src/lib.rs` (`ToolCtx`), `crates/core/src/viewport.rs`
 (the `Viewport` P6a created; this package adds the mutation surface tools
@@ -952,7 +953,7 @@ speculative generality.
 | Find bar: Include Bookmarks, Include Comments (row 149) | Both deferred. Comments need `tools-comment` (M3); bookmarks would need P8's outline reader, and P8 depends on P9 for the results pane, so pulling it forward inverts two packages for one checkbox. Both ship disabled with a reason. | Add the cut to row 149's Notes in `ACROBAT-PARITY.md`. |
 | Encrypted documents | M6. M2 fails loud with a message naming encryption and the milestone. | Add a `known-issues.md` entry: M2 cannot open the ~34 encrypted corpus files, and hayro can. **The entry must distinguish permissions-only encryption** (an `/Encrypt` dict with an empty user password, which Acrobat opens silently without prompting and which dominates real-world encrypted PDFs) from password-protected files, and record how many of the ~34 fall in each class. Losing the first class is a much worse viewer defect than losing the second, and the current entry does not separate them. |
 | Empty-password decryption in `cos` | Not M2. **Reassessment point recorded at M3 planning**: `crates/crypto`'s own charter calls encryption/decryption handlers a kernel concern used by cos from the start, and PLAN.md's risk list says "M1 parses encryption; M6 writes it", so *reading* an empty-password file is arguably already inside the plan's own boundary and only the write path is M6. Decide at M3 with the class counts from the entry above in hand. | Add the reassessment point to `known-issues.md` alongside the entry. |
-| `tools-organize` page-tree fixup after delete | M3. PLAN.md puts `tools-organize` at M3, so this is not M2 work; P8's thumbnail context menu ships those entries disabled. | **`known-issues.md` currently tags it "M2's tools-organize", which is stale.** Correct the tag to M3 so the ledger stops claiming an M2 deadline the milestone does not own. |
+| `tools-organize` page-tree fixup after delete | M3. PLAN.md puts `tools-organize` at M3, so this is not M2 work; P8's thumbnail context menu ships those entries disabled. | Completed ledger action: `known-issues.md` now assigns the fixup to M3's `tools-organize`. |
 | cos fuzz on nightly in CI | Not M2 scope, but P14 touches CI. If nightly is cheap to add there, add it; if not, leave the ledger entry. | Unchanged either way. |
 
 **One action for the orchestrator, not for this plan.** Candor item 12 says

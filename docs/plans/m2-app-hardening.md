@@ -77,10 +77,18 @@ superseded or resolved.
   "OnionskinSearch" key context; rename and rehome the shared input.
 - No zoom-to-percentage control (CanvasModel::zoom_to has only test callers);
   parity row 88 partly unmet.
-- page_controls.rs:83 saturating cast turns a non-finite zoom into 0 silently.
+- page_controls.rs:91 saturating cast turns a non-finite zoom into 0 silently.
 - Side panel host renders the literal "Panel"; consumer arrives with P8.
 
 ## Accessibility readiness (feeds P12)
+
+STATUS 2026-08-31: P12 shipped and closed most of this section - the tree,
+focus handles, a tab order, Escape dismissal, text labels for the glyph-only
+controls, checked state as state rather than a string prefix, and per-page
+nodes with the document's own words. What it did not ship is arrow-key
+navigation; see known-issues.md for that and the other P12 residuals.
+
+Historical pre-P12 finding retained for provenance:
 
 - The chrome is a GPUI element tree with stable ids, so a tree is derivable,
   but semantics are absent: one focus handle in the whole chrome
@@ -101,8 +109,10 @@ superseded or resolved.
   every package passes the adversarial review gate before merge, and every
   commit body states what changed, how the defect was found, and how it was
   verified.
-- The two registry-driven chrome assertions (rail.rs:419-436,
-  quick_actions.rs:616-621) are vacuous until P10 registers real tools; after
-  P10 merges, confirm they have teeth.
-- ACROBAT-PARITY.md still reads 0 implemented; reconcile the shipped M2 rows
-  once the foundation fixes and this backlog's parity items settle.
+- Historical pre-P10 finding: the two registry-driven chrome assertions
+  (rail.rs:419-436, quick_actions.rs:616-621) were vacuous before real tools
+  registered. P10 merged at `00a7d29`; current rail and quick-action tests now
+  exercise the live registry, resolving HARD-PROC-002.
+- Historical pre-audit finding: ACROBAT-PARITY.md read 0 implemented. Audit Task 2
+  reconciled all 403 rows and added an executable totals contract, resolving
+  HARD-PROC-003 while private reference comparison remains open.

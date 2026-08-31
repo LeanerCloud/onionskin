@@ -23,6 +23,35 @@ use super::input::{
     pointer_input, validate_pressure, DragKind, DragUpdate, InputError, InputState,
 };
 
+/// One visible page, as an accessibility tree sees it.
+///
+/// `rect` is in the canvas's own coordinates, the same space `PaintList` uses,
+/// so the caller adds `canvas_origin` to reach window coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageOutline {
+    pub page: PageIndex,
+    pub rect: ViewRect,
+    /// Whether the layout has this page's real size yet.
+    ///
+    /// An unmeasured page is still announced, at its placeholder rectangle,
+    /// rather than being left out of the tree while it loads. Its `text` is
+    /// empty because there is nowhere to put the words yet, which is why the
+    /// caller has to read this to tell "still loading" from "no text".
+    pub measured: bool,
+    /// The page's text, or why it could not be read. A page whose text failed
+    /// is announced as unreadable rather than as an empty page.
+    pub text: Result<Vec<TextOutline>, String>,
+}
+
+/// One run of text on a page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextOutline {
+    pub text: String,
+    /// `None` when the run's quads name a page the layout is not placing, so
+    /// there is no rectangle to give rather than a wrong one.
+    pub rect: Option<ViewRect>,
+}
+
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 /// How long the canvas keeps polling a request nothing has answered.
@@ -338,6 +367,9 @@ pub struct CanvasModel {
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
     ready_thumbnails: Vec<(PageIndex, BaseRaster)>,
+    /// Each visible page's words and where they sit on the page, for the
+    /// accessibility tree. Page space, so scrolling does not invalidate it.
+    page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
 }
 
 impl CanvasModel {
@@ -389,6 +421,7 @@ impl CanvasModel {
             pending_thumbnails: BTreeMap::new(),
             thumbnail_epoch: 0,
             ready_thumbnails: Vec::new(),
+            page_words: BTreeMap::new(),
         })
     }
 
@@ -462,6 +495,81 @@ impl CanvasModel {
             .selection()
             .text()
             .map(|selection| selection.text.as_str())
+    }
+
+    /// The visible pages and their text, in the canvas's own coordinates.
+    ///
+    /// What the accessibility tree needs and nothing else: `paint_list`
+    /// answers the same question in pixels, this one answers it in words.
+    ///
+    /// Extracting a page's text parses its content stream, which is not free,
+    /// but the session caches what it extracts, so a page is parsed once
+    /// rather than once per frame, and only the pages on screen are parsed at
+    /// all. An unmeasured page has no layout to place its words in yet, so it
+    /// is described without them and picks them up when it is measured.
+    pub fn accessible_pages(&mut self) -> Result<Vec<PageOutline>, CanvasError> {
+        let placements = self.viewport.visible_pages()?;
+        // Bounded to what is on screen: a long scroll would otherwise keep
+        // every page it passed for the life of the process.
+        self.page_words
+            .retain(|page, _| placements.iter().any(|placement| placement.page == *page));
+        let mut pages = Vec::with_capacity(placements.len());
+        for placement in placements {
+            let text = if placement.measured {
+                self.page_runs(placement.page)
+            } else {
+                Ok(Vec::new())
+            };
+            pages.push(PageOutline {
+                page: placement.page,
+                rect: placement.rect,
+                measured: placement.measured,
+                text,
+            });
+        }
+        Ok(pages)
+    }
+
+    /// One entry per run of text on a page, with the rectangle it occupies.
+    ///
+    /// A page is not one label: a screen reader that gets the whole page as a
+    /// single string cannot navigate it. Runs are what the extractor already
+    /// produces and what the selection tool already works in, so they are the
+    /// unit here too.
+    ///
+    /// The words and their page-space quads are cached because they do not
+    /// change while the document is open, and this runs on every frame; only
+    /// the mapping into the view is redone, because that is what scrolling
+    /// changes.
+    fn page_runs(&mut self, page: PageIndex) -> Result<Vec<TextOutline>, String> {
+        if !self.page_words.contains_key(&page) {
+            let words = self
+                .document
+                .page_text(page)
+                .map_err(|error| error.to_string())?
+                .runs
+                .iter()
+                .filter(|run| !run.text.trim().is_empty())
+                .map(|run| (run.text.clone(), run.quads_for(0..run.text.len())))
+                .collect();
+            self.page_words.insert(page, words);
+        }
+        // Split from the insert above so the borrow of `document` ends before
+        // the viewport is asked to map the quads.
+        let words = &self.page_words[&page];
+        words
+            .iter()
+            .map(|(text, quads)| {
+                let rects = self
+                    .viewport
+                    .page_quad_rects(page, quads)
+                    .map_err(|error| error.to_string())?;
+                Ok(TextOutline {
+                    text: text.clone(),
+                    rect: union_rect(&rects),
+                })
+            })
+            .collect()
     }
 
     pub fn active_tool(&self) -> Option<usize> {
@@ -4578,5 +4686,102 @@ mod tests {
             .iter()
             .map(|pixel| pixel[2])
             .collect()
+    }
+
+    fn seed_model(name: &str) -> CanvasModel {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/seeds")
+            .join(name);
+        let mut model = CanvasModel::new(
+            Document::open_path(&path).expect("seed opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        model.update().expect("the first frame runs");
+        model
+    }
+
+    /// A measured page is described at the rectangle it is painted at. The
+    /// two lists can differ in length, because the paint list drops
+    /// unmeasured pages and the description keeps them, so this compares the
+    /// measured ones.
+    #[test]
+    fn a_measured_page_is_described_at_the_rectangle_it_is_painted_at() {
+        let mut model = seed_model("two-page.pdf");
+
+        let painted = model.paint_list().expect("the frame paints").pages;
+        let described = model.accessible_pages().expect("the pages describe");
+
+        assert!(!painted.is_empty());
+        for page in &painted {
+            let outline = described
+                .iter()
+                .find(|outline| outline.page == page.page)
+                .unwrap_or_else(|| panic!("page {} is painted but not described", page.page));
+            assert_eq!(outline.rect, page.rect);
+        }
+    }
+
+    /// A page the layout has not measured yet has nowhere to put its words,
+    /// so it is described without them. That has to be tellable apart from a
+    /// page with no text on it, which is what `measured` is for.
+    ///
+    /// `two-page.pdf` measures page 0 to lay anything out at all and leaves
+    /// page 1 for the geometry worker, so one frame in it has both states.
+    #[test]
+    fn an_unmeasured_page_is_described_without_words_and_says_so() {
+        let mut model = seed_model("two-page.pdf");
+
+        let described = model.accessible_pages().expect("the pages describe");
+
+        let measured = described
+            .iter()
+            .find(|page| page.measured)
+            .expect("no page was measured");
+        assert!(!measured.text.as_ref().expect("no failure").is_empty());
+
+        let waiting = described
+            .iter()
+            .find(|page| !page.measured)
+            .expect("no page was left unmeasured");
+        assert_eq!(waiting.text.as_ref().expect("no failure"), &Vec::new());
+    }
+
+    /// The page's own words, one node per run rather than one string for the
+    /// page, and each with the rectangle it occupies so a screen reader can
+    /// put its cursor on it.
+    #[test]
+    fn a_page_reports_its_text_as_runs_with_the_rectangles_they_occupy() {
+        let mut model = seed_model("hello.pdf");
+
+        let described = model.accessible_pages().expect("the pages describe");
+        let runs = described[0].text.as_ref().expect("the text reads");
+
+        assert!(!runs.is_empty(), "the page reported no text");
+        assert!(
+            runs.iter().any(|run| run.text.contains("Hello Onionskin")),
+            "the page's words were not reported: {runs:?}"
+        );
+        let placed = runs.iter().find(|run| run.text.contains("Hello")).unwrap();
+        let rect = placed.rect.expect("the run has no rectangle");
+        assert!(rect.size.width > 0.0 && rect.size.height > 0.0);
+        // The run sits inside the page it belongs to.
+        let page = described[0].rect;
+        assert!(rect.origin.x >= page.origin.x - 1.0);
+        assert!(rect.origin.y >= page.origin.y - 1.0);
+    }
+
+    /// A page whose text will not read reports why, rather than reading as a
+    /// page with no words on it.
+    #[test]
+    fn a_page_whose_text_cannot_be_read_reports_the_reason() {
+        let mut model = seed_model("two-page.pdf");
+
+        let refused = model
+            .page_runs(model.viewport.page_count())
+            .expect_err("a page the document does not have has no text");
+
+        assert!(!refused.is_empty());
     }
 }

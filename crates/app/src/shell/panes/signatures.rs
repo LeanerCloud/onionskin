@@ -7,9 +7,11 @@
 //! carries [`VALIDATION_NOTE`] so a reader is told that, rather than being
 //! left to assume a listed signature is a checked one.
 
+use accesskit::Role;
 use gpui::{div, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _};
 use onionskin_core::SignatureField;
 
+use super::super::chrome::accessible::Element;
 use super::super::chrome::ThemeTokens;
 use super::{empty_message, error_message, list};
 
@@ -17,6 +19,9 @@ use super::{empty_message, error_message, list};
 /// verdict, which is the failure this exists to prevent.
 pub(super) const VALIDATION_NOTE: &str =
     "Onionskin does not check signatures yet. Validation and signer trust arrive in M6.";
+
+/// Said where the list would be when the document has no signature fields.
+const NO_SIGNATURES: &str = "This document has no signature fields.";
 
 /// What the file says about one field. Never whether it verifies.
 pub(super) fn status(field: &SignatureField) -> &'static str {
@@ -54,6 +59,57 @@ pub(super) fn detail(field: &SignatureField) -> String {
     }
 }
 
+/// The row's text. A file may leave a field unnamed, and a row with nothing
+/// in it is a row nobody can see or hear.
+fn name(field: &SignatureField) -> String {
+    if field.name.is_empty() {
+        "(unnamed field)".to_owned()
+    } else {
+        field.name.clone()
+    }
+}
+
+/// What the signatures pane tells a screen reader.
+///
+/// No row activates anything: the pane lists what the form dictionary says
+/// and does nothing to it until M6 brings validation. The note is described
+/// as the last child, as it is drawn, so a reader is told the listing is not
+/// a check.
+pub(super) fn accessible(items: Result<&[SignatureField], &String>) -> Vec<Element> {
+    let items = match items {
+        Ok(items) => items,
+        Err(message) => {
+            return vec![Element::new(
+                "signature-rows-error",
+                Role::Alert,
+                message.clone(),
+            )]
+        }
+    };
+    if items.is_empty() {
+        return vec![Element::new(
+            "signature-rows-empty",
+            Role::Label,
+            NO_SIGNATURES,
+        )];
+    }
+
+    let mut rows: Vec<Element> = items
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            Element::new(("signature-row", index), Role::ListItem, name(field))
+                .with_description(format!("{}. {}", status(field), detail(field)))
+        })
+        .collect();
+    rows.push(Element::new(
+        "signature-validation-note",
+        Role::Label,
+        VALIDATION_NOTE,
+    ));
+    vec![Element::new("signature-rows", Role::List, "Signatures").with_children(rows)]
+}
+
 pub(super) fn render(
     items: Result<&[SignatureField], &String>,
     theme: ThemeTokens,
@@ -63,7 +119,7 @@ pub(super) fn render(
         Err(message) => return error_message(message, theme).into_any_element(),
     };
     if items.is_empty() {
-        return empty_message("This document has no signature fields.", theme).into_any_element();
+        return empty_message(NO_SIGNATURES, theme).into_any_element();
     }
 
     let mut body = list("signature-rows");
@@ -77,11 +133,7 @@ pub(super) fn render(
                 .py_1()
                 .text_sm()
                 .text_color(theme.text)
-                .child(if field.name.is_empty() {
-                    "(unnamed field)".to_owned()
-                } else {
-                    field.name.clone()
-                })
+                .child(name(field))
                 .child(
                     div()
                         .text_xs()
@@ -175,5 +227,63 @@ mod tests {
             "said {detail:?}"
         );
         assert!(!detail.starts_with("Verified"), "said {detail:?}");
+    }
+
+    /// One described row per drawn row, each saying the field's status and
+    /// what the file wrote, and none of them activating anything: the pane is
+    /// a listing until M6 brings validation.
+    #[test]
+    fn each_described_field_says_its_status_and_activates_nothing() {
+        let items = [
+            field(true),
+            SignatureField {
+                name: String::new(),
+                ..field(false)
+            },
+        ];
+
+        let described = accessible(Ok(&items));
+        let rows = &described[0].children;
+
+        assert_eq!(described.len(), 1);
+        assert_eq!(described[0].role, Role::List);
+        assert_eq!(rows[0].label, "Approval");
+        assert_eq!(rows[1].label, "(unnamed field)");
+        for (index, (row, item)) in rows.iter().zip(items.iter()).enumerate() {
+            assert_eq!(row.key, gpui::ElementId::from(("signature-row", index)));
+            assert_eq!(
+                row.description.as_deref(),
+                Some(format!("{}. {}", status(item), detail(item)).as_str())
+            );
+            assert_eq!(row.activation, None);
+        }
+    }
+
+    /// The note is the last thing described, as it is the last thing drawn.
+    /// A reader given only the rows would hear a listing and take it for a
+    /// check.
+    #[test]
+    fn the_validation_note_is_described_after_the_last_field() {
+        let items = [field(true), field(false)];
+
+        let described = accessible(Ok(&items));
+        let children = &described[0].children;
+
+        assert_eq!(children.len(), items.len() + 1);
+        assert_eq!(children[items.len()].label, VALIDATION_NOTE);
+    }
+
+    /// A document with no signature fields says so, and a reader that failed
+    /// says what went wrong rather than reading as a document with none.
+    #[test]
+    fn an_empty_list_and_a_failed_read_are_announced_differently() {
+        let empty = accessible(Ok(&[]));
+        assert_eq!(empty[0].role, Role::Label);
+        assert_eq!(empty[0].label, NO_SIGNATURES);
+
+        let failure = "the form dictionary could not be decoded".to_owned();
+        let broken = accessible(Err(&failure));
+        assert_eq!(broken[0].role, Role::Alert);
+        assert_eq!(broken[0].label, failure);
     }
 }

@@ -8,8 +8,11 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
-# M1 spike (b). Behind `a11y-spike` so default builds and the headless tests
-# never pull GPUI.
+[[bin]]
+name = "shell_spike"
+path = "src/bin/shell_spike.rs"
+required-features = ["shell-spike"]
+
 [[bin]]
 name = "a11y_spike"
 path = "src/bin/a11y_spike.rs"
@@ -52,9 +55,13 @@ onionskin-tools-measure = { workspace = true, optional = true }
 onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
 
+[dev-dependencies]
+# `crates/app/tests/a11y_probe.rs` parses what the probe build prints.
+serde_json.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = { version = "0.26", optional = true }
-# Spike (d) reads the NSAccessibility surface back off the view directly, so
+# The probe reads the NSAccessibility surface back off the view directly, so
 # it can prove the tree without an accessibility-permission grant.
 objc2 = { version = "0.5", optional = true }
 
@@ -89,20 +96,27 @@ tools-measure = ["dep:onionskin-tools-measure"]
 tools-organize = ["dep:onionskin-tools-organize"]
 tools-protect = ["dep:onionskin-tools-protect"]
 
-# GPUI shell. Off by default: the kernel and its tests stay GPUI-free. The
-# AccessibilityKit dependencies remain isolated to the M1 accessibility spike.
+# GPUI shell. Off by default: the kernel and its tests stay GPUI-free.
+# AccessKit rides with the shell rather than behind a flag of its own:
+# decision 12 makes the accessibility tree part of the first release, not an
+# option a build can drop.
 shell = [
     "dep:gpui",
     "dep:image",
     "dep:smallvec",
     "dep:unicode-segmentation",
     "dep:onionskin-render",
-]
-shell-test-support = ["shell", "gpui/test-support"]
-a11y-spike = [
-    "shell",
     "dep:accesskit",
     "dep:accesskit_macos",
     "dep:raw-window-handle",
-    "dep:objc2",
 ]
+shell-test-support = ["shell", "gpui/test-support"]
+# Builds the app so that it reads its own accessibility tree back off the
+# window, prints it and exits. Separate from `shell` because `objc2` is only
+# needed to send those messages and nothing in the app itself sends them, and
+# because a shipped build must open a window and stay open. Driven by
+# `crates/app/tests/a11y_probe.rs`; `docs/spikes/m2-voiceover-acceptance.md`
+# says what it can and cannot prove.
+a11y-probe = ["shell", "dep:objc2"]
+shell-spike = ["shell"]
+a11y-spike = ["shell", "dep:objc2"]

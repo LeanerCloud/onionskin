@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -7,8 +8,10 @@ use gpui::{
 };
 use onionskin_plugin_api::{PluginRegistry, ToolPlugin};
 
+use super::accessible::{Activation, Element, Rects, Surface};
 use super::tabs::ShellFrame;
 use super::theme::ThemeTokens;
+use crate::a11y::State as A11yState;
 
 const COLLAPSED_WIDTH: f32 = 88.0;
 const EXPANDED_WIDTH: f32 = 240.0;
@@ -22,7 +25,7 @@ pub(super) fn rail_width(expanded: bool) -> gpui::Pixels {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct RailEntry {
+pub(in crate::shell) struct RailEntry {
     pub(super) registry_index: usize,
     pub(super) id: &'static str,
     pub(super) name: &'static str,
@@ -129,13 +132,75 @@ pub(super) fn apply_rail_selection<E>(
     Ok(changed)
 }
 
+fn empty_label(expanded: bool) -> &'static str {
+    if expanded {
+        "No tools installed"
+    } else {
+        "No tools"
+    }
+}
+
+fn view_more_label(expanded: bool) -> &'static str {
+    if expanded {
+        "Show less"
+    } else {
+        "View more"
+    }
+}
+
+/// What the tool rail tells a screen reader.
+///
+/// One node per child the column renders, in the same order, so the
+/// rectangles the column reports after prepaint land on the right nodes.
+pub(super) fn accessible(entries: &[RailEntry], expanded: bool) -> Element {
+    let mut rail = Element::new("tool-rail", Role::Toolbar, "Tools");
+
+    if entries.is_empty() {
+        rail = rail.child(Element::new(
+            "tool-rail-empty",
+            Role::Label,
+            empty_label(expanded),
+        ));
+    } else {
+        for entry in entries {
+            // The rail draws the plugin's `icon()` string as text, so the
+            // icon is an id-like token a screen reader must never read.
+            let mut element = Element::new(
+                ("tool-rail-entry", entry.registry_index),
+                Role::Button,
+                entry.name,
+            )
+            .with_state(A11yState::selected(entry.active))
+            .with_activation(Activation::Rail(*entry));
+            if let Some(shortcut) = entry.shortcut {
+                element = element.with_description(format!("Shortcut {shortcut}"));
+            }
+            rail = rail.child(element);
+        }
+    }
+
+    rail.child(
+        Element::new(
+            "tool-rail-view-more",
+            Role::Button,
+            view_more_label(expanded),
+        )
+        .with_state(A11yState::toggled(expanded))
+        .with_activation(Activation::ToggleRailExpanded),
+    )
+}
+
 pub(super) fn render_rail(
     entries: Vec<RailEntry>,
     expanded: bool,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
     let mut rail = div()
+        .on_children_prepainted(move |bounds, window, _cx| {
+            rects.record(Surface::Rail, &bounds, window);
+        })
         .w(rail_width(expanded))
         .h_full()
         .flex_none()
@@ -155,11 +220,7 @@ pub(super) fn render_rail(
                 .justify_center()
                 .text_xs()
                 .text_color(theme.muted_text)
-                .child(if expanded {
-                    "No tools installed"
-                } else {
-                    "No tools"
-                }),
+                .child(empty_label(expanded)),
         );
     } else {
         for entry in entries {
@@ -179,8 +240,8 @@ pub(super) fn render_rail(
                         theme.raised
                     })
                     .hover(move |row| row.bg(theme.hover))
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
-                        frame.select_rail_entry(entry, cx);
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                        frame.run_activation(Activation::Rail(entry), window, cx);
                     }))
                     .child(
                         div()
@@ -213,11 +274,11 @@ pub(super) fn render_rail(
             .cursor_pointer()
             .bg(theme.raised)
             .hover(move |button| button.bg(theme.selected))
-            .on_click(cx.listener(|frame, _event, _window, cx| {
-                frame.toggle_rail_expanded(cx);
+            .on_click(cx.listener(|frame, _event, window, cx| {
+                frame.run_activation(Activation::ToggleRailExpanded, window, cx);
             }))
             .text_xs()
-            .child(if expanded { "Show less" } else { "View more" }),
+            .child(view_more_label(expanded)),
     )
 }
 
@@ -470,5 +531,186 @@ mod tests {
         assert_eq!(collapsed[0].id, "marquee");
         assert_eq!(collapsed[1].id, "comment");
         assert!(collapsed[1].active);
+    }
+
+    /// The icon is a glyph or an id-like token drawn as text. A rail entry
+    /// announced by its icon would be read out as that token, so the name a
+    /// screen reader gets is the tool's name.
+    #[test]
+    fn a_rail_entry_is_announced_by_the_tool_name_and_never_by_its_icon_token() {
+        let entries = vec![
+            RailEntry {
+                registry_index: 0,
+                id: "select",
+                name: "Select",
+                icon: "sel-ico",
+                shortcut: Some("v"),
+                group: "cursor",
+                active: false,
+            },
+            RailEntry {
+                registry_index: 3,
+                id: "comment",
+                name: "Comment",
+                icon: "cmt-ico",
+                shortcut: None,
+                group: "annotate",
+                active: true,
+            },
+        ];
+
+        let described = accessible(&entries, true);
+
+        for entry in &entries {
+            let node = described
+                .find(&("tool-rail-entry", entry.registry_index).into())
+                .expect(entry.id);
+            assert_eq!(node.label, entry.name);
+            assert_ne!(node.label, entry.icon);
+            assert!(!node.label.contains(entry.icon));
+        }
+    }
+
+    #[test]
+    fn the_active_rail_entry_is_the_selected_one_and_carries_the_action_its_click_runs() {
+        let entries = vec![
+            RailEntry {
+                registry_index: 0,
+                id: "select",
+                name: "Select",
+                icon: "sel-ico",
+                shortcut: Some("v"),
+                group: "cursor",
+                active: false,
+            },
+            RailEntry {
+                registry_index: 1,
+                id: "marquee",
+                name: "Marquee",
+                icon: "mar-ico",
+                shortcut: Some("m"),
+                group: "cursor",
+                active: true,
+            },
+        ];
+
+        let described = accessible(&entries, true);
+
+        let inactive = described.find(&("tool-rail-entry", 0usize).into()).unwrap();
+        let active = described.find(&("tool-rail-entry", 1usize).into()).unwrap();
+        assert_eq!(inactive.state.selected, Some(false));
+        assert_eq!(active.state.selected, Some(true));
+        assert_eq!(inactive.activation, Some(Activation::Rail(entries[0])));
+        assert_eq!(active.activation, Some(Activation::Rail(entries[1])));
+    }
+
+    /// The shortcut is drawn beside the name only when the rail is expanded.
+    /// A screen reader hears it either way, because it is the only place the
+    /// keyboard route is stated.
+    #[test]
+    fn a_rail_entry_announces_its_keyboard_shortcut_and_omits_the_description_without_one() {
+        let with_shortcut = RailEntry {
+            registry_index: 0,
+            id: "select",
+            name: "Select",
+            icon: "sel-ico",
+            shortcut: Some("v"),
+            group: "cursor",
+            active: false,
+        };
+        let without_shortcut = RailEntry {
+            registry_index: 1,
+            id: "plain",
+            name: "Plain",
+            icon: "pln-ico",
+            shortcut: None,
+            group: "cursor",
+            active: false,
+        };
+
+        for expanded in [true, false] {
+            let described = accessible(&[with_shortcut, without_shortcut], expanded);
+            assert_eq!(
+                described
+                    .find(&("tool-rail-entry", 0usize).into())
+                    .unwrap()
+                    .description
+                    .as_deref(),
+                Some("Shortcut v")
+            );
+            assert_eq!(
+                described
+                    .find(&("tool-rail-entry", 1usize).into())
+                    .unwrap()
+                    .description,
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn the_view_more_toggle_announces_what_it_draws_and_carries_expansion_as_state() {
+        let expanded = accessible(&[], true);
+        let collapsed = accessible(&[], false);
+
+        let expanded = expanded.find(&"tool-rail-view-more".into()).unwrap();
+        let collapsed = collapsed.find(&"tool-rail-view-more".into()).unwrap();
+        assert_eq!(expanded.label, "Show less");
+        assert_eq!(collapsed.label, "View more");
+        assert_eq!(expanded.state.toggled, Some(true));
+        assert_eq!(collapsed.state.toggled, Some(false));
+        assert_eq!(expanded.activation, Some(Activation::ToggleRailExpanded));
+    }
+
+    /// The empty rail still draws a child, so it still describes one, or the
+    /// toggle would inherit the message's rectangle.
+    #[test]
+    fn an_empty_rail_describes_its_message_before_the_toggle() {
+        let described = accessible(&[], false);
+
+        assert_eq!(described.children.len(), 2);
+        assert_eq!(described.children[0].role, Role::Label);
+        assert_eq!(described.children[0].label, "No tools");
+        assert_eq!(described.children[0].activation, None);
+        assert_eq!(
+            accessible(&[], true).children[0].label,
+            "No tools installed"
+        );
+    }
+
+    /// Both halves of "one list drives both": the column renders one child
+    /// per entry and then the toggle, and the description has to match that
+    /// count and order for the prepainted rectangles to line up.
+    #[test]
+    fn the_description_has_one_node_per_rendered_column_child_in_column_order() {
+        let entries = (0..3)
+            .map(|registry_index| RailEntry {
+                registry_index,
+                id: "tool",
+                name: "Tool",
+                icon: "ico",
+                shortcut: None,
+                group: "cursor",
+                active: false,
+            })
+            .collect::<Vec<_>>();
+
+        let described = accessible(&entries, true);
+
+        assert_eq!(described.children.len(), entries.len() + 1);
+        let expected: Vec<gpui::ElementId> = vec![
+            ("tool-rail-entry", 0usize).into(),
+            ("tool-rail-entry", 1usize).into(),
+            ("tool-rail-entry", 2usize).into(),
+            "tool-rail-view-more".into(),
+        ];
+        assert_eq!(
+            described
+                .children
+                .iter()
+                .map(|child| child.key.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 }

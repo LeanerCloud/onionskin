@@ -6,14 +6,15 @@ Audit status: findings captured; remediation in progress
 
 ## Outcome
 
-M2 is substantially implemented but not complete. P1 through P11, P13, and P14
-are represented on main. P12 accessibility is still active and unmerged. M2 also
-has confirmed correctness, lifecycle, release, performance-accounting, navigation,
+M2 is substantially implemented but not complete. P1 through P14 are represented
+on main. P12's automated accessibility tree and probe merged at `07ebc93`; real
+VoiceOver acceptance and the documented residuals remain open. M2 also has
+confirmed correctness, lifecycle, release, performance-accounting, navigation,
 and documentation defects that must close before final acceptance.
 
 At the reviewed baseline, the Acrobat feature matrix still reported zero
 implemented rows even though most M2 packages had landed. Audit Task 2 has since
-reconciled all 403 rows to 43 implemented, 23 partial, 257 planned, and 80 out of
+reconciled all 403 rows to 43 implemented, 24 partial, 256 planned, and 80 out of
 scope. B7 still owns private reference comparison and final acceptance.
 
 ## Method
@@ -43,31 +44,28 @@ regression test and real user path pass.
 | P9 search | `72d0a21` | Merged; rare cancel race and Arabic visual/logical order remain. |
 | P10 tools | `00a7d29` | Merged; snapshot/context-menu defects remain. |
 | P11 commands/preferences/recents | `c3c6576` | Merged; keymap and preference-cap defects remain. |
-| P12 accessibility | no merge commit | Active, unmerged, and blocked from handoff until its owner preserves `a11y_spike.rs`. |
+| P12 accessibility | `07ebc93` | Merged; real VoiceOver acceptance, focus dispatch, platform coverage, and listed residuals remain. |
 | P13 codecs/export | `74b60ec` | Merged; export lifecycle and UI-thread debt remain. |
 | P14 budgets | `64829a0` | Merged; eviction-churn accounting and corpus integrity defects remain. |
 | M2 overall | no completion commit | Not complete. |
 
 ## Retained and concurrent state
 
-- B0 owns this retained-state reconciliation. Main was clean at the audit baseline.
-  During source-report freezing, a delegated
-  task accidentally created an untracked duplicate of
-  `docs/audits/source-reports/2026-08-31-repo-docs-ci.md` in main. Its SHA-256 is
-  `7ddb97efad7d554ebfbfc67b94a003248e9357d38e6a214b61cab170c8daf0a7`, identical
-  to the worktree copy. It is preserved. Before feature integration, track those
-  existing bytes in a separate additive main commit and rebase this package, so no
-  removal, move, or checkout-overwrite is required.
-- Active external worktree `.claude/worktrees/agent-a48bac55cf7a6b8b9` contains
-  uncommitted P12 work and marks retained `crates/app/src/bin/a11y_spike.rs`
-  deleted. This audit does not touch that worktree.
+- B0 restored all three deleted source artifacts at `d683def` before current main
+  was merged additively into this retained audit branch. The frozen repository
+  source-report bytes are tracked and preserved; no rebase, removal, move, or
+  checkout-overwrite was used.
+- External worktree `.claude/worktrees/agent-a48bac55cf7a6b8b9` is clean retained
+  P12 evidence. This audit does not modify it.
 - `../onionskin-m2-p10-tools-basic` retains uncommitted P10-era changes even though
   the completed P10 commits are ancestors of main. It is historical evidence, not
   the forward implementation target.
 - Other retained worktrees, branches, plans, and diffs remain preserved. No cleanup
   is authorized.
-- No Git remote is configured. Hosted CI, branch protection, remote release jobs,
-  and platform release status are therefore not verified.
+- `origin` is configured as `git@github.com:LeanerCloud/onionskin.git`. No
+  remote-tracking refs or enforceable hosted gates have been verified locally;
+  hosted CI, branch protection, release jobs, and platform release status remain
+  unverified.
 
 ## Independent finding ingestion
 
@@ -79,8 +77,8 @@ regression test and real user path pass.
 | CR-002 | Low | `crates/cos/src/document.rs:863` | Confirmed open | B1 | Added by this audit | Correct the stale M2 owner comment when the COS path is touched. |
 | CR-003 | Low | `crates/core/benches/scroll.rs:230` | Confirmed open | B1 | Already ledgered | Evict/reinsert mutation increments, rather than overwrites, composite totals. |
 | CR-004 | Medium | `corpus/fetch.sh:38,212` | Confirmed open | B1 | Already ledgered | Corrupted R2 object fails checksum validation. |
-| CR-005 | Low | `crates/app/tests/guarantees.rs:83` | Confirmed limitation | B6 | Already ledgered | Replace/supplement textual guarantee tripwires with live workflow policy once a remote exists. |
-| CR-006 | Low | no configured remote; local bench job only | Externally blocked | B6 | Already ledgered | Verify required branch protection through the remote API after configuration. |
+| CR-005 | Low | `crates/app/tests/guarantees.rs:83` | Confirmed limitation | B6 | Already ledgered | Replace or supplement textual tripwires with verified hosted workflow policy; a configured `origin` alone is not proof. |
+| CR-006 | Low | no configured remote at baseline; local bench job only | Externally blocked | B6 | Already ledgered | Verify required hosted checks and branch protection through the remote API; a configured `origin` alone is not proof. |
 | CR-007 | Low | `crates/core/src/search.rs:598` | Confirmed open | B4 | Already ledgered | Deterministic cancel hook or stress proof closes the race without weakening semantics. |
 
 ### App shell and merged feature packages
@@ -108,7 +106,7 @@ The entry is retained but marked resolved pending the package review.
 | Source ID | Severity | Evidence at `7413186` | Disposition | Owner | Known-issues state | Required proof |
 |---|---|---|---|---|---|---|
 | REPO-001 | Critical | `.github/workflows/release.yml:49-50`; `crates/app/Cargo.toml:64-100` | Confirmed release blocker | B6 | Added by this audit | Packaged artifact builds with `--features shell` and launches the real viewer. |
-| REPO-002 | Critical | no P12 merge; active P12 worktree | Confirmed M2 blocker | B5 | Existing VoiceOver/P12 entry | Preserve the spike, merge reviewed P12, pass probes and one real VoiceOver session. |
+| REPO-002 | Critical | `07ebc93`; `docs/spikes/m2-voiceover-acceptance.md` | Partially resolved; M2 acceptance blocker remains | B5 | Existing VoiceOver/P12 entry, narrowed | Keep the restored spike, fix focus/platform residuals, harden the soft probe gate, and pass one real VoiceOver session. |
 | REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Resolved in Audit Task 2 | B7 | Added and resolved by this audit | All 403 rows are reviewed and the summary totals mechanically match the rows; B7 retains REPO-010 and final acceptance. |
 | REPO-004 | High | `docs/plans/m2-viewer.md:3` at baseline | Resolved in this task | B7 | Added and resolved by this audit | M2 plan header now matches live merge history and open gates. |
 | REPO-005 | High | retained P10/agent branches and worktrees | Preserve, no cleanup | B0 | Added by this audit | Inventory remains reproducible; useful work reconciles additively only. |
@@ -128,9 +126,9 @@ alone does not satisfy that user instruction.
 
 | Artifact | Evidence | Disposition | Owner |
 |---|---|---|---|
-| `crates/content/src/filter.rs` | Deleted on main by `cb75deea` after decoder consolidation; retained branch history also contains `f60b285`. | Restore exact blob at its original path as an uncompiled retained reference. | B0 |
-| `crates/app/src/bin/shell_spike.rs` | Deleted by `8573fad` and included in foundation merge `1eed2de`. | Restore exact blob behind an opt-in feature. | B0 |
-| `crates/app/src/bin/a11y_spike.rs` | Still present on main; active P12 worktree marks it deleted. | P12 owner must drop the deletion before handoff. | B5 |
+| `crates/content/src/filter.rs` | Deleted on main by `cb75deea` after decoder consolidation; retained branch history also contains `f60b285`. | Restored byte-exact at `d683def` as an uncompiled retained reference. | B0 complete |
+| `crates/app/src/bin/shell_spike.rs` | Deleted by `8573fad` and included in foundation merge `1eed2de`. | Restored byte-exact at `d683def` behind `shell-spike`. | B0 complete |
+| `crates/app/src/bin/a11y_spike.rs` | Deleted by P12 commit `6077d7c`. | Restored byte-exact at `d683def` behind `a11y-spike`. | B0 complete |
 
 ## Existing ledger disposition
 
@@ -179,9 +177,9 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CHR-011 | Partially accepted | B3 | Repeated layout dimensions need names only where they encode a shared invariant; naming every visual literal would be over-engineering. |
 | HARD-CHR-012 | Confirmed | B3 | Page entry still reuses `SearchInput` and its search key context; give the shared input an honest neutral contract. |
 | HARD-CHR-013 | Confirmed | B3 | Page controls show zoom text but offer no percentage input even though `zoom_to` exists. |
-| HARD-CHR-014 | Confirmed | B3 | Non-finite zoom still casts silently to zero in `page_controls.rs:83`; validate before formatting. |
+| HARD-CHR-014 | Confirmed | B3 | Non-finite zoom still casts silently to zero in `page_controls.rs:91`; validate before formatting. |
 | HARD-CHR-015 | Confirmed | B3 | The side-panel empty host still displays the literal `Panel`; render an honest empty/context state. |
-| HARD-A11Y-001 | Deferred, confirmed gap | B5 | Stable IDs exist, but focus/semantics are absent outside `SearchInput` and the canvas is one unlabeled GPUI element. P12 owns it. |
+| HARD-A11Y-001 | Partially resolved | B5 | P12 shipped the tree, roles, labels, page text, focus ring, actions, bounds, and probe. Real VoiceOver acceptance, AccessKit-to-GPUI focus transfer, arrow navigation, occluded-window actions, UI-thread text extraction, probe gating, and non-macOS adapters remain. |
 | HARD-PROC-001 | Historical | Process | The thin P2-P7 review trail cannot be repaired in source; the current package/review/evidence gates prevent recurrence. |
 | HARD-PROC-002 | Resolved | B3 | P10 registered real tools and current rail/quick-action tests exercise the live registry. |
 | HARD-PROC-003 | Resolved in Audit Task 2 | B7 | All 403 rows are reconciled and mechanically recounted; B7 retains private reference comparison and final acceptance. |
@@ -215,3 +213,22 @@ The core auditor passed:
 The app and repository auditors performed source/test/doc/history inspection only.
 No cargo bench, hosted CI, platform release, real VoiceOver, or Acrobat screenshot
 comparison was run. Those remain open and must not be inferred from this report.
+
+### Current integration verification
+
+After P12 and B0 reached `main`, this retained audit branch merged current `main`
+without removing or overwriting retained state. The reconciliation pass proved:
+
+- all 403 matrix rows recount to 43 implemented, 24 partial, 256 planned, and 80
+  out of scope;
+- `cargo test -p onionskin-app --test guarantees` passes, including the executable
+  matrix-headline and milestone-total contract;
+- the three B0 source files still match their recorded SHA-256 values; and
+- the production-source diff from `main` is empty. The only code difference is the
+  audit branch's matrix contract in `crates/app/tests/guarantees.rs`.
+
+Fresh shell and accessibility-probe reruns were attempted from both the audit and
+shared main target directories, but the filesystem had only 140 MiB available and
+Rust failed with `No space left on device`. No pass is inferred from those failed
+runs; their last green P12/B0 results remain recorded in the corresponding package
+plans, and final acceptance must rerun them after space is available.

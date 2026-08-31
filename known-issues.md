@@ -32,6 +32,15 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- B0 restored `crates/content/src/filter.rs`, `shell_spike.rs`, and
+  `a11y_spike.rs` byte-for-byte as retained historical references after earlier
+  sessions deleted them. Production decoding continues through
+  `cos::Document::decode_stream`; the content file is outside the module tree,
+  and both spike binaries require explicit opt-in features. Keep these artifacts
+  preserved without making production depend on them. Commands embedded in the
+  historical spike sources may name their former feature gates; current checks use
+  `shell-spike` and `a11y-spike` as declared in `crates/app/Cargo.toml`.
+
 - cos: the fuzz target builds on stable but needs a nightly toolchain to
   actually run - install one when wiring fuzz into CI. Until then the
   robustness suite drives the same paths on stable. The four other
@@ -104,8 +113,9 @@ source IDs, severity, ownership, and required proof.
   of the frame-pinning regression could under-count (the primary mode is
   caught); guarantee 9's CI checks are textual tripwires, evadable by a
   softened harness with a stray assert. Branch protection must REQUIRE the
-  bench job once a remote exists, or the budget gate binds the job and not
-  the merge, and corpus/fetch.sh verifies no checksum for the R2-hosted
+  bench job through an enforceable hosted rule; `origin` now exists but the
+  rule is not verified, so the budget gate binds the job and not the merge.
+  corpus/fetch.sh also verifies no checksum for the R2-hosted
   objects the bench job now puts on the PR path.
 - P8 residuals: Reduce/Enlarge does not advance the thumbnail epoch, so a
   page pending at the old size that falls outside the new band keeps a
@@ -146,9 +156,30 @@ source IDs, severity, ownership, and required proof.
   of the queued generation before hearing the cancel. Harden by tolerating
   queued-generation updates that precede the cancel rather than forbidding
   them outright.
-- One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
-  proven by direct view messaging only. Role::Document currently surfaces as
-  AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
+- One real VoiceOver session is the remaining M2 acceptance item: P12 built
+  the tree, the focus ring and an automated probe, but the probe messages the
+  view directly and never leaves the process, so the AX server path,
+  notification delivery and speech itself are unproven. Follow the 20-minute
+  script at docs/spikes/m2-voiceover-acceptance.md and record the result
+  there. Role::Document is fixed (the M1 spike misread it: the missing piece
+  was the role description, not the role) and verified by execution.
+- P12 residuals: arrow-key navigation was not shipped, so the focus ring is
+  flat and every visible pane row is a tab stop, which makes Tab cross an
+  open thumbnails pane in dozens of presses; a screen-reader press on an
+  occluded window is queued rather than honoured, because gpui runs a
+  window's display link only while macOS reports it visible and
+  refresh_windows merely marks the window dirty; the shell extracts every
+  visible page's text on every frame whether or not a client is listening,
+  so first-visit content-stream extraction runs on the UI thread during
+  scroll and P14's headless scroll bench cannot see it; two probe tests
+  (the platform half of the press, and the prepaint rectangles) are guarded
+  only by the continue-on-error probe job, which ci.yml plans to harden
+  after its first green run - hold that plan or those guards stay soft.
+- P12 focus dispatch: an AccessKit `Focus` request updates the internal ring but
+  does not clear stale GPUI text-field focus or focus the requested real input.
+  B5 must regress text-field focus -> screen-reader focus on Zoom In -> Enter and
+  prove Zoom In runs. Linux and Windows adapters are currently no-ops; either wire
+  them or scope M2 app-accessibility acceptance to macOS with named follow-ups.
 - Linux packaging script and Windows NSIS installer have inspection-only
   confidence; the first tagged release is their real test.
 - Shell spike nit for M2: drag state not cleared on outside-window
@@ -191,23 +222,20 @@ source IDs, severity, ownership, and required proof.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.
-- **Retained prior deletions (owner B0):** `crates/content/src/filter.rs` and
-  `crates/app/src/bin/shell_spike.rs` were deleted in prior sessions. Restore their
-  exact blobs additively without selecting obsolete code in normal builds.
-- **Active P12 spike preservation (owner B5):** main retains `a11y_spike.rs`; the
-  active P12 owner must remove its pending deletion before handoff.
+- **Resolved retained prior deletions (B0):** `d683def` restored
+  `crates/content/src/filter.rs`, `shell_spike.rs`, and `a11y_spike.rs` with their
+  exact pre-deletion hashes. The content reference remains outside the module tree;
+  the spike binaries remain behind explicit opt-in features.
 - **Resolved dispatch report retained:** the prior global-action-listener warning
   is stale at `7413186`. Current `RunCommand`, close-tab, and view-menu paths defer
   correctly and shell tests cover real find/close/view keystrokes. No code change
   is justified unless B2 re-verification disproves this evidence.
-- **Current-session retained duplicate (owner B0):** source-report freezing accidentally
-  created an untracked main-checkout copy of
-  `docs/audits/source-reports/2026-08-31-repo-docs-ci.md`. It is byte-identical to
-  the audit-worktree copy (SHA-256
-  `7ddb97efad7d554ebfbfc67b94a003248e9357d38e6a214b61cab170c8daf0a7`) and is
-  preserved. Before feature integration, track those exact existing bytes in an
-  additive main commit and rebase the audit package, so no removal or move is
-  needed.
+- **Resolved retained source-report duplicate (B0):**
+  `docs/audits/source-reports/2026-08-31-repo-docs-ci.md` is tracked on `main`
+  with the preserved SHA-256
+  `7ddb97efad7d554ebfbfc67b94a003248e9357d38e6a214b61cab170c8daf0a7`.
+  The audit branch accepted the current main tree additively; no removal, move,
+  checkout overwrite, or history rewrite was used.
 
 ## Environment
 
