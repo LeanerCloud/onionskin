@@ -21,7 +21,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use onionskin_core::{FitMode, MatchMode, PageLayoutMode, SearchOptions};
-use serde::{Deserialize, Serialize};
 
 /// How the shell picks light or dark. `System` follows the window's
 /// appearance, which is what makes it the default.
@@ -101,6 +100,18 @@ impl ZoomPreference {
     }
 }
 
+/// What the interface calls a page layout. Here rather than in the chrome
+/// because the View menu and the Preferences dialog both say it, and they
+/// have to say the same thing.
+pub fn layout_label(mode: PageLayoutMode) -> &'static str {
+    match mode {
+        PageLayoutMode::SinglePage => "Single Page",
+        PageLayoutMode::SinglePageContinuous => "Single Page Continuous",
+        PageLayoutMode::TwoPage => "Two Page",
+        PageLayoutMode::TwoPageContinuous => "Two Page Continuous",
+    }
+}
+
 /// The dialog's category list, in the order Acrobat lists the ones we have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferenceCategory {
@@ -170,18 +181,25 @@ pub enum PreferencesError {
         path: PathBuf,
         message: String,
     },
+    /// A key no setting in this build answers to. Everything else in the
+    /// file still applies.
+    UnknownSetting {
+        path: PathBuf,
+        setting: String,
+    },
     /// A setting named a value it does not have. The defaults keep that one
     /// setting; everything else in the file still applies.
     UnknownValue {
         path: PathBuf,
-        setting: &'static str,
+        setting: String,
+        /// As the file wrote it, so a message can quote it back.
         value: String,
         allowed: &'static str,
     },
     OutOfRange {
         path: PathBuf,
-        setting: &'static str,
-        value: i64,
+        setting: String,
+        value: String,
         max: usize,
     },
     Unwritable {
@@ -202,6 +220,11 @@ impl fmt::Display for PreferencesError {
             Self::Malformed { path, message } => {
                 write!(f, "{} is not a preferences file: {message}", path.display())
             }
+            Self::UnknownSetting { path, setting } => write!(
+                f,
+                "{} sets {setting}, which is not a setting this build has",
+                path.display()
+            ),
             Self::UnknownValue {
                 path,
                 setting,
@@ -209,7 +232,7 @@ impl fmt::Display for PreferencesError {
                 allowed,
             } => write!(
                 f,
-                "{} sets {setting} to \"{value}\"; it takes one of {allowed}",
+                "{} sets {setting} to {value}; it takes one of {allowed}",
                 path.display()
             ),
             Self::OutOfRange {
@@ -230,24 +253,12 @@ impl std::error::Error for PreferencesError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unreadable { source, .. } | Self::Unwritable { source, .. } => Some(source),
-            Self::Malformed { .. } | Self::UnknownValue { .. } | Self::OutOfRange { .. } => None,
+            Self::Malformed { .. }
+            | Self::UnknownSetting { .. }
+            | Self::UnknownValue { .. }
+            | Self::OutOfRange { .. } => None,
         }
     }
-}
-
-/// The file's shape, separate from [`Preferences`] so the in-memory type
-/// stays typed and every value that is not one of the ones a setting takes
-/// is reported rather than deserialized into something else.
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PreferencesFile {
-    theme: Option<String>,
-    recent_documents: Option<i64>,
-    page_layout: Option<String>,
-    zoom: Option<String>,
-    search_case_sensitive: Option<bool>,
-    search_whole_word: Option<bool>,
-    search_mode: Option<String>,
 }
 
 const THEMES: &str = "\"system\", \"light\", \"dark\"";
@@ -255,6 +266,7 @@ const LAYOUTS: &str =
     "\"single-page\", \"single-page-continuous\", \"two-page\", \"two-page-continuous\"";
 const ZOOMS: &str = "\"actual-size\", \"fit-page\", \"fit-width\", \"fit-height\"";
 const MODES: &str = "\"phrase\", \"any-word\", \"all-words\"";
+const FLAGS: &str = "true, false";
 
 impl Preferences {
     /// The defaults with `~/.config/onionskin/preferences.json` applied when
@@ -276,8 +288,16 @@ impl Preferences {
         }
     }
 
-    pub fn parse(source: &str, path: &Path) -> (Self, Vec<PreferencesError>) {
-        let file: PreferencesFile = match serde_json::from_str(source) {
+    /// The defaults with `source` applied over them.
+    ///
+    /// Read setting by setting rather than into one struct: a value of the
+    /// wrong type, a value outside the set its setting takes, and a key this
+    /// build does not have are each one setting's problem. Failing the whole
+    /// document over any of them would replace everything the user wrote
+    /// with the defaults, and then the next save would write those defaults
+    /// over their file.
+    fn parse(source: &str, path: &Path) -> (Self, Vec<PreferencesError>) {
+        let file: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(source) {
             Ok(file) => file,
             Err(error) => {
                 return (
@@ -291,82 +311,32 @@ impl Preferences {
         };
         let mut preferences = Self::default();
         let mut errors = Vec::new();
-
-        if let Some(theme) = choose(
-            &mut errors,
-            path,
-            "theme",
-            file.theme.as_deref(),
-            THEMES,
-            parse_theme,
-        ) {
-            preferences.theme = theme;
-        }
-        if let Some(layout) = choose(
-            &mut errors,
-            path,
-            "page_layout",
-            file.page_layout.as_deref(),
-            LAYOUTS,
-            parse_layout,
-        ) {
-            preferences.layout = layout;
-        }
-        if let Some(zoom) = choose(
-            &mut errors,
-            path,
-            "zoom",
-            file.zoom.as_deref(),
-            ZOOMS,
-            parse_zoom,
-        ) {
-            preferences.zoom = zoom;
-        }
-        if let Some(mode) = choose(
-            &mut errors,
-            path,
-            "search_mode",
-            file.search_mode.as_deref(),
-            MODES,
-            parse_mode,
-        ) {
-            preferences.search.mode = mode;
-        }
-        if let Some(count) = file.recent_documents {
-            match usize::try_from(count)
-                .ok()
-                .filter(|count| *count <= MAX_RECENT_DOCUMENTS)
-            {
-                Some(count) => preferences.recent_documents = count,
-                None => errors.push(PreferencesError::OutOfRange {
-                    path: path.to_path_buf(),
-                    setting: "recent_documents",
-                    value: count,
-                    max: MAX_RECENT_DOCUMENTS,
-                }),
+        for (setting, value) in &file {
+            if let Err(error) = apply(&mut preferences, path, setting, value) {
+                errors.push(error);
             }
-        }
-        if let Some(case_sensitive) = file.search_case_sensitive {
-            preferences.search.case_sensitive = case_sensitive;
-        }
-        if let Some(whole_word) = file.search_whole_word {
-            preferences.search.whole_word = whole_word;
         }
         (preferences, errors)
     }
 
+    /// Write every setting this build has.
+    ///
+    /// A key it does not have is not written back: it cannot be kept in step
+    /// with the rest of the file, and the load that reported it said so.
     pub fn save(&self, path: &Path) -> Result<(), PreferencesError> {
-        let file = PreferencesFile {
-            theme: Some(self.theme.key().to_owned()),
-            recent_documents: Some(self.recent_documents as i64),
-            page_layout: Some(layout_key(self.layout).to_owned()),
-            zoom: Some(self.zoom.key().to_owned()),
-            search_case_sensitive: Some(self.search.case_sensitive),
-            search_whole_word: Some(self.search.whole_word),
-            search_mode: Some(mode_key(self.search.mode).to_owned()),
-        };
+        let mut file = serde_json::Map::new();
+        file.insert("theme".into(), self.theme.key().into());
+        file.insert("recent_documents".into(), self.recent_documents.into());
+        file.insert("page_layout".into(), layout_key(self.layout).into());
+        file.insert("zoom".into(), self.zoom.key().into());
+        file.insert(
+            "search_case_sensitive".into(),
+            self.search.case_sensitive.into(),
+        );
+        file.insert("search_whole_word".into(), self.search.whole_word.into());
+        file.insert("search_mode".into(), mode_key(self.search.mode).into());
         let json = serde_json::to_string_pretty(&file)
-            .expect("a preferences file of strings, bools and one number serializes");
+            .expect("a map of strings, bools and one number serializes");
         crate::config::write_private(path, &json).map_err(|source| PreferencesError::Unwritable {
             path: path.to_path_buf(),
             source,
@@ -374,27 +344,78 @@ impl Preferences {
     }
 }
 
-/// The value a setting names, or `None` with the reason recorded. Generic
-/// over the setting's type so every one of them reports the same way.
-fn choose<T>(
-    errors: &mut Vec<PreferencesError>,
+/// Apply one setting from the file.
+///
+/// Every arm names the values it takes, so the message a user gets says what
+/// to write instead rather than that something was wrong.
+fn apply(
+    preferences: &mut Preferences,
     path: &Path,
-    setting: &'static str,
-    value: Option<&str>,
+    setting: &str,
+    value: &serde_json::Value,
+) -> Result<(), PreferencesError> {
+    match setting {
+        "theme" => preferences.theme = named(path, setting, value, THEMES, parse_theme)?,
+        "page_layout" => preferences.layout = named(path, setting, value, LAYOUTS, parse_layout)?,
+        "zoom" => preferences.zoom = named(path, setting, value, ZOOMS, parse_zoom)?,
+        "search_mode" => preferences.search.mode = named(path, setting, value, MODES, parse_mode)?,
+        "search_case_sensitive" => preferences.search.case_sensitive = flag(path, setting, value)?,
+        "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
+        "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
+        _ => {
+            return Err(PreferencesError::UnknownSetting {
+                path: path.to_path_buf(),
+                setting: setting.to_owned(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn named<T>(
+    path: &Path,
+    setting: &str,
+    value: &serde_json::Value,
     allowed: &'static str,
     parse: fn(&str) -> Option<T>,
-) -> Option<T> {
-    let value = value?;
-    let parsed = parse(value);
-    if parsed.is_none() {
-        errors.push(PreferencesError::UnknownValue {
+) -> Result<T, PreferencesError> {
+    value
+        .as_str()
+        .and_then(parse)
+        .ok_or_else(|| unknown_value(path, setting, value, allowed))
+}
+
+fn flag(path: &Path, setting: &str, value: &serde_json::Value) -> Result<bool, PreferencesError> {
+    value
+        .as_bool()
+        .ok_or_else(|| unknown_value(path, setting, value, FLAGS))
+}
+
+fn count(path: &Path, setting: &str, value: &serde_json::Value) -> Result<usize, PreferencesError> {
+    value
+        .as_u64()
+        .and_then(|count| usize::try_from(count).ok())
+        .filter(|count| *count <= MAX_RECENT_DOCUMENTS)
+        .ok_or_else(|| PreferencesError::OutOfRange {
             path: path.to_path_buf(),
-            setting,
-            value: value.to_owned(),
-            allowed,
-        });
+            setting: setting.to_owned(),
+            value: value.to_string(),
+            max: MAX_RECENT_DOCUMENTS,
+        })
+}
+
+fn unknown_value(
+    path: &Path,
+    setting: &str,
+    value: &serde_json::Value,
+    allowed: &'static str,
+) -> PreferencesError {
+    PreferencesError::UnknownValue {
+        path: path.to_path_buf(),
+        setting: setting.to_owned(),
+        value: value.to_string(),
+        allowed,
     }
-    parsed
 }
 
 fn parse_theme(value: &str) -> Option<ThemePreference> {
@@ -423,24 +444,28 @@ fn parse_mode(value: &str) -> Option<MatchMode> {
         .map(|(_, mode)| mode)
 }
 
+/// Written as a match rather than a lookup in the table below, so a new
+/// variant in `core` fails the build here instead of panicking on the first
+/// save that meets it.
 fn layout_key(mode: PageLayoutMode) -> &'static str {
-    LAYOUT_MODES
-        .into_iter()
-        .find(|(_, known)| *known == mode)
-        .map(|(key, _)| key)
-        .expect("every layout mode has a key")
+    match mode {
+        PageLayoutMode::SinglePage => "single-page",
+        PageLayoutMode::SinglePageContinuous => "single-page-continuous",
+        PageLayoutMode::TwoPage => "two-page",
+        PageLayoutMode::TwoPageContinuous => "two-page-continuous",
+    }
 }
 
 fn mode_key(mode: MatchMode) -> &'static str {
-    MATCH_MODES
-        .into_iter()
-        .find(|(_, known)| *known == mode)
-        .map(|(key, _)| key)
-        .expect("every match mode has a key")
+    match mode {
+        MatchMode::Phrase => "phrase",
+        MatchMode::AnyWord => "any-word",
+        MatchMode::AllWords => "all-words",
+    }
 }
 
-/// The file's spelling of `core`'s layout modes. One table for both
-/// directions, so a mode cannot be readable and unwritable.
+/// The file's spelling of `core`'s layout modes, for reading. Writing goes
+/// through [`layout_key`], and the test below holds the two together.
 const LAYOUT_MODES: [(&str, PageLayoutMode); 4] = [
     ("single-page", PageLayoutMode::SinglePage),
     (
@@ -541,12 +566,60 @@ mod tests {
 
     /// Turning the list off is a setting, not an error: Acrobat's field
     /// accepts zero and it means "keep no recents".
+    /// A value of the wrong type is one setting's problem too: the file's
+    /// other settings still apply and the file is not replaced.
+    #[test]
+    fn a_value_of_the_wrong_type_costs_only_its_own_setting() {
+        let (preferences, errors) = parse(
+            r#"{"theme": 7, "search_whole_word": "yes", "recent_documents": "ten", "zoom": "fit-width"}"#,
+        );
+
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(
+            errors.iter().any(|error| error.contains("sets theme to 7")),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(r#"sets search_whole_word to "yes""#)),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(r#"sets recent_documents to "ten""#)),
+            "{errors:?}"
+        );
+        assert_eq!(preferences.zoom, ZoomPreference::FitWidth);
+        assert_eq!(preferences.theme, ThemePreference::System);
+        assert!(!preferences.search.whole_word);
+    }
+
     #[test]
     fn zero_recent_documents_is_allowed() {
         let (preferences, errors) = parse(r#"{"recent_documents": 0}"#);
 
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(preferences.recent_documents, 0);
+    }
+
+    /// The read table and the write match have to agree, or a preference
+    /// saves as something the next start cannot read back.
+    #[test]
+    fn every_key_written_is_a_key_that_reads_back() {
+        for (_, layout) in LAYOUT_MODES {
+            assert_eq!(parse_layout(layout_key(layout)), Some(layout));
+        }
+        for (_, mode) in MATCH_MODES {
+            assert_eq!(parse_mode(mode_key(mode)), Some(mode));
+        }
+        for theme in ThemePreference::ALL {
+            assert_eq!(parse_theme(theme.key()), Some(theme));
+        }
+        for zoom in ZoomPreference::ALL {
+            assert_eq!(parse_zoom(zoom.key()), Some(zoom));
+        }
     }
 
     #[test]
@@ -561,15 +634,23 @@ mod tests {
         assert_eq!(preferences, Preferences::default());
     }
 
-    /// A key nobody reads is a setting the user believes is in force. Say so
-    /// rather than accepting the file silently.
+    /// A key nobody reads is a setting the user believes is in force, so it
+    /// is reported. It is also one key: a preference file written by a
+    /// version that has one more category must not cost the user the
+    /// settings this build does understand.
     #[test]
-    fn a_setting_this_build_does_not_have_is_reported() {
-        let (preferences, errors) = parse(r#"{"commenting_author": "me"}"#);
+    fn a_setting_this_build_does_not_have_is_reported_and_costs_nothing_else() {
+        let (preferences, errors) =
+            parse(r#"{"commenting_author": "me", "theme": "dark", "recent_documents": 3}"#);
 
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].contains("commenting_author"), "{errors:?}");
-        assert_eq!(preferences, Preferences::default());
+        assert!(
+            errors[0].contains("not a setting this build has"),
+            "{errors:?}"
+        );
+        assert_eq!(preferences.theme, ThemePreference::Dark);
+        assert_eq!(preferences.recent_documents, 3);
     }
 
     /// The dialog carries only the categories with a setting behind them.

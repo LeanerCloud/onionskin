@@ -301,21 +301,41 @@ mod tests {
     }
 
     /// Two commands sharing a default keystroke is the collision the keymap
-    /// reports at runtime; in the built-in table it is a mistake to catch
-    /// here, where it is still free to fix.
+    /// reports at runtime; in the set this build ships it is a mistake to
+    /// catch here, where it is still free to fix.
+    ///
+    /// Over the defaults the app really resolves, which is the built-in
+    /// table plus whatever the installed plugins registered, and on both
+    /// platforms: off macOS `cmd` and `ctrl` are one key, so a plugin
+    /// binding `ctrl-o` collides there and not on a Mac.
     #[test]
     fn no_two_defaults_claim_one_keystroke() {
-        let mut seen: Vec<(&str, &str)> = Vec::new();
-        for command in MenuCommand::all() {
-            let Some(keystroke) = command.default_keystroke() else {
-                continue;
-            };
-            if let Some((other, _)) = seen.iter().find(|(_, taken)| *taken == keystroke) {
-                panic!("{} and {other} both default to {keystroke}", command.id());
-            }
-            seen.push((command.id(), keystroke));
+        let defaults = command_defaults(
+            crate::build_registry()
+                .commands()
+                .iter()
+                .map(|command| (command.id, command.keybind)),
+        );
+        let bound = defaults
+            .iter()
+            .filter(|default| default.keystroke.is_some())
+            .count();
+        assert!(bound > 1, "there is nothing to collide");
+
+        for macos in [true, false] {
+            let keymap = crate::keymap::Keymap::resolve(
+                &defaults,
+                None,
+                std::path::Path::new("built-in"),
+                macos,
+            );
+            let reported: Vec<_> = keymap.errors().iter().map(ToString::to_string).collect();
+            assert!(
+                reported.is_empty(),
+                "the built-in defaults collide on macos={macos}: {reported:?}"
+            );
+            assert_eq!(keymap.bindings().len(), bound);
         }
-        assert!(!seen.is_empty());
     }
 
     /// A command the app cannot run yet must not hold a keystroke: pressing

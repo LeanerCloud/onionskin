@@ -5,7 +5,7 @@ use onionskin_plugin_api::{PluginRegistry, ToolCapability};
 use super::quick_actions::QuickAction;
 use super::theme::{ShellViewAction, ShellViewState};
 use super::ShellFrame;
-use crate::preferences::ThemePreference;
+use crate::preferences::{layout_label, ThemePreference};
 use crate::shell::canvas::{CanvasViewState, ViewAction};
 use crate::shell::context_menu::tool_with;
 
@@ -146,12 +146,14 @@ pub(super) struct RegisteredCommands([bool; REGISTRY_BACKED.len()]);
 
 impl RegisteredCommands {
     fn installed(has_command: impl Fn(&str) -> bool) -> Self {
+        // `registry_command_id` answers for exactly these two, but this runs
+        // on every menu refresh, and an entry added to REGISTRY_BACKED by
+        // mistake should read as "no plugin provides it" rather than take
+        // the window down.
         Self(REGISTRY_BACKED.map(|command| {
-            has_command(
-                command
-                    .registry_command_id()
-                    .expect("REGISTRY_BACKED holds registry commands"),
-            )
+            command
+                .registry_command_id()
+                .is_some_and(&has_command)
         }))
     }
 
@@ -430,9 +432,6 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
     ]
 }
 
-/// The three export formats M2 owns. The full `File > Export To` menu, with
-/// the image and Office targets behind it, is an M3 row; these three are M2
-/// rows and need a surface to be reachable from.
 /// An entry a plugin's command runs: live when that plugin registered the
 /// command and there is a document for it to act on.
 fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability {
@@ -443,6 +442,9 @@ fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability 
     }
 }
 
+/// The three export formats M2 owns. The full `File > Export To` menu, with
+/// the image and Office targets behind it, is an M3 row; these three are M2
+/// rows and need a surface to be reachable from.
 fn export_entries(state: MenuState) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -582,25 +584,25 @@ fn view_menu_entries(
         ),
         entry(
             MenuCommand::SinglePage,
-            "Single Page",
+            layout_label(PageLayoutMode::SinglePage),
             availability,
             layout == Some(PageLayoutMode::SinglePage),
         ),
         entry(
             MenuCommand::SinglePageContinuous,
-            "Single Page Continuous",
+            layout_label(PageLayoutMode::SinglePageContinuous),
             availability,
             layout == Some(PageLayoutMode::SinglePageContinuous),
         ),
         entry(
             MenuCommand::TwoPage,
-            "Two Page",
+            layout_label(PageLayoutMode::TwoPage),
             availability,
             layout == Some(PageLayoutMode::TwoPage),
         ),
         entry(
             MenuCommand::TwoPageContinuous,
-            "Two Page Continuous",
+            layout_label(PageLayoutMode::TwoPageContinuous),
             availability,
             layout == Some(PageLayoutMode::TwoPageContinuous),
         ),
@@ -650,19 +652,19 @@ fn view_menu_entries(
         ),
         entry(
             MenuCommand::ThemeSystem,
-            "System Theme",
+            ThemePreference::System.label(),
             Enabled,
             shell_view.theme() == ThemePreference::System,
         ),
         entry(
             MenuCommand::ThemeLight,
-            "Light Theme",
+            ThemePreference::Light.label(),
             Enabled,
             shell_view.theme() == ThemePreference::Light,
         ),
         entry(
             MenuCommand::ThemeDark,
-            "Dark Theme",
+            ThemePreference::Dark.label(),
             Enabled,
             shell_view.theme() == ThemePreference::Dark,
         ),
@@ -1032,11 +1034,23 @@ mod tests {
             .flat_map(|section| section.entries)
             .collect();
 
+        assert_eq!(
+            registry.commands().is_empty(),
+            cfg!(not(feature = "commands-core")),
+            "there is nothing to check"
+        );
         for command in registry.commands() {
             let in_menu = entries.iter().any(|entry| entry.command.id() == command.id);
             assert!(
                 in_menu || command.keybind.is_some(),
                 "{} is registered but nothing can reach it",
+                command.id
+            );
+            // The menu half specifically: a keystroke alone leaves a command
+            // invisible to anyone who has not read the keymap.
+            assert!(
+                in_menu,
+                "{} has no menu entry, so only a keystroke could reach it",
                 command.id
             );
         }

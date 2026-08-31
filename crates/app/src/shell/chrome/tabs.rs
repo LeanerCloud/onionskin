@@ -42,7 +42,7 @@ use super::theme::{ShellViewAction, ShellViewState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
-use crate::preferences::{PreferenceCategory, Preferences};
+use crate::preferences::{PreferenceCategory, Preferences, ThemePreference};
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
@@ -449,20 +449,20 @@ impl ShellFrame {
             }
             MenuCommand::TakeSnapshot => {
                 self.dismiss_menus(cx);
-                self.activate_tool_with(ToolCapability::Snapshot, "Take a Snapshot", cx);
+                self.take_a_snapshot(cx);
                 Ok(())
             }
             MenuCommand::CloseTab => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::Close, active, window, cx)
+                self.run_tab_command(TabCommand::Close, active, cx)
             }
             MenuCommand::CloseOtherTabs => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::CloseOthers, active, window, cx)
+                self.run_tab_command(TabCommand::CloseOthers, active, cx)
             }
             MenuCommand::CloseAllTabs => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::CloseAll, active, window, cx)
+                self.run_tab_command(TabCommand::CloseAll, active, cx)
             }
             MenuCommand::PreviousView
             | MenuCommand::NextView
@@ -499,11 +499,22 @@ impl ShellFrame {
                 self.toggle_quick_action_visibility(action, cx);
                 Ok(())
             }
+            MenuCommand::ThemeSystem | MenuCommand::ThemeLight | MenuCommand::ThemeDark => {
+                self.dismiss_menus(cx);
+                let theme = match command {
+                    MenuCommand::ThemeLight => ThemePreference::Light,
+                    MenuCommand::ThemeDark => ThemePreference::Dark,
+                    _ => ThemePreference::System,
+                };
+                // Through the preference rather than straight at the view
+                // state: the display theme is a setting, so choosing it in
+                // the View menu has to survive a restart and has to be what
+                // the Preferences dialog shows.
+                self.change_preference(PreferenceChange::Theme(theme), cx);
+                Ok(())
+            }
             command @ (MenuCommand::ToggleNavigationPane
             | MenuCommand::TogglePageControls
-            | MenuCommand::ThemeSystem
-            | MenuCommand::ThemeLight
-            | MenuCommand::ThemeDark
             | MenuCommand::ReadMode) => {
                 self.main_menu_open = false;
                 self.run_shell_view_action(
@@ -528,6 +539,10 @@ impl ShellFrame {
                 self.open_find_bar(None, window, cx);
                 Ok(())
             }
+            // Disabled in the schema for a milestone rather than for a
+            // state, so the check at the top of this function returns first.
+            // Kept as a loud answer in case an entry is ever enabled before
+            // the thing behind it exists.
             MenuCommand::SaveAs
             | MenuCommand::Undo
             | MenuCommand::Redo
@@ -551,11 +566,25 @@ impl ShellFrame {
             prompt: Some("Open".into()),
         });
         cx.spawn(async move |frame, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
+            let chosen = match chosen.await {
+                Ok(Ok(Some(paths))) => paths,
+                // The user changed their mind, or the task was dropped with
+                // the window.
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    frame
+                        .update(cx, |frame, cx| {
+                            frame
+                                .notices
+                                .push(format!("no files could be chosen: {error}"));
+                            cx.notify();
+                        })
+                        .ok();
+                    return;
+                }
             };
             frame
-                .update(cx, |frame, cx| frame.open_documents(&paths, cx))
+                .update(cx, |frame, cx| frame.open_documents(&chosen, cx))
                 .ok();
         })
         .detach();
@@ -597,6 +626,9 @@ impl ShellFrame {
             self.settings.paths.recents.as_deref(),
         );
         self.notices.extend(notices);
+        // Home may be behind this window with the thumbnail view showing;
+        // the document just recorded needs its card.
+        self.home.refresh(&self.settings.recents);
         self.observed_view_state = self.active_view_state(cx);
         self.sync_page_entry(cx);
         self.refresh_find(cx);
@@ -672,23 +704,25 @@ impl ShellFrame {
         cx.notify();
     }
 
-    /// Activate whichever installed tool carries `capability`, saying so in
-    /// the chrome when none does.
-    fn activate_tool_with(
-        &mut self,
-        capability: ToolCapability,
-        name: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self
-            .tabs
-            .active()
-            .and_then(|tab| tool_with(tab.canvas.read(cx).model.registry(), capability))
-        else {
+    /// Activate whichever installed tool carries [`ToolCapability::Snapshot`].
+    ///
+    /// The menu entry asked the same question before it went live, so a
+    /// miss here means the registry changed underneath it. Reported rather
+    /// than returned quietly: the user clicked something that did nothing.
+    fn take_a_snapshot(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.tabs.active().and_then(|tab| {
+            tool_with(
+                tab.canvas.read(cx).model.registry(),
+                ToolCapability::Snapshot,
+            )
+        }) else {
+            self.notices
+                .push("no installed tool takes a snapshot".to_owned());
+            cx.notify();
             return;
         };
         let entry = self.active_rail_entry(index, cx);
-        self.activate_canvas_tool(index, name, entry, cx);
+        self.activate_canvas_tool(index, "Take a Snapshot", entry, cx);
     }
 
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
@@ -836,8 +870,20 @@ impl ShellFrame {
         let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |frame, cx| {
-            let Ok(Ok(Some(path))) = chosen.await else {
-                return;
+            let path = match chosen.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    frame
+                        .update(cx, |frame, cx| {
+                            frame
+                                .notices
+                                .push(format!("no destination could be chosen: {error}"));
+                            cx.notify();
+                        })
+                        .ok();
+                    return;
+                }
             };
             frame
                 .update(cx, |_frame, cx| run_export(&canvas, target, &path, cx))
@@ -850,7 +896,6 @@ impl ShellFrame {
         &mut self,
         command: TabCommand,
         index: usize,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
         self.main_menu_open = false;
@@ -1853,11 +1898,9 @@ impl ShellFrame {
                         row.cursor_pointer()
                             .hover(move |row| row.bg(theme.selected))
                     })
-                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                    .on_click(cx.listener(move |frame, _event, _window, cx| {
                         if enabled {
-                            if let Err(error) =
-                                frame.run_tab_command(command, tab_index, window, cx)
-                            {
+                            if let Err(error) = frame.run_tab_command(command, tab_index, cx) {
                                 eprintln!("onionskin: {error}");
                             }
                         }
@@ -2975,9 +3018,7 @@ mod tests {
         window
             .update(cx, |frame, _window, cx| {
                 frame.open_documents(std::slice::from_ref(&seed), cx);
-                frame
-                    .run_tab_command(TabCommand::CloseAll, 0, _window, cx)
-                    .unwrap();
+                frame.run_tab_command(TabCommand::CloseAll, 0, cx).unwrap();
 
                 assert!(frame.tabs.is_empty(), "back on Home");
                 assert_eq!(frame.settings.recents.documents().len(), 1);
@@ -2985,8 +3026,75 @@ mod tests {
 
                 frame.set_home_view(HomeView::Thumbnail, cx);
                 assert_eq!(frame.home.view(), HomeView::Thumbnail);
+                assert!(
+                    frame
+                        .home
+                        .thumbnail(&frame.settings.recents.documents()[0].path)
+                        .is_some_and(Result::is_ok),
+                    "the recent document has no page on its card"
+                );
             })
             .unwrap();
+    }
+
+    /// A document opened while Home is on thumbnails gets a card without
+    /// the user toggling the view again.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_document_opened_from_home_gets_a_thumbnail_without_a_second_toggle(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = crate::config::test_dir("home-refresh");
+        let _ = std::fs::remove_file(dir.join(crate::config::RECENTS_FILE));
+        let (window, _) = bound_window_in(&[], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.set_home_view(HomeView::Thumbnail, cx);
+                frame.open_documents(std::slice::from_ref(&seed), cx);
+
+                assert!(
+                    frame
+                        .home
+                        .thumbnail(&frame.settings.recents.documents()[0].path)
+                        .is_some_and(Result::is_ok),
+                    "the document just opened has no card"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The display theme is one setting with two ways in. Choosing it from
+    /// the View menu used to change the window and nothing else, so it was
+    /// gone on restart and the dialog showed the wrong one.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_view_menus_theme_is_the_preference(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("theme-from-menu");
+        let file = dir.join(crate::config::PREFERENCES_FILE);
+        let _ = std::fs::remove_file(&file);
+        let (window, _) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::ThemeDark, window, cx)
+                    .expect("the theme entry is live");
+
+                assert_eq!(frame.shell_view_state.theme(), ThemePreference::Dark);
+                assert_eq!(frame.preferences().theme, ThemePreference::Dark);
+            })
+            .unwrap();
+
+        let (saved, errors) = crate::preferences::Preferences::load(Some(&file));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            saved.theme,
+            ThemePreference::Dark,
+            "the View menu's choice did not reach the file"
+        );
     }
 
     /// A clean file gets no notice, so the notice bar means something.

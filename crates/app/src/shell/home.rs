@@ -68,9 +68,28 @@ impl HomeState {
     /// Switch views, rendering whatever the new one needs and does not have.
     pub(in crate::shell) fn set_view(&mut self, view: HomeView, recents: &Recents) {
         self.view = view;
-        if view != HomeView::Thumbnail {
+        self.refresh(recents);
+    }
+
+    /// Render any thumbnail the current view wants and does not have.
+    ///
+    /// Called again when the recents list changes: a document opened after
+    /// the last toggle would otherwise sit behind a blank card until the
+    /// user switched views and back.
+    ///
+    /// A card that failed is retried, because the usual reason is a file
+    /// that moved or a disk that was not mounted, and both come back.
+    pub(in crate::shell) fn refresh(&mut self, recents: &Recents) {
+        if self.view != HomeView::Thumbnail {
             return;
         }
+        self.thumbnails.retain(|path, thumbnail| {
+            thumbnail.is_ok()
+                && recents
+                    .documents()
+                    .iter()
+                    .any(|recent| &recent.path == path)
+        });
         for recent in recents.documents() {
             if !self.thumbnails.contains_key(&recent.path) {
                 let thumbnail = render_thumbnail(&recent.path);
@@ -79,7 +98,7 @@ impl HomeState {
         }
     }
 
-    fn thumbnail(&self, path: &Path) -> Option<&Thumbnail> {
+    pub(in crate::shell) fn thumbnail(&self, path: &Path) -> Option<&Thumbnail> {
         self.thumbnails.get(path)
     }
 }
@@ -171,7 +190,7 @@ pub(in crate::shell) fn render_home(
             .into_any_element()
     } else {
         match state.view() {
-            HomeView::List => list(state, recents, theme, cx).into_any_element(),
+            HomeView::List => list(recents, theme, cx).into_any_element(),
             HomeView::Thumbnail => thumbnails(state, recents, theme, cx).into_any_element(),
         }
     };
@@ -188,12 +207,7 @@ pub(in crate::shell) fn render_home(
         .child(body)
 }
 
-fn list(
-    _state: &HomeState,
-    recents: &Recents,
-    theme: ThemeTokens,
-    cx: &mut Context<ShellFrame>,
-) -> gpui::Div {
+fn list(recents: &Recents, theme: ThemeTokens, cx: &mut Context<ShellFrame>) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
     for (index, recent) in recents.documents().iter().enumerate() {
         rows = rows.child(

@@ -39,9 +39,23 @@ impl RecentDocument {
 
 #[derive(Debug)]
 pub enum RecentsError {
-    Unreadable { path: PathBuf, source: io::Error },
-    Malformed { path: PathBuf, message: String },
-    Unwritable { path: PathBuf, source: io::Error },
+    Unreadable {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Malformed {
+        path: PathBuf,
+        message: String,
+    },
+    Unwritable {
+        path: PathBuf,
+        source: io::Error,
+    },
+    /// A document path that is not valid UTF-8, which JSON cannot carry.
+    /// Rare, and a real filename on every platform that allows one.
+    Unrepresentable {
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for RecentsError {
@@ -58,6 +72,11 @@ impl fmt::Display for RecentsError {
                 "{} is not a recent-documents list: {message}",
                 path.display()
             ),
+            Self::Unrepresentable { path } => write!(
+                f,
+                "{} cannot be added to the recents list: its name is not valid UTF-8",
+                path.display()
+            ),
         }
     }
 }
@@ -66,7 +85,7 @@ impl std::error::Error for RecentsError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unreadable { source, .. } | Self::Unwritable { source, .. } => Some(source),
-            Self::Malformed { .. } => None,
+            Self::Malformed { .. } | Self::Unrepresentable { .. } => None,
         }
     }
 }
@@ -131,6 +150,10 @@ impl Recents {
     /// Re-opening a document moves it to the front rather than adding a
     /// second row: the list is of documents, not of openings.
     pub fn record(&mut self, path: &Path, opened_at: SystemTime, limit: usize) -> bool {
+        // Compared against a copy rather than reasoned about: "did this
+        // change" has to be right for the limit-of-zero and
+        // already-at-the-front cases, and this is a handful of paths on a
+        // user-driven open.
         let before = self.documents.clone();
         self.documents.retain(|recent| recent.path != path);
         self.documents.insert(
@@ -151,15 +174,26 @@ impl Recents {
         self.documents.truncate(limit);
     }
 
-    pub fn clear(&mut self) {
-        self.documents.clear();
-    }
-
+    /// Write the list.
+    ///
+    /// A document whose name is not valid UTF-8 has no JSON form, and
+    /// serde's `Path` refuses it rather than inventing one. Reported as
+    /// itself: this used to be an `expect`, which made an unusual filename a
+    /// panic inside the window update that opened it.
     pub fn save(&self, path: &Path) -> Result<(), RecentsError> {
+        if let Some(unrepresentable) = self
+            .documents
+            .iter()
+            .find(|recent| recent.path.to_str().is_none())
+        {
+            return Err(RecentsError::Unrepresentable {
+                path: unrepresentable.path.clone(),
+            });
+        }
         let json = serde_json::to_string_pretty(&RecentsFile {
             documents: self.documents.clone(),
         })
-        .expect("a list of paths and timestamps serializes");
+        .expect("every path is UTF-8 by the check above, and a timestamp is a number");
         crate::config::write_private(path, &json).map_err(|source| RecentsError::Unwritable {
             path: path.to_path_buf(),
             source,
@@ -235,6 +269,22 @@ mod tests {
 
         assert!(!changed);
         assert!(recents.is_empty());
+    }
+
+    /// A filename that is not UTF-8 is still a filename.
+    #[cfg(unix)]
+    #[test]
+    fn a_document_whose_name_is_not_utf8_is_reported_rather_than_fatal() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let path = crate::config::test_dir("recents-non-utf8").join("recents.json");
+        let mut recents = Recents::default();
+        recents.record(Path::new(OsStr::from_bytes(b"/docs/\xff.pdf")), at(10), 10);
+
+        let error = recents.save(&path).expect_err("the path has no JSON form");
+
+        assert!(error.to_string().contains("not valid UTF-8"), "{error}");
     }
 
     #[test]

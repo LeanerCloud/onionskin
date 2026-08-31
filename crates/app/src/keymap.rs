@@ -123,14 +123,18 @@ pub struct Keymap {
 impl Keymap {
     /// The built-in table with `~/.config/onionskin/keymap.json` applied when
     /// it exists. A missing file is the ordinary case and not an error.
-    pub fn load(defaults: &[CommandDefault], path: Option<&Path>) -> Self {
+    ///
+    /// `macos` decides how the file's keystrokes are compared: off macOS
+    /// `cmd` is `ctrl`, so two commands that do not collide on a Mac collide
+    /// everywhere else.
+    pub fn load(defaults: &[CommandDefault], path: Option<&Path>, macos: bool) -> Self {
         let Some(path) = path else {
-            return Self::resolve(defaults, None, Path::new(crate::config::KEYMAP_FILE));
+            return Self::resolve(defaults, None, Path::new(crate::config::KEYMAP_FILE), macos);
         };
         match crate::config::read(path) {
-            Ok(source) => Self::resolve(defaults, source.as_deref(), path),
+            Ok(source) => Self::resolve(defaults, source.as_deref(), path, macos),
             Err(source) => {
-                let mut keymap = Self::resolve(defaults, None, path);
+                let mut keymap = Self::resolve(defaults, None, path, macos);
                 keymap.errors.push(KeymapError::Unreadable {
                     path: path.to_path_buf(),
                     source,
@@ -143,7 +147,12 @@ impl Keymap {
     /// The built-in table with `source` applied, if any. Named separately
     /// from [`Keymap::load`] because everything interesting about a keymap
     /// happens between a file's text and the resulting bindings.
-    pub fn resolve(defaults: &[CommandDefault], source: Option<&str>, path: &Path) -> Self {
+    pub fn resolve(
+        defaults: &[CommandDefault],
+        source: Option<&str>,
+        path: &Path,
+        macos: bool,
+    ) -> Self {
         let mut resolved: Vec<(&'static str, Option<String>)> = defaults
             .iter()
             .map(|default| (default.id, default.keystroke.map(str::to_owned)))
@@ -165,20 +174,22 @@ impl Keymap {
         }
 
         let mut bindings: Vec<Binding> = Vec::new();
+        let mut claimed: Vec<(String, &'static str)> = Vec::new();
         for (id, keystroke) in resolved {
             let Some(keystroke) = keystroke else {
                 continue;
             };
-            match bindings
-                .iter()
-                .find(|binding| binding.keystroke == keystroke)
-            {
-                Some(kept) => errors.push(KeymapError::Duplicate {
+            let chord = chord(&keystroke, macos);
+            match claimed.iter().find(|(taken, _)| *taken == chord) {
+                Some((_, kept)) => errors.push(KeymapError::Duplicate {
                     keystroke,
-                    kept: kept.id,
+                    kept,
                     dropped: id,
                 }),
-                None => bindings.push(Binding { id, keystroke }),
+                None => {
+                    claimed.push((chord, id));
+                    bindings.push(Binding { id, keystroke });
+                }
             }
         }
 
@@ -192,13 +203,23 @@ impl Keymap {
     pub fn errors(&self) -> &[KeymapError] {
         &self.errors
     }
+}
 
-    pub fn keystroke(&self, id: &str) -> Option<&str> {
-        self.bindings
-            .iter()
-            .find(|binding| binding.id == id)
-            .map(|binding| binding.keystroke.as_str())
-    }
+/// One keystroke's identity, for deciding whether two bindings collide.
+///
+/// Comparing the strings is not enough: `cmd-shift-a` and `shift-cmd-a` are
+/// the same chord, and off macOS `cmd-a` and `ctrl-a` are too. Both used to
+/// bind, leaving which one wins to GPUI's internal order.
+///
+/// The key is whatever follows the last separator, which is empty when the
+/// key *is* the separator: `cmd--` is the minus key.
+fn chord(keystroke: &str, macos: bool) -> String {
+    let mapped = platform_keystroke(keystroke, macos);
+    let mut parts: Vec<&str> = mapped.split('-').collect();
+    let key = parts.pop().unwrap_or_default();
+    parts.sort_unstable();
+    parts.dedup();
+    format!("{}|{key}", parts.join("-"))
 }
 
 fn apply_override(
@@ -281,7 +302,15 @@ mod tests {
     ];
 
     fn resolve(source: &str) -> Keymap {
-        Keymap::resolve(&DEFAULTS, Some(source), Path::new("/tmp/keymap.json"))
+        Keymap::resolve(&DEFAULTS, Some(source), Path::new("/tmp/keymap.json"), true)
+    }
+
+    fn keystroke<'a>(keymap: &'a Keymap, id: &str) -> Option<&'a str> {
+        keymap
+            .bindings()
+            .iter()
+            .find(|binding| binding.id == id)
+            .map(|binding| binding.keystroke.as_str())
     }
 
     fn messages(keymap: &Keymap) -> Vec<String> {
@@ -290,11 +319,11 @@ mod tests {
 
     #[test]
     fn without_a_file_the_defaults_are_the_keymap() {
-        let keymap = Keymap::resolve(&DEFAULTS, None, Path::new("/tmp/keymap.json"));
+        let keymap = Keymap::resolve(&DEFAULTS, None, Path::new("/tmp/keymap.json"), true);
 
         assert!(keymap.errors().is_empty());
-        assert_eq!(keymap.keystroke("file.open"), Some("cmd-o"));
-        assert_eq!(keymap.keystroke("help.about"), None);
+        assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
+        assert_eq!(keystroke(&keymap, "help.about"), None);
         assert_eq!(keymap.bindings().len(), 3, "the unbound command has no row");
     }
 
@@ -303,8 +332,8 @@ mod tests {
         let keymap = resolve(r#"{"view.zoom-in": "cmd-shift-="}"#);
 
         assert!(messages(&keymap).is_empty(), "{:?}", messages(&keymap));
-        assert_eq!(keymap.keystroke("view.zoom-in"), Some("cmd-shift-="));
-        assert_eq!(keymap.keystroke("file.open"), Some("cmd-o"));
+        assert_eq!(keystroke(&keymap, "view.zoom-in"), Some("cmd-shift-="));
+        assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
     }
 
     /// Binding a command that has no default is how the file reaches the
@@ -314,7 +343,7 @@ mod tests {
         let keymap = resolve(r#"{"help.about": "cmd-i"}"#);
 
         assert!(messages(&keymap).is_empty());
-        assert_eq!(keymap.keystroke("help.about"), Some("cmd-i"));
+        assert_eq!(keystroke(&keymap, "help.about"), Some("cmd-i"));
     }
 
     #[test]
@@ -322,8 +351,8 @@ mod tests {
         let keymap = resolve(r#"{"file.close": null, "view.zoom-in": "cmd-w"}"#);
 
         assert!(messages(&keymap).is_empty(), "{:?}", messages(&keymap));
-        assert_eq!(keymap.keystroke("file.close"), None);
-        assert_eq!(keymap.keystroke("view.zoom-in"), Some("cmd-w"));
+        assert_eq!(keystroke(&keymap, "file.close"), None);
+        assert_eq!(keystroke(&keymap, "view.zoom-in"), Some("cmd-w"));
     }
 
     /// An id nobody answers to is the typo case, and a typo that silently
@@ -339,7 +368,7 @@ mod tests {
                     .to_owned()
             ]
         );
-        assert_eq!(keymap.keystroke("file.close"), Some("cmd-k"));
+        assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-k"));
     }
 
     #[test]
@@ -354,9 +383,9 @@ mod tests {
                     .to_owned()
             ]
         );
-        assert_eq!(keymap.keystroke("file.close"), Some("cmd-w"));
+        assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-w"));
         assert_eq!(
-            keymap.keystroke("view.zoom-in"),
+            keystroke(&keymap, "view.zoom-in"),
             None,
             "the dropped binding is dropped, not silently doubled"
         );
@@ -374,8 +403,8 @@ mod tests {
             messages[0].starts_with("/tmp/keymap.json is not a JSON object"),
             "{messages:?}"
         );
-        assert_eq!(keymap.keystroke("file.open"), Some("cmd-o"));
-        assert_eq!(keymap.keystroke("file.close"), Some("cmd-w"));
+        assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
+        assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-w"));
     }
 
     #[test]
@@ -395,8 +424,8 @@ mod tests {
                 .any(|message| message.contains("empty keystroke")),
             "{messages:?}"
         );
-        assert_eq!(keymap.keystroke("file.open"), Some("cmd-o"));
-        assert_eq!(keymap.keystroke("file.close"), Some("cmd-w"));
+        assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
+        assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-w"));
     }
 
     #[test]
@@ -405,15 +434,54 @@ mod tests {
         let path = dir.join("keymap.json");
         let _ = std::fs::remove_file(&path);
 
-        let missing = Keymap::load(&DEFAULTS, Some(&path));
+        let missing = Keymap::load(&DEFAULTS, Some(&path), true);
         assert!(missing.errors().is_empty());
-        assert_eq!(missing.keystroke("file.open"), Some("cmd-o"));
+        assert_eq!(keystroke(&missing, "file.open"), Some("cmd-o"));
 
         std::fs::write(&path, r#"{"file.open": "cmd-shift-o"}"#).expect("the test writes its file");
-        let loaded = Keymap::load(&DEFAULTS, Some(&path));
+        let loaded = Keymap::load(&DEFAULTS, Some(&path), true);
 
         assert!(loaded.errors().is_empty());
-        assert_eq!(loaded.keystroke("file.open"), Some("cmd-shift-o"));
+        assert_eq!(keystroke(&loaded, "file.open"), Some("cmd-shift-o"));
+    }
+
+    /// One chord written two ways is one chord. Both spellings used to
+    /// bind, and which one GPUI honoured was its own business.
+    #[test]
+    fn a_collision_is_found_however_the_file_spells_it() {
+        let reordered = resolve(r#"{"view.zoom-in": "shift-cmd-a", "file.open": "cmd-shift-a"}"#);
+
+        assert_eq!(reordered.errors().len(), 1, "{:?}", messages(&reordered));
+        assert!(
+            messages(&reordered)[0].contains("bound to both"),
+            "{:?}",
+            messages(&reordered)
+        );
+    }
+
+    /// Off macOS the command modifier is ctrl, so a file that binds one of
+    /// each collides there and not on a Mac. The report has to follow the
+    /// platform it will run on.
+    #[test]
+    fn cmd_and_ctrl_collide_only_where_they_are_the_same_key() {
+        let source = r#"{"view.zoom-in": "ctrl-o"}"#;
+
+        let on_mac = Keymap::resolve(&DEFAULTS, Some(source), Path::new("/tmp/keymap.json"), true);
+        let elsewhere = Keymap::resolve(
+            &DEFAULTS,
+            Some(source),
+            Path::new("/tmp/keymap.json"),
+            false,
+        );
+
+        assert!(on_mac.errors().is_empty(), "{:?}", messages(&on_mac));
+        assert_eq!(keystroke(&on_mac, "view.zoom-in"), Some("ctrl-o"));
+        assert_eq!(elsewhere.errors().len(), 1, "{:?}", messages(&elsewhere));
+        assert_eq!(
+            keystroke(&elsewhere, "file.open"),
+            Some("cmd-o"),
+            "the built-in binding is the one that keeps the chord"
+        );
     }
 
     #[test]

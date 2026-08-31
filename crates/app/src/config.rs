@@ -26,10 +26,6 @@ pub fn config_dir() -> Option<PathBuf> {
     )
 }
 
-pub fn config_path(file: &str) -> Option<PathBuf> {
-    Some(config_dir()?.join(file))
-}
-
 /// Split out from [`config_dir`] so the rule is testable without setting
 /// process-wide environment variables under a threaded test runner.
 fn config_dir_from(xdg_config_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
@@ -81,14 +77,20 @@ pub fn read(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-/// Write `contents`, creating the directory and the file owner-only.
+/// Write `contents` owner-only, as one step.
 ///
-/// The mode is set as the file is created; an existing file keeps whatever
-/// mode it has, because a user who widened it did so deliberately.
+/// Written to a temporary file beside the destination and renamed over it,
+/// so a crash or a full disk leaves the previous file rather than half of
+/// the new one. A half-written config reads as malformed on the next start,
+/// which is a worse failure than the write that did not happen.
+///
+/// The rename also means the mode is always the one set here, rather than
+/// whatever an existing file happened to carry.
 pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let temporary = path.with_extension("writing");
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -96,7 +98,27 @@ pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    options.open(path)?.write_all(contents.as_bytes())
+    let write = options
+        .open(&temporary)
+        .and_then(|mut file| file.write_all(contents.as_bytes()));
+    if let Err(error) = write {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    std::fs::rename(&temporary, path)
+}
+
+/// Keep a file this build could not read, before something overwrites it.
+///
+/// A user who mistypes their keymap gets one notice; without this the next
+/// save would take the rest of the file with it. Returns where the copy
+/// went, for the notice to name.
+pub fn preserve_unreadable(path: &Path) -> Option<PathBuf> {
+    let kept = path.with_extension("bak");
+    match std::fs::copy(path, &kept) {
+        Ok(_) => Some(kept),
+        Err(_) => None,
+    }
 }
 
 /// A directory this test process owns, for the modules whose subject is a
@@ -145,6 +167,39 @@ mod tests {
         assert_eq!(dir(None, None), None);
     }
 
+    /// A file the app already wrote is replaced with the new mode, not left
+    /// with whatever it had. The rename is what makes that true, and it is
+    /// also what keeps a widened file from staying widened.
+    #[cfg(unix)]
+    #[test]
+    fn rewriting_an_existing_file_leaves_it_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = test_dir("config-rewrite").join("recents.json");
+        std::fs::write(&path, "{}").expect("the test writes its file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("the test can widen its own file");
+
+        write_private(&path, "{\"documents\":[]}").expect("the file is rewritten");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_file_this_build_cannot_read_is_kept_before_it_is_replaced() {
+        let path = test_dir("config-preserve").join("keymap.json");
+        std::fs::write(&path, "not json").expect("the test writes its file");
+
+        let kept = preserve_unreadable(&path).expect("the copy is made");
+
+        assert_eq!(
+            std::fs::read_to_string(&kept).expect("the copy reads"),
+            "not json"
+        );
+        assert_eq!(kept, path.with_extension("bak"));
+    }
+
     #[test]
     fn a_missing_file_reads_as_absent_rather_than_as_an_error() {
         let path = test_dir("config-missing").join("nothing.json");
@@ -157,6 +212,10 @@ mod tests {
         let path = test_dir("config-write").join("nested").join("recents.json");
 
         write_private(&path, "{\"documents\":[]}").expect("the file is written");
+        assert!(
+            !path.with_extension("writing").exists(),
+            "the temporary file is renamed away, not left behind"
+        );
 
         assert_eq!(
             read(&path).expect("the file reads back").as_deref(),

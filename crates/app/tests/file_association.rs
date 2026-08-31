@@ -64,10 +64,21 @@ fn the_windows_installer_offers_itself_without_taking_the_association() {
         installer.contains(r#"!insertmacro AssociateExt "pdf""#),
         "the installer associates no PDF extension"
     );
-    for line in installer.lines().map(str::trim) {
+    // Matched on the shape rather than on an exact line: any write whose
+    // key is the extension itself and whose value name is empty is a write
+    // of the default handler, whatever the spacing, the hive or the
+    // WriteReg variant.
+    for line in installer.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let writes_default = words
+            .first()
+            .is_some_and(|word| word.starts_with("WriteReg"))
+            && words
+                .iter()
+                .any(|word| word.ends_with("\".pdf\"") || word.ends_with("\".${ext}\""))
+            && words.contains(&"\"\"");
         assert!(
-            !(line.starts_with("WriteRegStr HKCR \".pdf\" \"\"")
-                || line.starts_with("WriteRegStr HKCR \".${ext}\" \"\"")),
+            !writes_default,
             "the installer writes the extension's default handler: {line}"
         );
     }
@@ -94,8 +105,9 @@ fn the_linux_desktop_entry_advertises_pdf_without_claiming_the_default() {
         "the desktop entry advertises no PDF support"
     );
     assert!(
-        desktop.lines().any(|line| line.starts_with("Exec=")
-            && (line.contains("%f") || line.contains("%F"))),
+        desktop
+            .lines()
+            .any(|line| line.starts_with("Exec=") && (line.contains("%f") || line.contains("%F"))),
         "the desktop entry takes no file argument, so Open With cannot use it"
     );
     assert!(
@@ -104,36 +116,57 @@ fn the_linux_desktop_entry_advertises_pdf_without_claiming_the_default() {
     );
 }
 
-/// The other half of the promise: nothing in the app asks the OS to make it
-/// the default at runtime, which is how applications take a file type after
-/// installation rather than during it.
+/// The other half of the promise: nothing anywhere in the workspace asks
+/// the OS to make Onionskin the default at runtime, which is how an
+/// application takes a file type after installation rather than during it.
+///
+/// Over every crate and plugin, not just the app: any of them could link a
+/// platform call, and the whole point is that none does.
 #[test]
-fn the_app_never_asks_to_become_the_default_handler_at_runtime() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+fn nothing_in_the_workspace_asks_to_become_the_default_handler_at_runtime() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut offenders = Vec::new();
-    let mut pending = vec![source];
+    let mut examined = 0_usize;
+    let mut pending = vec![root.join("crates"), root.join("plugins")];
     while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).expect("the app's source is readable") {
+        for entry in std::fs::read_dir(&directory).expect("the workspace source is readable") {
             let path = entry.expect("a directory entry reads").path();
             if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "target") {
+                    continue;
+                }
                 pending.push(path);
                 continue;
             }
-            if path.extension().is_some_and(|extension| extension == "rs") {
-                let text = std::fs::read_to_string(&path).expect("a source file reads");
-                for forbidden in [
-                    "LSSetDefaultRoleHandler",
-                    "LSSetDefaultHandlerForURLScheme",
-                    "xdg-mime",
-                    "xdg-settings",
-                ] {
-                    if text.contains(forbidden) {
-                        offenders.push(format!("{} names {forbidden}", path.display()));
-                    }
+            let is_source = path
+                .extension()
+                .is_some_and(|extension| extension == "rs" || extension == "sh");
+            if !is_source {
+                continue;
+            }
+            examined += 1;
+            let text = std::fs::read_to_string(&path).expect("a source file reads");
+            for forbidden in [
+                "LSSetDefaultRoleHandler",
+                "LSSetDefaultHandlerForURLScheme",
+                "xdg-mime",
+                "xdg-settings",
+                "SetUserFTA",
+            ] {
+                // This file names them all, to say what it forbids.
+                if path
+                    .file_name()
+                    .is_some_and(|name| name == "file_association.rs")
+                {
+                    continue;
+                }
+                if text.contains(forbidden) {
+                    offenders.push(format!("{} names {forbidden}", path.display()));
                 }
             }
         }
     }
 
+    assert!(examined > 50, "only {examined} files were read");
     assert!(offenders.is_empty(), "{offenders:?}");
 }

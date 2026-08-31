@@ -123,7 +123,8 @@ impl ShellSettings {
                 .iter()
                 .map(|command| (command.id, command.keybind)),
         );
-        let keymap = Keymap::load(&defaults, paths.keymap.as_deref());
+        let macos = cfg!(target_os = "macos");
+        let keymap = Keymap::load(&defaults, paths.keymap.as_deref(), macos);
         notices.extend(keymap.errors().iter().map(ToString::to_string));
         let (bindings, unbindable) = bindable(keymap.bindings());
         notices.extend(unbindable);
@@ -181,6 +182,8 @@ fn bindable(bindings: &[Binding]) -> (Vec<Binding>, Vec<String>) {
 pub(in crate::shell) fn install_command_keybindings(cx: &mut App, bindings: &[Binding]) {
     let macos = cfg!(target_os = "macos");
     cx.bind_keys(bindings.iter().filter_map(|binding| {
+        // Total over what `bindable` hands back: it drops and reports the
+        // bindings no menu entry runs, so nothing is dropped silently here.
         let command = command_for_id(binding.id)?;
         Some(KeyBinding::new(
             &platform_keystroke(&binding.keystroke, macos),

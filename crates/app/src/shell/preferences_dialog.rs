@@ -7,6 +7,7 @@
 //! Page Display decides how the next document opens, Search seeds the find
 //! bar's options.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
@@ -14,7 +15,8 @@ use gpui::{
 
 use super::chrome::{ShellFrame, ThemeTokens};
 use crate::preferences::{
-    PreferenceCategory, Preferences, ThemePreference, ZoomPreference, MAX_RECENT_DOCUMENTS,
+    layout_label, PreferenceCategory, Preferences, ThemePreference, ZoomPreference,
+    MAX_RECENT_DOCUMENTS,
 };
 use onionskin_core::{MatchMode, PageLayoutMode};
 
@@ -77,7 +79,7 @@ pub(in crate::shell) fn category_rows(
         }],
         PreferenceCategory::Documents => vec![PreferenceRow {
             label: "Documents in recently used list",
-            choices: RECENT_STEPS
+            choices: recent_steps(preferences.recent_documents)
                 .into_iter()
                 .map(|count| {
                     choice(
@@ -93,9 +95,9 @@ pub(in crate::shell) fn category_rows(
                 label: "Page layout",
                 choices: LAYOUTS
                     .into_iter()
-                    .map(|(label, layout)| {
+                    .map(|layout| {
                         choice(
-                            label.to_owned(),
+                            layout_label(layout).to_owned(),
                             PreferenceChange::Layout(layout),
                             preferences.layout == layout,
                         )
@@ -148,6 +150,18 @@ pub(in crate::shell) fn category_rows(
     }
 }
 
+/// The steps the row offers, always including the value in force: the file
+/// takes any count up to the maximum, and a dialog showing nothing selected
+/// would overwrite a value the user set by hand on the first click.
+fn recent_steps(in_force: usize) -> Vec<usize> {
+    let mut steps = RECENT_STEPS.to_vec();
+    if !steps.contains(&in_force) {
+        steps.push(in_force);
+        steps.sort_unstable();
+    }
+    steps
+}
+
 fn switch(on: bool, change: fn(bool) -> PreferenceChange) -> Vec<PreferenceChoice> {
     [("On", true), ("Off", false)]
         .into_iter()
@@ -159,14 +173,11 @@ fn switch(on: bool, change: fn(bool) -> PreferenceChange) -> Vec<PreferenceChoic
         .collect()
 }
 
-const LAYOUTS: [(&str, PageLayoutMode); 4] = [
-    ("Single Page", PageLayoutMode::SinglePage),
-    (
-        "Single Page Continuous",
-        PageLayoutMode::SinglePageContinuous,
-    ),
-    ("Two Page", PageLayoutMode::TwoPage),
-    ("Two Page Continuous", PageLayoutMode::TwoPageContinuous),
+const LAYOUTS: [PageLayoutMode; 4] = [
+    PageLayoutMode::SinglePage,
+    PageLayoutMode::SinglePageContinuous,
+    PageLayoutMode::TwoPage,
+    PageLayoutMode::TwoPageContinuous,
 ];
 
 /// Acrobat's own wording for the three Advanced Search modes, which the find
@@ -193,7 +204,7 @@ pub(in crate::shell) fn render_preferences(
                 .py_1()
                 .rounded_sm()
                 .cursor_pointer()
-                .when_selected(selected, theme)
+                .when(selected, |row| row.bg(theme.selected))
                 .hover(move |row| row.bg(theme.subtle_hover))
                 .on_click(cx.listener(move |frame, _event, _window, cx| {
                     frame.show_preferences(entry, cx);
@@ -212,12 +223,15 @@ pub(in crate::shell) fn render_preferences(
             let change = choice.change;
             choices = choices.child(
                 div()
-                    .id(("preference-choice", index * 100 + choice_index))
+                    .id(gpui::ElementId::NamedInteger(
+                        format!("preference-choice-{index}").into(),
+                        choice_index as u64,
+                    ))
                     .px_2()
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .when_selected(choice.selected, theme)
+                    .when(choice.selected, |button| button.bg(theme.selected))
                     .hover(move |button| button.bg(theme.subtle_hover))
                     .on_click(cx.listener(move |frame, _event, _window, cx| {
                         frame.change_preference(change, cx);
@@ -241,22 +255,6 @@ pub(in crate::shell) fn render_preferences(
     }
 
     div().flex().child(categories).child(settings)
-}
-
-/// The selected state of a choice, in one place: the dialog has two lists of
-/// them and they have to read the same.
-trait SelectedRow: Sized {
-    fn when_selected(self, selected: bool, theme: ThemeTokens) -> Self;
-}
-
-impl SelectedRow for gpui::Stateful<gpui::Div> {
-    fn when_selected(self, selected: bool, theme: ThemeTokens) -> Self {
-        if selected {
-            self.bg(theme.selected)
-        } else {
-            self
-        }
-    }
 }
 
 #[cfg(test)]
@@ -289,6 +287,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A count the file allows but the row does not list still shows as the
+    /// one in force, so opening the dialog cannot silently change it.
+    #[test]
+    fn a_count_off_the_offered_steps_is_still_the_one_selected() {
+        let preferences = Preferences {
+            recent_documents: 7,
+            ..Preferences::default()
+        };
+
+        let rows = category_rows(&preferences, PreferenceCategory::Documents);
+
+        let selected: Vec<_> = rows[0]
+            .choices
+            .iter()
+            .filter(|choice| choice.selected)
+            .map(|choice| choice.label.clone())
+            .collect();
+        assert_eq!(selected, vec!["7".to_owned()]);
     }
 
     /// The rows show what is in force, not what the defaults were.
