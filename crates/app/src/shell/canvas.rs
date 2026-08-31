@@ -502,7 +502,6 @@ impl CanvasModel {
     pub fn has_pending_work(&self) -> bool {
         !self.geometry_requests.is_empty() || self.has_pending_render()
     }
-
     pub fn resize(&mut self, origin: ViewPoint, size: ViewSize) -> Result<(), CanvasError> {
         self.canvas_origin = origin;
         if self.viewport.size() != size {
@@ -699,15 +698,12 @@ impl CanvasModel {
         let mut displayed_images = BTreeSet::new();
 
         for placement in visible.into_iter().filter(|page| page.measured) {
-            let Some((source_zoom, raster_width, raster_height)) =
-                self.paint_source(placement.page, exact_zoom)?
-            else {
+            let Some(source_zoom) = self.paint_source(placement.page, exact_zoom)? else {
                 continue;
             };
             let source = RasterPaintSource {
                 page: placement.page,
                 zoom: source_zoom,
-                size: (raster_width, raster_height),
                 rect: placement.rect,
                 rotation,
             };
@@ -903,27 +899,32 @@ impl CanvasModel {
         true
     }
 
+    /// The zoom whose cached raster this page paints from, or `None` when it
+    /// has none yet.
+    ///
+    /// Only the zoom, because that plus the page is the store's key and the
+    /// store owns the raster's dimensions. Reporting a size here as well gave
+    /// the paint two sources for one fact, and the one it reported came from
+    /// `sources` while the tiles it cut came from the store.
     fn paint_source(
         &mut self,
         page: PageIndex,
         exact_zoom: f32,
-    ) -> Result<Option<(f32, u32, u32)>, CanvasError> {
+    ) -> Result<Option<f32>, CanvasError> {
         if let Some(cache) = self.tiles.get(page, exact_zoom) {
             let source = cache.base().clone();
-            let size = (source.width(), source.height());
             self.sources.insert(page, source);
-            return Ok(Some((exact_zoom, size.0, size.1)));
+            return Ok(Some(exact_zoom));
         }
 
         let Some(source) = self.sources.get(&page).cloned() else {
             return Ok(None);
         };
         let source_zoom = source.zoom();
-        let size = (source.width(), source.height());
         if self.tiles.get(page, source_zoom).is_none() {
             self.tiles.insert(page, source);
         }
-        Ok(Some((source_zoom, size.0, size.1)))
+        Ok(Some(source_zoom))
     }
 
     fn map_pointer(
@@ -1064,20 +1065,26 @@ struct TileRegion {
 struct RasterPaintSource {
     page: PageIndex,
     zoom: f32,
-    size: (u32, u32),
     rect: ViewRect,
     rotation: ViewRotation,
 }
 
+/// The visible tiles of one page's cached raster.
+///
+/// The raster's dimensions come from the cache being cut, never from the
+/// caller: `cols` and `rows` are derived from them, so `col * TILE_SIZE` is
+/// below `raster_width` by construction and the remainder below cannot
+/// underflow. A caller that passed its own size could disagree with the store
+/// and did not have to be right.
 fn collect_tiles(
     store: &mut TileStore,
     source: RasterPaintSource,
     viewport_size: ViewSize,
 ) -> Vec<RawTile> {
-    let (raster_width, raster_height) = source.size;
     let cache = store
         .get(source.page, source.zoom)
         .expect("the selected paint source has a tile cache");
+    let (raster_width, raster_height) = (cache.base().width(), cache.base().height());
     let mut tiles = Vec::with_capacity((cache.cols() * cache.rows()) as usize);
     for row in 0..cache.rows() {
         for col in 0..cache.cols() {
@@ -1983,6 +1990,42 @@ mod tests {
         model.update().unwrap();
         assert!(!model.geometry_requests.contains(&1));
         assert!(model.failed_geometry.contains(&1));
+    }
+
+    /// `paint_source` and `collect_tiles` used to take the raster's size from
+    /// different places for the same `(page, zoom)`: the first from `sources`,
+    /// the second from the tile store. The store's `cols` and `rows` come from
+    /// its own base raster, so a disagreement made `raster_width - col *
+    /// TILE_SIZE` underflow and took the window down.
+    ///
+    /// No reachable sequence produces the disagreement in the current code, so
+    /// it is constructed here directly.
+    #[test]
+    fn the_tiles_of_a_page_are_cut_to_the_raster_the_store_holds() {
+        let mut model = model();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+        let source_zoom = 0.5_f32;
+        assert_ne!(model.viewport.zoom().to_bits(), source_zoom.to_bits());
+        model.tiles.begin_frame();
+        model.tiles.insert(
+            0,
+            BaseRaster::new(
+                TILE_SIZE * 2,
+                1,
+                source_zoom,
+                vec![255; (TILE_SIZE * 2 * 4) as usize],
+            ),
+        );
+        // A stale raster of a different size under the same key.
+        model
+            .sources
+            .insert(0, BaseRaster::new(8, 1, source_zoom, vec![255; 32]));
+
+        let paint = model.paint_list().expect("the page paints");
+
+        let tiles = paint.tiles.iter().filter(|tile| tile.page == 0).count();
+        assert_eq!(tiles, 2, "the store holds a raster two tiles wide");
     }
 
     #[test]
