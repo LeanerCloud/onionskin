@@ -32,7 +32,14 @@ fn page_size(zoom: f32) -> (u32, u32) {
 fn page_bytes(zoom: f32) -> usize {
     let (w, h) = page_size(zoom);
     let tiles = (w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)) as usize;
-    (w * h * 4) as usize + tiles * TILE_BYTES
+    base_bytes(zoom) + tiles * TILE_BYTES
+}
+
+/// What a page costs before any of its tiles are composited, which is all an
+/// insert puts in the store.
+fn base_bytes(zoom: f32) -> usize {
+    let (w, h) = page_size(zoom);
+    (w * h * 4) as usize
 }
 
 /// What the canvas does with a page it has scrolled into view.
@@ -107,12 +114,11 @@ fn scrolling_at_a_zoom_that_fits_never_recomposites_a_visible_page() {
     }
 }
 
-/// Paint a whole frame the way the canvas will: declare what is visible, then
-/// render anything missing and composite every visible page's tiles. Returns
-/// the number of pages that had to be rendered again this frame.
+/// Paint a whole frame the way the canvas does: open a frame, render anything
+/// missing, composite every visible page's tiles, and close it. Returns the
+/// number of pages that had to be rendered again this frame.
 fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
-    let pinned: Vec<(usize, f32)> = visible.iter().map(|&page| (page, zoom)).collect();
-    store.begin_frame(&pinned);
+    store.begin_frame();
 
     let mut rerendered = 0;
     for &index in visible {
@@ -129,6 +135,8 @@ fn frame(store: &mut TileStore, visible: &[usize], zoom: f32) -> usize {
             }
         }
     }
+    store.end_frame();
+
     rerendered
 }
 
@@ -193,6 +201,150 @@ fn the_oldest_page_goes_whole_before_a_newer_one_loses_a_tile() {
         BASE_BYTES + TILES_PER_PAGE * TILE_BYTES,
         "and it kept every tile"
     );
+}
+
+#[test]
+fn a_framed_scroll_still_evicts_what_it_has_scrolled_past() {
+    // The exemption must not become a leak: a page is exempt for the frame it
+    // was painted in and the one after, and evictable once the view has moved
+    // on. Three visible pages at 2x, scrolled the length of a 200-page book.
+    let mut store = TileStore::new();
+
+    for top in 0..198 {
+        let visible: Vec<usize> = (top..top + 3).collect();
+        frame(&mut store, &visible, ZOOM);
+
+        // Tiles are composited after the frame's last sweep, so the peak is
+        // the budget plus the tiles of the page painted last.
+        assert!(
+            store.over_budget() <= TILES_PER_PAGE * TILE_BYTES,
+            "frame {top}: {} bytes over budget",
+            store.over_budget()
+        );
+        // The budget holds twelve pages at this zoom, and eviction runs
+        // before the frame's last page composites its tiles, so one more can
+        // be resident at the moment the frame ends.
+        assert!(
+            store.len() <= 13,
+            "frame {top}: {} caches resident, the exemption is leaking",
+            store.len()
+        );
+    }
+    assert!(store.get(0, ZOOM).is_none(), "page 0 is long out of view");
+}
+
+#[test]
+fn caches_arriving_between_frames_do_not_join_the_last_one() {
+    // A render worker delivers pages whenever it finishes, not when the canvas
+    // paints. Those inserts land outside any frame, so they must be evictable:
+    // while the frame stayed open they exempted themselves into it, and thirty
+    // of them at 6x held 4 GB that eviction was not allowed to touch.
+    const ZOOM_6: f32 = 6.0;
+    let mut store = TileStore::new();
+    frame(&mut store, &[0, 1], ZOOM_6);
+
+    for index in 2..32 {
+        store.insert(index, page_at(ZOOM_6));
+    }
+
+    // The two pages the last frame painted keep their grace exemption; nothing
+    // that arrived after it does.
+    assert!(
+        store.resident_bytes() <= 2 * page_bytes(ZOOM_6) + page_bytes(ZOOM_6),
+        "{} bytes resident after thirty unframed inserts",
+        store.resident_bytes()
+    );
+    assert!(store.len() <= 3, "{} caches resident", store.len());
+}
+
+#[test]
+fn a_burst_of_rasters_inside_a_frame_does_not_evict_itself() {
+    // The canvas drains its render worker inside the frame. A worker that
+    // finishes several pages between two paints delivers them in one drain,
+    // and at 6x four base rasters are 266 MiB against a 202 MiB budget, so
+    // unframed the earlier arrivals pay for the later ones and the canvas
+    // renders them a second time.
+    const ZOOM_6: f32 = 6.0;
+    const BURST: usize = 4;
+    assert!(
+        BURST * base_bytes(ZOOM_6) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless the burst goes over budget"
+    );
+
+    let mut framed = TileStore::new();
+    framed.begin_frame();
+    for index in 0..BURST {
+        framed.insert(index, page_at(ZOOM_6));
+    }
+    assert_eq!(framed.len(), BURST, "a frame's own deliveries evicted");
+
+    // Outside a frame the same burst is ordinary cache traffic, and recency
+    // decides: this is what the canvas used to do before the drain moved
+    // inside the frame.
+    let mut unframed = TileStore::new();
+    for index in 0..BURST {
+        unframed.insert(index, page_at(ZOOM_6));
+    }
+    assert!(
+        unframed.len() < BURST,
+        "unframed inserts stayed resident, so the probe proves nothing"
+    );
+}
+
+#[test]
+fn clearing_mid_frame_keeps_the_frame_open() {
+    // A layers toggle clears the store while the canvas is painting. The pages
+    // it is about to insert again are still the frame's, so re-inserting the
+    // second must not evict the first.
+    //
+    // 8x, because two base rasters have to exceed the budget on their own for
+    // the sweep on the second insert to run at all: 237 MiB against 202 MiB.
+    const ZOOM_8: f32 = 8.0;
+    let mut store = TileStore::new();
+    assert!(
+        2 * base_bytes(ZOOM_8) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless re-inserting both goes over budget"
+    );
+
+    store.begin_frame();
+    for index in 0..2 {
+        store.insert(index, page_at(ZOOM_8));
+    }
+
+    store.clear();
+    assert!(store.is_empty());
+
+    for index in 0..2 {
+        store.insert(index, page_at(ZOOM_8));
+    }
+    assert_eq!(store.len(), 2, "the frame's own pages evicted each other");
+    assert!(store.get(0, ZOOM_8).is_some(), "the first page survived");
+}
+
+#[test]
+fn the_exemption_follows_the_zoom_the_frame_painted_with() {
+    // 6.0000005 is a different f32 from 6.0, and a viewport that computes its
+    // zoom twice can land either side of that. The exemption is built from the
+    // keys `get` and `insert` are called with, so there is no second value to
+    // disagree with: a frame declaring 6.0 while painting this left both pages
+    // unpinned and re-rendered them on every one of five steady frames.
+    const ZOOM_ULP: f32 = 6.000_000_5;
+    assert_ne!(ZOOM_ULP.to_bits(), 6.0f32.to_bits(), "same f32, no probe");
+    assert!(
+        2 * page_bytes(ZOOM_ULP) > TileStore::DEFAULT_BUDGET_BYTES,
+        "the probe is pointless unless the spread really does not fit"
+    );
+
+    let mut store = TileStore::new();
+    assert_eq!(frame(&mut store, &[0, 1], ZOOM_ULP), 2, "the first frame");
+    for _ in 0..5 {
+        assert_eq!(
+            frame(&mut store, &[0, 1], ZOOM_ULP),
+            0,
+            "a visible page was evicted and had to be rendered again"
+        );
+    }
+    assert!(store.over_budget() > 0, "and the overage is reported");
 }
 
 #[test]
