@@ -65,11 +65,110 @@ fn editing_a_tagged_document_leaves_its_structure_tree_valid() {
 }
 
 /// Guarantee 9, performance: decision 11's budgets - time to first page
-/// under 200 ms on the 1000-page corpus file, memory proportional to
-/// viewed pages, 60 fps scroll - run as benches, and a regression past
-/// budget fails the build like any other test.
+/// under 200 ms on the 1000-page corpus file, something visible under
+/// 200 ms on any page, memory proportional to viewed pages, 60 fps
+/// scroll - run as benches, and a regression past budget fails the build
+/// like any other test.
+///
+/// The budgets are asserted in `crates/core/benches/`, where the session,
+/// the render worker and the tile store are; `app` has no document to
+/// measure and running them twice would only double the corpus a test
+/// needs. What this guarantee owns is the second half of the sentence:
+/// that those benches are wired to fail a build. Each one is a `[[bench]]`
+/// target with its own `main`, and CI runs them as a gate with the corpus
+/// made mandatory. A bench that quietly stopped being run would leave
+/// every budget green and unmeasured, and that is the regression this
+/// catches and the benches themselves cannot.
 #[test]
-#[ignore = "lands with the M2 viewer, when there is something to measure"]
 fn open_and_scroll_stay_within_the_performance_budgets() {
-    unimplemented!("needs the viewer and the 1000-page corpus file")
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crates/app sits two levels under the workspace root");
+
+    let manifest = std::fs::read_to_string(workspace.join("crates/core/Cargo.toml"))
+        .expect("core's manifest is readable");
+    for bench in ["open", "paint", "scroll"] {
+        let path = workspace.join(format!("crates/core/benches/{bench}.rs"));
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{} is unreadable ({error}), so a decision-11 budget is unmeasured",
+                path.display()
+            )
+        });
+        assert!(
+            manifest.contains(&format!("name = \"{bench}\"")),
+            "crates/core/benches/{bench}.rs is not declared, so cargo bench never runs it"
+        );
+        assert!(
+            source.contains("harness::under"),
+            "crates/core/benches/{bench}.rs states no budget, so it only reports numbers"
+        );
+    }
+    // Every bench keeps its own main. Under libtest's harness a bench reports
+    // timings and passes regardless, and counting against the declarations
+    // rather than against three keeps that true of the fourth one.
+    let lines = |needle: &str| {
+        manifest
+            .lines()
+            .filter(|line| line.trim() == needle)
+            .count()
+    };
+    assert_eq!(
+        lines("harness = false"),
+        lines("[[bench]]"),
+        "a budget bench that runs under libtest's harness reports numbers instead of failing"
+    );
+    // The budgets are all reported through one function, so a `println!` where
+    // its `assert!` is would turn every one of them green and silent, which is
+    // the whole failure mode this package exists to prevent.
+    let harness = std::fs::read_to_string(workspace.join("crates/core/benches/harness/mod.rs"))
+        .expect("the bench harness is readable");
+    assert!(
+        harness.contains("BUDGET EXCEEDED") && harness.contains("assert!("),
+        "the bench harness no longer fails a run that misses a budget"
+    );
+
+    let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
+        .expect("the workflow is readable");
+    assert!(
+        ci.contains("pull_request"),
+        "CI does not run on pull requests, so no budget is checked before a merge"
+    );
+    let bench_job = job(&ci, "bench");
+    assert!(
+        !bench_job.is_empty(),
+        "the workflow has no bench job, so nothing runs the budgets"
+    );
+    assert!(
+        bench_job.contains("cargo bench -p onionskin-core"),
+        "the bench job does not run the benches, so a regression past budget fails nothing"
+    );
+    assert!(
+        bench_job.contains("ONIONSKIN_CORPUS_REQUIRED: 1"),
+        "the bench job does not require its corpus, so it would skip every budget and pass"
+    );
+    assert!(
+        !bench_job.contains("continue-on-error"),
+        "a job allowed to fail is not a gate"
+    );
+    // A job-level condition sits at four spaces, a step's at eight. A gate that
+    // only runs on some events is not a gate on the others.
+    assert!(
+        !bench_job.lines().any(|line| line.starts_with("    if:")),
+        "the bench job is conditional, so there are pushes it does not gate"
+    );
+}
+
+/// One top-level job of a workflow: its header line and everything indented
+/// under it. Scoped, so that what another job is allowed to do stays that
+/// job's business.
+fn job(workflow: &str, name: &str) -> String {
+    let header = format!("  {name}:");
+    workflow
+        .lines()
+        .skip_while(|line| *line != header)
+        .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
