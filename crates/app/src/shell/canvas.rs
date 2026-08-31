@@ -801,6 +801,11 @@ impl CanvasModel {
         self.signature = Some(signature);
         self.requests.clear();
         self.failed_renders.clear();
+        // Geometry failures go with them. Nothing re-requests a page the
+        // canvas is holding as failed, so the only response that could clear
+        // it never arrives, and a page that failed once stayed blank for the
+        // life of the process.
+        self.failed_geometry.clear();
         self.placeholders.clear();
         Ok(true)
     }
@@ -1967,10 +1972,13 @@ mod tests {
         assert!(model.has_pending_render());
     }
 
-    #[test]
-    fn geometry_failure_is_visible() {
+    /// Fails page 1's geometry with the view already pinned, so nothing in
+    /// the test clears the failure on its own.
+    fn model_with_failed_geometry() -> CanvasModel {
         let mut model = model();
         model.viewport.go_to_page(1, PageAlignment::Start).unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
         model.geometry_requests.insert(1);
         model
             .apply_geometry_response(PageGeometryResponse::Failed {
@@ -1978,6 +1986,12 @@ mod tests {
                 error: CoreError::NoSuchPage { page: 1, count: 1 },
             })
             .unwrap();
+        model
+    }
+
+    #[test]
+    fn geometry_failure_is_visible() {
+        let mut model = model_with_failed_geometry();
 
         assert!(!model.geometry_requests.contains(&1));
         assert!(model.failed_geometry.contains(&1));
@@ -1987,9 +2001,28 @@ mod tests {
                 if message.contains("outside a 1-page document")
         ));
         assert_eq!(model.queue_visible_geometry().unwrap(), 0);
-        model.update().unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(!model.update_signature(&visible).unwrap());
         assert!(!model.geometry_requests.contains(&1));
         assert!(model.failed_geometry.contains(&1));
+    }
+
+    /// A failed render is retried when the view changes. Geometry was not, and
+    /// nothing else could retry it: the only thing that cleared
+    /// `failed_geometry` was a `Ready` response, and a page held as failed is
+    /// never requested again, so one transient failure blanked that page for
+    /// the life of the process.
+    #[test]
+    fn a_view_change_retries_a_page_whose_geometry_failed() {
+        let mut model = model_with_failed_geometry();
+        assert!(model.failed_geometry.contains(&1));
+
+        assert!(model.zoom_to(2.0).unwrap());
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(model.update_signature(&visible).unwrap());
+
+        assert!(!model.failed_geometry.contains(&1));
+        assert_eq!(model.queue_visible_geometry().unwrap(), 1);
     }
 
     /// `paint_source` and `collect_tiles` used to take the raster's size from
