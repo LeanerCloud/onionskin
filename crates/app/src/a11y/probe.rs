@@ -275,7 +275,6 @@ unsafe fn describe(element: *mut AnyObject, depth: usize) -> String {
     )
 }
 
-
 /// # Safety
 /// `s` must be nil or a valid `NSString`.
 unsafe fn ns_string(s: *mut AnyObject) -> String {

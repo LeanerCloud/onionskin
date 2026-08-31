@@ -513,10 +513,19 @@ mod tests {
             Element::new("c", Role::Button, "C"),
         ]);
 
-        root.place_children(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(10.0, 0.0, 20.0, 10.0)]);
+        root.place_children(&[
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Rect::new(10.0, 0.0, 20.0, 10.0),
+        ]);
 
-        assert_eq!(root.children[0].bounds, Some(Rect::new(0.0, 0.0, 10.0, 10.0)));
-        assert_eq!(root.children[1].bounds, Some(Rect::new(10.0, 0.0, 20.0, 10.0)));
+        assert_eq!(
+            root.children[0].bounds,
+            Some(Rect::new(0.0, 0.0, 10.0, 10.0))
+        );
+        assert_eq!(
+            root.children[1].bounds,
+            Some(Rect::new(10.0, 0.0, 20.0, 10.0))
+        );
         assert_eq!(root.children[2].bounds, None);
     }
 
@@ -539,7 +548,11 @@ mod tests {
         assert!(button.is_tab_stop());
 
         let mut ids = Ids::default();
-        let update = update(&Element::new("root", Role::Window, "W").with_children(vec![handle]), None, &mut ids);
+        let update = update(
+            &Element::new("root", Role::Window, "W").with_children(vec![handle]),
+            None,
+            &mut ids,
+        );
         let id = ids.id_for(&"drag".into());
         let (_, node) = update.nodes.iter().find(|(node, _)| *node == id).unwrap();
         assert!(!node.supports_action(accesskit::Action::Click));

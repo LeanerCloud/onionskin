@@ -285,8 +285,12 @@ pub(super) fn accessible(
     error: Option<&PageEntryError>,
     page_entry: &str,
 ) -> Element {
-    let mut controls = Element::new("page-controls", Role::Toolbar, "Page Controls")
-        .with_children(Item::ROW.iter().map(|item| describe(*item, state, page_entry)).collect());
+    let mut controls = Element::new("page-controls", Role::Toolbar, "Page Controls").with_children(
+        Item::ROW
+            .iter()
+            .map(|item| describe(*item, state, page_entry))
+            .collect(),
+    );
     if let Some(error) = error {
         controls = controls.child(Element::new(
             "page-entry-error",
@@ -567,7 +571,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} is not in the description", control.id()));
             assert_eq!(node.label, control.name());
             assert_ne!(node.label, control.glyph(PageControlsLayout::FullLabels));
-            assert!(node.label.chars().any(char::is_alphabetic), "{}", control.id());
+            assert!(
+                node.label.chars().any(char::is_alphabetic),
+                "{}",
+                control.id()
+            );
         }
     }
 
@@ -586,7 +594,10 @@ mod tests {
             Control::FitWidth.glyph(PageControlsLayout::FullLabels),
             "Width"
         );
-        assert_eq!(described.find(&"fit-width".into()).unwrap().label, "Fit Width");
+        assert_eq!(
+            described.find(&"fit-width".into()).unwrap().label,
+            "Fit Width"
+        );
     }
 
     #[test]
@@ -611,7 +622,10 @@ mod tests {
         let first = accessible(state(0, 3), None, "");
         let previous = first.find(&"previous-page".into()).unwrap();
         assert!(previous.state.disabled);
-        assert_eq!(previous.description.as_deref(), Some("This is the first page"));
+        assert_eq!(
+            previous.description.as_deref(),
+            Some("This is the first page")
+        );
 
         let last = accessible(state(2, 3), None, "");
         let next = last.find(&"next-page".into()).unwrap();
@@ -663,7 +677,11 @@ mod tests {
         assert_eq!(empty.label, "Page Number");
         assert_eq!(empty.description.as_deref(), Some("Page 1 of 12"));
         assert_eq!(
-            typed.find(&PAGE_ENTRY_ID.into()).unwrap().description.as_deref(),
+            typed
+                .find(&PAGE_ENTRY_ID.into())
+                .unwrap()
+                .description
+                .as_deref(),
             Some("7")
         );
     }

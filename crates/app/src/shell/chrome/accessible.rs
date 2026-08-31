@@ -272,7 +272,9 @@ impl ShellAccessibility {
     }
 
     /// What a screen reader asked the shell to do since the last frame.
-    pub(in crate::shell) fn take_requests(&mut self) -> Vec<(gpui::ElementId, crate::a11y::Request)> {
+    pub(in crate::shell) fn take_requests(
+        &mut self,
+    ) -> Vec<(gpui::ElementId, crate::a11y::Request)> {
         self.adapter
             .as_mut()
             .map(crate::a11y::Adapter::take_requests)
@@ -288,8 +290,8 @@ mod tests {
     #[test]
     fn a_surface_with_no_recorded_frame_leaves_its_children_unplaced() {
         let rects = Rects::default();
-        let mut row = Element::new("row", Role::Group, "Row")
-            .child(Element::new("a", Role::Button, "A"));
+        let mut row =
+            Element::new("row", Role::Group, "Row").child(Element::new("a", Role::Button, "A"));
 
         rects.place(Surface::PageControls, &mut row);
 

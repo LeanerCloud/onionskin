@@ -48,7 +48,10 @@ impl Ring {
             }
         }
         self.focused = match (self.focused.is_some(), previous) {
-            (true, Some(index)) => self.order.get(index.min(self.order.len().saturating_sub(1))).cloned(),
+            (true, Some(index)) => self
+                .order
+                .get(index.min(self.order.len().saturating_sub(1)))
+                .cloned(),
             _ => None,
         };
     }
@@ -240,8 +243,8 @@ mod tests {
         ring.rebuild(&tree());
         ring.focus(&"last-page".into());
 
-        let shorter = Element::new("window", Role::Window, "Onionskin")
-            .child(element("menu", Role::Button));
+        let shorter =
+            Element::new("window", Role::Window, "Onionskin").child(element("menu", Role::Button));
         ring.rebuild(&shorter);
 
         assert_eq!(ring.focused(), Some(&"menu".into()));

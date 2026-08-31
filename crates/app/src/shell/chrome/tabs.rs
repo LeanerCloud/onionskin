@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, App, AppContext as _, ClipboardItem, Context, Entity, Focusable as _,
@@ -9,7 +10,6 @@ use gpui::{
     PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
     WindowHandle,
 };
-use accesskit::Role;
 use onionskin_core::{Document, ViewSize};
 use onionskin_plugin_api::{ExportedFile, PageIndex, ToolCapability};
 
@@ -27,6 +27,10 @@ use super::super::panes::{self, NavigationPanesState, PaneAction};
 use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
 use super::super::{record_opened, repair_notice, ShellSettings};
+use super::accessible::{
+    ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusPrevious,
+    ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
+};
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
     RegistryFacts, NO_SNAPSHOT_TOOL,
@@ -37,10 +41,6 @@ use super::page_controls::{
 };
 use super::quick_actions::{
     self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
-};
-use super::accessible::{
-    ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusPrevious,
-    ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
 };
 use super::rail::{self, apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
 use super::side_panel::{self, render_side_panel, SidePanelState};
@@ -302,9 +302,8 @@ impl ShellFrame {
         // Named from the same constants the accessible description names,
         // so a field and the node describing it cannot be given different
         // identities.
-        let find_input = cx.new(|cx| {
-            SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx)
-        });
+        let find_input =
+            cx.new(|cx| SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx));
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
@@ -385,10 +384,7 @@ impl ShellFrame {
     /// as well as to a mouse.
     fn accessible(&self, window: &Window, cx: &mut Context<Self>) -> A11yElement {
         let scale = window.scale_factor();
-        let title = self
-            .tabs
-            .active()
-            .map_or("Onionskin", |tab| tab.title());
+        let title = self.tabs.active().map_or("Onionskin", |tab| tab.title());
         let mut root = A11yElement::new("window", Role::Window, format!("Onionskin, {title}"));
 
         if let Some(dialog) = self.dialog {
@@ -421,7 +417,8 @@ impl ShellFrame {
 
         let visibility = self.shell_view_state.visibility();
         if visibility.rail {
-            let mut described = rail::accessible(&self.rail_entries(cx), self.rail_state.expanded());
+            let mut described =
+                rail::accessible(&self.rail_entries(cx), self.rail_state.expanded());
             self.a11y.rects.place(Surface::Rail, &mut described);
             root = root.child(described);
         }
@@ -517,9 +514,13 @@ impl ShellFrame {
                 .iter()
                 .enumerate()
                 .map(|(index, tab)| {
-                    A11yElement::new(tab_element_id(&tab.source), Role::Tab, tab.title().to_owned())
-                        .with_state(A11yState::selected(self.tabs.active_index() == Some(index)))
-                        .with_activation(Activation::ActivateTab(index))
+                    A11yElement::new(
+                        tab_element_id(&tab.source),
+                        Role::Tab,
+                        tab.title().to_owned(),
+                    )
+                    .with_state(A11yState::selected(self.tabs.active_index() == Some(index)))
+                    .with_activation(Activation::ActivateTab(index))
                 })
                 .collect(),
         )
@@ -565,8 +566,8 @@ impl ShellFrame {
                 rows.push(node);
             }
         }
-        let mut menu = A11yElement::new("main-menu-panel", Role::Menu, "Main Menu")
-            .with_children(rows);
+        let mut menu =
+            A11yElement::new("main-menu-panel", Role::Menu, "Main Menu").with_children(rows);
         self.a11y.rects.place(Surface::MainMenu, &mut menu);
         menu
     }
@@ -580,9 +581,7 @@ impl ShellFrame {
                 .enumerate()
                 .map(|(index, recent)| {
                     A11yElement::new(("recent-entry", index), Role::MenuItem, recent.title())
-                        .with_description(
-                            recent.display_path(self.settings.paths.home.as_deref()),
-                        )
+                        .with_description(recent.display_path(self.settings.paths.home.as_deref()))
                         .with_activation(Activation::OpenRecent(index))
                 })
                 .collect(),
@@ -600,7 +599,10 @@ impl ShellFrame {
                     let mut node =
                         A11yElement::new(("tab-context-entry", index), Role::MenuItem, entry.label)
                             .with_state(A11yState::enabled(entry.availability.is_enabled()))
-                            .with_activation(Activation::TabCommand(entry.command, entry.tab_index));
+                            .with_activation(Activation::TabCommand(
+                                entry.command,
+                                entry.tab_index,
+                            ));
                     if let Some(reason) = entry.availability.reason() {
                         node = node.with_description(reason);
                     }
@@ -757,7 +759,12 @@ impl ShellFrame {
     ///
     /// Propagates when a text field has focus, so Enter still submits a find
     /// or a page number instead of being eaten by the focus ring.
-    fn activate_focused(&mut self, _: &ActivateFocused, window: &mut Window, cx: &mut Context<Self>) {
+    fn activate_focused(
+        &mut self,
+        _: &ActivateFocused,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.text_field_focused(window, cx) {
             cx.propagate();
             return;
@@ -2549,7 +2556,13 @@ impl Render for ShellFrame {
             .min_h_0()
             .flex()
             .when(visibility.rail, |body| {
-                body.child(render_rail(rail_entries, rail_expanded, rects.clone(), theme, cx))
+                body.child(render_rail(
+                    rail_entries,
+                    rail_expanded,
+                    rects.clone(),
+                    theme,
+                    cx,
+                ))
             });
         if visibility.navigation_pane {
             // The column is as tall as the body it sits in, which is the one
@@ -2607,7 +2620,14 @@ impl Render for ShellFrame {
                 .child(canvas)
                 .when(visibility.quick_actions, |view| view.child(quick_actions))
                 .when_some(find_summary, |view, summary| {
-                    view.child(render_find_bar(find_state, find_input, &summary, rects.clone(), theme, cx))
+                    view.child(render_find_bar(
+                        find_state,
+                        find_input,
+                        &summary,
+                        rects.clone(),
+                        theme,
+                        cx,
+                    ))
                 });
             let document_column = div()
                 .w(document_bounds.size.width)
@@ -4865,7 +4885,10 @@ mod tests {
                     .is_some()
             })
             .unwrap();
-        assert!(chrome, "the page controls were not in the tree to begin with");
+        assert!(
+            chrome,
+            "the page controls were not in the tree to begin with"
+        );
 
         window
             .update(cx, |frame, _window, cx| {
@@ -4926,8 +4949,10 @@ mod tests {
         window
             .update(cx, |frame, window, cx| {
                 let tree = frame.accessible(window, cx);
-                let stops: Vec<&A11yElement> =
-                    tree.walk().filter(|element| element.is_tab_stop()).collect();
+                let stops: Vec<&A11yElement> = tree
+                    .walk()
+                    .filter(|element| element.is_tab_stop())
+                    .collect();
                 assert!(stops.len() > 10, "the tab order is {} long", stops.len());
                 for stop in stops {
                     assert!(

@@ -160,7 +160,9 @@ fn described(header: &str, rows: Vec<ResultRow>, capped: bool) -> Vec<Element> {
                 row.announcement(),
             )
             .with_state(A11yState::selected(row.current))
-            .with_activation(Activation::Pane(PaneAction::SelectMatch(row.page, row.index)))
+            .with_activation(Activation::Pane(PaneAction::SelectMatch(
+                row.page, row.index,
+            )))
         }));
         if capped {
             children.push(Element::new("search-result-capped", Role::Label, CAPPED));
@@ -336,7 +338,11 @@ mod tests {
     /// another row's coordinates would send a reader to the wrong hit.
     #[test]
     fn the_described_rows_are_the_drawn_rows_and_select_the_hit_they_name() {
-        let matches = [hit(0, "alpha one"), hit(4, "alpha two"), hit(4, "alpha three")];
+        let matches = [
+            hit(0, "alpha one"),
+            hit(4, "alpha two"),
+            hit(4, "alpha three"),
+        ];
         let rows = rows_from(matches.iter(), Some((4, 0)));
 
         let described = described("3 results for \"alpha\"", rows.clone(), false);
@@ -358,7 +364,11 @@ mod tests {
                 )))
             );
         }
-        assert_eq!(children[2].state.selected, Some(true), "the cursor is on (4, 0)");
+        assert_eq!(
+            children[2].state.selected,
+            Some(true),
+            "the cursor is on (4, 0)"
+        );
         assert_eq!(children[1].state.selected, Some(false));
         assert_eq!(children[3].state.selected, Some(false));
     }

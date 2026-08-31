@@ -103,8 +103,9 @@ pub(super) fn accessible(items: Result<&[OutlineItem], &String>) -> Vec<Element>
                             .with_state(A11yState::enabled(row.availability().is_enabled()))
                             .with_description(row.announcement());
                     match row.page {
-                        Some(page) => described
-                            .with_activation(Activation::Pane(PaneAction::GoToPage(page))),
+                        Some(page) => {
+                            described.with_activation(Activation::Pane(PaneAction::GoToPage(page)))
+                        }
                         None => described,
                     }
                 })
@@ -266,7 +267,11 @@ mod tests {
         let outline = vec![item(
             "one",
             Some(0),
-            vec![item("one.one", Some(1), vec![item("one.one.one", Some(2), vec![])])],
+            vec![item(
+                "one.one",
+                Some(1),
+                vec![item("one.one.one", Some(2), vec![])],
+            )],
         )];
 
         let described = accessible(Ok(&outline));

@@ -471,11 +471,7 @@ pub(in crate::shell) fn render_navigation_panes(
                 .when(active, |button| button.bg(theme.selected))
                 .hover(move |button| button.bg(theme.hover))
                 .on_click(cx.listener(move |frame, _event, window, cx| {
-                    frame.run_activation(
-                        Activation::Pane(PaneAction::Select(pane)),
-                        window,
-                        cx,
-                    );
+                    frame.run_activation(Activation::Pane(PaneAction::Select(pane)), window, cx);
                 }))
                 .child(pane.icon()),
         );
@@ -1221,9 +1217,7 @@ mod tests {
     /// asked the worker for is the band it is drawing.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
-    fn the_open_panes_described_rows_are_the_rows_the_frame_drew(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn the_open_panes_described_rows_are_the_rows_the_frame_drew(cx: &mut gpui::TestAppContext) {
         let (frame, cx) = frame_over(super::super::fixtures::many_pages_pdf(1_000), cx);
 
         cx.update(|_window, app| {

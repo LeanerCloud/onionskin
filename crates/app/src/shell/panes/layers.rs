@@ -159,8 +159,13 @@ pub(super) fn accessible(items: Result<&[Layer], &String>, menu_open: bool) -> V
             "layers-context-menu",
             "Layers",
             "layers-menu-entry",
-            LayersCommand::ALL
-                .map(|command| (command.label(), command.availability(), run_command(command))),
+            LayersCommand::ALL.map(|command| {
+                (
+                    command.label(),
+                    command.availability(),
+                    run_command(command),
+                )
+            }),
         ));
     }
     described

@@ -399,7 +399,10 @@ mod tests {
     /// with the reason it waits on M5 rather than being left out of the tree.
     #[test]
     fn each_rows_buttons_are_announced_with_the_action_the_row_runs() {
-        let items = [attachment("a.csv", None, None), attachment("b.csv", None, None)];
+        let items = [
+            attachment("a.csv", None, None),
+            attachment("b.csv", None, None),
+        ];
 
         let described = accessible(Ok(&items));
         let rows = &described[0].children;
@@ -409,9 +412,15 @@ mod tests {
             for (button, command) in row.children.iter().zip(AttachmentCommand::ALL) {
                 assert_eq!(button.role, Role::Button);
                 assert_eq!(button.label, command.label());
-                assert_eq!(button.key, gpui::ElementId::from(command_id(index, command)));
+                assert_eq!(
+                    button.key,
+                    gpui::ElementId::from(command_id(index, command))
+                );
                 assert_eq!(button.state.disabled, !command.availability().is_enabled());
-                assert_eq!(button.description.as_deref(), command.availability().reason());
+                assert_eq!(
+                    button.description.as_deref(),
+                    command.availability().reason()
+                );
             }
         }
 
@@ -434,7 +443,10 @@ mod tests {
             .find(|button| button.label == AttachmentCommand::Open.label())
             .expect("every row lists Open");
         assert!(open.state.disabled);
-        assert_eq!(open.activation, None, "a listed command that cannot run yet runs nothing");
+        assert_eq!(
+            open.activation, None,
+            "a listed command that cannot run yet runs nothing"
+        );
     }
 
     /// A document with no attachments says so, and a reader that failed says

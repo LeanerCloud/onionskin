@@ -65,7 +65,9 @@ impl Tree {
 
     /// The node's rectangle on screen: x, y, width, height.
     fn frame(&self, node: &Node) -> [f64; 4] {
-        let frame = node["frame"].as_array().expect("every node reports a frame");
+        let frame = node["frame"]
+            .as_array()
+            .expect("every node reports a frame");
         [
             frame[0].as_f64().unwrap(),
             frame[1].as_f64().unwrap(),
@@ -202,7 +204,9 @@ fn the_page_controls_report_the_rectangles_they_were_painted_at() {
         );
     }
     // All on one row.
-    assert!(row.windows(2).all(|pair| (pair[1][1] - pair[0][1]).abs() < 1.0));
+    assert!(row
+        .windows(2)
+        .all(|pair| (pair[1][1] - pair[0][1]).abs() < 1.0));
 }
 
 /// The document's own rectangle comes from the viewport rather than from a
@@ -225,7 +229,10 @@ fn a_page_reports_the_rectangle_it_is_drawn_at() {
     let text = tree.frame(text);
     assert!(text[2] > 0.0 && text[3] > 0.0);
     // The words sit inside the page they are on, within a pixel of rounding.
-    assert!(text[0] >= page[0] - 1.0, "text {text:?} is left of page {page:?}");
+    assert!(
+        text[0] >= page[0] - 1.0,
+        "text {text:?} is left of page {page:?}"
+    );
     assert!(
         text[0] + text[2] <= page[0] + page[2] + 1.0,
         "text {text:?} is right of page {page:?}"
@@ -346,7 +353,10 @@ fn a_rail_entry_is_announced_by_its_tool_name_and_not_by_its_icon_string() {
     let rail: Vec<&Node> = tree
         .nodes
         .iter()
-        .filter(|node| tree.field(node, "identifier").starts_with("tool-rail-entry"))
+        .filter(|node| {
+            tree.field(node, "identifier")
+                .starts_with("tool-rail-entry")
+        })
         .collect();
 
     assert!(!rail.is_empty(), "the rail published no entries");
