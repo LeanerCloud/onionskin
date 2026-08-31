@@ -439,17 +439,22 @@ fn parse_zoom(value: &str) -> Option<ZoomPreference> {
 }
 
 fn parse_layout(value: &str) -> Option<PageLayoutMode> {
-    LAYOUT_MODES
-        .into_iter()
-        .find(|(key, _)| *key == value)
-        .map(|(_, mode)| mode)
+    Some(match value {
+        "single-page" => PageLayoutMode::SinglePage,
+        "single-page-continuous" => PageLayoutMode::SinglePageContinuous,
+        "two-page" => PageLayoutMode::TwoPage,
+        "two-page-continuous" => PageLayoutMode::TwoPageContinuous,
+        _ => return None,
+    })
 }
 
 fn parse_mode(value: &str) -> Option<MatchMode> {
-    MATCH_MODES
-        .into_iter()
-        .find(|(key, _)| *key == value)
-        .map(|(_, mode)| mode)
+    Some(match value {
+        "phrase" => MatchMode::Phrase,
+        "any-word" => MatchMode::AnyWord,
+        "all-words" => MatchMode::AllWords,
+        _ => return None,
+    })
 }
 
 /// Written as a match rather than a lookup in the table below, so a new
@@ -471,24 +476,6 @@ fn mode_key(mode: MatchMode) -> &'static str {
         MatchMode::AllWords => "all-words",
     }
 }
-
-/// The file's spelling of `core`'s layout modes, for reading. Writing goes
-/// through [`layout_key`], and the test below holds the two together.
-const LAYOUT_MODES: [(&str, PageLayoutMode); 4] = [
-    ("single-page", PageLayoutMode::SinglePage),
-    (
-        "single-page-continuous",
-        PageLayoutMode::SinglePageContinuous,
-    ),
-    ("two-page", PageLayoutMode::TwoPage),
-    ("two-page-continuous", PageLayoutMode::TwoPageContinuous),
-];
-
-const MATCH_MODES: [(&str, MatchMode); 3] = [
-    ("phrase", MatchMode::Phrase),
-    ("any-word", MatchMode::AnyWord),
-    ("all-words", MatchMode::AllWords),
-];
 
 #[cfg(test)]
 mod tests {
@@ -616,10 +603,15 @@ mod tests {
     /// saves as something the next start cannot read back.
     #[test]
     fn every_key_written_is_a_key_that_reads_back() {
-        for (_, layout) in LAYOUT_MODES {
+        for layout in [
+            PageLayoutMode::SinglePage,
+            PageLayoutMode::SinglePageContinuous,
+            PageLayoutMode::TwoPage,
+            PageLayoutMode::TwoPageContinuous,
+        ] {
             assert_eq!(parse_layout(layout_key(layout)), Some(layout));
         }
-        for (_, mode) in MATCH_MODES {
+        for mode in [MatchMode::Phrase, MatchMode::AnyWord, MatchMode::AllWords] {
             assert_eq!(parse_mode(mode_key(mode)), Some(mode));
         }
         for theme in ThemePreference::ALL {

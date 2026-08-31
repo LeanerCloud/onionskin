@@ -137,6 +137,11 @@ pub(in crate::shell) enum MenuCommand {
     KeyboardShortcuts,
 }
 
+/// What the Take a Snapshot entry says when no installed tool carries the
+/// capability, and what the frame says if one disappears between the menu
+/// being built and the entry being chosen.
+pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
+
 /// The menu entries a registered command runs, rather than shell code.
 const REGISTRY_BACKED: [MenuCommand; 2] = [MenuCommand::SelectAll, MenuCommand::DeselectAll];
 
@@ -206,23 +211,6 @@ pub(in crate::shell) struct MenuState {
 }
 
 impl MenuState {
-    pub(in crate::shell) fn initial(
-        tab_count: usize,
-        view: Option<CanvasViewState>,
-        shell_view: ShellViewState,
-        registry: RegistryFacts,
-        recent_count: usize,
-    ) -> Self {
-        Self::new(
-            tab_count,
-            view,
-            shell_view,
-            [true; QuickAction::ALL.len()],
-            registry,
-            recent_count,
-        )
-    }
-
     pub(in crate::shell) fn new(
         tab_count: usize,
         view: Option<CanvasViewState>,
@@ -370,7 +358,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     command: MenuCommand::TakeSnapshot,
                     label: "Take a Snapshot",
                     availability: match (state.registry.snapshot_tool, state.has_active_tab) {
-                        (false, _) => Disabled("No installed tool takes a snapshot"),
+                        (false, _) => Disabled(NO_SNAPSHOT_TOOL),
                         (true, false) => Disabled("No document is open"),
                         (true, true) => Enabled,
                     },
@@ -1019,11 +1007,11 @@ mod tests {
         assert!(entries.iter().all(|entry| !entry.label.is_empty()));
     }
 
-    /// Nothing the registry holds can be unreachable: a command has a
-    /// keystroke, a menu entry, or both. Without this, a plugin could
-    /// register a command that no user could ever run.
+    /// Nothing the registry holds can be unreachable, and a keystroke alone
+    /// does not count: a command only a keymap file mentions is invisible to
+    /// anyone who has not read it.
     #[test]
-    fn every_registered_command_has_a_keystroke_or_a_menu_entry() {
+    fn every_registered_command_has_a_menu_entry() {
         let registry = crate::build_registry();
         let entries: Vec<_> = main_menu_schema(menu_state(1, Some(view())))
             .into_iter()
@@ -1036,17 +1024,9 @@ mod tests {
             "there is nothing to check"
         );
         for command in registry.commands() {
-            let in_menu = entries.iter().any(|entry| entry.command.id() == command.id);
             assert!(
-                in_menu || command.keybind.is_some(),
-                "{} is registered but nothing can reach it",
-                command.id
-            );
-            // The menu half specifically: a keystroke alone leaves a command
-            // invisible to anyone who has not read the keymap.
-            assert!(
-                in_menu,
-                "{} has no menu entry, so only a keystroke could reach it",
+                entries.iter().any(|entry| entry.command.id() == command.id),
+                "{} is registered but no menu entry reaches it",
                 command.id
             );
         }

@@ -91,7 +91,8 @@ impl fmt::Display for RecentsError {
             ),
             Self::Unrepresentable { path } => write!(
                 f,
-                "{} cannot be added to the recents list: its name is not valid UTF-8",
+                "{} is not in the recents list: its name is not valid UTF-8, \
+                 which the list has no way to write down",
                 path.display()
             ),
         }
@@ -162,11 +163,26 @@ impl Recents {
         self.documents.is_empty()
     }
 
-    /// Record a document as just opened, and return whether the list changed.
+    /// Record a document as just opened, and return whether the list
+    /// changed.
     ///
     /// Re-opening a document moves it to the front rather than adding a
     /// second row: the list is of documents, not of openings.
-    pub fn record(&mut self, path: &Path, opened_at: SystemTime, limit: usize) -> bool {
+    ///
+    /// A path that is not valid UTF-8 is refused here rather than at save
+    /// time. JSON has no way to write one down, and an entry that cannot be
+    /// written would block every later save of the whole list.
+    pub fn record(
+        &mut self,
+        path: &Path,
+        opened_at: SystemTime,
+        limit: usize,
+    ) -> Result<bool, RecentsError> {
+        if path.to_str().is_none() {
+            return Err(RecentsError::Unrepresentable {
+                path: path.to_path_buf(),
+            });
+        }
         // Compared against a copy rather than reasoned about: "did this
         // change" has to be right for the limit-of-zero and
         // already-at-the-front cases, and this is a handful of paths on a
@@ -183,7 +199,7 @@ impl Recents {
             },
         );
         self.truncate(limit);
-        before != self.documents
+        Ok(before != self.documents)
     }
 
     /// Drop everything past `limit`, which the Documents preference sets.
@@ -192,25 +208,13 @@ impl Recents {
     }
 
     /// Write the list.
-    ///
-    /// A document whose name is not valid UTF-8 has no JSON form, and
-    /// serde's `Path` refuses it rather than inventing one. Reported as
-    /// itself: this used to be an `expect`, which made an unusual filename a
-    /// panic inside the window update that opened it.
     pub fn save(&self, path: &Path) -> Result<(), RecentsError> {
-        if let Some(unrepresentable) = self
-            .documents
-            .iter()
-            .find(|recent| recent.path.to_str().is_none())
-        {
-            return Err(RecentsError::Unrepresentable {
-                path: unrepresentable.path.clone(),
-            });
-        }
         let json = serde_json::to_string_pretty(&RecentsFile {
             documents: self.documents.clone(),
         })
-        .expect("every path is UTF-8 by the check above, and a timestamp is a number");
+        // Total: `record` is the only way in and it refuses a path serde
+        // cannot write, and a list read back from JSON is UTF-8 already.
+        .expect("every path in the list is UTF-8, and a timestamp is a number");
         crate::config::write_private(path, &json).map_err(|source| RecentsError::Unwritable {
             path: path.to_path_buf(),
             source,
@@ -228,12 +232,18 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(seconds)
     }
 
+    fn record(recents: &mut Recents, path: &str, seconds: u64) -> bool {
+        recents
+            .record(Path::new(path), at(seconds), 10)
+            .expect("an ordinary path records")
+    }
+
     #[test]
     fn the_most_recently_opened_document_is_first() {
         let mut recents = Recents::default();
 
-        recents.record(Path::new("/docs/a.pdf"), at(10), 10);
-        recents.record(Path::new("/docs/b.pdf"), at(20), 10);
+        record(&mut recents, "/docs/a.pdf", 10);
+        record(&mut recents, "/docs/b.pdf", 20);
 
         assert_eq!(
             recents
@@ -271,10 +281,10 @@ mod tests {
     #[test]
     fn re_opening_a_document_moves_it_rather_than_repeating_it() {
         let mut recents = Recents::default();
-        recents.record(Path::new("/docs/a.pdf"), at(10), 10);
-        recents.record(Path::new("/docs/b.pdf"), at(20), 10);
+        record(&mut recents, "/docs/a.pdf", 10);
+        record(&mut recents, "/docs/b.pdf", 20);
 
-        let changed = recents.record(Path::new("/docs/a.pdf"), at(30), 10);
+        let changed = record(&mut recents, "/docs/a.pdf", 30);
 
         assert!(changed);
         assert_eq!(recents.documents().len(), 2);
@@ -288,7 +298,9 @@ mod tests {
     fn the_list_never_grows_past_the_limit_it_is_given() {
         let mut recents = Recents::default();
         for index in 0..5 {
-            recents.record(&PathBuf::from(format!("/docs/{index}.pdf")), at(index), 3);
+            recents
+                .record(&PathBuf::from(format!("/docs/{index}.pdf")), at(index), 3)
+                .expect("an ordinary path records");
         }
 
         assert_eq!(recents.documents().len(), 3);
@@ -304,34 +316,49 @@ mod tests {
     fn a_limit_of_zero_keeps_nothing() {
         let mut recents = Recents::default();
 
-        let changed = recents.record(Path::new("/docs/a.pdf"), at(10), 0);
+        let changed = recents
+            .record(Path::new("/docs/a.pdf"), at(10), 0)
+            .expect("an ordinary path records");
 
         assert!(!changed);
         assert!(recents.is_empty());
     }
 
-    /// A filename that is not UTF-8 is still a filename.
+    /// A filename that is not UTF-8 is still a filename. Refused as it
+    /// arrives, so it cannot sit in the list blocking every later save.
     #[cfg(unix)]
     #[test]
-    fn a_document_whose_name_is_not_utf8_is_reported_rather_than_fatal() {
+    fn a_document_whose_name_is_not_utf8_is_refused_without_costing_the_list() {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt as _;
 
         let path = crate::config::test_dir("recents-non-utf8").join("recents.json");
         let mut recents = Recents::default();
-        recents.record(Path::new(OsStr::from_bytes(b"/docs/\xff.pdf")), at(10), 10);
 
-        let error = recents.save(&path).expect_err("the path has no JSON form");
+        let error = recents
+            .record(Path::new(OsStr::from_bytes(b"/docs/\xff.pdf")), at(10), 10)
+            .expect_err("the path has no JSON form");
 
         assert!(error.to_string().contains("not valid UTF-8"), "{error}");
+        assert!(recents.is_empty(), "the list took an entry it cannot write");
+
+        // And the list still works afterwards, which is what the old
+        // save-time check cost: one odd filename stopped every later save.
+        recents
+            .record(Path::new("/docs/fine.pdf"), at(20), 10)
+            .expect("an ordinary path records");
+        recents.save(&path).expect("the list still saves");
+        let (loaded, errors) = Recents::load(Some(&path));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(loaded.documents().len(), 1);
     }
 
     #[test]
     fn the_list_round_trips_through_its_file() {
         let path = crate::config::test_dir("recents-round-trip").join("recents.json");
         let mut recents = Recents::default();
-        recents.record(Path::new("/docs/a.pdf"), at(10), 10);
-        recents.record(Path::new("/docs/b.pdf"), at(20), 10);
+        record(&mut recents, "/docs/a.pdf", 10);
+        record(&mut recents, "/docs/b.pdf", 20);
 
         recents.save(&path).expect("the list saves");
         let (loaded, errors) = Recents::load(Some(&path));
@@ -368,7 +395,7 @@ mod tests {
         let path = crate::config::test_dir("recents-mode").join("recents.json");
         let _ = std::fs::remove_file(&path);
         let mut recents = Recents::default();
-        recents.record(Path::new("/docs/private.pdf"), at(10), 10);
+        record(&mut recents, "/docs/private.pdf", 10);
 
         recents.save(&path).expect("the list saves");
 

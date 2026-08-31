@@ -20,7 +20,7 @@ use onionskin_plugin_api::PluginRegistry;
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList, ViewAction};
 use self::chrome::{
     command_defaults, command_for_id, install_native_menus, install_search_keybindings, MenuState,
-    RegistryFacts, RunCommand, ShellFrame, ShellViewState, ThemeTokens,
+    QuickAction, RegistryFacts, RunCommand, ShellFrame, ShellViewState, ThemeTokens,
 };
 use crate::config::ConfigPaths;
 use crate::keymap::{platform_keystroke, Binding, Keymap};
@@ -634,15 +634,15 @@ where
         let shell_view_state =
             ShellViewState::new(cx.window_appearance(), settings.preferences.theme);
         let theme = shell_view_state.tokens();
-        let menu_state = MenuState::initial(
+        let menu_state = MenuState::new(
             prepared.len(),
             prepared.first().map(|(_, model)| model.view_state()),
             shell_view_state,
-            prepared
-                .first()
-                .map_or_else(RegistryFacts::default, |(_, model)| {
-                    RegistryFacts::of(model.registry())
-                }),
+            // Every quick action is on until the user hides one.
+            [true; QuickAction::ALL.len()],
+            prepared.first().map_or(settings.registry, |(_, model)| {
+                RegistryFacts::of(model.registry())
+            }),
             settings.recents.documents().len(),
         );
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
@@ -727,16 +727,20 @@ pub(in crate::shell) fn record_opened<'a>(
 ) -> Vec<String> {
     let now = SystemTime::now();
     let mut changed = false;
+    let mut notices = Vec::new();
     for path in paths {
-        changed |= recents.record(path, now, limit);
+        match recents.record(path, now, limit) {
+            Ok(recorded) => changed |= recorded,
+            Err(error) => notices.push(error.to_string()),
+        }
     }
     let Some(file) = file.filter(|_| changed) else {
-        return Vec::new();
+        return notices;
     };
-    match recents.save(file) {
-        Ok(()) => Vec::new(),
-        Err(error) => vec![error.to_string()],
+    if let Err(error) = recents.save(file) {
+        notices.push(error.to_string());
     }
+    notices
 }
 
 fn should_quit_after_window_closed(open_window_count: usize) -> bool {

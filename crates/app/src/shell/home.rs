@@ -6,12 +6,16 @@
 //! list/thumbnail toggle over them. Starred is M3, and everything
 //! cloud-tethered is out of scope, so there are no other sections to show.
 //!
-//! Thumbnails are the first page of each recent document, rendered when the
-//! user switches to that view and kept until the window closes. That render
-//! is synchronous: with the default list of ten it is a few hundred
-//! milliseconds once, on an explicit click, and moving it to the render
-//! worker means a worker per recent document for a view the user may never
-//! open. Worth revisiting if the list limit grows.
+//! Thumbnails are the first page of each recent document, rendered once
+//! per document and kept until the window closes, including the failures:
+//! a file that is gone is gone every time it is asked about, and asking
+//! again on every open would turn a missing volume into ten synchronous
+//! opens per File > Open. Switching views is the retry.
+//!
+//! That render is synchronous. With the default list of ten it is a few
+//! hundred milliseconds once, on an explicit click, and moving it to the
+//! render worker means a worker per recent document for a view the user may
+//! never open. Worth revisiting if the list limit grows.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,30 +69,36 @@ impl HomeState {
         self.view
     }
 
-    /// Switch views, rendering whatever the new one needs and does not have.
+    /// Switch views, rendering whatever the new one needs and does not
+    /// have.
+    ///
+    /// Choosing Thumbnails is also the retry: a file that was on a volume
+    /// that was not mounted gets another chance here, and nowhere else,
+    /// because this is the one place the user asked for the work.
     pub(in crate::shell) fn set_view(&mut self, view: HomeView, recents: &Recents) {
         self.view = view;
+        if view == HomeView::Thumbnail {
+            self.thumbnails.retain(|_, thumbnail| thumbnail.is_ok());
+        }
         self.refresh(recents);
     }
 
     /// Render any thumbnail the current view wants and does not have.
     ///
-    /// Called again when the recents list changes: a document opened after
-    /// the last toggle would otherwise sit behind a blank card until the
-    /// user switched views and back.
-    ///
-    /// A card that failed is retried, because the usual reason is a file
-    /// that moved or a disk that was not mounted, and both come back.
+    /// Called when the recents list changes as well: a document opened
+    /// after the last toggle would otherwise sit behind a blank card until
+    /// the user switched views and back. A card that already failed keeps
+    /// its reason rather than being asked again, so this does no work on a
+    /// list it has already seen.
     pub(in crate::shell) fn refresh(&mut self, recents: &Recents) {
         if self.view != HomeView::Thumbnail {
             return;
         }
-        self.thumbnails.retain(|path, thumbnail| {
-            thumbnail.is_ok()
-                && recents
-                    .documents()
-                    .iter()
-                    .any(|recent| &recent.path == path)
+        self.thumbnails.retain(|path, _| {
+            recents
+                .documents()
+                .iter()
+                .any(|recent| &recent.path == path)
         });
         for recent in recents.documents() {
             if !self.thumbnails.contains_key(&recent.path) {
@@ -121,18 +131,34 @@ fn render_thumbnail(path: &Path) -> Thumbnail {
     let render = document
         .render_page_now(0, zoom)
         .map_err(|error| format!("page one cannot be rendered: {error}"))?;
-    Ok(image_for(&render.raster))
+    image_for(&render.raster)
 }
 
 /// GPUI takes image data as BGRA; the renderer produces RGBA.
-fn image_for(raster: &BaseRaster) -> Arc<RenderImage> {
+///
+/// A raster carries its own size, and `BaseRaster::new` asserts the bytes
+/// match it, so the size check here should never fire. It is a `Result`
+/// rather than an assumption because this runs on a click and the card has
+/// somewhere to put the reason.
+fn image_for(raster: &BaseRaster) -> Thumbnail {
     let mut bgra = raster.rgba().to_vec();
+    let expected = raster.width() as usize * raster.height() as usize * 4;
+    if bgra.len() != expected {
+        return Err(format!(
+            "page one rendered {} bytes for a {}x{} image",
+            bgra.len(),
+            raster.width(),
+            raster.height()
+        ));
+    }
     for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     let buffer = image::RgbaImage::from_raw(raster.width(), raster.height(), bgra)
-        .expect("a raster's bytes are exactly width * height * 4");
-    Arc::new(RenderImage::new(smallvec![image::Frame::new(buffer)]))
+        .ok_or_else(|| "page one cannot be turned into an image".to_owned())?;
+    Ok(Arc::new(RenderImage::new(smallvec![image::Frame::new(
+        buffer
+    )])))
 }
 
 pub(in crate::shell) fn render_home(
@@ -304,7 +330,9 @@ mod tests {
     #[test]
     fn switching_to_thumbnails_renders_the_first_page_of_each_recent() {
         let mut recents = Recents::default();
-        recents.record(&seed("hello.pdf"), UNIX_EPOCH, 10);
+        recents
+            .record(&seed("hello.pdf"), UNIX_EPOCH, 10)
+            .expect("the seed path records");
         let mut state = HomeState::default();
 
         state.set_view(HomeView::Thumbnail, &recents);
@@ -319,13 +347,56 @@ mod tests {
         assert!(u32::from(size.height) > 0);
     }
 
+    /// A failure is kept rather than retried on every refresh, and choosing
+    /// the view again is the retry.
+    ///
+    /// refresh runs whenever a document is opened, so a list of ten files on
+    /// an unmounted volume would otherwise mean ten opens of nothing per
+    /// File > Open. The file is made to appear between the two calls,
+    /// because a re-render of a still-missing file fails again and would
+    /// look exactly like keeping the failure.
+    #[test]
+    fn a_failed_card_is_retried_when_the_view_is_chosen_again_and_not_before() {
+        let dir = crate::config::test_dir("home-retry");
+        let path = dir.join("appears-later.pdf");
+        let _ = std::fs::remove_file(&path);
+        let mut recents = Recents::default();
+        recents
+            .record(&path, UNIX_EPOCH, 10)
+            .expect("the path records");
+        let mut state = HomeState::default();
+        state.set_view(HomeView::Thumbnail, &recents);
+        assert!(
+            state.thumbnail(&path).is_some_and(Result::is_err),
+            "a missing file should have failed"
+        );
+
+        std::fs::copy(seed("hello.pdf"), &path).expect("the file appears");
+        state.refresh(&recents);
+
+        assert!(
+            state.thumbnail(&path).is_some_and(Result::is_err),
+            "refresh rendered a card it already had, which is the work \
+             every open would repeat"
+        );
+
+        state.set_view(HomeView::Thumbnail, &recents);
+
+        assert!(
+            state.thumbnail(&path).is_some_and(Result::is_ok),
+            "choosing the view again did not retry the failure"
+        );
+    }
+
     /// A recent document that has since been deleted still gets a card, with
     /// the reason on it. Dropping the row would look like the app forgot the
     /// file rather than that the file is gone.
     #[test]
     fn a_recent_document_that_is_gone_says_so_on_its_card() {
         let mut recents = Recents::default();
-        recents.record(&seed("not-here.pdf"), UNIX_EPOCH, 10);
+        recents
+            .record(&seed("not-here.pdf"), UNIX_EPOCH, 10)
+            .expect("the path records even though the file is missing");
         let mut state = HomeState::default();
 
         state.set_view(HomeView::Thumbnail, &recents);
@@ -343,7 +414,9 @@ mod tests {
     #[test]
     fn the_list_view_renders_no_pages() {
         let mut recents = Recents::default();
-        recents.record(&seed("hello.pdf"), UNIX_EPOCH, 10);
+        recents
+            .record(&seed("hello.pdf"), UNIX_EPOCH, 10)
+            .expect("the seed path records");
         let mut state = HomeState::default();
 
         state.set_view(HomeView::List, &recents);

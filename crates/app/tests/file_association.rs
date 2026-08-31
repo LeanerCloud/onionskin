@@ -64,22 +64,33 @@ fn the_windows_installer_offers_itself_without_taking_the_association() {
         installer.contains(r#"!insertmacro AssociateExt "pdf""#),
         "the installer associates no PDF extension"
     );
-    // Matched on the shape rather than on an exact line: any write whose
-    // key is the extension itself and whose value name is empty is a write
-    // of the default handler, whatever the spacing, the hive or the
-    // WriteReg variant.
     for line in installer.lines() {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        let writes_default = words
-            .first()
-            .is_some_and(|word| word.starts_with("WriteReg"))
-            && words
-                .iter()
-                .any(|word| word.ends_with("\".pdf\"") || word.ends_with("\".${ext}\""))
-            && words.contains(&"\"\"");
         assert!(
-            !writes_default,
+            !writes_default_handler(line),
             "the installer writes the extension's default handler: {line}"
+        );
+    }
+    // The matcher has to catch the per-user form as well as the per-machine
+    // one, which is what an installer reaches for when it cannot write HKLM.
+    for taken in [
+        r#"WriteRegStr HKCR ".pdf" "" "Onionskin.pdf""#,
+        r#"WriteRegStr HKCU "Software\Classes\.pdf" "" "Onionskin.pdf""#,
+        r#"WriteRegStr HKCR  ".${ext}"  ""  "Onionskin.${ext}""#,
+        r#"WriteRegExpandStr HKLM "Software\Classes\.pdf" "" "Onionskin.pdf""#,
+    ] {
+        assert!(
+            writes_default_handler(taken),
+            "this would take the association and the check missed it: {taken}"
+        );
+    }
+    // And it must not catch the two writes the installer needs.
+    for allowed in [
+        r#"WriteRegStr HKCR ".${ext}\OpenWithProgids" "Onionskin.${ext}" "" "#,
+        r#"WriteRegStr HKCR "Onionskin.${ext}\shell\open\command" "" '"$INSTDIR\onionskin.exe" "%1"'"#,
+    ] {
+        assert!(
+            !writes_default_handler(allowed),
+            "the check refuses a write the installer needs: {allowed}"
         );
     }
     // The association is removed again, so uninstalling leaves no entry in
@@ -88,6 +99,29 @@ fn the_windows_installer_offers_itself_without_taking_the_association() {
         installer.contains(r#"!insertmacro UnassociateExt "pdf""#),
         "the uninstaller leaves the association behind"
     );
+}
+
+/// Whether a line writes the default handler for the extension: a registry
+/// write whose key names the extension itself, rather than a subkey of it,
+/// and whose value name is empty.
+///
+/// Both halves matter. `".pdf\OpenWithProgids"` names a subkey and is the
+/// write that offers the app; `"Software\Classes\.pdf"` with an empty value
+/// name is the same key as `HKCR ".pdf"` and takes the association.
+fn writes_default_handler(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let Some(command) = words.first() else {
+        return false;
+    };
+    if !command.starts_with("WriteReg") {
+        return false;
+    }
+    let names_the_extension = words.iter().any(|word| {
+        let key = word.trim_matches('"');
+        let last = key.rsplit('\\').next().unwrap_or(key);
+        last == ".pdf" || last == ".${ext}"
+    });
+    names_the_extension && words.contains(&"\"\"")
 }
 
 /// On Linux a desktop entry advertising the MIME type appears in the "Open
@@ -122,11 +156,18 @@ fn the_linux_desktop_entry_advertises_pdf_without_claiming_the_default() {
 ///
 /// Over every crate and plugin, not just the app: any of them could link a
 /// platform call, and the whole point is that none does.
+///
+/// A guardrail rather than a test of behaviour: it proves an absence, so it
+/// says nothing about what the app does and everything about what it must
+/// never start doing.
 #[test]
 fn nothing_in_the_workspace_asks_to_become_the_default_handler_at_runtime() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // This file names every call it forbids, so it excludes itself by path
+    // rather than by name.
+    let self_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/file_association.rs");
     let mut offenders = Vec::new();
-    let mut examined = 0_usize;
+    let mut examined = Vec::new();
     let mut pending = vec![root.join("crates"), root.join("plugins")];
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).expect("the workspace source is readable") {
@@ -141,10 +182,10 @@ fn nothing_in_the_workspace_asks_to_become_the_default_handler_at_runtime() {
             let is_source = path
                 .extension()
                 .is_some_and(|extension| extension == "rs" || extension == "sh");
-            if !is_source {
+            if !is_source || same_file(&path, &self_path) {
                 continue;
             }
-            examined += 1;
+            examined.push(path.clone());
             let text = std::fs::read_to_string(&path).expect("a source file reads");
             for forbidden in [
                 "LSSetDefaultRoleHandler",
@@ -153,13 +194,6 @@ fn nothing_in_the_workspace_asks_to_become_the_default_handler_at_runtime() {
                 "xdg-settings",
                 "SetUserFTA",
             ] {
-                // This file names them all, to say what it forbids.
-                if path
-                    .file_name()
-                    .is_some_and(|name| name == "file_association.rs")
-                {
-                    continue;
-                }
                 if text.contains(forbidden) {
                     offenders.push(format!("{} names {forbidden}", path.display()));
                 }
@@ -167,6 +201,28 @@ fn nothing_in_the_workspace_asks_to_become_the_default_handler_at_runtime() {
         }
     }
 
-    assert!(examined > 50, "only {examined} files were read");
+    // Named files rather than a count, so a walk that stops early fails
+    // here instead of passing on whatever it happened to reach: one is the
+    // app's own entry point, one is a plugin, one is deep in a crate.
+    for expected in [
+        root.join("crates/app/src/main.rs"),
+        root.join("crates/app/src/shell/home.rs"),
+        root.join("plugins/commands-core/src/lib.rs"),
+    ] {
+        assert!(
+            examined.iter().any(|path| same_file(path, &expected)),
+            "the walk never reached {}",
+            expected.display()
+        );
+    }
     assert!(offenders.is_empty(), "{offenders:?}");
+}
+
+/// Paths built from `CARGO_MANIFEST_DIR` carry `..` segments, so they are
+/// compared by what they resolve to.
+fn same_file(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }

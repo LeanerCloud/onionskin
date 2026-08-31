@@ -108,20 +108,52 @@ pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     std::fs::rename(&temporary, path)
 }
 
+/// How many rescue copies of one file this will make before giving up.
+/// Past this the user has a directory full of them and is not reading the
+/// notice anyway.
+const KEPT_COPIES: u32 = 9;
+
 /// Keep a file this build could not read, and say where.
 ///
 /// A user who mistypes their keymap gets one notice; without this the next
 /// save would take the rest of the file with it. The note goes on the end
 /// of the message that reports the file, so the two cannot be separated.
 ///
-/// A copy that fails adds nothing: the message it would join is already
-/// telling the user their file is unreadable.
+/// Never writes over a file it did not create: a `.bak` may be the user's
+/// own, or the rescue copy from the edit before this one, and the whole
+/// point is not to lose either. A copy that could not be made is said
+/// plainly, because that message is the only warning the user gets that
+/// their file is about to be replaced.
 pub fn keep_unreadable(path: &Path) -> String {
-    let kept = path.with_extension("bak");
-    match std::fs::copy(path, &kept) {
-        Ok(_) => format!(" (a copy of it is kept at {})", kept.display()),
-        Err(_) => String::new(),
+    let mut kept = path.with_extension("bak");
+    for attempt in 1..=KEPT_COPIES {
+        match copy_new(path, &kept) {
+            Ok(()) => return format!(" (a copy of it is kept at {})", kept.display()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                kept = path.with_extension(format!("bak.{attempt}"));
+            }
+            Err(error) => {
+                return format!(
+                    " (it could not be copied aside: {error}, so the next save replaces it)"
+                )
+            }
+        }
     }
+    format!(
+        " (it could not be copied aside: {} and {KEPT_COPIES} numbered copies already exist, \
+         so the next save replaces it)",
+        path.with_extension("bak").display()
+    )
+}
+
+/// Copy `from` to `to` only when `to` does not exist yet.
+fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
+    let contents = std::fs::read(from)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    file.write_all(&contents)
 }
 
 /// A directory this test process owns, for the modules whose subject is a
@@ -191,17 +223,61 @@ mod tests {
 
     #[test]
     fn a_file_this_build_cannot_read_is_kept_before_it_is_replaced() {
-        let path = test_dir("config-preserve").join("keymap.json");
+        let dir = test_dir("config-preserve");
+        let path = dir.join("keymap.json");
+        let kept = path.with_extension("bak");
+        let _ = std::fs::remove_file(&kept);
+        let _ = std::fs::remove_file(path.with_extension("bak.1"));
         std::fs::write(&path, "not json").expect("the test writes its file");
 
         let note = keep_unreadable(&path);
 
-        let kept = path.with_extension("bak");
         assert!(note.contains(&kept.display().to_string()), "{note}");
         assert_eq!(
             std::fs::read_to_string(&kept).expect("the copy reads"),
             "not json"
         );
+    }
+
+    /// A `.bak` may be the user's own, or the rescue copy from the previous
+    /// bad edit. Neither is this code's to overwrite, and losing the first
+    /// of two bad edits is exactly how a rescue copy becomes useless.
+    #[test]
+    fn a_second_rescue_copy_does_not_replace_the_first() {
+        let dir = test_dir("config-preserve-twice");
+        let path = dir.join("preferences.json");
+        for name in ["bak", "bak.1"] {
+            let _ = std::fs::remove_file(path.with_extension(name));
+        }
+        std::fs::write(&path, "first bad edit").expect("the test writes its file");
+        keep_unreadable(&path);
+        std::fs::write(&path, "second bad edit").expect("the test rewrites its file");
+
+        let note = keep_unreadable(&path);
+
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("bak")).expect("the first copy reads"),
+            "first bad edit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("bak.1")).expect("the second copy reads"),
+            "second bad edit"
+        );
+        assert!(note.contains("bak.1"), "{note}");
+    }
+
+    /// The note is the only warning that the file is about to be replaced,
+    /// so a copy that could not be made has to say so rather than leave the
+    /// message reading as though the contents were saved.
+    #[test]
+    fn a_rescue_copy_that_cannot_be_made_says_so() {
+        let path = test_dir("config-preserve-missing").join("gone.json");
+        let _ = std::fs::remove_file(&path);
+
+        let note = keep_unreadable(&path);
+
+        assert!(note.contains("could not be copied aside"), "{note}");
+        assert!(note.contains("the next save replaces it"), "{note}");
     }
 
     #[test]

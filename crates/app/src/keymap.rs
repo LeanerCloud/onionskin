@@ -57,6 +57,13 @@ pub enum KeymapError {
         path: PathBuf,
         id: String,
     },
+    /// One binding's value is neither a keystroke nor null. The rest of the
+    /// file is fine, which is why this is not [`KeymapError::Malformed`].
+    InvalidBinding {
+        path: PathBuf,
+        id: String,
+        value: String,
+    },
     /// Two commands claim one keystroke. The earlier command in the built-in
     /// table keeps it, so which one wins does not depend on the order of a
     /// JSON object.
@@ -88,6 +95,11 @@ impl fmt::Display for KeymapError {
                 "{} binds \"{id}\" to an empty keystroke; use null to unbind it",
                 path.display()
             ),
+            Self::InvalidBinding { path, id, value } => write!(
+                f,
+                "{} binds \"{id}\" to {value}, which is not a keystroke or null",
+                path.display()
+            ),
             Self::Duplicate {
                 keystroke,
                 kept,
@@ -108,6 +120,7 @@ impl std::error::Error for KeymapError {
             Self::Malformed { .. }
             | Self::UnknownCommand { .. }
             | Self::EmptyKeystroke { .. }
+            | Self::InvalidBinding { .. }
             | Self::Duplicate { .. } => None,
         }
     }
@@ -185,8 +198,11 @@ impl Keymap {
             };
             let chord = chord(&keystroke, macos);
             match claimed.iter().find(|(taken, _)| *taken == chord) {
+                // Reported in this platform's spelling: off macOS a file
+                // that binds ctrl-o collides with a cmd-o default, and
+                // naming either spelling alone reads as a mistake.
                 Some((_, kept)) => errors.push(KeymapError::Duplicate {
-                    keystroke,
+                    keystroke: platform_keystroke(&keystroke, macos),
                     kept,
                     dropped: id,
                 }),
@@ -200,8 +216,11 @@ impl Keymap {
         Self { bindings, errors }
     }
 
-    /// Copy the file aside when this build could not parse it, so the next
-    /// save does not take the user's only copy with it.
+    /// Copy the file aside when this build could not parse it at all, so
+    /// the next save does not take the user's only copy with it.
+    ///
+    /// Only for the document-level failure: a file with one bad binding is
+    /// still a file the user can read and this build can mostly apply.
     fn keep_if_malformed(&mut self, path: &Path) {
         for error in &mut self.errors {
             if let KeymapError::Malformed { message, .. } = error {
@@ -259,9 +278,10 @@ fn apply_override(
             path: path.to_path_buf(),
             id: id.to_owned(),
         }),
-        other => errors.push(KeymapError::Malformed {
+        other => errors.push(KeymapError::InvalidBinding {
             path: path.to_path_buf(),
-            message: format!("\"{id}\" is bound to {other}, which is not a keystroke or null"),
+            id: id.to_owned(),
+            value: other.to_string(),
         }),
     }
 }
@@ -427,9 +447,9 @@ mod tests {
 
         let messages = messages(&keymap);
         assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("bound to 7, which is not a keystroke or null")),
+            messages.iter().any(|message| {
+                message.contains(r#"binds "file.open" to 7, which is not a keystroke or null"#)
+            }),
             "{messages:?}"
         );
         assert!(
@@ -440,6 +460,30 @@ mod tests {
         );
         assert_eq!(keystroke(&keymap, "file.open"), Some("cmd-o"));
         assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-w"));
+    }
+
+    /// A file with one bad binding is not a file at risk: the rest of it
+    /// applied, so nothing is copied aside and nothing claims the document
+    /// failed to parse.
+    #[test]
+    fn one_bad_binding_does_not_make_the_file_unreadable() {
+        let dir = crate::config::test_dir("keymap-one-bad");
+        let path = dir.join("keymap.json");
+        let kept = path.with_extension("bak");
+        let _ = std::fs::remove_file(&kept);
+        std::fs::write(&path, r#"{"file.open": 7, "file.close": "cmd-k"}"#)
+            .expect("the test writes its file");
+
+        let keymap = Keymap::load(&DEFAULTS, Some(&path), true);
+
+        assert!(!kept.exists(), "a readable file was copied aside");
+        assert_eq!(messages(&keymap).len(), 1, "{:?}", messages(&keymap));
+        assert!(
+            !messages(&keymap)[0].contains("is not a JSON object"),
+            "{:?}",
+            messages(&keymap)
+        );
+        assert_eq!(keystroke(&keymap, "file.close"), Some("cmd-k"));
     }
 
     /// The message that reports an unreadable file also says where its
@@ -516,6 +560,11 @@ mod tests {
         assert!(on_mac.errors().is_empty(), "{:?}", messages(&on_mac));
         assert_eq!(keystroke(&on_mac, "view.zoom-in"), Some("ctrl-o"));
         assert_eq!(elsewhere.errors().len(), 1, "{:?}", messages(&elsewhere));
+        assert!(
+            messages(&elsewhere)[0].starts_with("ctrl-o is bound to both"),
+            "the message spells the chord the way this platform types it: {:?}",
+            messages(&elsewhere)
+        );
         assert_eq!(
             keystroke(&elsewhere, "file.open"),
             Some("cmd-o"),

@@ -28,7 +28,7 @@ use super::super::Canvas;
 use super::super::{record_opened, repair_notice, ShellSettings};
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
-    RegistryFacts,
+    RegistryFacts, NO_SNAPSHOT_TOOL,
 };
 use super::page_controls::{
     parse_page_entry, render_page_controls, PageControlsState, PageEntryError, PAGE_CONTROLS_HEIGHT,
@@ -499,20 +499,13 @@ impl ShellFrame {
                 self.toggle_quick_action_visibility(action, cx);
                 Ok(())
             }
-            MenuCommand::ThemeSystem | MenuCommand::ThemeLight | MenuCommand::ThemeDark => {
-                self.dismiss_menus(cx);
-                let theme = match command {
-                    MenuCommand::ThemeLight => ThemePreference::Light,
-                    MenuCommand::ThemeDark => ThemePreference::Dark,
-                    _ => ThemePreference::System,
-                };
-                // Through the preference rather than straight at the view
-                // state: the display theme is a setting, so choosing it in
-                // the View menu has to survive a restart and has to be what
-                // the Preferences dialog shows.
-                self.change_preference(PreferenceChange::Theme(theme), cx);
-                Ok(())
-            }
+            // Through the preference rather than straight at the view state:
+            // the display theme is a setting, so choosing it in the View
+            // menu has to survive a restart and has to be what the
+            // Preferences dialog shows.
+            MenuCommand::ThemeSystem => self.set_theme(ThemePreference::System, cx),
+            MenuCommand::ThemeLight => self.set_theme(ThemePreference::Light, cx),
+            MenuCommand::ThemeDark => self.set_theme(ThemePreference::Dark, cx),
             command @ (MenuCommand::ToggleNavigationPane
             | MenuCommand::TogglePageControls
             | MenuCommand::ReadMode) => {
@@ -716,8 +709,7 @@ impl ShellFrame {
                 ToolCapability::Snapshot,
             )
         }) else {
-            self.notices
-                .push("no installed tool takes a snapshot".to_owned());
+            self.notices.push(NO_SNAPSHOT_TOOL.to_owned());
             cx.notify();
             return;
         };
@@ -727,6 +719,16 @@ impl ShellFrame {
 
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
         &self.settings.preferences
+    }
+
+    fn set_theme(
+        &mut self,
+        theme: ThemePreference,
+        cx: &mut Context<Self>,
+    ) -> Result<(), TabError> {
+        self.dismiss_menus(cx);
+        self.change_preference(PreferenceChange::Theme(theme), cx);
+        Ok(())
     }
 
     pub(in crate::shell) fn show_preferences(

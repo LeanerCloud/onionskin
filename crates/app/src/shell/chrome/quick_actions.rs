@@ -24,7 +24,7 @@ pub(in crate::shell) enum QuickAction {
 }
 
 impl QuickAction {
-    pub(super) const ALL: [Self; 6] = [
+    pub(in crate::shell) const ALL: [Self; 6] = [
         Self::Select,
         Self::Comment,
         Self::Highlight,
