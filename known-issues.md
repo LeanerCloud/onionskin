@@ -82,6 +82,17 @@ referenced.
   native-menu path have the same latent shape and want the same treatment plus
   a keystroke-dispatch test. Found by executing a real ctrl-f in a gpui test,
   not by reading the code.
+- P8/P14 follow-ups: the outline destination map sweeps cos::Document::page(i)
+  once to resolve bookmarks that name a page by reference, which is O(pages)
+  walks on a large outlined document; attachment save writes on the UI thread
+  like export does; the P14 scroll bench overwrites rather than accumulates a
+  page's composite count on evict-and-reinsert, so an eviction-churn variant
+  of the frame-pinning regression could under-count (the primary mode is
+  caught); guarantee 9's CI checks are textual tripwires, evadable by a
+  softened harness with a stray assert. Branch protection must REQUIRE the
+  bench job once a remote exists, or the budget gate binds the job and not
+  the merge, and corpus/fetch.sh verifies no checksum for the R2-hosted
+  objects the bench job now puts on the PR path.
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
   string (a hair against no-invented-characters; tighten when touched);
