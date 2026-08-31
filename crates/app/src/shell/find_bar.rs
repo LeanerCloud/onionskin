@@ -16,7 +16,7 @@ use super::chrome::{SearchInput, ShellFrame, ThemeTokens};
 
 actions!(
     onionskin_find,
-    [OpenFindBar, CloseFindBar, FindNextMatch, FindPreviousMatch]
+    [CloseFindBar, FindNextMatch, FindPreviousMatch]
 );
 
 /// Only the bar's own subtree carries this, so Enter means "next hit" while
@@ -26,10 +26,10 @@ pub(in crate::shell) const FIND_KEY_CONTEXT: &str = "OnionskinFind";
 const BOOKMARKS_DEFERRED: &str = "Bookmarks arrive with the navigation panes in M2 P8";
 const COMMENTS_DEFERRED: &str = "Comments arrive with the comment tools in M3";
 
+/// The bar's own keys. Opening it is `edit.find` in the keymap, like every
+/// other command, so a user who rebinds Ctrl+F rebinds it everywhere.
 pub(in crate::shell) fn install_keybindings(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-f", OpenFindBar, None),
-        KeyBinding::new("cmd-f", OpenFindBar, None),
         // Escape closes the bar from wherever focus sits, so it is bound
         // window-wide; the handler propagates when the bar is already closed.
         KeyBinding::new("escape", CloseFindBar, None),
@@ -60,6 +60,15 @@ pub(in crate::shell) struct FindBarState {
 }
 
 impl FindBarState {
+    /// The bar starts on the Search preferences: Acrobat's find toolbar
+    /// remembers its checkboxes, and here they are a setting.
+    pub(in crate::shell) fn with_options(options: SearchOptions) -> Self {
+        Self {
+            open: false,
+            options,
+        }
+    }
+
     pub(in crate::shell) fn is_open(self) -> bool {
         self.open
     }

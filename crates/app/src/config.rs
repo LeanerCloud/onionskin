@@ -40,6 +40,37 @@ fn config_dir_from(xdg_config_home: Option<&OsStr>, home: Option<&OsStr>) -> Opt
     Some(Path::new(home).join(".config").join("onionskin"))
 }
 
+/// The three files, resolved once at startup.
+///
+/// Every path is optional together: an environment that names no home
+/// directory gives an app that runs on defaults and cannot persist, which
+/// it says once rather than failing on every write.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigPaths {
+    pub keymap: Option<PathBuf>,
+    pub preferences: Option<PathBuf>,
+    pub recents: Option<PathBuf>,
+}
+
+impl ConfigPaths {
+    pub fn resolve() -> Self {
+        match config_dir() {
+            Some(dir) => Self::in_dir(&dir),
+            None => Self::default(),
+        }
+    }
+
+    /// The same three files under `dir`. What a test drives, and what keeps
+    /// the tests off the developer's own configuration.
+    pub fn in_dir(dir: &Path) -> Self {
+        Self {
+            keymap: Some(dir.join(KEYMAP_FILE)),
+            preferences: Some(dir.join(PREFERENCES_FILE)),
+            recents: Some(dir.join(RECENTS_FILE)),
+        }
+    }
+}
+
 /// The file's contents, or `None` when it does not exist. A missing config
 /// file is the normal first-run state, not a failure.
 pub fn read(path: &Path) -> io::Result<Option<String>> {

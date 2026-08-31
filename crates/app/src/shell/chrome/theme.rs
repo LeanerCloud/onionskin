@@ -1,11 +1,8 @@
 use gpui::{rgb, rgba, Rgba, WindowAppearance};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ThemePreference {
-    System,
-    Light,
-    Dark,
-}
+/// The display theme is a preference before it is a view state: the View
+/// menu and the preferences dialog set the same thing, and it is persisted.
+pub(super) use crate::preferences::ThemePreference;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResolvedTheme {
@@ -42,9 +39,12 @@ pub(in crate::shell) struct ShellViewState {
 }
 
 impl ShellViewState {
-    pub(in crate::shell) fn new(system_appearance: WindowAppearance) -> Self {
+    pub(in crate::shell) fn new(
+        system_appearance: WindowAppearance,
+        theme: ThemePreference,
+    ) -> Self {
         Self {
-            theme: ThemePreference::System,
+            theme,
             system_appearance,
             fullscreen: false,
             read_mode: false,
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn fullscreen_and_read_mode_remain_independent() {
-        let mut state = ShellViewState::new(WindowAppearance::Dark);
+        let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
         assert!(state.set_fullscreen(true));
         assert!(state.apply(ShellViewAction::ToggleReadMode));
         assert!(state.fullscreen());
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn read_mode_hides_document_chrome_but_keeps_the_global_bar() {
-        let mut state = ShellViewState::new(WindowAppearance::Dark);
+        let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
         assert!(state.apply(ShellViewAction::ToggleReadMode));
 
         let visibility = state.visibility();
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn visibility_toggles_affect_only_their_target() {
-        let mut state = ShellViewState::new(WindowAppearance::Dark);
+        let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
 
         let before = state.visibility();
         assert!(state.apply(ShellViewAction::ToggleNavigationPane));

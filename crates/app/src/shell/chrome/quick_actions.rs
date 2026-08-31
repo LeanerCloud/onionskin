@@ -14,7 +14,7 @@ const TOOLBAR_HEIGHT: f32 = 64.0;
 const CUSTOMIZATION_HEIGHT: f32 = 296.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum QuickAction {
+pub(in crate::shell) enum QuickAction {
     Select,
     Comment,
     Highlight,

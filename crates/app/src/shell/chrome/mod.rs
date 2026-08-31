@@ -1,3 +1,4 @@
+mod commands;
 mod global_bar;
 mod page_controls;
 mod quick_actions;
@@ -7,8 +8,9 @@ mod tabs;
 mod theme;
 mod tool_search;
 
+pub(in crate::shell) use commands::{command_defaults, command_for_id};
 pub(in crate::shell) use global_bar::install_native_menus;
-pub(in crate::shell) use global_bar::{ExportCodecs, MenuAvailability, MenuState};
+pub(in crate::shell) use global_bar::{MenuAvailability, MenuState, RegistryFacts, RunCommand};
 pub(in crate::shell) use tabs::ShellFrame;
 pub(in crate::shell) use theme::{ShellViewState, ThemeTokens};
 pub(in crate::shell) use tool_search::install_keybindings as install_search_keybindings;

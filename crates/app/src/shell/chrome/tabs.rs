@@ -5,24 +5,29 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, App, AppContext as _, ClipboardItem, Context, Entity, Focusable as _,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
-    Point, Render, StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
+    PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
+    WindowHandle,
 };
-use onionskin_plugin_api::{ExportedFile, PageIndex};
+use onionskin_core::{Document, ViewSize};
+use onionskin_plugin_api::{ExportedFile, PageIndex, ToolCapability};
 
-use super::super::canvas::{CanvasError, CanvasViewState, ViewAction};
+use super::super::canvas::{CanvasError, CanvasModel, CanvasViewState, ViewAction};
 use super::super::context_menu::{
     canvas_context_entries, tool_with, CanvasContextCommand, CanvasContextEntry,
 };
+use super::super::dialog::{render_dialog, ShellDialog};
 use super::super::find_bar::{
     render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
     FindPreviousMatch, FindSummary,
 };
 use super::super::panes::{self, NavigationPanesState, PaneAction};
+use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
+use super::super::{record_opened, repair_notice, ShellSettings};
 use super::global_bar::{
-    main_menu_schema, refresh_native_menus, ExportCodecs, ExportTarget, MenuAvailability,
-    MenuCommand, MenuState,
+    main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
+    RegistryFacts,
 };
 use super::page_controls::{
     parse_page_entry, render_page_controls, PageControlsState, PageEntryError, PAGE_CONTROLS_HEIGHT,
@@ -36,6 +41,7 @@ use super::theme::{ShellViewAction, ShellViewState};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
+use crate::preferences::{PreferenceCategory, Preferences};
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
@@ -52,8 +58,14 @@ const TOOL_ACTIVATION_FAILED: &str =
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TabError {
-    OutOfRange { index: usize, count: usize },
+    OutOfRange {
+        index: usize,
+        count: usize,
+    },
     CommandUnavailable,
+    /// The menus grey this command out right now, and a keystroke reaches
+    /// the same commands the menus do.
+    Unavailable(&'static str),
 }
 
 impl fmt::Display for TabError {
@@ -63,6 +75,7 @@ impl fmt::Display for TabError {
                 write!(f, "tab {index} is outside a {count}-tab window")
             }
             Self::CommandUnavailable => write!(f, "menu command is not available yet"),
+            Self::Unavailable(reason) => write!(f, "{reason}"),
         }
     }
 }
@@ -160,6 +173,15 @@ impl<T> TabState<T> {
         Ok(true)
     }
 
+    /// Add a tab and make it the active one, the way opening a document
+    /// does. Returns its index.
+    pub fn push(&mut self, tab: T) -> usize {
+        self.tabs.push(tab);
+        let index = self.tabs.len() - 1;
+        self.active = Some(index);
+        index
+    }
+
     pub fn close(&mut self, index: usize) -> Result<T, TabError> {
         if index >= self.tabs.len() {
             return Err(TabError::OutOfRange {
@@ -213,6 +235,13 @@ pub(in crate::shell) struct ShellFrame {
     quick_actions_state: QuickActionsState,
     side_panel_state: SidePanelState,
     navigation: NavigationPanesState,
+    settings: ShellSettings,
+    /// What the app has to tell the user: a file it repaired to open, a
+    /// config file it could not read, a document that would not open. Shown
+    /// in the window and dismissed there, not only printed to stderr.
+    notices: Vec<String>,
+    dialog: Option<ShellDialog>,
+    recent_menu_open: bool,
 }
 
 fn activate_tab<T>(
@@ -251,6 +280,7 @@ impl ShellFrame {
     pub(in crate::shell) fn new(
         tabs: Vec<(PathBuf, Entity<Canvas>)>,
         mut shell_view_state: ShellViewState,
+        mut settings: ShellSettings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -297,6 +327,7 @@ impl ShellFrame {
         let observed_view_state = tabs
             .active()
             .map(|tab| tab.canvas.read(cx).model.view_state());
+        let notices = std::mem::take(&mut settings.notices);
         let frame = Self {
             tabs,
             main_menu_open: false,
@@ -304,7 +335,7 @@ impl ShellFrame {
             canvas_context_menu: None,
             search_input,
             search_feedback: None,
-            find: FindBarState::default(),
+            find: FindBarState::with_options(settings.preferences.search),
             find_input,
             page_input,
             page_entry_error: None,
@@ -314,6 +345,10 @@ impl ShellFrame {
             quick_actions_state: QuickActionsState::default(),
             side_panel_state: SidePanelState::default(),
             navigation: NavigationPanesState::default(),
+            settings,
+            notices,
+            dialog: None,
+            recent_menu_open: false,
         };
         frame.sync_page_entry(cx);
         frame
@@ -346,22 +381,84 @@ impl ShellFrame {
         }
     }
 
+    /// The reason the menus would grey `command` out, if they would.
+    ///
+    /// One rule for both routes: a keystroke reaches exactly the commands a
+    /// click on the menu entry reaches. Without this, cmd-1 with no document
+    /// open would run a view command against a viewport that is not there.
+    fn command_unavailable(&self, command: MenuCommand, cx: &App) -> Option<&'static str> {
+        main_menu_schema(self.menu_state(cx))
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .find(|entry| entry.command == command)
+            .and_then(|entry| entry.availability.reason())
+    }
+
     fn run_main_menu_command(
         &mut self,
         command: MenuCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
-        let active = self
-            .tabs
-            .active_index()
-            .ok_or(TabError::OutOfRange { index: 0, count: 0 })?;
+        if let Some(reason) = self.command_unavailable(command, cx) {
+            return Err(TabError::Unavailable(reason));
+        }
         match command {
-            MenuCommand::CloseTab => self.run_tab_command(TabCommand::Close, active, window, cx),
+            MenuCommand::Open => {
+                self.dismiss_menus(cx);
+                self.prompt_for_documents(cx);
+                Ok(())
+            }
+            MenuCommand::OpenRecent => {
+                self.main_menu_open = false;
+                self.recent_menu_open = !self.recent_menu_open;
+                cx.notify();
+                Ok(())
+            }
+            MenuCommand::Quit => {
+                cx.quit();
+                Ok(())
+            }
+            MenuCommand::Preferences => {
+                self.show_preferences(PreferenceCategory::General, cx);
+                Ok(())
+            }
+            MenuCommand::About => {
+                self.show_dialog(ShellDialog::About, cx);
+                Ok(())
+            }
+            MenuCommand::KeyboardShortcuts => {
+                self.show_dialog(ShellDialog::KeyboardShortcuts, cx);
+                Ok(())
+            }
+            MenuCommand::Tools => {
+                self.dismiss_menus(cx);
+                self.toggle_rail_expanded(cx);
+                Ok(())
+            }
+            MenuCommand::SelectAll | MenuCommand::DeselectAll => {
+                self.dismiss_menus(cx);
+                let id = command
+                    .registry_command_id()
+                    .expect("both entries name a registry command");
+                self.run_registry_command(id, cx);
+                Ok(())
+            }
+            MenuCommand::TakeSnapshot => {
+                self.dismiss_menus(cx);
+                self.activate_tool_with(ToolCapability::Snapshot, "Take a Snapshot", cx);
+                Ok(())
+            }
+            MenuCommand::CloseTab => {
+                let active = self.active_index()?;
+                self.run_tab_command(TabCommand::Close, active, window, cx)
+            }
             MenuCommand::CloseOtherTabs => {
+                let active = self.active_index()?;
                 self.run_tab_command(TabCommand::CloseOthers, active, window, cx)
             }
             MenuCommand::CloseAllTabs => {
+                let active = self.active_index()?;
                 self.run_tab_command(TabCommand::CloseAll, active, window, cx)
             }
             MenuCommand::PreviousView
@@ -382,9 +479,9 @@ impl ShellFrame {
             | MenuCommand::TwoPage
             | MenuCommand::TwoPageContinuous
             | MenuCommand::ToggleCover => {
-                let view = self
-                    .active_view_state(cx)
-                    .expect("view commands require an active document");
+                let Some(view) = self.active_view_state(cx) else {
+                    return Err(TabError::Unavailable("No document is open"));
+                };
                 self.main_menu_open = false;
                 self.run_view_action(
                     command
@@ -428,14 +525,269 @@ impl ShellFrame {
                 self.open_find_bar(None, window, cx);
                 Ok(())
             }
-            MenuCommand::Open
-            | MenuCommand::SaveAs
+            MenuCommand::SaveAs
             | MenuCommand::Undo
             | MenuCommand::Redo
             | MenuCommand::LineWeights
-            | MenuCommand::NewWindow
-            | MenuCommand::About
-            | MenuCommand::KeyboardShortcuts => Err(TabError::CommandUnavailable),
+            | MenuCommand::NewWindow => Err(TabError::CommandUnavailable),
+        }
+    }
+
+    fn active_index(&self) -> Result<usize, TabError> {
+        self.tabs
+            .active_index()
+            .ok_or(TabError::OutOfRange { index: 0, count: 0 })
+    }
+
+    /// Ask for documents, then open them.
+    fn prompt_for_documents(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn(async move |frame, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            frame
+                .update(cx, |frame, cx| frame.open_documents(&paths, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Open a recent document by its position in the list.
+    pub(super) fn open_recent(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.recent_menu_open = false;
+        let Some(path) = self
+            .settings
+            .recents
+            .get(index)
+            .map(|recent| recent.path.clone())
+        else {
+            cx.notify();
+            return;
+        };
+        self.open_documents(&[path], cx);
+    }
+
+    /// Open documents into tabs, in the order they were chosen, and record
+    /// them as recent.
+    ///
+    /// A path that will not open is reported on the notice bar and the rest
+    /// still open: choosing five files and losing all of them because one is
+    /// corrupt would be the wrong trade.
+    pub(super) fn open_documents(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let mut opened: Vec<PathBuf> = Vec::new();
+        for path in paths {
+            match self.open_document(path, cx) {
+                Ok(source) => opened.push(source),
+                Err(failure) => self.notices.push(failure),
+            }
+        }
+        let notices = record_opened(
+            &mut self.settings.recents,
+            opened.iter().map(PathBuf::as_path),
+            self.settings.preferences.recent_documents,
+            self.settings.paths.recents.as_deref(),
+        );
+        self.notices.extend(notices);
+        self.observed_view_state = self.active_view_state(cx);
+        self.sync_page_entry(cx);
+        self.refresh_find(cx);
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    fn open_document(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<PathBuf, String> {
+        let source = std::path::absolute(path)
+            .map_err(|error| format!("{} could not be resolved: {error}", path.display()))?;
+        if let Some(index) = self.tabs.tabs().iter().position(|tab| tab.source == source) {
+            // Already open. Acrobat raises the tab rather than opening the
+            // document twice, and two tabs over one file would be two
+            // independent view states over one document.
+            self.activate(index, cx);
+            return Ok(source);
+        }
+        let document = Document::open_path(&source)
+            .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
+        let mut model = CanvasModel::new(
+            document,
+            crate::build_registry(),
+            ViewSize {
+                width: crate::shell::WINDOW_WIDTH,
+                height: crate::shell::WINDOW_HEIGHT,
+            },
+        )
+        .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
+        let repaired = repair_notice(&source, model.provenance());
+        if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
+        {
+            self.notices.push(format!(
+                "{} opened at the default view: {error}",
+                source.display()
+            ));
+        }
+        self.notices.extend(repaired);
+        let theme = self.shell_view_state.tokens();
+        let canvas = cx.new(|_cx| Canvas::new(model, theme));
+        cx.observe(&canvas, |frame, _, cx| {
+            frame.canvas_view_changed(cx);
+        })
+        .detach();
+        self.tabs.push(DocumentTab::new(source.clone(), canvas));
+        self.search_feedback = None;
+        Ok(source)
+    }
+
+    /// Run a command the registry holds against the active document.
+    ///
+    /// The chrome never carries a command's body: it looks the id up in the
+    /// registry the active document was built with, which is the same query
+    /// that decided whether the entry was live.
+    pub(super) fn run_registry_command(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        let failure = canvas.update(cx, |canvas, cx| match canvas.model.run_command(id) {
+            Ok(()) => {
+                // A command changes the document, so the canvas repaints for
+                // the same reasons a tool gesture does.
+                canvas.handle_change(Ok(true), cx);
+                None
+            }
+            Err(error) => {
+                let message = error.to_string();
+                canvas.record_error(error, cx);
+                Some(message)
+            }
+        });
+        if let Some(message) = failure {
+            self.notices.push(message);
+        }
+        cx.notify();
+    }
+
+    /// Activate whichever installed tool carries `capability`, saying so in
+    /// the chrome when none does.
+    fn activate_tool_with(
+        &mut self,
+        capability: ToolCapability,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .tabs
+            .active()
+            .and_then(|tab| tool_with(tab.canvas.read(cx).model.registry(), capability))
+        else {
+            return;
+        };
+        let entry = self.active_rail_entry(index, cx);
+        self.activate_canvas_tool(index, name, entry, cx);
+    }
+
+    pub(in crate::shell) fn preferences(&self) -> &Preferences {
+        &self.settings.preferences
+    }
+
+    pub(in crate::shell) fn show_preferences(
+        &mut self,
+        category: PreferenceCategory,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_dialog(ShellDialog::Preferences(category), cx);
+    }
+
+    fn show_dialog(&mut self, dialog: ShellDialog, cx: &mut Context<Self>) {
+        self.dismiss_menus(cx);
+        self.dialog = Some(dialog);
+        cx.notify();
+    }
+
+    pub(in crate::shell) fn close_dialog(&mut self, cx: &mut Context<Self>) {
+        self.dialog = None;
+        cx.notify();
+    }
+
+    /// Apply a preference, save it, and let whatever it changes see it.
+    ///
+    /// Saved on every change rather than on closing the dialog: there is no
+    /// OK button to press, so a change the user made is a change they meant.
+    pub(in crate::shell) fn change_preference(
+        &mut self,
+        change: PreferenceChange,
+        cx: &mut Context<Self>,
+    ) {
+        let preferences = &mut self.settings.preferences;
+        match change {
+            PreferenceChange::Theme(theme) => {
+                preferences.theme = theme;
+                self.run_shell_view_action(ShellViewAction::SetTheme(theme), cx);
+            }
+            PreferenceChange::RecentDocuments(count) => {
+                preferences.recent_documents = count;
+                self.settings.recents.truncate(count);
+                if let Some(path) = self.settings.paths.recents.as_deref() {
+                    if let Err(error) = self.settings.recents.save(path) {
+                        self.notices.push(error.to_string());
+                    }
+                }
+            }
+            PreferenceChange::Layout(layout) => preferences.layout = layout,
+            PreferenceChange::Zoom(zoom) => preferences.zoom = zoom,
+            PreferenceChange::SearchCaseSensitive(on) => preferences.search.case_sensitive = on,
+            PreferenceChange::SearchWholeWord(on) => preferences.search.whole_word = on,
+            PreferenceChange::SearchMode(mode) => preferences.search.mode = mode,
+        }
+        if let Some(path) = self.settings.paths.preferences.as_deref() {
+            if let Err(error) = self.settings.preferences.save(path) {
+                self.notices.push(error.to_string());
+            }
+        }
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    /// One row per keystroke in force, for the Help menu's local reference.
+    pub(in crate::shell) fn shortcut_rows(&self, cx: &App) -> Vec<(String, String)> {
+        let schema = main_menu_schema(self.menu_state(cx));
+        let registry_titles: Vec<(&str, &str)> = self
+            .tabs
+            .active()
+            .map(|tab| {
+                tab.canvas
+                    .read(cx)
+                    .model
+                    .registry()
+                    .commands()
+                    .iter()
+                    .map(|command| (command.id, command.title))
+                    .collect()
+            })
+            .unwrap_or_default();
+        crate::shell::dialog::shortcut_rows(&self.settings.bindings, |id| {
+            schema
+                .iter()
+                .flat_map(|section| &section.entries)
+                .find(|entry| entry.command.id() == id)
+                .map(|entry| entry.label.to_owned())
+                .or_else(|| {
+                    registry_titles
+                        .iter()
+                        .find(|(known, _)| *known == id)
+                        .map(|(_, title)| (*title).to_owned())
+                })
+                .unwrap_or_else(|| id.to_owned())
+        })
+    }
+
+    pub(in crate::shell) fn dismiss_notice(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.notices.len() {
+            self.notices.remove(index);
+            cx.notify();
         }
     }
 
@@ -552,21 +904,22 @@ impl ShellFrame {
             self.active_view_state(cx),
             self.shell_view_state,
             self.quick_actions_state.visibility(),
-            self.export_codecs(cx),
+            self.registry_facts(cx),
+            self.settings.recents.documents().len(),
         )
     }
 
-    /// Which export formats the active document's registry installed. Derived
-    /// from the registry rather than from a hardcoded list, so a build with
-    /// `codecs-common` compiled out disables the entries with a reason
+    /// What the active document's registry answers about the entries that
+    /// ask it: which export codecs, which commands, which capabilities.
+    /// Derived from the registry rather than from a hardcoded list, so a
+    /// build with a plugin compiled out disables its entries with a reason
     /// instead of offering entries that would fail.
-    fn export_codecs(&self, cx: &App) -> ExportCodecs {
+    fn registry_facts(&self, cx: &App) -> RegistryFacts {
         match self.tabs.active() {
-            Some(tab) => {
-                let model = &tab.canvas.read(cx).model;
-                ExportCodecs::installed(|id| model.has_codec(id))
-            }
-            None => ExportCodecs::default(),
+            Some(tab) => RegistryFacts::of(tab.canvas.read(cx).model.registry()),
+            // With no document there is no tab registry to ask, and the
+            // entries still have to say whether their plugin is installed.
+            None => self.settings.registry,
         }
     }
 
@@ -862,8 +1215,91 @@ impl ShellFrame {
         cx.notify();
     }
 
+    /// The notices waiting to be read, newest last.
+    fn render_notices(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
+        let mut column = div().flex().flex_col();
+        for (index, notice) in self.notices.iter().enumerate() {
+            column = column.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .bg(theme.error_surface)
+                    .text_color(theme.error_text)
+                    .child(div().flex_1().child(notice.clone()))
+                    .child(
+                        div()
+                            .id(("notice-dismiss", index))
+                            .px_2()
+                            .cursor_pointer()
+                            .rounded_sm()
+                            .hover(move |button| button.bg(theme.subtle_hover))
+                            .on_click(cx.listener(move |frame, _event, _window, cx| {
+                                frame.dismiss_notice(index, cx);
+                            }))
+                            .child("Dismiss"),
+                    ),
+            );
+        }
+        column
+    }
+
+    /// File > Open Recent, as a flyout rather than a submenu: the entries are
+    /// file names, and the menu schema carries static labels.
+    fn render_recent_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
+        let mut panel = div()
+            .id("recent-menu")
+            .absolute()
+            .top(px(GLOBAL_BAR_HEIGHT))
+            .left(px(8.0))
+            .w(px(420.0))
+            .max_h(px(400.0))
+            .overflow_y_scroll()
+            .p_2()
+            .rounded_md()
+            .bg(theme.raised)
+            .text_color(theme.text)
+            .occlude();
+        for (index, recent) in self.settings.recents.documents().iter().enumerate() {
+            let title = recent.title();
+            let path = recent.path.display().to_string();
+            panel = panel.child(
+                div()
+                    .id(("recent-entry", index))
+                    .min_h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(move |row| row.bg(theme.selected))
+                    .on_click(cx.listener(move |frame, _event, _window, cx| {
+                        frame.open_recent(index, cx);
+                    }))
+                    .child(div().flex_none().child(title))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_right()
+                            .text_xs()
+                            .text_color(theme.muted_text)
+                            .child(path),
+                    ),
+            );
+        }
+        panel
+    }
+
     fn dismiss_menus(&mut self, cx: &mut Context<Self>) {
         self.main_menu_open = false;
+        self.recent_menu_open = false;
         self.tab_context_menu = None;
         self.canvas_context_menu = None;
         cx.notify();
@@ -994,6 +1430,13 @@ impl ShellFrame {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(unavailable) =
+            unavailable_selection(result.clone(), self.tabs.active().is_some())
+        {
+            self.search_feedback = Some(unavailable);
+            cx.notify();
+            return;
+        }
         match result {
             SearchResult::Tool { index, name, .. } => {
                 let entry = self.active_rail_entry(index, cx);
@@ -1006,10 +1449,12 @@ impl ShellFrame {
                 self.search_feedback = None;
                 self.open_find_bar(Some(query), window, cx);
             }
-            deferred => {
-                self.search_feedback = unavailable_selection(deferred);
-                cx.notify();
+            SearchResult::Command { id, .. } => {
+                self.search_feedback = None;
+                self.run_registry_command(id, cx);
             }
+            // Everything unavailable returned above.
+            SearchResult::Unavailable { .. } => {}
         }
     }
 
@@ -1619,6 +2064,7 @@ impl Render for ShellFrame {
             .flex()
             .flex_col()
             .child(self.render_global_bar(cx))
+            .child(self.render_notices(cx))
             .child(tab_bar)
             .child(body);
 
@@ -1628,6 +2074,7 @@ impl Render for ShellFrame {
             .on_action(cx.listener(Self::close_find_bar))
             .child(frame);
         if self.main_menu_open
+            || self.recent_menu_open
             || self.tab_context_menu.is_some()
             || self.canvas_context_menu.is_some()
         {
@@ -1647,6 +2094,9 @@ impl Render for ShellFrame {
         if self.main_menu_open {
             root = root.child(self.render_main_menu(window, cx));
         }
+        if self.recent_menu_open {
+            root = root.child(self.render_recent_menu(cx));
+        }
         if let Some(menu) = self.tab_context_menu {
             root = root.child(self.render_tab_context_menu(menu, window, cx));
         }
@@ -1655,6 +2105,9 @@ impl Render for ShellFrame {
         }
         if self.search_panel_visible(cx) {
             root = root.child(self.render_search_results(cx));
+        }
+        if let Some(dialog) = self.dialog {
+            root = root.child(render_dialog(self, dialog, theme, cx));
         }
         root
     }
@@ -1878,7 +2331,9 @@ mod tests {
 
     #[cfg(feature = "shell-test-support")]
     use gpui::{TestAppContext, VisualTestContext};
-    use onionskin_core::{Document, PageLayoutMode, ViewPoint, ViewRotation, ViewSize, ZoomPolicy};
+    use onionskin_core::{PageLayoutMode, ViewPoint, ViewRotation, ZoomPolicy};
+
+    use crate::preferences::ThemePreference;
     use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
 
     use super::*;
@@ -2088,11 +2543,17 @@ mod tests {
             },
         )
         .unwrap();
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
         let theme = shell_view.tokens();
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
-            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
         });
 
         let right_click = MouseDownEvent {
@@ -2161,7 +2622,75 @@ mod tests {
         });
     }
 
-    /// The headline binding, dispatched the way the user dispatches it.
+    /// A window with the routes the app installs at startup: the keymap's
+    /// keybindings and the one action listener behind them.
+    #[cfg(feature = "shell-test-support")]
+    fn bound_window(
+        seeds: &[&str],
+        cx: &mut TestAppContext,
+    ) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
+        bound_window_in(seeds, crate::config::ConfigPaths::default(), cx)
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn bound_window_in(
+        seeds: &[&str],
+        paths: crate::config::ConfigPaths,
+        cx: &mut TestAppContext,
+    ) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
+        let tabs: Vec<_> = seeds
+            .iter()
+            .map(|seed| {
+                let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../corpus/seeds")
+                    .join(seed);
+                let document = Document::open_path(&path).expect("the seed opens");
+                let model = CanvasModel::new(
+                    document,
+                    crate::build_registry(),
+                    ViewSize {
+                        width: 800.0,
+                        height: 600.0,
+                    },
+                )
+                .expect("the model builds");
+                (path, model)
+            })
+            .collect();
+        let settings = ShellSettings::load(paths, &crate::build_registry());
+        let bindings = settings.bindings.clone();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
+        let theme = shell_view.tokens();
+        let window = cx.add_window(move |window, cx| {
+            let tabs = tabs
+                .into_iter()
+                .map(|(path, model)| (path, cx.new(|_| Canvas::new(model, theme))))
+                .collect();
+            ShellFrame::new(tabs, shell_view, settings, window, cx)
+        });
+        let state = window
+            .update(cx, |frame, _window, cx| frame.menu_state(cx))
+            .unwrap();
+        let installed = bindings.clone();
+        cx.update(|cx| {
+            crate::shell::find_bar::install_keybindings(cx);
+            crate::shell::install_command_keybindings(cx, &installed);
+            super::super::global_bar::install_native_menus(cx, window, state);
+        });
+        (window, bindings)
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn keystroke_for(bindings: &[crate::keymap::Binding], id: &str) -> String {
+        let binding = bindings
+            .iter()
+            .find(|binding| binding.id == id)
+            .unwrap_or_else(|| panic!("{id} is bound"));
+        crate::keymap::platform_keystroke(&binding.keystroke, cfg!(target_os = "macos"))
+    }
+
+    /// The headline binding, dispatched the way the user dispatches it, and
+    /// with the keystroke the keymap actually installed.
     ///
     /// Everything else about the find bar was tested by calling its methods,
     /// which is how two separate dead routes shipped: an element listener that
@@ -2169,48 +2698,341 @@ mod tests {
     /// inside the dispatching window's own update and could not find it.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
-    fn a_real_ctrl_f_keystroke_opens_the_find_bar(cx: &mut TestAppContext) {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
-        let document = Document::open_path(&path).unwrap();
-        let model = CanvasModel::new(
-            document,
-            PluginRegistry::new(),
-            ViewSize {
-                width: 800.0,
-                height: 600.0,
-            },
-        )
-        .unwrap();
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
-        let theme = shell_view.tokens();
-        let window = cx.add_window(move |window, cx| {
-            let canvas = cx.new(|_| Canvas::new(model, theme));
-            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
-        });
-
-        // Both halves of the route the app installs at startup.
-        let state = window
-            .update(cx, |frame, _window, cx| frame.menu_state(cx))
-            .unwrap();
-        cx.update(|cx| {
-            crate::shell::find_bar::install_keybindings(cx);
-            super::super::global_bar::install_native_menus(cx, window, state);
-        });
+    fn the_find_keystroke_opens_the_find_bar(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
         window
             .update(cx, |frame, _window, _cx| assert!(!frame.find.is_open()))
             .unwrap();
 
-        cx.simulate_keystrokes(window.into(), "ctrl-f");
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.find"));
         cx.run_until_parked();
 
         window
             .update(cx, |frame, _window, _cx| {
                 assert!(
                     frame.find.is_open(),
-                    "ctrl-f did not reach the find bar in a real window"
+                    "the find keystroke did not reach the find bar in a real window"
                 );
             })
             .unwrap();
+    }
+
+    /// The route the close and view commands used to take had the same
+    /// latent shape as the find bar's did: a global listener calling back
+    /// into the window that is mid-update. Both are pressed here rather than
+    /// called, because calling the handler is exactly what missed it twice.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_close_keystroke_closes_the_active_tab(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.close"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame
+                        .tabs
+                        .tabs()
+                        .iter()
+                        .map(|tab| tab.title().to_owned())
+                        .collect::<Vec<_>>(),
+                    vec!["two-page.pdf".to_owned()],
+                    "the close keystroke did not reach the window"
+                );
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_view_keystroke_reaches_the_canvas(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(!frame.active_view_state(cx).unwrap().is_actual_size());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.actual-size"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(
+                    frame.active_view_state(cx).unwrap().is_actual_size(),
+                    "the zoom keystroke did not reach the canvas"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Select All is a plugin's command reached by a keystroke: the keymap
+    /// binds the id the plugin published, the menu entry names the same id,
+    /// and the shell runs whatever the registry holds for it.
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    #[gpui::test]
+    fn the_select_all_keystroke_runs_the_registered_command(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.select-all"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let selected = frame
+                    .tabs
+                    .active()
+                    .unwrap()
+                    .canvas
+                    .read(cx)
+                    .model
+                    .selection_text()
+                    .map(str::to_owned);
+                assert!(
+                    selected.is_some_and(|text| !text.is_empty()),
+                    "the Select All keystroke selected nothing"
+                );
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(
+            window.into(),
+            &keystroke_for(&bindings, "edit.deselect-all"),
+        );
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert_eq!(
+                    frame
+                        .tabs
+                        .active()
+                        .unwrap()
+                        .canvas
+                        .read(cx)
+                        .model
+                        .selection_text(),
+                    None
+                );
+            })
+            .unwrap();
+    }
+
+    /// A file that only opens because cos repaired it, built the way
+    /// `corpus/make-malformed.sh`'s junk-header variant builds one: bytes
+    /// ahead of `%PDF-`, which leaves every cross-reference offset short.
+    #[cfg(feature = "shell-test-support")]
+    fn junk_header_pdf(name: &str) -> PathBuf {
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let mut bytes = b"% this line is not part of the PDF\n".to_vec();
+        bytes.extend(std::fs::read(seed).expect("the seed reads"));
+        let path = crate::config::test_dir("repair-notice").join(name);
+        std::fs::write(&path, bytes).expect("the test writes its file");
+        path
+    }
+
+    /// Decision 10 opens a repaired file; it does not open one silently.
+    /// The notice names the file and what the repair did, from the report
+    /// rather than from a fixed sentence.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_repaired_document_says_so_where_the_user_can_read_it(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let broken = junk_header_pdf("junk-header.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(frame.notices.is_empty(), "{:?}", frame.notices);
+                frame.open_documents(std::slice::from_ref(&broken), cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert_eq!(frame.tabs.tabs().len(), 2);
+                let notices = frame.notices.join(" | ");
+                assert!(notices.contains("junk-header.pdf"), "{notices}");
+                assert!(notices.contains("repaired"), "{notices}");
+                let summary = frame
+                    .tabs
+                    .active()
+                    .unwrap()
+                    .canvas
+                    .read(cx)
+                    .model
+                    .provenance()
+                    .report()
+                    .expect("the file needed repair")
+                    .summary();
+                assert!(
+                    notices.contains(&summary),
+                    "the notice does not carry the repair report: {notices}"
+                );
+            })
+            .unwrap();
+    }
+
+    /// A clean file gets no notice, so the notice bar means something.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_clean_document_opens_without_a_notice(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_documents(&[seed], cx);
+                assert_eq!(frame.tabs.tabs().len(), 2);
+                assert!(frame.notices.is_empty(), "{:?}", frame.notices);
+            })
+            .unwrap();
+    }
+
+    /// Opening writes the recents list, and Open Recent opens what it
+    /// recorded. The file is checked as well as the in-memory list: a
+    /// recents list that does not survive the session is not one.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn opening_a_document_records_it_and_open_recent_opens_it_again(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("recents-frame");
+        let recents_file = dir.join(crate::config::RECENTS_FILE);
+        let _ = std::fs::remove_file(&recents_file);
+        let (window, _) = bound_window_in(&[], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_documents(std::slice::from_ref(&seed), cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(frame.tabs.tabs().len(), 1);
+                assert_eq!(
+                    frame
+                        .settings
+                        .recents
+                        .documents()
+                        .iter()
+                        .map(|recent| recent.title())
+                        .collect::<Vec<_>>(),
+                    vec!["two-page.pdf".to_owned()]
+                );
+            })
+            .unwrap();
+        let (saved, errors) = crate::recents::Recents::load(Some(&recents_file));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(saved.documents().len(), 1, "the list reached disk");
+        assert!(saved.documents()[0].path.is_absolute());
+
+        // Open Recent on a document that is already open raises its tab
+        // rather than opening it twice.
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_recent(0, cx);
+                assert_eq!(frame.tabs.tabs().len(), 1);
+                assert!(!frame.recent_menu_open);
+            })
+            .unwrap();
+    }
+
+    /// One unopenable path does not cost the user the others.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_document_that_will_not_open_is_reported_and_the_rest_still_open(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&[], cx);
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/gone.pdf");
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_documents(&[missing, seed], cx);
+
+                assert_eq!(frame.tabs.tabs().len(), 1);
+                assert_eq!(frame.notices.len(), 1, "{:?}", frame.notices);
+                assert!(frame.notices[0].contains("gone.pdf"), "{:?}", frame.notices);
+            })
+            .unwrap();
+    }
+
+    /// A preference has to reach three places: the state the window paints
+    /// from, the file, and the menu that shows which one is in force.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_preference_change_reaches_the_window_and_the_file(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("preferences-frame");
+        let file = dir.join(crate::config::PREFERENCES_FILE);
+        let _ = std::fs::remove_file(&file);
+        let (window, _) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.change_preference(
+                    crate::shell::preferences_dialog::PreferenceChange::Theme(
+                        ThemePreference::Light,
+                    ),
+                    cx,
+                );
+                assert_eq!(frame.shell_view_state.theme(), ThemePreference::Light);
+                assert_eq!(frame.preferences().theme, ThemePreference::Light);
+            })
+            .unwrap();
+
+        let (saved, errors) = crate::preferences::Preferences::load(Some(&file));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(saved.theme, ThemePreference::Light);
+    }
+
+    /// Shortening the list in Preferences shortens it now, not next launch.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn lowering_the_recents_limit_drops_the_extra_entries(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("recents-limit");
+        let _ = std::fs::remove_file(dir.join(crate::config::RECENTS_FILE));
+        let (window, _) = bound_window_in(&[], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let seeds = ["hello.pdf", "two-page.pdf", "minimal.pdf"].map(|name| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus/seeds")
+                .join(name)
+        });
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_documents(&seeds, cx);
+                assert_eq!(frame.settings.recents.documents().len(), 3);
+
+                frame.change_preference(
+                    crate::shell::preferences_dialog::PreferenceChange::RecentDocuments(1),
+                    cx,
+                );
+
+                assert_eq!(frame.settings.recents.documents().len(), 1);
+            })
+            .unwrap();
+    }
+
+    /// The Help menu's shortcut reference is the keymap, with the menus'
+    /// own names for the commands.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_shortcut_reference_names_the_commands_the_menus_name(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        let rows = window
+            .update(cx, |frame, _window, cx| frame.shortcut_rows(cx))
+            .unwrap();
+
+        assert_eq!(rows.len(), bindings.len());
+        assert!(
+            rows.iter().any(|(label, keystroke)| label == "Open…"
+                && *keystroke == keystroke_for(&bindings, "file.open")),
+            "{rows:?}"
+        );
+        assert!(rows.iter().all(|(label, _)| !label.is_empty()), "{rows:?}");
     }
 
     #[cfg(feature = "shell-test-support")]
@@ -2227,11 +3049,17 @@ mod tests {
             },
         )
         .unwrap();
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
         let theme = shell_view.tokens();
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
-            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
         });
 
         cx.update(|window, app| {
@@ -2295,12 +3123,19 @@ mod tests {
             },
         )
         .unwrap();
-        let mut shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let mut shell_view =
+            ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
         shell_view.apply(ShellViewAction::ToggleReadMode);
         let theme = shell_view.tokens();
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
-            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
         });
 
         cx.update(|window, app| {
@@ -2376,7 +3211,8 @@ mod tests {
             },
         )
         .unwrap();
-        let theme = ShellViewState::new(gpui::WindowAppearance::Dark).tokens();
+        let theme =
+            ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System).tokens();
         let mut canvas = Canvas::new(model, theme);
         let origin = ViewPoint {
             x: f32::from(bounds.origin.x),
@@ -2721,7 +3557,8 @@ mod tests {
             },
         )
         .expect("the canvas model builds");
-        let theme = ShellViewState::new(gpui::WindowAppearance::Dark).tokens();
+        let theme =
+            ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System).tokens();
         let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
         (canvas, on_screen, cx)
     }
@@ -2859,11 +3696,17 @@ mod tests {
             },
         )
         .unwrap();
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
         let theme = shell_view.tokens();
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
-            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
         });
 
         // The registry has no tools, so every index is out of range.
