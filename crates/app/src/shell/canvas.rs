@@ -2410,6 +2410,10 @@ mod tests {
         assert!(model.take_snapshot_png().unwrap().is_none());
     }
 
+    // Names a tools-basic type, so it only exists when that plugin is compiled
+    // in. Without the guard, --no-default-features --features shell builds the
+    // app but fails to build its tests.
+    #[cfg(feature = "tools-basic")]
     #[test]
     fn the_snapshot_tool_reaches_the_canvas_through_the_snapshot_request() {
         let mut model = painted_model([255, 255, 255, 255]);
