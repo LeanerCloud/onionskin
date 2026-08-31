@@ -308,7 +308,8 @@ impl SearchInput {
 
     /// What the field has selected, for the test that checks a window-wide
     /// binding does not take a keystroke away from a focused text field.
-    #[cfg(test)]
+    /// That test needs a window, hence the feature.
+    #[cfg(all(test, feature = "shell-test-support"))]
     pub(super) fn selected_range(&self) -> std::ops::Range<usize> {
         self.buffer.selected_range.clone()
     }

@@ -164,6 +164,7 @@ fn image_for(raster: &BaseRaster) -> Thumbnail {
 pub(in crate::shell) fn render_home(
     state: &HomeState,
     recents: &Recents,
+    home: Option<&Path>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -216,7 +217,7 @@ pub(in crate::shell) fn render_home(
             .into_any_element()
     } else {
         match state.view() {
-            HomeView::List => list(recents, theme, cx).into_any_element(),
+            HomeView::List => list(recents, home, theme, cx).into_any_element(),
             HomeView::Thumbnail => thumbnails(state, recents, theme, cx).into_any_element(),
         }
     };
@@ -233,7 +234,12 @@ pub(in crate::shell) fn render_home(
         .child(body)
 }
 
-fn list(recents: &Recents, theme: ThemeTokens, cx: &mut Context<ShellFrame>) -> gpui::Div {
+fn list(
+    recents: &Recents,
+    home: Option<&Path>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
     for (index, recent) in recents.documents().iter().enumerate() {
         rows = rows.child(
@@ -258,7 +264,7 @@ fn list(recents: &Recents, theme: ThemeTokens, cx: &mut Context<ShellFrame>) -> 
                         .text_right()
                         .text_xs()
                         .text_color(theme.muted_text)
-                        .child(recent.display_path()),
+                        .child(recent.display_path(home)),
                 ),
         );
     }

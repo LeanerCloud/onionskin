@@ -39,11 +39,11 @@ impl RecentDocument {
     /// Where it is, as a person reads it. The home directory is written
     /// `~`: the list is on screen whenever Home is, and an absolute path
     /// spells out the account name to anyone looking at the screen.
-    pub fn display_path(&self) -> String {
-        abbreviate(
-            &self.path,
-            std::env::var_os("HOME").as_deref().map(Path::new),
-        )
+    ///
+    /// The home directory is passed in rather than read here: this runs once
+    /// per row per frame, and `ConfigPaths` already resolved it at startup.
+    pub fn display_path(&self, home: Option<&Path>) -> String {
+        abbreviate(&self.path, home)
     }
 }
 
@@ -275,6 +275,31 @@ mod tests {
         assert_eq!(
             abbreviate(Path::new("/srv/report.pdf"), None),
             "/srv/report.pdf"
+        );
+    }
+
+    /// The abbreviation is what keeps an account name off a shared screen,
+    /// and it takes the home directory it is given rather than reading the
+    /// environment once per row per frame.
+    #[test]
+    fn a_document_under_the_home_directory_reads_as_a_tilde() {
+        let recent = RecentDocument {
+            path: PathBuf::from("/home/someone/papers/report.pdf"),
+            opened_at: 0,
+        };
+
+        assert_eq!(
+            recent.display_path(Some(Path::new("/home/someone"))),
+            "~/papers/report.pdf"
+        );
+        assert_eq!(
+            recent.display_path(Some(Path::new("/home/else"))),
+            "/home/someone/papers/report.pdf"
+        );
+        assert_eq!(
+            recent.display_path(None),
+            "/home/someone/papers/report.pdf",
+            "with no home to compare against, the whole path is what there is"
         );
     }
 

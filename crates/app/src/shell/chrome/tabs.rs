@@ -369,17 +369,30 @@ impl ShellFrame {
         }
     }
 
+    /// Run a command that arrived from a keystroke or a native menu item.
+    ///
+    /// A refusal goes on the notice bar as well as to stderr: a keystroke
+    /// can reach a command the menus grey out, and the user pressing it is
+    /// looking at the window, not at a terminal.
     pub(super) fn run_native_command(
         window_handle: WindowHandle<Self>,
         command: MenuCommand,
         cx: &mut App,
     ) {
         let result = window_handle.update(cx, |frame, window, cx| {
-            frame.run_main_menu_command(command, window, cx)
+            match frame.run_main_menu_command(command, window, cx) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let message = format!("{}: {error}", command.id());
+                    frame.notices.push(message.clone());
+                    cx.notify();
+                    Err(message)
+                }
+            }
         });
         match result {
             Ok(Ok(())) => {}
-            Ok(Err(error)) => eprintln!("onionskin: {error}"),
+            Ok(Err(message)) => eprintln!("onionskin: {message}"),
             Err(error) => eprintln!("onionskin: cannot run menu command: {error}"),
         }
     }
@@ -1347,7 +1360,7 @@ impl ShellFrame {
             .occlude();
         for (index, recent) in self.settings.recents.documents().iter().enumerate() {
             let title = recent.title();
-            let path = recent.display_path();
+            let path = recent.display_path(self.settings.paths.home.as_deref());
             panel = panel.child(
                 div()
                     .id(("recent-entry", index))
@@ -1684,18 +1697,20 @@ impl ShellFrame {
     }
 
     /// The navigation column, for tests that drive a pane through a real
-    /// window and then ask what it holds.
-    #[cfg(test)]
+    /// window and then ask what it holds. Gated on the feature those tests
+    /// are gated on, or a `--features shell` test build compiles all three
+    /// with nothing calling them.
+    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn navigation(&self) -> &NavigationPanesState {
         &self.navigation
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn navigation_mut(&mut self) -> &mut NavigationPanesState {
         &mut self.navigation
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn active_canvas(&self) -> Option<&Entity<Canvas>> {
         self.tabs.active().map(|tab| &tab.canvas)
     }
@@ -2132,7 +2147,13 @@ impl Render for ShellFrame {
                 });
             body = body.child(document_column);
         } else {
-            body = body.child(render_home(&self.home, &self.settings.recents, theme, cx));
+            body = body.child(render_home(
+                &self.home,
+                &self.settings.recents,
+                self.settings.paths.home.as_deref(),
+                theme,
+                cx,
+            ));
         }
         body = body.when(visibility.side_panel, |body| {
             body.child(render_side_panel(self.side_panel_state, theme, cx))
@@ -2607,7 +2628,11 @@ mod tests {
     /// The entries the menu shows come from the live model, and picking one
     /// reaches the subsystem that owns it: Take A Snapshot activates the
     /// registered snapshot tool, Rotate Clockwise turns the real view.
-    #[cfg(feature = "shell-test-support")]
+    ///
+    /// Needs the plugin that registers that tool, for the same reason the
+    /// canvas's snapshot-request test does: without it the entry is
+    /// correctly not live, and the assertion is about the case where it is.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
     #[gpui::test]
     fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext) {
         use onionskin_plugin_api::ToolCapability;
@@ -2851,9 +2876,13 @@ mod tests {
     /// Quit runs inside the same deferred window update every other command
     /// does, and it is the one that tears the application down while it is
     /// there. Pressed rather than called, because that is the route.
+    ///
+    /// Named for what it asserts: a test context has no process to end, so
+    /// this says the update quit ran in did not leave the frame unusable,
+    /// and nothing more. Making the Quit arm a no-op leaves it green.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
-    fn the_quit_keystroke_reaches_the_application(cx: &mut TestAppContext) {
+    fn the_quit_keystroke_does_not_leave_the_frame_mid_flight(cx: &mut TestAppContext) {
         let (window, bindings) = bound_window(&["hello.pdf"], cx);
 
         cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.quit"));
@@ -2866,6 +2895,29 @@ mod tests {
                 assert_eq!(frame.tabs.tabs().len(), 1);
             })
             .expect("quitting left the window in a state it can be read in");
+    }
+
+    /// A keystroke can reach a command the menus grey out, and telling the
+    /// user only on stderr tells them nothing.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keystroke_the_menus_would_grey_out_says_so_in_the_window(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.close"));
+        cx.run_until_parked();
+
+        // No document now, so the zoom command the keystroke reaches is one
+        // the menus disable.
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.actual-size"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                let notices = frame.notices.join(" | ");
+                assert!(notices.contains("view.actual-size"), "{notices}");
+                assert!(notices.contains("No document is open"), "{notices}");
+            })
+            .unwrap();
     }
 
     /// Select All is a plugin's command reached by a keystroke: the keymap

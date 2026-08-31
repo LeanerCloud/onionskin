@@ -4,9 +4,11 @@
 //! keymap path the plan names and the one Schist uses. `XDG_CONFIG_HOME`
 //! overrides it where it is set.
 //!
-//! Everything written here is written owner-only. The recents list is a list
-//! of paths to documents the user opened, which is exactly the kind of thing
-//! a shared or backed-up home directory should not hand to another account.
+//! Everything written here is written owner-only, and so is the directory:
+//! the recents list is a list of paths to documents the user opened, and the
+//! file names alone say which of Onionskin's features someone uses. Neither
+//! is something a shared or backed-up home directory should hand to another
+//! account.
 
 use std::ffi::OsStr;
 use std::io::{self, Write as _};
@@ -36,6 +38,21 @@ fn config_dir_from(xdg_config_home: Option<&OsStr>, home: Option<&OsStr>) -> Opt
     Some(Path::new(home).join(".config").join("onionskin"))
 }
 
+/// The user's home directory, whatever this platform calls it.
+///
+/// Windows sets `USERPROFILE` and normally leaves `HOME` unset, so reading
+/// only `HOME` there quietly means "no home", which is how an abbreviation
+/// meant to keep an account name off the screen stops happening on one
+/// platform.
+pub fn home_dir() -> Option<PathBuf> {
+    for variable in ["HOME", "USERPROFILE"] {
+        if let Some(value) = std::env::var_os(variable).filter(|value| !value.is_empty()) {
+            return Some(PathBuf::from(value));
+        }
+    }
+    None
+}
+
 /// The three files, resolved once at startup.
 ///
 /// Every path is optional together: an environment that names no home
@@ -46,13 +63,24 @@ pub struct ConfigPaths {
     pub keymap: Option<PathBuf>,
     pub preferences: Option<PathBuf>,
     pub recents: Option<PathBuf>,
+    /// The user's home directory, resolved once here so the surfaces that
+    /// shorten a path for display do not ask the environment per row per
+    /// frame.
+    pub home: Option<PathBuf>,
 }
 
 impl ConfigPaths {
     pub fn resolve() -> Self {
+        let home = home_dir();
         match config_dir() {
-            Some(dir) => Self::in_dir(&dir),
-            None => Self::default(),
+            Some(dir) => Self {
+                home,
+                ..Self::in_dir(&dir)
+            },
+            None => Self {
+                home,
+                ..Self::default()
+            },
         }
     }
 
@@ -63,18 +91,51 @@ impl ConfigPaths {
             keymap: Some(dir.join(KEYMAP_FILE)),
             preferences: Some(dir.join(PREFERENCES_FILE)),
             recents: Some(dir.join(RECENTS_FILE)),
+            home: home_dir(),
         }
     }
 }
 
+/// The largest config file this will read.
+///
+/// Every file here is meant to be edited by hand, and the biggest of them is
+/// a recents list of fifty paths. A megabyte is far past anything legitimate
+/// and small enough that reading it costs nothing.
+pub const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
 /// The file's contents, or `None` when it does not exist. A missing config
 /// file is the normal first-run state, not a failure.
+///
+/// Bounded, and not as a formality: a `keymap.json` symlinked to
+/// `/dev/urandom` held startup for a minute while memory grew, because
+/// nothing about `read_to_string` stops at a file that never ends. Three of
+/// these are read before the window opens, so a config file must not be able
+/// to hang the app. Anything larger is refused by name, and the caller's
+/// defaults stand.
 pub fn read(path: &Path) -> io::Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(contents) => Ok(Some(contents)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+    use std::io::Read as _;
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    // One byte past the limit, so a file exactly at it still reads and
+    // anything longer is caught without reading the rest of it.
+    let mut contents = String::new();
+    let read = file
+        .take(MAX_CONFIG_BYTES + 1)
+        .read_to_string(&mut contents)?;
+    if read as u64 > MAX_CONFIG_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} is larger than {MAX_CONFIG_BYTES} bytes, which no configuration file is",
+                path.display()
+            ),
+        ));
     }
+    Ok(Some(contents))
 }
 
 /// Write `contents` owner-only, as one step.
@@ -88,11 +149,20 @@ pub fn read(path: &Path) -> io::Result<Option<String>> {
 /// whatever an existing file happened to carry.
 pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        create_private_dir(parent)?;
     }
     let temporary = path.with_extension("writing");
+    // Removed first and created new, rather than truncated: `mode` applies
+    // only to a file this call creates, so a leftover `.writing` from a
+    // killed process would keep whatever mode it had and carry it through
+    // the rename onto the real file.
+    match std::fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -146,6 +216,22 @@ pub fn keep_unreadable(path: &Path) -> String {
          exist, so the next save replaces it)",
         path.with_extension("bak").display()
     )
+}
+
+/// Create the configuration directory, owner-only.
+///
+/// The names of the files in it say which features someone uses, so the
+/// directory is 0700 for the same reason the files are 0600. An existing
+/// directory keeps its mode: a user who widened it did so deliberately.
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(path)
 }
 
 /// Copy `from` to `to` only when `to` does not exist yet, owner-only.
@@ -331,11 +417,120 @@ mod tests {
         assert!(note.contains("the next save replaces it"), "{note}");
     }
 
+    /// The directory is as private as the files: its listing says which
+    /// features this account uses.
+    #[cfg(unix)]
+    #[test]
+    fn the_configuration_directory_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = test_dir("config-dir-mode").join("fresh");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        write_private(&dir.join("recents.json"), "{}").expect("the file is written");
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "the config directory is readable by others"
+        );
+    }
+
+    /// A `.writing` file left by a killed process must not lend its mode to
+    /// the file that replaces it.
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_temporary_file_does_not_widen_the_file_it_becomes() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = test_dir("config-stale-temp").join("recents.json");
+        let temporary = path.with_extension("writing");
+        std::fs::write(&temporary, "left behind").expect("the test writes its file");
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644))
+            .expect("the test can widen its own file");
+
+        write_private(&path, "{\"documents\":[]}").expect("the file is written");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// Windows sets USERPROFILE and normally leaves HOME unset, so reading
+    /// only HOME there means "no home", and the abbreviation that keeps an
+    /// account name off the screen silently stops happening on that
+    /// platform.
+    #[test]
+    fn the_home_directory_is_found_under_the_name_this_platform_uses() {
+        let named = ["HOME", "USERPROFILE"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+
+        assert_eq!(
+            named,
+            home_dir().is_some(),
+            "home_dir disagrees with the environment it reads"
+        );
+    }
+
     #[test]
     fn a_missing_file_reads_as_absent_rather_than_as_an_error() {
         let path = test_dir("config-missing").join("nothing.json");
 
         assert_eq!(read(&path).expect("a missing file is not an error"), None);
+    }
+
+    /// A config file is read with a bound, because it may be a symlink to
+    /// something that never ends. Checked on a real file rather than on the
+    /// constant, so the bound is the one `read` applies.
+    #[test]
+    fn a_file_larger_than_a_configuration_file_is_refused_by_name() {
+        let path = test_dir("config-too-large").join("keymap.json");
+        let oversized = "x".repeat(MAX_CONFIG_BYTES as usize + 1);
+        std::fs::write(&path, &oversized).expect("the test writes its file");
+
+        let error = read(&path).expect_err("an oversized file is refused");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("keymap.json"), "{error}");
+        assert!(error.to_string().contains("larger than"), "{error}");
+    }
+
+    /// The case the bound exists for: a config file that never ends.
+    ///
+    /// This is what a `keymap.json` symlinked to `/dev/urandom` does, and
+    /// before the bound it held startup for a minute while memory grew. The
+    /// test finishes in milliseconds or not at all, which is the assertion.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_never_ends_is_refused_rather_than_read_forever() {
+        let path = test_dir("config-endless").join("keymap.json");
+        let _ = std::fs::remove_file(&path);
+        std::os::unix::fs::symlink("/dev/urandom", &path).expect("the test makes its symlink");
+
+        let started = std::time::Instant::now();
+        let error = read(&path).expect_err("an endless file is refused");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "reading an endless file took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// And a file at the limit still reads, so the bound refuses only what it
+    /// means to.
+    #[test]
+    fn a_file_at_the_limit_still_reads() {
+        let path = test_dir("config-at-limit").join("keymap.json");
+        let contents = "x".repeat(MAX_CONFIG_BYTES as usize);
+        std::fs::write(&path, &contents).expect("the test writes its file");
+
+        assert_eq!(
+            read(&path).expect("a file at the limit reads"),
+            Some(contents)
+        );
     }
 
     #[test]

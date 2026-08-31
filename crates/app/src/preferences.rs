@@ -346,17 +346,7 @@ impl Preferences {
         );
         file.insert("search_whole_word".into(), self.search.whole_word.into());
         file.insert("search_mode".into(), mode_key(self.search.mode).into());
-        // Whatever is already in the file and is not one of the settings
-        // above. `or_insert` keeps this build's value for the keys it wrote.
-        if let Ok(Some(source)) = crate::config::read(path) {
-            if let Ok(existing) =
-                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&source)
-            {
-                for (setting, value) in existing {
-                    file.entry(setting).or_insert(value);
-                }
-            }
-        }
+        carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
         crate::config::write_private(path, &json).map_err(|source| PreferencesError::Unwritable {
@@ -437,6 +427,40 @@ fn unknown_value(
         setting: setting.to_owned(),
         value: value.to_string(),
         allowed,
+    }
+}
+
+/// How many keys this build does not know it will carry forward.
+///
+/// Enough for another version's whole category list, few enough that a file
+/// filled with junk sheds it rather than being re-serialised on every click.
+const MAX_CARRIED_SETTINGS: usize = 64;
+
+/// Add the keys already in the file that `save` did not write.
+///
+/// A key from another version was reported when the file was read, and that
+/// report is not consent to delete it. Read back from disk rather than
+/// carried in memory, so a file edited by hand between load and save keeps
+/// what was added.
+///
+/// Read-modify-write against an atomic writer: two processes saving at once
+/// can lose the second one's unknown keys. Not worth a lock file for a
+/// preference dialog, and the known settings are unaffected either way.
+fn carry_forward(path: &Path, file: &mut serde_json::Map<String, serde_json::Value>) {
+    let Ok(Some(source)) = crate::config::read(path) else {
+        // No file, or one that cannot be read at all. Nothing to carry, and
+        // the load that reported it already copied it aside.
+        return;
+    };
+    let Ok(existing) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&source)
+    else {
+        // The file became unparseable since it was loaded, so this save is
+        // about to replace something the user cannot get back otherwise.
+        crate::config::keep_unreadable(path);
+        return;
+    };
+    for (setting, value) in existing.into_iter().take(file.len() + MAX_CARRIED_SETTINGS) {
+        file.entry(setting).or_insert(value);
     }
 }
 
@@ -660,6 +684,30 @@ mod tests {
             "the save dropped a setting this build does not have: {written}"
         );
         assert!(written.contains("\"light\""), "{written}");
+    }
+
+    /// A file that became unparseable between load and save is about to be
+    /// replaced by this save, so it is copied aside first. Without this the
+    /// only rescue copy was made at load time, and a hand edit mid-session
+    /// never saw one.
+    #[test]
+    fn a_file_that_broke_since_it_was_loaded_is_kept_before_the_save_replaces_it() {
+        let dir = crate::config::test_dir("preferences-broke-later");
+        let path = dir.join("preferences.json");
+        let kept = path.with_extension("bak");
+        let _ = std::fs::remove_file(&kept);
+        std::fs::write(&path, r#"{"theme": "dark"}"#).expect("the test writes its file");
+        let (preferences, errors) = Preferences::load(Some(&path));
+        assert!(errors.is_empty(), "{errors:?}");
+        // Someone edits the file badly while the app is running.
+        std::fs::write(&path, "{ broken by hand").expect("the test breaks its file");
+
+        preferences.save(&path).expect("preferences save");
+
+        assert_eq!(
+            std::fs::read_to_string(&kept).expect("the copy exists"),
+            "{ broken by hand"
+        );
     }
 
     #[test]

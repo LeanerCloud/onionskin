@@ -139,7 +139,10 @@ impl ShellSettings {
         }
     }
 
-    #[cfg(test)]
+    /// Gated on the feature its callers are gated on: every test that uses
+    /// this is a windowed one, and a `--features shell` test build would
+    /// otherwise compile it with nothing calling it.
+    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn defaults() -> Self {
         Self::load(ConfigPaths::default(), &PluginRegistry::new())
     }

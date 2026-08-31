@@ -64,6 +64,14 @@ pub enum KeymapError {
         id: String,
         value: String,
     },
+    /// A keystroke this build cannot bind: a key name nothing produces, or
+    /// a sequence where a chord belongs.
+    Unbindable {
+        path: PathBuf,
+        id: String,
+        keystroke: String,
+        reason: &'static str,
+    },
     /// Two commands claim one keystroke. The earlier command in the built-in
     /// table keeps it, so which one wins does not depend on the order of a
     /// JSON object.
@@ -100,6 +108,16 @@ impl fmt::Display for KeymapError {
                 "{} binds \"{id}\" to {value}, which is not a keystroke or null",
                 path.display()
             ),
+            Self::Unbindable {
+                path,
+                id,
+                keystroke,
+                reason,
+            } => write!(
+                f,
+                "{} binds \"{id}\" to {keystroke}, which {reason}",
+                path.display()
+            ),
             Self::Duplicate {
                 keystroke,
                 kept,
@@ -121,6 +139,7 @@ impl std::error::Error for KeymapError {
             | Self::UnknownCommand { .. }
             | Self::EmptyKeystroke { .. }
             | Self::InvalidBinding { .. }
+            | Self::Unbindable { .. }
             | Self::Duplicate { .. } => None,
         }
     }
@@ -238,6 +257,69 @@ impl Keymap {
     }
 }
 
+/// Why this build cannot bind `keystroke`, or `None` when it can.
+///
+/// GPUI takes any single token as a key name, so `cmd-zoomin` binds happily
+/// and then never fires, with nothing anywhere saying why. And whitespace
+/// makes a *sequence* of keystrokes, which is a chord to everything else
+/// here: `cmd-a b` would install a two-keystroke binding that swallows a
+/// plain `cmd-a`. Both are refused by name instead.
+fn unbindable(keystroke: &str) -> Option<&'static str> {
+    if keystroke.split_whitespace().count() > 1 {
+        return Some("is a sequence of keystrokes; one command takes one chord");
+    }
+    let key = keystroke.rsplit('-').next().unwrap_or(keystroke);
+    // `cmd--` is the minus key: the last segment is empty because the key is
+    // the separator.
+    if key.is_empty() {
+        return None;
+    }
+    let single_character = key.chars().count() == 1;
+    if single_character || NAMED_KEYS.contains(&key) {
+        return None;
+    }
+    Some("names a key this build cannot produce")
+}
+
+/// The key names GPUI translates, from its own platform table. A name
+/// outside this and not a single character reaches nothing, whatever it
+/// parses as.
+const NAMED_KEYS: [&str; 33] = [
+    "space",
+    "backspace",
+    "escape",
+    "enter",
+    "tab",
+    "up",
+    "down",
+    "left",
+    "right",
+    "pageup",
+    "pagedown",
+    "home",
+    "end",
+    "delete",
+    "insert",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+    "f13",
+    "f14",
+    "f15",
+    "f16",
+    "f17",
+    "f18",
+];
+
 /// One keystroke's identity, for deciding whether two bindings collide.
 ///
 /// Comparing the strings is not enough: `cmd-shift-a` and `shift-cmd-a` are
@@ -272,7 +354,20 @@ fn apply_override(
     match value {
         serde_json::Value::Null => entry.1 = None,
         serde_json::Value::String(keystroke) if !keystroke.trim().is_empty() => {
-            entry.1 = Some(keystroke.trim().to_owned());
+            let keystroke = keystroke.trim();
+            // Refused here rather than after the whole table is resolved, so
+            // the command keeps the keystroke it had. A file this build
+            // cannot use should leave the app as it was, which is what a
+            // value that is not a keystroke at all already does.
+            match unbindable(keystroke) {
+                Some(reason) => errors.push(KeymapError::Unbindable {
+                    path: path.to_path_buf(),
+                    id: id.to_owned(),
+                    keystroke: keystroke.to_owned(),
+                    reason,
+                }),
+                None => entry.1 = Some(keystroke.to_owned()),
+            }
         }
         serde_json::Value::String(_) => errors.push(KeymapError::EmptyKeystroke {
             path: path.to_path_buf(),
@@ -526,6 +621,52 @@ mod tests {
 
         assert!(loaded.errors().is_empty());
         assert_eq!(keystroke(&loaded, "file.open"), Some("cmd-shift-o"));
+    }
+
+    /// A key name nothing produces parses, binds, and then never fires.
+    /// Refused by name, and the command keeps its default.
+    #[test]
+    fn a_key_this_build_cannot_produce_is_refused_and_the_default_stands() {
+        let keymap = resolve(r#"{"view.zoom-in": "cmd-zoomin"}"#);
+
+        assert_eq!(
+            messages(&keymap),
+            vec![
+                "/tmp/keymap.json binds \"view.zoom-in\" to cmd-zoomin, which names a key \
+                 this build cannot produce"
+                    .to_owned()
+            ]
+        );
+        assert_eq!(keystroke(&keymap, "view.zoom-in"), Some("cmd-="));
+    }
+
+    /// Whitespace makes a sequence, which GPUI installs as two keystrokes
+    /// while everything here treats it as one chord. A `cmd-a b` binding
+    /// would have swallowed a plain `cmd-a`.
+    #[test]
+    fn a_sequence_of_keystrokes_is_refused_rather_than_shadowing_a_chord() {
+        let keymap = resolve(r#"{"view.zoom-in": "cmd-a b"}"#);
+
+        assert_eq!(keymap.errors().len(), 1, "{:?}", messages(&keymap));
+        assert!(
+            messages(&keymap)[0].contains("is a sequence of keystrokes"),
+            "{:?}",
+            messages(&keymap)
+        );
+        assert_eq!(keystroke(&keymap, "view.zoom-in"), Some("cmd-="));
+    }
+
+    /// The names that do reach a key, including the ones with a modifier
+    /// spelling and the minus key, still bind.
+    #[test]
+    fn named_keys_and_the_separator_key_still_bind() {
+        for keystroke in ["f4", "cmd-pagedown", "cmd--", "alt-left", "cmd-shift-="] {
+            assert_eq!(
+                unbindable(keystroke),
+                None,
+                "{keystroke} was refused and should not be"
+            );
+        }
     }
 
     /// One chord written two ways is one chord. Both spellings used to
