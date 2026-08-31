@@ -37,17 +37,19 @@ rendering, which would let the vello backend restore per-tile base renders.
 
 Most pages render in 1-53 ms. One real-world transparency-heavy page
 (0041790.pdf: 394 /Group, 90 /SMask) takes ~738 ms at 1x, correctly.
-UPDATE 2026-08-31 (P14 bench review): that figure is specific to hayro 0.7.1,
-the release the spike measured; re-pinning =0.7.1 reproduces 717-727 ms. The
-fork of upstream main we now pin renders the same page in ~181 ms at 1x, so
-hayro got roughly 4x faster. Decision 11's first-paint budget still stands:
-the fork takes 226-243 ms at retina zoom on a fast Mac, over the 200 ms
-budget, and a slower machine or a heavier page recreates the original case. This is
+This is
 interpreter cost, unfixable at the tile layer. The plan therefore carries TWO
 budgets: the lazy-open budget (unchanged, it guards xref-driven laziness) and
 a first-paint budget (something visible under 200 ms, full raster completes
 in background). The corpus has no real 1000-page document (largest real file:
 152 pages); the bench file must be fetched or synthesized.
+
+UPDATE 2026-08-31 (P14 bench review): that figure is specific to hayro 0.7.1,
+the release the spike measured; re-pinning =0.7.1 reproduces 717-727 ms. The
+fork of upstream main we now pin renders the same page in ~181 ms at 1x, so
+hayro got roughly 4x faster. Decision 11's first-paint budget still stands:
+the fork takes 226-243 ms at retina zoom on a fast Mac, over the 200 ms
+budget, and a slower machine or a heavier page recreates the original case.
 
 ## hayro gaps found (upstream candidates)
 
