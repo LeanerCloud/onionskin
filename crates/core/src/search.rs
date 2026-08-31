@@ -110,6 +110,13 @@ impl SearchState {
         self.pages.get(&page)?.get(index)
     }
 
+    /// Which hit is current, as the page it sits on and its position among that
+    /// page's hits. A highlight pass needs the identity, not the hit itself, to
+    /// draw the current one differently from the rest.
+    pub fn cursor(&self) -> Option<(PageIndex, usize)> {
+        self.cursor
+    }
+
     /// The current hit's one-based position among all hits found so far, for
     /// the find bar's "3 of 12".
     pub fn current_ordinal(&self) -> Option<usize> {

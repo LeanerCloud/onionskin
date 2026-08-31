@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas as gpui_canvas, div, fill, outline, point, px, size, App, AppContext as _, Application,
-    BorderStyle, Bounds, ClipboardItem, Context, DispatchPhase, Image, ImageFormat,
+    BorderStyle, Bounds, ClipboardItem, Context, DispatchPhase, Hsla, Image, ImageFormat,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point, Render,
     ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase, Window, WindowBounds,
@@ -406,6 +406,16 @@ impl Render for Canvas {
                             }
                         }
                         paint_overlays(&paint.overlays, bounds.origin, theme, window);
+                        for highlight in paint.highlights {
+                            window.paint_quad(fill(
+                                window_bounds(bounds.origin, highlight.rect),
+                                Hsla::from(if highlight.current {
+                                    theme.search_highlight_current
+                                } else {
+                                    theme.search_highlight
+                                }),
+                            ));
+                        }
                     },
                 )
                 .size_full(),

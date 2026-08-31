@@ -2,8 +2,7 @@ use std::time::{Duration, Instant};
 
 use onionskin_core::{
     Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PagePoint,
-    PageQuad,
-    PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    PageQuad, PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
     ZoomPolicy,
 };
 use onionskin_render::raster_size;
