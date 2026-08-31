@@ -23,6 +23,7 @@ mod thumbnails;
 
 use std::path::PathBuf;
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
@@ -31,8 +32,10 @@ use gpui::{
 use onionskin_core::{Attachment, Layer, ObjRef, OutlineItem, PageIndex, SignatureField};
 
 use super::canvas::CanvasError;
+use super::chrome::accessible::{Activation, Element, Rects, Surface};
 use super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::Canvas;
+use crate::a11y::State as A11yState;
 
 pub(in crate::shell) use self::attachments::AttachmentAction;
 pub(in crate::shell) use self::layers::LayersCommand;
@@ -43,6 +46,10 @@ const STRIP_WIDTH: f32 = 48.0;
 /// The pane body beside it, when one is open.
 const BODY_WIDTH: f32 = 244.0;
 const ROW_HEIGHT: f32 = 28.0;
+/// Drawn and announced when the open pane's snapshot is not the open pane's.
+const NOTHING_YET: &str = "This pane has nothing to show yet.";
+/// What the two live panes say with no document behind them.
+const NO_DOCUMENT: &str = "No document is open.";
 
 /// Which pane is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,11 +353,87 @@ fn navigate(
     state.feedback = failure;
 }
 
+/// What the navigation column tells a screen reader.
+///
+/// Built from the same state, and in the same order, as
+/// [`render_navigation_panes`]: the strip walks `NavigationPane::ALL` and each
+/// pane body walks the list its render walks, so the rectangles the strip
+/// reports after prepaint land on the buttons they were measured from.
+pub(in crate::shell) fn accessible(
+    state: &NavigationPanesState,
+    canvas: Option<&Entity<Canvas>>,
+    rects: &Rects,
+    cx: &Context<ShellFrame>,
+) -> Element {
+    let mut strip = Element::new("navigation-pane-strip", Role::TabList, "Navigation Panes")
+        .with_children(
+            NavigationPane::ALL
+                .into_iter()
+                .map(|pane| {
+                    // The strip draws only `pane.icon()`, which a screen
+                    // reader reads as punctuation, so the name is the label.
+                    Element::new(pane.element_id(), Role::Tab, pane.label())
+                        .with_state(A11yState::selected(state.active == Some(pane)))
+                        .with_activation(Activation::Pane(PaneAction::Select(pane)))
+                })
+                .collect(),
+        );
+    rects.place(Surface::PaneStrip, &mut strip);
+
+    let mut column = Element::new("navigation-panes", Role::Navigation, "Navigation").child(strip);
+    if let Some(pane) = state.active {
+        column = column.child(
+            Element::new("navigation-pane-body", Role::TabPanel, pane.label())
+                .with_children(accessible_body(state, pane, canvas, cx)),
+        );
+    }
+    if let Some(feedback) = state.feedback.as_ref() {
+        column = column.child(Element::new(
+            "navigation-pane-feedback",
+            Role::Alert,
+            feedback.clone(),
+        ));
+    }
+    column
+}
+
+/// The open pane's own description, dispatched the way [`render_body`]
+/// dispatches its drawing.
+fn accessible_body(
+    state: &NavigationPanesState,
+    pane: NavigationPane,
+    canvas: Option<&Entity<Canvas>>,
+    cx: &Context<ShellFrame>,
+) -> Vec<Element> {
+    match (pane, state.content.as_ref()) {
+        (NavigationPane::Thumbnails, _) => thumbnails::accessible(state, canvas, cx),
+        (NavigationPane::SearchResults, _) => results::accessible(canvas, cx),
+        (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => {
+            bookmarks::accessible(items.as_deref())
+        }
+        (NavigationPane::Attachments, Some(PaneContent::Attachments(items))) => {
+            attachments::accessible(items.as_deref())
+        }
+        (NavigationPane::Layers, Some(PaneContent::Layers(items))) => {
+            layers::accessible(items.as_deref(), state.layers_menu.is_some())
+        }
+        (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
+            signatures::accessible(items.as_deref())
+        }
+        _ => vec![Element::new(
+            "navigation-pane-empty",
+            Role::Label,
+            NOTHING_YET,
+        )],
+    }
+}
+
 /// The navigation column: the button strip, and the open pane beside it.
 pub(in crate::shell) fn render_navigation_panes(
     state: &mut NavigationPanesState,
     canvas: Option<&Entity<Canvas>>,
     height: Pixels,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -359,6 +442,9 @@ pub(in crate::shell) fn render_navigation_panes(
     state.body_height = f32::from(height);
 
     let mut strip = div()
+        .on_children_prepainted(move |bounds, window, _cx| {
+            rects.record(Surface::PaneStrip, &bounds, window);
+        })
         .id("navigation-pane-strip")
         .w(px(STRIP_WIDTH))
         .h_full()
@@ -384,8 +470,8 @@ pub(in crate::shell) fn render_navigation_panes(
                 .cursor_pointer()
                 .when(active, |button| button.bg(theme.selected))
                 .hover(move |button| button.bg(theme.hover))
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
-                    frame.run_pane_action(PaneAction::Select(pane), cx);
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::Pane(PaneAction::Select(pane)), window, cx);
                 }))
                 .child(pane.icon()),
         );
@@ -468,7 +554,7 @@ fn render_body(
         }
         // The snapshot is always the open pane's, taken when it opened, so
         // the mismatched arms are unreachable rather than a state to draw.
-        _ => empty_message("This pane has nothing to show yet.", theme).into_any_element(),
+        _ => empty_message(NOTHING_YET, theme).into_any_element(),
     }
 }
 
@@ -513,9 +599,9 @@ fn menu_row(
     id: usize,
     label: &'static str,
     availability: MenuAvailability,
+    activation: Activation,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
-    on_click: impl Fn(&mut ShellFrame, &mut Context<ShellFrame>) + 'static,
 ) -> impl IntoElement {
     let enabled = availability.is_enabled();
     let mut row = div()
@@ -545,9 +631,37 @@ fn menu_row(
         row = row
             .cursor_pointer()
             .hover(move |row| row.bg(theme.hover))
-            .on_click(cx.listener(move |frame, _event, _window, cx| on_click(frame, cx)));
+            .on_click(cx.listener(move |frame, _event, window, cx| {
+                frame.run_activation(activation.clone(), window, cx);
+            }));
     }
     row
+}
+
+/// The described half of a pane's context menu, built from the same label,
+/// availability and action each drawn row takes, so the menu cannot be drawn
+/// with one set of entries and announced with another.
+fn menu_element(
+    id: &'static str,
+    name: &'static str,
+    entry: &'static str,
+    entries: impl IntoIterator<Item = (&'static str, MenuAvailability, Activation)>,
+) -> Element {
+    Element::new(id, Role::Menu, name).with_children(
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, availability, activation))| {
+                let row = Element::new((entry, index), Role::MenuItem, label)
+                    .with_state(A11yState::enabled(availability.is_enabled()))
+                    .with_activation(activation);
+                match availability.reason() {
+                    Some(reason) => row.with_description(reason),
+                    None => row,
+                }
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -1039,6 +1153,210 @@ mod tests {
                 frame.navigation().layers().expect("the layers read")[0].visible,
                 "the visibility the document locked is unchanged"
             );
+        });
+    }
+
+    /// The strip draws six glyphs and nothing else, so a reader given the
+    /// buttons as drawn hears punctuation. Every button is announced by its
+    /// pane's name, and the open one is the one announced as selected.
+    ///
+    /// Driven through a real frame because the strip's description has to
+    /// agree with the strip the frame drew, not with a state built here.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_pane_strip_button_is_announced_by_its_pane_name_and_not_by_its_glyph(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (frame, cx) = frame_over(super::super::fixtures::outline_pdf(), cx);
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                let described = accessible(
+                    frame.navigation(),
+                    frame.active_canvas(),
+                    &Rects::default(),
+                    cx,
+                );
+
+                let strip = described
+                    .find(&"navigation-pane-strip".into())
+                    .expect("the strip is described");
+                assert_eq!(strip.children.len(), NavigationPane::ALL.len());
+                for (button, pane) in strip.children.iter().zip(NavigationPane::ALL) {
+                    assert_eq!(button.key, gpui::ElementId::from(pane.element_id()));
+                    assert_eq!(button.label, pane.label());
+                    assert_ne!(button.label, pane.icon(), "the glyph is not a name");
+                    assert!(
+                        button.label.chars().any(char::is_alphabetic),
+                        "{} is announced as {:?}",
+                        pane.element_id(),
+                        button.label
+                    );
+                    assert_eq!(
+                        button.state.selected,
+                        Some(pane == NavigationPane::Bookmarks)
+                    );
+                    assert_eq!(
+                        button.activation,
+                        Some(Activation::Pane(PaneAction::Select(pane)))
+                    );
+                }
+            });
+        });
+    }
+
+    /// The open pane is described as the panel the strip's selected button
+    /// opened, and its rows are the rows the frame drew: the band the pane
+    /// asked the worker for is the band it is drawing.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_open_panes_described_rows_are_the_rows_the_frame_drew(cx: &mut gpui::TestAppContext) {
+        let (frame, cx) = frame_over(super::super::fixtures::many_pages_pdf(1_000), cx);
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Thumbnails), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                let band = frame.navigation().thumbnails.requested_band();
+                assert!(!band.is_empty(), "the frame drew rows to describe");
+                let described = accessible(
+                    frame.navigation(),
+                    frame.active_canvas(),
+                    &Rects::default(),
+                    cx,
+                );
+
+                let body = described
+                    .find(&"navigation-pane-body".into())
+                    .expect("an open pane is described");
+                assert_eq!(body.label, NavigationPane::Thumbnails.label());
+
+                let rows = described
+                    .find(&"thumbnail-rows".into())
+                    .expect("the rows are described");
+                assert_eq!(rows.children.len(), band.len());
+                for (row, page) in rows.children.iter().zip(band) {
+                    assert_eq!(row.label, format!("Page {}", page + 1));
+                    assert_eq!(
+                        row.activation,
+                        Some(Activation::Pane(PaneAction::GoToPage(page)))
+                    );
+                }
+                let current = frame
+                    .active_canvas()
+                    .map(|canvas| canvas.read(cx).model.viewport().current_page())
+                    .expect("a tab is open");
+                let selected: Vec<&str> = rows
+                    .children
+                    .iter()
+                    .filter(|row| row.state.selected == Some(true))
+                    .map(|row| row.label.as_str())
+                    .collect();
+                assert_eq!(
+                    selected,
+                    [format!("Page {}", current + 1).as_str()],
+                    "exactly the page the view is on is announced as selected"
+                );
+            });
+        });
+    }
+
+    /// A pane the strip has not opened has no panel, so a reader is not
+    /// offered a body that is not on screen.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_closed_column_describes_its_strip_and_no_panel(cx: &mut gpui::TestAppContext) {
+        let (frame, cx) = frame_over(super::super::fixtures::outline_pdf(), cx);
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                let described = accessible(
+                    frame.navigation(),
+                    frame.active_canvas(),
+                    &Rects::default(),
+                    cx,
+                );
+
+                assert_eq!(described.children.len(), 1);
+                assert!(described.find(&"navigation-pane-body".into()).is_none());
+                for pane in NavigationPane::ALL {
+                    let button = described
+                        .find(&pane.element_id().into())
+                        .unwrap_or_else(|| panic!("{} is described", pane.element_id()));
+                    assert_eq!(button.state.selected, Some(false));
+                }
+            });
+        });
+    }
+
+    /// What an action refused is announced as an alert, because the pane's
+    /// feedback line is the only place it is shown and a reader that missed
+    /// it would be left with a control that looks live and does nothing.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_refused_action_is_announced_as_an_alert(cx: &mut gpui::TestAppContext) {
+        let (frame, cx) = frame_over(super::super::fixtures::locked_layer_pdf(), cx);
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Layers), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let layer = cx.update(|_window, app| {
+            frame
+                .read(app)
+                .navigation()
+                .layers()
+                .expect("the pane read the layers")[0]
+                .id
+        });
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_pane_action(
+                    PaneAction::Layer(LayerAction::SetVisible {
+                        layer,
+                        visible: false,
+                    }),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                let feedback = frame
+                    .navigation()
+                    .feedback
+                    .clone()
+                    .expect("a refused toggle says why");
+                let described = accessible(
+                    frame.navigation(),
+                    frame.active_canvas(),
+                    &Rects::default(),
+                    cx,
+                );
+
+                let alert = described
+                    .find(&"navigation-pane-feedback".into())
+                    .expect("the feedback line is announced");
+                assert_eq!(alert.role, Role::Alert);
+                assert_eq!(alert.label, feedback);
+            });
         });
     }
 

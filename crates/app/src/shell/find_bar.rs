@@ -5,23 +5,32 @@
 //! from the search worker one page at a time, so the count and the highlights
 //! grow while the walk is still running instead of appearing at the end.
 
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     actions, div, px, App, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_core::{MatchMode, SearchOptions, SearchState};
 
+use super::chrome::accessible::{Activation, Element, Rects, Surface, TextField};
 use super::chrome::{SearchInput, ShellFrame, ThemeTokens};
+use crate::a11y::State as A11yState;
 
-actions!(
-    onionskin_find,
-    [CloseFindBar, FindNextMatch, FindPreviousMatch]
-);
+actions!(onionskin_find, [Dismiss, FindNextMatch, FindPreviousMatch]);
 
 /// Only the bar's own subtree carries this, so Enter means "next hit" while
 /// the find field has focus and nothing anywhere else.
 pub(in crate::shell) const FIND_KEY_CONTEXT: &str = "OnionskinFind";
+
+/// The element id and the placeholder the find field renders with. Named here
+/// rather than at the call site so the field and the node describing it cannot
+/// be given different identities or different prompts.
+/// What the count slot says before there is anything to count.
+const NOTHING_TO_COUNT: &str = "No search yet";
+
+pub(in crate::shell) const FIND_INPUT_ID: &str = "find-input";
+pub(in crate::shell) const FIND_PLACEHOLDER: &str = "Find in document";
 
 const BOOKMARKS_DEFERRED: &str = "Bookmarks arrive with the navigation panes in M2 P8";
 const COMMENTS_DEFERRED: &str = "Comments arrive with the comment tools in M3";
@@ -30,9 +39,9 @@ const COMMENTS_DEFERRED: &str = "Comments arrive with the comment tools in M3";
 /// other command, so a user who rebinds Ctrl+F rebinds it everywhere.
 pub(in crate::shell) fn install_keybindings(cx: &mut App) {
     cx.bind_keys([
-        // Escape closes the bar from wherever focus sits, so it is bound
-        // window-wide; the handler propagates when the bar is already closed.
-        KeyBinding::new("escape", CloseFindBar, None),
+        // Escape dismisses the topmost overlay from wherever focus sits, so it
+        // is bound window-wide; the handler propagates when there is none.
+        KeyBinding::new("escape", Dismiss, None),
         KeyBinding::new("enter", FindNextMatch, Some(FIND_KEY_CONTEXT)),
         KeyBinding::new("shift-enter", FindPreviousMatch, Some(FIND_KEY_CONTEXT)),
     ]);
@@ -52,6 +61,116 @@ pub(in crate::shell) enum FindOption {
     WholeWord,
     Mode(MatchMode),
 }
+
+/// The bar's three glyph buttons.
+///
+/// Each is punctuation on screen, and a screen reader reading the glyph says
+/// the punctuation, so the name lives here beside the glyph rather than being
+/// invented somewhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Button {
+    Previous,
+    Next,
+    Close,
+}
+
+impl Button {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Previous => "find-previous",
+            Self::Next => "find-next",
+            Self::Close => "find-close",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Previous => "Previous Match",
+            Self::Next => "Next Match",
+            Self::Close => "Close Find",
+        }
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::Previous => "‹",
+            Self::Next => "›",
+            Self::Close => "✕",
+        }
+    }
+
+    fn activation(self) -> Activation {
+        match self {
+            Self::Previous => Activation::StepFind(FindDirection::Previous),
+            Self::Next => Activation::StepFind(FindDirection::Next),
+            Self::Close => Activation::DismissFindBar,
+        }
+    }
+}
+
+/// One thing in the query row, in the order the row builds it.
+///
+/// The row, its accessible description and the rectangles it reports after
+/// prepaint all walk this list, so a control cannot be drawn with one name,
+/// announced with another and measured as a third.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Item {
+    /// The query field.
+    Field,
+    /// The count beside it.
+    Count,
+    Button(Button),
+}
+
+impl Item {
+    const ROW: [Item; 5] = [
+        Item::Field,
+        Item::Count,
+        Item::Button(Button::Previous),
+        Item::Button(Button::Next),
+        Item::Button(Button::Close),
+    ];
+}
+
+/// Acrobat's two find-toolbar checkboxes: each is on or off on its own.
+const CHECKBOXES: [(&str, &str, FindOption); 2] = [
+    ("find-match-case", "Match Case", FindOption::CaseSensitive),
+    ("find-whole-word", "Whole Word", FindOption::WholeWord),
+];
+
+/// Acrobat's Return Results Containing: one of three, not three switches.
+const MODES: [(&str, &str, FindOption); 3] = [
+    (
+        "find-mode-phrase",
+        "Phrase",
+        FindOption::Mode(MatchMode::Phrase),
+    ),
+    (
+        "find-mode-any",
+        "Any Word",
+        FindOption::Mode(MatchMode::AnyWord),
+    ),
+    (
+        "find-mode-all",
+        "All Words",
+        FindOption::Mode(MatchMode::AllWords),
+    ),
+];
+
+/// Row 149's two checkboxes. They ship disabled with the reason they are, not
+/// absent: a user looking for them learns when they arrive.
+const DEFERRED: [(&str, &str, &str); 2] = [
+    (
+        "find-include-bookmarks",
+        "Include Bookmarks",
+        BOOKMARKS_DEFERRED,
+    ),
+    (
+        "find-include-comments",
+        "Include Comments",
+        COMMENTS_DEFERRED,
+    ),
+];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::shell) struct FindBarState {
@@ -181,104 +300,133 @@ impl FindSummary {
     }
 }
 
+/// What the find bar tells a screen reader.
+///
+/// The query row comes first and in row order, so the rectangles the row
+/// reports after prepaint land on the nodes describing it. Everything below
+/// the row follows in the order it is drawn.
+pub(in crate::shell) fn accessible(
+    state: FindBarState,
+    summary: &FindSummary,
+    query: &str,
+    rects: &Rects,
+) -> Element {
+    let mut bar = Element::new("find-bar", Role::Toolbar, "Find").with_children(
+        Item::ROW
+            .iter()
+            .map(|item| describe(*item, summary, query))
+            .collect(),
+    );
+    // The row is the head of the child list, so its rectangles land before
+    // anything the rest of the bar adds.
+    rects.place(Surface::FindBar, &mut bar);
+    for (id, label, option) in CHECKBOXES {
+        bar = bar.child(describe_option(id, label, option, Role::CheckBox, state));
+    }
+    for (id, label, option) in MODES {
+        bar = bar.child(describe_option(id, label, option, Role::RadioButton, state));
+    }
+    for (id, label, reason) in DEFERRED {
+        bar = bar.child(
+            Element::new(id, Role::CheckBox, label)
+                .with_state(A11yState {
+                    toggled: Some(false),
+                    selected: None,
+                    disabled: true,
+                })
+                .with_description(reason),
+        );
+    }
+    if let Some(progress) = summary.progress_label() {
+        bar = bar.child(Element::new("find-progress", Role::Label, progress));
+    }
+    if let Some(stopped) = summary.stopped_label() {
+        bar = bar.child(Element::new("find-stopped", Role::Alert, stopped));
+    }
+    if let Some(failure) = summary.failure_label() {
+        bar = bar.child(Element::new("find-failure", Role::Alert, failure));
+    }
+    bar
+}
+
+fn describe(item: Item, summary: &FindSummary, query: &str) -> Element {
+    match item {
+        Item::Field => Element::new(FIND_INPUT_ID, Role::SearchInput, "Find In Document")
+            .with_description(if query.is_empty() {
+                FIND_PLACEHOLDER.to_owned()
+            } else {
+                query.to_owned()
+            })
+            .with_activation(Activation::Focus(TextField::Find)),
+        // The count keeps its place with nothing to count, because the row
+        // draws it either way and the rectangles are paired by position.
+        Item::Count => Element::new(
+            "find-count",
+            Role::Label,
+            // The slot stays even with nothing to count, so the rectangles
+            // the row reports keep lining up, but a node with no name is a
+            // node a screen reader stops on and says nothing about.
+            summary
+                .count_label()
+                .unwrap_or_else(|| NOTHING_TO_COUNT.to_owned()),
+        ),
+        Item::Button(button) => Element::new(button.id(), Role::Button, button.name())
+            .with_activation(button.activation()),
+    }
+}
+
+fn describe_option(
+    id: &'static str,
+    label: &'static str,
+    option: FindOption,
+    role: Role,
+    state: FindBarState,
+) -> Element {
+    Element::new(id, role, label)
+        .with_state(A11yState::toggled(state.is_selected(option)))
+        .with_activation(Activation::ApplyFindOption(option))
+}
+
 pub(in crate::shell) fn render_find_bar(
     state: FindBarState,
     input: Entity<SearchInput>,
     summary: &FindSummary,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
-    let query_row = div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(div().w(px(200.0)).flex_none().child(input))
-        .child(
-            div()
-                .min_w(px(76.0))
-                .text_xs()
-                .text_color(theme.muted_text)
-                .children(summary.count_label()),
-        )
-        .child(step_button(
-            "find-previous",
-            "‹",
-            FindDirection::Previous,
-            theme,
-            cx,
-        ))
-        .child(step_button(
-            "find-next",
-            "›",
-            FindDirection::Next,
-            theme,
-            cx,
-        ))
-        .child(
-            div()
-                .id("find-close")
-                .h(px(24.0))
-                .w(px(24.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_sm()
-                .cursor_pointer()
-                .text_sm()
-                .hover(move |button| button.bg(theme.hover))
-                .on_click(cx.listener(|frame, _event, _window, cx| {
-                    frame.dismiss_find_bar(cx);
-                }))
-                .child("✕"),
-        );
+    let mut query_row =
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .on_children_prepainted(move |bounds, window, _cx| {
+                rects.record(Surface::FindBar, &bounds, window);
+            });
+    for item in Item::ROW {
+        query_row = match item {
+            Item::Field => query_row.child(div().w(px(200.0)).flex_none().child(input.clone())),
+            Item::Count => query_row.child(
+                div()
+                    .min_w(px(76.0))
+                    .text_xs()
+                    .text_color(theme.muted_text)
+                    .children(summary.count_label()),
+            ),
+            Item::Button(button) => query_row.child(glyph_button(button, theme, cx)),
+        };
+    }
 
-    let option_row = div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(option_chip(
-            "find-match-case",
-            "Match Case",
-            FindOption::CaseSensitive,
-            state,
-            theme,
-            cx,
-        ))
-        .child(option_chip(
-            "find-whole-word",
-            "Whole Word",
-            FindOption::WholeWord,
-            state,
-            theme,
-            cx,
-        ))
-        .child(div().w(px(8.0)))
-        .child(option_chip(
-            "find-mode-phrase",
-            "Phrase",
-            FindOption::Mode(MatchMode::Phrase),
-            state,
-            theme,
-            cx,
-        ))
-        .child(option_chip(
-            "find-mode-any",
-            "Any Word",
-            FindOption::Mode(MatchMode::AnyWord),
-            state,
-            theme,
-            cx,
-        ))
-        .child(option_chip(
-            "find-mode-all",
-            "All Words",
-            FindOption::Mode(MatchMode::AllWords),
-            state,
-            theme,
-            cx,
-        ));
+    let mut option_row = div().flex().items_center().gap_1();
+    for (id, label, option) in CHECKBOXES {
+        option_row = option_row.child(option_chip(id, label, option, state, theme, cx));
+    }
+    option_row = option_row.child(div().w(px(8.0)));
+    for (id, label, option) in MODES {
+        option_row = option_row.child(option_chip(id, label, option, state, theme, cx));
+    }
 
-    div()
+    let mut bar = div()
         .id("find-bar")
         .key_context(FIND_KEY_CONTEXT)
         .absolute()
@@ -293,53 +441,45 @@ pub(in crate::shell) fn render_find_bar(
         .occlude()
         .bg(theme.raised)
         .text_color(theme.text)
-        .on_action(cx.listener(ShellFrame::close_find_bar))
+        .on_action(cx.listener(ShellFrame::dismiss_overlay))
         .on_action(cx.listener(ShellFrame::find_next_match))
         .on_action(cx.listener(ShellFrame::find_previous_match))
         .child(query_row)
-        .child(option_row)
-        .child(deferred_checkbox(
-            "Include Bookmarks",
-            BOOKMARKS_DEFERRED,
-            theme,
-        ))
-        .child(deferred_checkbox(
-            "Include Comments",
-            COMMENTS_DEFERRED,
-            theme,
-        ))
-        .children(
-            summary
-                .progress_label()
-                .map(|progress| div().text_xs().text_color(theme.muted_text).child(progress)),
-        )
-        .children(
-            summary
-                .stopped_label()
-                .into_iter()
-                .chain(summary.failure_label())
-                .map(|problem| {
-                    div()
-                        .px_1()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(theme.error_surface)
-                        .text_xs()
-                        .text_color(theme.error_text)
-                        .child(problem)
-                }),
-        )
+        .child(option_row);
+    for (_, label, reason) in DEFERRED {
+        bar = bar.child(deferred_checkbox(label, reason, theme));
+    }
+    bar.children(
+        summary
+            .progress_label()
+            .map(|progress| div().text_xs().text_color(theme.muted_text).child(progress)),
+    )
+    .children(
+        summary
+            .stopped_label()
+            .into_iter()
+            .chain(summary.failure_label())
+            .map(|problem| {
+                div()
+                    .px_1()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(theme.error_surface)
+                    .text_xs()
+                    .text_color(theme.error_text)
+                    .child(problem)
+            }),
+    )
 }
 
-fn step_button(
-    id: &'static str,
-    label: &'static str,
-    direction: FindDirection,
+fn glyph_button(
+    button: Button,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
+    let activation = button.activation();
     div()
-        .id(id)
+        .id(button.id())
         .h(px(24.0))
         .w(px(24.0))
         .flex()
@@ -348,16 +488,16 @@ fn step_button(
         .rounded_sm()
         .cursor_pointer()
         .text_sm()
-        .hover(move |button| button.bg(theme.hover))
-        .on_click(cx.listener(move |frame, _event, _window, cx| {
-            frame.step_find(direction, cx);
+        .hover(move |style| style.bg(theme.hover))
+        .on_click(cx.listener(move |frame, _event, window, cx| {
+            frame.run_activation(activation.clone(), window, cx);
         }))
-        .child(label)
+        .child(button.glyph())
 }
 
 fn option_chip(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: &'static str,
     option: FindOption,
     state: FindBarState,
     theme: ThemeTokens,
@@ -375,14 +515,12 @@ fn option_chip(
         .text_xs()
         .when(selected, |chip| chip.bg(theme.selected))
         .hover(move |chip| chip.bg(theme.hover))
-        .on_click(cx.listener(move |frame, _event, _window, cx| {
-            frame.apply_find_option(option, cx);
+        .on_click(cx.listener(move |frame, _event, window, cx| {
+            frame.run_activation(Activation::ApplyFindOption(option), window, cx);
         }))
-        .child(label.into())
+        .child(label)
 }
 
-/// Row 149's two checkboxes. They ship disabled with the reason they are, not
-/// absent: a user looking for them learns when they arrive.
 fn deferred_checkbox(
     label: &'static str,
     reason: &'static str,
@@ -537,5 +675,209 @@ mod tests {
         // Choosing the mode already chosen changes nothing, so it does not
         // restart the walk.
         assert!(!state.apply(FindOption::Mode(MatchMode::AllWords)));
+    }
+
+    /// The step and close buttons draw as "‹", "›" and "✕". A screen reader
+    /// reading those says punctuation, so each carries a name made of words.
+    #[test]
+    fn the_step_and_close_buttons_are_announced_by_name_and_not_by_their_glyph() {
+        let described = accessible(
+            FindBarState::default(),
+            &summary(12, Some(3), false),
+            "ink",
+            &Rects::default(),
+        );
+
+        for button in [Button::Previous, Button::Next, Button::Close] {
+            let node = described
+                .find(&button.id().into())
+                .unwrap_or_else(|| panic!("{} is not in the description", button.id()));
+            assert_eq!(node.label, button.name());
+            assert_ne!(node.label, button.glyph());
+            assert!(
+                node.label.chars().any(char::is_alphabetic),
+                "{} is announced as {:?}",
+                button.id(),
+                node.label
+            );
+            assert_eq!(node.activation.as_ref(), Some(&button.activation()));
+        }
+        assert_eq!(
+            described.find(&"find-close".into()).unwrap().activation,
+            Some(Activation::DismissFindBar)
+        );
+    }
+
+    /// A chosen chip is a background colour on screen and nothing else, so the
+    /// state is the only thing that tells a screen reader it is on.
+    #[test]
+    fn an_option_chip_carries_its_selection_as_state_rather_than_in_its_name() {
+        let mut state = FindBarState::default();
+        state.apply(FindOption::CaseSensitive);
+        state.apply(FindOption::Mode(MatchMode::AllWords));
+
+        let described = accessible(state, &summary(0, None, false), "ink", &Rects::default());
+
+        let case = described.find(&"find-match-case".into()).unwrap();
+        assert_eq!(case.role, Role::CheckBox);
+        assert_eq!(case.label, "Match Case");
+        assert_eq!(case.state.toggled, Some(true));
+        assert_eq!(
+            case.activation,
+            Some(Activation::ApplyFindOption(FindOption::CaseSensitive))
+        );
+        assert_eq!(
+            described
+                .find(&"find-whole-word".into())
+                .unwrap()
+                .state
+                .toggled,
+            Some(false)
+        );
+
+        let all_words = described.find(&"find-mode-all".into()).unwrap();
+        assert_eq!(all_words.role, Role::RadioButton);
+        assert_eq!(all_words.state.toggled, Some(true));
+        assert_eq!(
+            described
+                .find(&"find-mode-phrase".into())
+                .unwrap()
+                .state
+                .toggled,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_deferred_checkbox_is_off_disabled_and_says_when_it_arrives() {
+        let described = accessible(
+            FindBarState::default(),
+            &summary(0, None, false),
+            "",
+            &Rects::default(),
+        );
+
+        let bookmarks = described.find(&"find-include-bookmarks".into()).unwrap();
+        assert_eq!(bookmarks.label, "Include Bookmarks");
+        assert!(!bookmarks.label.contains('☐'));
+        assert!(bookmarks.state.disabled);
+        assert_eq!(bookmarks.state.toggled, Some(false));
+        assert_eq!(bookmarks.description.as_deref(), Some(BOOKMARKS_DEFERRED));
+        assert_eq!(
+            described
+                .find(&"find-include-comments".into())
+                .unwrap()
+                .description
+                .as_deref(),
+            Some(COMMENTS_DEFERRED)
+        );
+    }
+
+    /// Both halves of "one list drives both": the description opens with one
+    /// node per rendered query-row item, in the same order, so the rectangles
+    /// the row reports after prepaint land on the right nodes.
+    #[test]
+    fn the_description_opens_with_one_node_per_query_row_item_in_row_order() {
+        let described = accessible(
+            FindBarState::default(),
+            &summary(12, Some(3), true),
+            "ink",
+            &Rects::default(),
+        );
+
+        let keys: Vec<gpui::ElementId> = described
+            .children
+            .iter()
+            .take(Item::ROW.len())
+            .map(|child| child.key.clone())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                FIND_INPUT_ID.into(),
+                "find-count".into(),
+                "find-previous".into(),
+                "find-next".into(),
+                "find-close".into(),
+            ]
+        );
+        assert!(described.children.len() > Item::ROW.len());
+    }
+
+    /// The count is drawn either way, so its node stays in place: dropping it
+    /// would shift every rectangle after it onto the wrong control.
+    #[test]
+    fn the_count_is_announced_and_keeps_its_place_with_nothing_to_count() {
+        let counted = accessible(
+            FindBarState::default(),
+            &summary(12, Some(3), true),
+            "ink",
+            &Rects::default(),
+        );
+        let mut empty = summary(0, None, false);
+        empty.has_query = false;
+        let uncounted = accessible(FindBarState::default(), &empty, "", &Rects::default());
+
+        assert_eq!(counted.children[1].label, "3 of 12");
+        assert_eq!(uncounted.children[1].key, "find-count".into());
+        // Named even with nothing to count: a screen reader stops here and
+        // would otherwise say only "text".
+        assert_eq!(uncounted.children[1].label, NOTHING_TO_COUNT);
+    }
+
+    #[test]
+    fn the_find_field_reads_what_was_typed_and_its_prompt_until_then() {
+        let empty = accessible(
+            FindBarState::default(),
+            &summary(0, None, false),
+            "",
+            &Rects::default(),
+        );
+        let typed = accessible(
+            FindBarState::default(),
+            &summary(1, Some(1), false),
+            "ink",
+            &Rects::default(),
+        );
+
+        let empty = empty.find(&FIND_INPUT_ID.into()).unwrap();
+        assert_eq!(empty.role, Role::SearchInput);
+        assert_eq!(empty.label, "Find In Document");
+        assert_eq!(empty.description.as_deref(), Some(FIND_PLACEHOLDER));
+        assert_eq!(empty.activation, Some(Activation::Focus(TextField::Find)));
+        assert_eq!(
+            typed
+                .find(&FIND_INPUT_ID.into())
+                .unwrap()
+                .description
+                .as_deref(),
+            Some("ink")
+        );
+    }
+
+    /// A walk that died and a page that could not be read are both on screen,
+    /// so both are in the description, and as alerts rather than as text a
+    /// screen reader only finds by hunting for it.
+    #[test]
+    fn a_walk_that_died_and_a_page_that_failed_are_announced_as_alerts() {
+        let mut summary = summary(2, Some(1), true);
+        summary.stopped = Some("search worker stopped before answering".to_owned());
+        summary.failed_pages = 1;
+        summary.first_failure = Some("page 9: content stream is not readable".to_owned());
+
+        let described = accessible(FindBarState::default(), &summary, "ink", &Rects::default());
+
+        let progress = described.find(&"find-progress".into()).unwrap();
+        assert_eq!(progress.role, Role::Label);
+        assert_eq!(progress.label, "3 of 10 pages searched");
+        let stopped = described.find(&"find-stopped".into()).unwrap();
+        assert_eq!(stopped.role, Role::Alert);
+        assert_eq!(
+            stopped.label,
+            "The search stopped: search worker stopped before answering"
+        );
+        let failure = described.find(&"find-failure".into()).unwrap();
+        assert_eq!(failure.role, Role::Alert);
+        assert!(failure.label.contains("1 page could not be read"));
     }
 }

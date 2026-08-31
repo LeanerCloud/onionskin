@@ -10,6 +10,7 @@ use gpui::{
 use onionskin_plugin_api::PluginRegistry;
 use unicode_segmentation::UnicodeSegmentation as _;
 
+use super::accessible::{Activation, TextField};
 use super::theme::ThemeTokens;
 
 actions!(
@@ -31,7 +32,7 @@ actions!(
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SearchResult {
+pub(in crate::shell) enum SearchResult {
     Tool {
         index: usize,
         id: &'static str,
@@ -306,6 +307,25 @@ impl SearchInput {
         &self.buffer.content
     }
 
+    /// What the field tells a screen reader.
+    ///
+    /// The name comes from the caller, because a text field is drawn with no
+    /// label of its own: the placeholder is all a sighted user gets, and it
+    /// disappears the moment anything is typed.
+    pub(super) fn accessible(
+        &self,
+        label: &'static str,
+        field: TextField,
+    ) -> super::accessible::Element {
+        field_node(
+            self.element_id,
+            label,
+            &self.buffer.content,
+            &self.placeholder,
+            field,
+        )
+    }
+
     /// What the field has selected, for the test that checks a window-wide
     /// binding does not take a keystroke away from a focused text field.
     /// That test needs a window, hence the feature.
@@ -454,6 +474,26 @@ impl SearchInput {
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
     }
+}
+
+/// The node for a text field: its name, and what it holds.
+///
+/// Split from [`SearchInput::accessible`] so what a field says can be checked
+/// without a window to build one in.
+fn field_node(
+    id: &'static str,
+    label: &'static str,
+    query: &str,
+    placeholder: &str,
+    field: TextField,
+) -> super::accessible::Element {
+    super::accessible::Element::new(id, accesskit::Role::SearchInput, label)
+        .with_description(if query.is_empty() {
+            placeholder.to_owned()
+        } else {
+            query.to_owned()
+        })
+        .with_activation(Activation::Focus(field))
 }
 
 fn single_line(text: &str) -> String {
@@ -1051,5 +1091,67 @@ mod tests {
     #[test]
     fn pasted_text_remains_single_line() {
         assert_eq!(single_line("one\r\ntwo\nthree"), "one  two three");
+    }
+
+    /// The placeholder is the only thing a sighted user sees in an empty
+    /// field, and it is gone the moment anything is typed, so the field says
+    /// whichever of the two is on screen and keeps its name either way.
+    #[test]
+    fn a_text_field_reads_what_was_typed_and_its_placeholder_until_then() {
+        let empty = field_node(
+            "global-search-input",
+            "Search",
+            "",
+            "Search tools or document",
+            TextField::Search,
+        );
+        let typed = field_node(
+            "global-search-input",
+            "Search",
+            "rotate",
+            "Search tools or document",
+            TextField::Search,
+        );
+
+        assert_eq!(empty.role, accesskit::Role::SearchInput);
+        assert_eq!(empty.label, "Search");
+        assert_eq!(
+            empty.description.as_deref(),
+            Some("Search tools or document")
+        );
+        assert_eq!(typed.label, "Search");
+        assert_eq!(typed.description.as_deref(), Some("rotate"));
+        assert_eq!(typed.activation, Some(Activation::Focus(TextField::Search)));
+        assert_eq!(typed.key, ElementId::from("global-search-input"));
+    }
+
+    /// The same thing over a live field rather than over the helper, so the
+    /// wiring between the two is covered as well as the shape it produces.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_live_field_announces_its_own_id_and_what_is_in_it(cx: &mut gpui::TestAppContext) {
+        let theme = crate::shell::chrome::ShellViewState::new(
+            gpui::WindowAppearance::Dark,
+            crate::preferences::ThemePreference::System,
+        )
+        .tokens();
+        let (input, cx) = cx.add_window_view(|_window, cx| {
+            SearchInput::with_placeholder("page-entry-input", "Page", theme, cx)
+        });
+        cx.run_until_parked();
+
+        let empty = input.update(cx, |input, _cx| {
+            input.accessible("Page Number", TextField::Page)
+        });
+        assert_eq!(empty.key, ElementId::from("page-entry-input"));
+        assert_eq!(empty.label, "Page Number");
+        assert_eq!(empty.description.as_deref(), Some("Page"));
+
+        let typed = input.update(cx, |input, cx| {
+            input.set_query("7", cx);
+            input.accessible("Page Number", TextField::Page)
+        });
+        assert_eq!(typed.description.as_deref(), Some("7"));
+        assert_eq!(typed.activation, Some(Activation::Focus(TextField::Page)));
     }
 }

@@ -17,7 +17,10 @@ use gpui::{
 use onionskin_core::{Document, Provenance, ViewPoint, ViewRect, ViewSize};
 use onionskin_plugin_api::PluginRegistry;
 
+use accesskit::Role;
+
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList, ViewAction};
+use self::chrome::accessible::{Activation, Element as A11yElement, Rects};
 use self::chrome::{
     command_defaults, command_for_id, install_native_menus, install_search_keybindings, MenuState,
     QuickAction, RegistryFacts, RunCommand, ShellFrame, ShellViewState, ThemeTokens,
@@ -390,6 +393,88 @@ impl Canvas {
         .detach();
     }
 
+    /// What the document tells a screen reader.
+    ///
+    /// The page node is a `Role::Document` with a role description of its
+    /// own, because AccessKit maps that role to `NSAccessibilityGroupRole`
+    /// and AppKit would otherwise answer "group": the defect M1's spike
+    /// recorded. Its children are one node per visible page and, under each,
+    /// one node per run of text, so a screen reader navigates the page rather
+    /// than being handed it as a single string.
+    ///
+    pub(in crate::shell) fn accessible(&mut self, title: &str, scale: f32) -> A11yElement {
+        let origin = self.model.canvas_origin();
+        let page_count = self.model.viewport().page_count();
+        let mut document = A11yElement::new("document", Role::Document, title.to_owned())
+            .with_activation(Activation::FocusDocument);
+        let pages = match self.model.accessible_pages() {
+            Ok(pages) => pages,
+            Err(error) => {
+                return document.child(A11yElement::new(
+                    "document-unreadable",
+                    Role::Alert,
+                    format!("This document cannot be laid out: {error}"),
+                ));
+            }
+        };
+        for outline in pages {
+            let number = outline.page + 1;
+            let mut page = A11yElement::new(
+                ("page", outline.page),
+                Role::Region,
+                format!("Page {number} of {page_count}"),
+            )
+            .with_role_description("page");
+            page.bounds = Some(Rects::view_rect(outline.rect, origin, scale));
+            match outline.text {
+                // An unmeasured page has no layout to place its words in, so
+                // it carries no runs. Saying so keeps "still loading" from
+                // sounding like "this page has no text on it".
+                Ok(_) if !outline.measured => {
+                    page = page.child(A11yElement::new(
+                        ("page-loading", outline.page),
+                        Role::Label,
+                        format!("Page {number} is still loading"),
+                    ));
+                }
+                Ok(runs) => {
+                    for (index, run) in runs.into_iter().enumerate() {
+                        let mut node = A11yElement::new(
+                            // Keyed by the page's own index, so a run reads
+                            // as belonging to the `page-N` node above it.
+                            // The label is what carries the human page
+                            // number.
+                            gpui::ElementId::NamedInteger(
+                                format!("page-{}-text", outline.page).into(),
+                                index as u64,
+                            ),
+                            Role::Label,
+                            run.text,
+                        );
+                        node.bounds = run.rect.map(|rect| Rects::view_rect(rect, origin, scale));
+                        page = page.child(node);
+                    }
+                }
+                Err(error) => {
+                    page = page.child(A11yElement::new(
+                        ("page-unreadable", outline.page),
+                        Role::Alert,
+                        format!("The text on page {number} cannot be read: {error}"),
+                    ));
+                }
+            }
+            document = document.child(page);
+        }
+        if let Some(status) = self.model.status() {
+            document = document.child(A11yElement::new(
+                "document-status",
+                Role::Alert,
+                status_text(status),
+            ));
+        }
+        document
+    }
+
     fn local_point(&self, point: Point<Pixels>) -> ViewPoint {
         let origin = self.model.canvas_origin();
         ViewPoint {
@@ -626,6 +711,7 @@ where
     Application::new().run(move |cx: &mut App| {
         install_search_keybindings(cx);
         find_bar::install_keybindings(cx);
+        chrome::install_a11y_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {
             if should_quit_after_window_closed(cx.windows().len()) {
@@ -670,6 +756,12 @@ where
             Ok(window) => {
                 install_native_menus(cx, window, menu_state);
                 cx.activate(true);
+                // A build with the probe feature on reads its own
+                // accessibility tree back off the window and exits. It walks
+                // this boot path rather than a copy of it, so what it reports
+                // is what the app publishes.
+                #[cfg(all(feature = "a11y-probe", target_os = "macos"))]
+                crate::a11y::probe::arm(cx);
             }
             Err(error) => {
                 *error_slot.borrow_mut() = Some(ShellError::Window(error.to_string()));

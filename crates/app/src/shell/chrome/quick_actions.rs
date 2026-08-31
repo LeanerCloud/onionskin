@@ -1,3 +1,4 @@
+use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, point, px, size, AppContext as _, Bounds, Context, Div, InteractiveElement as _,
@@ -6,12 +7,19 @@ use gpui::{
 };
 use onionskin_plugin_api::{PluginRegistry, ToolCapability};
 
+use super::accessible::{Activation, Element, Rects, Surface};
 use super::tabs::ShellFrame;
 use super::theme::ThemeTokens;
+use crate::a11y::State as A11yState;
 
 const PREFERRED_TOOLBAR_WIDTH: f32 = 640.0;
 const TOOLBAR_HEIGHT: f32 = 64.0;
 const CUSTOMIZATION_HEIGHT: f32 = 296.0;
+
+/// The braille-pattern glyph the drag handle draws, and the words a screen
+/// reader says instead of it.
+const DRAG_HANDLE_GLYPH: &str = "⠿";
+const DRAG_HANDLE_NAME: &str = "Move Quick Actions";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum QuickAction {
@@ -145,7 +153,7 @@ impl QuickActionAvailability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct QuickActionEntry {
+pub(in crate::shell) struct QuickActionEntry {
     pub(super) action: QuickAction,
     pub(super) availability: QuickActionAvailability,
 }
@@ -342,11 +350,90 @@ impl Render for QuickActionDragPreview {
     }
 }
 
+fn customize_label(customizing: bool) -> &'static str {
+    if customizing {
+        "Done"
+    } else {
+        "Customize"
+    }
+}
+
+fn visibility_glyph(visible: bool) -> &'static str {
+    if visible {
+        "✓"
+    } else {
+        "○"
+    }
+}
+
+/// What the quick-action toolbar tells a screen reader.
+///
+/// The row's children come first, in row order, so the rectangles the row
+/// reports after prepaint land on the right nodes. The customization rows
+/// follow, in the panel's order.
+pub(super) fn accessible(
+    entries: &[QuickActionEntry],
+    all_entries: &[QuickActionEntry],
+    state: &QuickActionsState,
+) -> Element {
+    let customizing = state.customizing();
+    // The handle is dragged, not activated, so it carries no activation.
+    let mut toolbar = Element::new("quick-actions", Role::Toolbar, "Quick Actions").child(
+        Element::new("quick-actions-drag-handle", Role::Button, DRAG_HANDLE_NAME),
+    );
+
+    for entry in entries {
+        let mut button = Element::new(
+            ("quick-action", entry.action.index()),
+            Role::Button,
+            entry.action.label(),
+        )
+        .with_state(A11yState::enabled(entry.availability.is_enabled()))
+        .with_activation(Activation::QuickAction(*entry));
+        if let Some(reason) = entry.availability.reason() {
+            button = button.with_description(reason);
+        }
+        toolbar = toolbar.child(button);
+    }
+
+    toolbar = toolbar.child(
+        Element::new(
+            "quick-actions-customize",
+            Role::Button,
+            customize_label(customizing),
+        )
+        .with_state(A11yState::toggled(customizing))
+        .with_activation(Activation::ToggleQuickActionCustomization),
+    );
+
+    if customizing {
+        for entry in all_entries {
+            let action = entry.action;
+            // The panel draws a tick beside the label. The tick is the
+            // checkbox's state here, so the name stays just the label.
+            let mut item = Element::new(
+                ("quick-action-customization", action.index()),
+                Role::CheckBox,
+                action.label(),
+            )
+            .with_state(A11yState::toggled(state.is_visible(action)))
+            .with_activation(Activation::ToggleQuickActionVisibility(action));
+            if let Some(reason) = entry.availability.reason() {
+                item = item.with_description(reason);
+            }
+            toolbar = toolbar.child(item);
+        }
+    }
+
+    toolbar
+}
+
 pub(super) fn render_quick_actions(
     entries: Vec<QuickActionEntry>,
     all_entries: Vec<QuickActionEntry>,
     state: &QuickActionsState,
     document: Size<Pixels>,
+    rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -356,31 +443,35 @@ pub(super) fn render_quick_actions(
     let drag = QuickActionDrag {
         id: state.next_drag(),
     };
-    let mut row = quick_actions_row().child(
-        div()
-            .id("quick-actions-drag-handle")
-            .w(px(24.0))
-            .h_full()
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_move()
-            .text_color(theme.secondary_text)
-            .on_drag(drag, move |_drag, offset, _window, cx| {
-                cx.new(|_| QuickActionDragPreview {
-                    offset,
-                    color: theme.drag_preview,
+    let mut row = quick_actions_row()
+        .on_children_prepainted(move |bounds, window, _cx| {
+            rects.record(Surface::QuickActions, &bounds, window);
+        })
+        .child(
+            div()
+                .id("quick-actions-drag-handle")
+                .w(px(24.0))
+                .h_full()
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_move()
+                .text_color(theme.secondary_text)
+                .on_drag(drag, move |_drag, offset, _window, cx| {
+                    cx.new(|_| QuickActionDragPreview {
+                        offset,
+                        color: theme.drag_preview,
+                    })
                 })
-            })
-            .on_drag_move::<QuickActionDrag>(cx.listener(
-                |frame, event: &gpui::DragMoveEvent<QuickActionDrag>, window, cx| {
-                    let id = event.drag(cx).id();
-                    frame.drag_quick_actions(id, event.event.position, window, cx);
-                },
-            ))
-            .child("⠿"),
-    );
+                .on_drag_move::<QuickActionDrag>(cx.listener(
+                    |frame, event: &gpui::DragMoveEvent<QuickActionDrag>, window, cx| {
+                        let id = event.drag(cx).id();
+                        frame.drag_quick_actions(id, event.event.position, window, cx);
+                    },
+                ))
+                .child(DRAG_HANDLE_GLYPH),
+        );
 
     for entry in entries {
         let enabled = entry.availability.is_enabled();
@@ -405,9 +496,9 @@ pub(super) fn render_quick_actions(
                         .cursor_pointer()
                         .hover(move |button| button.bg(theme.hover))
                 })
-                .on_click(cx.listener(move |frame, _event, _window, cx| {
+                .on_click(cx.listener(move |frame, _event, window, cx| {
                     if enabled {
-                        frame.select_quick_action(entry, cx);
+                        frame.run_activation(Activation::QuickAction(entry), window, cx);
                     }
                 }))
                 .child(div().text_xs().child(entry.action.label()))
@@ -435,11 +526,11 @@ pub(super) fn render_quick_actions(
             .rounded_sm()
             .cursor_pointer()
             .hover(move |button| button.bg(theme.hover))
-            .on_click(cx.listener(|frame, _event, _window, cx| {
-                frame.toggle_quick_action_customization(cx);
+            .on_click(cx.listener(|frame, _event, window, cx| {
+                frame.run_activation(Activation::ToggleQuickActionCustomization, window, cx);
             }))
             .text_xs()
-            .child(if customizing { "Done" } else { "Customize" }),
+            .child(customize_label(customizing)),
     );
 
     let mut toolbar = div()
@@ -477,10 +568,14 @@ pub(super) fn render_quick_actions(
                     .rounded_sm()
                     .cursor_pointer()
                     .hover(move |item| item.bg(theme.selected))
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
-                        frame.toggle_quick_action_visibility(action, cx);
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                        frame.run_activation(
+                            Activation::ToggleQuickActionVisibility(action),
+                            window,
+                            cx,
+                        );
                     }))
-                    .child(if visible { "✓" } else { "○" })
+                    .child(visibility_glyph(visible))
                     .child(action.label())
                     .when_some(entry.availability.reason(), |item, reason| {
                         item.child(
@@ -787,6 +882,180 @@ mod tests {
 
         assert_eq!(state.toolbar_size(document).width, document.width);
         assert_eq!(state.position().x, px(0.0));
+    }
+
+    fn described(state: &QuickActionsState, registry: &PluginRegistry) -> Element {
+        accessible(
+            &state.entries(registry),
+            &state.all_entries(registry),
+            state,
+        )
+    }
+
+    /// The handle is a braille-pattern glyph and the toolbar's only unlabeled
+    /// control. A screen reader reading the glyph says nothing useful, so the
+    /// name has to be words.
+    #[test]
+    fn the_drag_handle_is_announced_by_words_rather_than_by_its_braille_glyph() {
+        let handle = described(&QuickActionsState::default(), &PluginRegistry::new())
+            .find(&"quick-actions-drag-handle".into())
+            .expect("the toolbar describes its drag handle")
+            .clone();
+
+        assert_eq!(handle.label, "Move Quick Actions");
+        assert!(!handle.label.contains(DRAG_HANDLE_GLYPH));
+        assert!(handle.label.chars().all(|c| c.is_alphabetic() || c == ' '));
+        assert_eq!(handle.activation, None);
+    }
+
+    fn described_comment(registry: &PluginRegistry) -> Element {
+        described(&QuickActionsState::default(), registry)
+            .find(&("quick-action", QuickAction::Comment.index()).into())
+            .expect("the toolbar describes the comment action")
+            .clone()
+    }
+
+    #[test]
+    fn a_quick_action_that_is_not_delivered_yet_is_disabled_and_says_why() {
+        let missing = described_comment(&PluginRegistry::new());
+        assert!(missing.state.disabled);
+        assert_eq!(
+            missing.description.as_deref(),
+            Some("Available in M3 tools-comment")
+        );
+
+        let mut registry = PluginRegistry::new();
+        registry.register_tool(Box::new(CapabilityTool {
+            id: "comment",
+            capabilities: single_capability(ToolCapability::Comment),
+        }));
+        let live = described_comment(&registry);
+        assert!(!live.state.disabled);
+        assert_eq!(live.description, None);
+    }
+
+    #[test]
+    fn each_described_quick_action_carries_the_action_its_click_runs() {
+        let state = QuickActionsState::default();
+        let registry = PluginRegistry::new();
+        let entries = state.entries(&registry);
+        let described = accessible(&entries, &state.all_entries(&registry), &state);
+
+        for entry in &entries {
+            let node = described
+                .find(&("quick-action", entry.action.index()).into())
+                .unwrap_or_else(|| panic!("{} is not in the description", entry.action.label()));
+            assert_eq!(node.activation, Some(Activation::QuickAction(*entry)));
+        }
+    }
+
+    /// The panel draws a tick beside each label. The tick has to be the
+    /// checkbox's state, or a screen reader user hears "Comment" whether the
+    /// action is in the toolbar or not.
+    #[test]
+    fn a_visibility_checkbox_carries_its_tick_as_state_rather_than_in_its_name() {
+        let mut state = QuickActionsState::default();
+        state.toggle_customizing();
+        state.toggle_visibility(QuickAction::Comment);
+        let registry = PluginRegistry::new();
+
+        let described = described(&state, &registry);
+
+        let on = described
+            .find(&("quick-action-customization", QuickAction::Select.index()).into())
+            .unwrap();
+        let off = described
+            .find(&("quick-action-customization", QuickAction::Comment.index()).into())
+            .unwrap();
+        assert_eq!(on.role, Role::CheckBox);
+        assert_eq!(on.state.toggled, Some(true));
+        assert_eq!(off.state.toggled, Some(false));
+        assert_eq!(on.label, QuickAction::Select.label());
+        assert_eq!(off.label, QuickAction::Comment.label());
+        assert!(!on.label.contains(visibility_glyph(true)));
+        assert!(!off.label.contains(visibility_glyph(false)));
+        assert_eq!(
+            off.activation,
+            Some(Activation::ToggleQuickActionVisibility(
+                QuickAction::Comment
+            ))
+        );
+        assert_eq!(
+            off.description.as_deref(),
+            Some("Available in M3 tools-comment")
+        );
+    }
+
+    #[test]
+    fn the_customize_button_announces_what_it_draws_and_carries_the_panel_state() {
+        let registry = PluginRegistry::new();
+        let closed = QuickActionsState::default();
+        let mut open = QuickActionsState::default();
+        open.toggle_customizing();
+
+        let closed = described(&closed, &registry)
+            .find(&"quick-actions-customize".into())
+            .unwrap()
+            .clone();
+        let open = described(&open, &registry)
+            .find(&"quick-actions-customize".into())
+            .unwrap()
+            .clone();
+        assert_eq!(closed.label, "Customize");
+        assert_eq!(open.label, "Done");
+        assert_eq!(closed.state.toggled, Some(false));
+        assert_eq!(open.state.toggled, Some(true));
+        assert_eq!(
+            closed.activation,
+            Some(Activation::ToggleQuickActionCustomization)
+        );
+    }
+
+    /// Both halves of "one list drives both": the row renders the handle,
+    /// then one button per visible action, then the customize button, and the
+    /// description has to match that count and order for the prepainted
+    /// rectangles to line up. The customization rows come after, because the
+    /// panel paints them below the row.
+    #[test]
+    fn the_description_has_one_node_per_rendered_row_child_in_row_order() {
+        let registry = PluginRegistry::new();
+        let mut state = QuickActionsState::default();
+        state.toggle_visibility(QuickAction::Draw);
+
+        let row_only = described(&state, &registry);
+        let visible = state.entries(&registry);
+
+        assert_eq!(visible.len(), QuickAction::ALL.len() - 1);
+        assert_eq!(row_only.children.len(), visible.len() + 2);
+        let mut expected: Vec<gpui::ElementId> = vec!["quick-actions-drag-handle".into()];
+        expected.extend(
+            visible
+                .iter()
+                .map(|entry| ("quick-action", entry.action.index()).into()),
+        );
+        expected.push("quick-actions-customize".into());
+        assert_eq!(
+            row_only
+                .children
+                .iter()
+                .map(|child| child.key.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+
+        state.toggle_customizing();
+        let with_panel = described(&state, &registry);
+        assert_eq!(
+            with_panel.children.len(),
+            row_only.children.len() + QuickAction::ALL.len()
+        );
+        assert_eq!(
+            with_panel.children[..row_only.children.len()]
+                .iter()
+                .map(|child| child.key.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[cfg(feature = "shell-test-support")]
