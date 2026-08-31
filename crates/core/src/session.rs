@@ -8,8 +8,8 @@ use onionskin_cos::{BytesSource, Provenance};
 
 use crate::render::WorkerHandle;
 use crate::{
-    PageGeometry, PageIndex, PageRender, PageSvg, RenderRequest, RenderResponse, SearchMatch,
-    SearchOptions, SearchState, Selection,
+    PageGeometry, PageIndex, PageRect, PageRender, PageSvg, RenderRequest, RenderResponse,
+    SearchMatch, SearchOptions, SearchState, Selection,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -111,6 +111,16 @@ impl PageGeometryResponse {
     }
 }
 
+/// A page region the snapshot tool asked the shell to copy as an image.
+///
+/// The tool raises this instead of holding a render handle, so the plugin
+/// surface stays document and viewport only and the clipboard stays in
+/// `app`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SnapshotRequest {
+    pub region: PageRect,
+}
+
 const PAGE_CACHE_LIMIT: usize = 128;
 const TEXT_CACHE_LIMIT: usize = 16;
 
@@ -125,6 +135,7 @@ pub struct Document {
     text: PageCache<content::PageText>,
     selection: Selection,
     search: SearchState,
+    snapshot: Option<SnapshotRequest>,
 }
 
 impl Document {
@@ -153,6 +164,7 @@ impl Document {
             text: PageCache::new(TEXT_CACHE_LIMIT),
             selection: Selection::default(),
             search: SearchState::default(),
+            snapshot: None,
         })
     }
 
@@ -306,6 +318,18 @@ impl Document {
 
     pub fn selection_mut(&mut self) -> &mut Selection {
         &mut self.selection
+    }
+
+    /// Select `region` and ask the shell to copy it as an image. Raising a
+    /// request the shell has not taken yet replaces it: the user asked for
+    /// the region they drew last.
+    pub fn request_snapshot(&mut self, region: PageRect) {
+        self.selection.set_region(region);
+        self.snapshot = Some(SnapshotRequest { region });
+    }
+
+    pub fn take_snapshot_request(&mut self) -> Option<SnapshotRequest> {
+        self.snapshot.take()
     }
 
     pub fn search(&self) -> &SearchState {

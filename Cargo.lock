@@ -4082,6 +4082,7 @@ dependencies = [
 name = "onionskin-tools-basic"
 version = "0.1.0"
 dependencies = [
+ "onionskin-core",
  "onionskin-plugin-api",
 ]
 

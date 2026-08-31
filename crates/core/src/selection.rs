@@ -2,10 +2,21 @@ use onionskin_content as content;
 
 use crate::{PageIndex, PageQuad, PageRect, SearchOptions};
 
+/// Selected text: the quads to draw it with, and the text they cover in
+/// document order. The text travels with the quads because the clipboard
+/// path needs it, and reading it back off the quads would have to guess
+/// where the line breaks were.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextSelection {
+    pub page: PageIndex,
+    pub quads: Vec<PageQuad>,
+    pub text: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Selection {
     region: Option<PageRect>,
-    text: Vec<PageQuad>,
+    text: Option<TextSelection>,
 }
 
 impl Selection {
@@ -13,23 +24,30 @@ impl Selection {
         self.region
     }
 
+    pub fn text(&self) -> Option<&TextSelection> {
+        self.text.as_ref()
+    }
+
     pub fn text_quads(&self) -> &[PageQuad] {
-        &self.text
+        match &self.text {
+            Some(text) => &text.quads,
+            None => &[],
+        }
     }
 
     pub fn set_region(&mut self, region: PageRect) {
         self.region = Some(region);
-        self.text.clear();
+        self.text = None;
     }
 
-    pub fn set_text_quads(&mut self, quads: Vec<PageQuad>) {
+    pub fn set_text(&mut self, text: TextSelection) {
         self.region = None;
-        self.text = quads;
+        self.text = Some(text);
     }
 
     pub fn clear(&mut self) {
         self.region = None;
-        self.text.clear();
+        self.text = None;
     }
 }
 
@@ -108,16 +126,22 @@ mod tests {
         });
         assert!(selection.region().is_some());
 
-        selection.set_text_quads(vec![PageQuad {
+        selection.set_text(TextSelection {
             page: 0,
-            corners: [(0.0, 1.0), (1.0, 1.0), (0.0, 0.0), (1.0, 0.0)],
-        }]);
+            quads: vec![PageQuad {
+                page: 0,
+                corners: [(0.0, 1.0), (1.0, 1.0), (0.0, 0.0), (1.0, 0.0)],
+            }],
+            text: "a".into(),
+        });
         assert!(selection.region().is_none());
         assert_eq!(selection.text_quads().len(), 1);
+        assert_eq!(selection.text().map(|text| text.text.as_str()), Some("a"));
 
         selection.clear();
         assert!(selection.region().is_none());
         assert!(selection.text_quads().is_empty());
+        assert!(selection.text().is_none());
     }
 
     #[test]

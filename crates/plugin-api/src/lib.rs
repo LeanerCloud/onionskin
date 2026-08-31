@@ -15,10 +15,11 @@
 
 pub use codec::{CodecPlugin, ExportError, ExportRequest, ExportedFile, PageRange};
 /// Re-exported so a plugin crate needs this one dependency to name what the
-/// contract hands it: `Document` for every trait here, the page-render types
-/// for what a codec gets back when it asks for a page.
+/// contract hands it: `Document` and `Viewport` for every trait here, the
+/// page-render types for what a codec gets back when it asks for a page.
 pub use onionskin_core::{
     BaseRaster, Document, Modifiers, PageIndex, PagePoint, PageQuad, PageRect, PageRender, PageSvg,
+    Viewport,
 };
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
 
@@ -63,11 +64,20 @@ pub enum ToolCapability {
     Draw,
     FillTextFields,
     AddSignature,
+    /// Copies a page region as an image. The canvas context menu's Take A
+    /// Snapshot entry finds its tool through this rather than by id.
+    Snapshot,
 }
 
 /// Everything a tool may touch while handling input.
+///
+/// The viewport is here because pan and zoom are view state, not document
+/// state: without it a hand tool cannot pan and a zoom tool cannot zoom.
+/// Its named consumers are `tools-basic`'s hand and zoom tools; a tool that
+/// only marks up the document has no reason to touch it.
 pub struct ToolCtx<'a> {
     pub doc: &'a mut Document,
+    pub viewport: &'a mut Viewport,
 }
 
 /// A canvas tool. One is active at a time; the canvas routes pointer

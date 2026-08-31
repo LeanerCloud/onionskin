@@ -1,6 +1,7 @@
 use onionskin_core::{
-    Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PageRenderRect,
-    ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError, ZoomPolicy,
+    Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PagePoint,
+    PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    ZoomPolicy,
 };
 
 const VIEWPORT: ViewSize = ViewSize {
@@ -402,6 +403,71 @@ fn view_rotation_and_page_hit_testing_use_the_core_geometry_mapping() {
         assert!((actual.x - expected.x).abs() < 1e-5);
         assert!((actual.y - expected.y).abs() < 1e-5);
     }
+}
+
+#[test]
+fn a_page_point_maps_back_to_the_viewport_point_it_came_from() {
+    let mut document = Document::open_bytes(geometry_pdf(90)).unwrap();
+    let geometry = document.page_geometry(0).unwrap().clone();
+    let mut viewport = Viewport::new(2, VIEWPORT, 12.0).unwrap();
+    viewport.measure_page(geometry.clone()).unwrap();
+    let mut second = geometry;
+    second.index = 1;
+    viewport.measure_page(second).unwrap();
+
+    for rotation in [
+        ViewRotation::None,
+        ViewRotation::Clockwise90,
+        ViewRotation::HalfTurn,
+        ViewRotation::Clockwise270,
+    ] {
+        viewport.set_rotation(rotation).unwrap();
+        viewport.zoom_to(1.7, center()).unwrap();
+        for page_index in [0, 1] {
+            let rect = page(&viewport, page_index);
+            let screen = ViewPoint {
+                x: rect.origin.x + rect.size.width * 0.37,
+                y: rect.origin.y + rect.size.height * 0.61,
+            };
+            let at = viewport.page_point_at(screen).unwrap().unwrap();
+            assert_eq!(at.page, page_index);
+            let back = viewport.view_point_for(at).unwrap().unwrap();
+            assert!((back.x - screen.x).abs() < 1e-3, "{back:?} != {screen:?}");
+            assert!((back.y - screen.y).abs() < 1e-3, "{back:?} != {screen:?}");
+        }
+    }
+}
+
+#[test]
+fn mapping_from_an_unmeasured_page_fails_loudly() {
+    let viewport = viewport(2);
+
+    assert!(matches!(
+        viewport.view_point_for(PagePoint {
+            page: 1,
+            x: 0.0,
+            y: 0.0,
+        }),
+        Err(ViewportError::UnmeasuredPage(1))
+    ));
+}
+
+#[test]
+fn a_page_outside_a_non_continuous_spread_has_no_viewport_point() {
+    let mut viewport = viewport(2);
+    viewport.measure_page(geometry(1, 850.0, 1_100.0)).unwrap();
+    viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+
+    assert_eq!(
+        viewport
+            .view_point_for(PagePoint {
+                page: 1,
+                x: 10.0,
+                y: 10.0,
+            })
+            .unwrap(),
+        None
+    );
 }
 
 #[test]
