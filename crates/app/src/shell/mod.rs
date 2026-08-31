@@ -302,6 +302,7 @@ impl Render for Canvas {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prepare_entity = cx.entity();
         let exit_entity = cx.entity();
+        let error_entity = cx.entity();
         let status = self.model.status().map(status_text);
         let mut root = div()
             .id("canvas")
@@ -332,7 +333,7 @@ impl Render for Canvas {
                     move |bounds, _window, cx| {
                         prepare_entity.update(cx, |canvas, cx| canvas.prepare_paint(bounds, cx))
                     },
-                    move |bounds, paint: PaintList, window, _cx| {
+                    move |bounds, paint: PaintList, window, cx| {
                         let exit_entity = exit_entity.clone();
                         window.on_mouse_event(
                             move |_event: &MouseExitEvent, phase, _window, cx| {
@@ -352,22 +353,34 @@ impl Render for Canvas {
                             ));
                         }
                         for tile in paint.tiles {
-                            window
-                                .with_content_mask(
-                                    Some(gpui::ContentMask {
-                                        bounds: window_bounds(bounds.origin, tile.clip_rect),
-                                    }),
-                                    |window| {
-                                        window.paint_image(
-                                            window_bounds(bounds.origin, tile.rect),
-                                            gpui::Corners::default(),
-                                            tile.image,
-                                            0,
-                                            false,
-                                        )
-                                    },
-                                )
-                                .expect("canvas tile image is valid");
+                            let page = tile.page;
+                            let painted = window.with_content_mask(
+                                Some(gpui::ContentMask {
+                                    bounds: window_bounds(bounds.origin, tile.clip_rect),
+                                }),
+                                |window| {
+                                    window.paint_image(
+                                        window_bounds(bounds.origin, tile.rect),
+                                        gpui::Corners::default(),
+                                        tile.image,
+                                        0,
+                                        false,
+                                    )
+                                },
+                            );
+                            // Whether the GPU can take this frame's image is a
+                            // runtime condition, not a claim the canvas gets to
+                            // make: an unwrap here took the window down over a
+                            // tile. Drop it, keep the rest of the page, and say
+                            // so on the status line the next frame.
+                            if let Err(error) = painted {
+                                let entity = error_entity.clone();
+                                cx.defer(move |cx| {
+                                    entity.update(cx, |canvas, cx| {
+                                        canvas.record_error(format!("page {page}: {error}"), cx);
+                                    });
+                                });
+                            }
                         }
                     },
                 )
