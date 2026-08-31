@@ -7,6 +7,8 @@
 //! hand-built three-node tree.
 
 pub(crate) mod focus;
+#[cfg(all(feature = "a11y-probe", target_os = "macos"))]
+pub(crate) mod probe;
 pub(crate) mod tree;
 
 use std::cell::RefCell;

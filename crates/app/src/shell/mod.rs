@@ -752,6 +752,12 @@ where
             Ok(window) => {
                 install_native_menus(cx, window, menu_state);
                 cx.activate(true);
+                // A build with the probe feature on reads its own
+                // accessibility tree back off the window and exits. It walks
+                // this boot path rather than a copy of it, so what it reports
+                // is what the app publishes.
+                #[cfg(all(feature = "a11y-probe", target_os = "macos"))]
+                crate::a11y::probe::arm(cx);
             }
             Err(error) => {
                 *error_slot.borrow_mut() = Some(ShellError::Window(error.to_string()));

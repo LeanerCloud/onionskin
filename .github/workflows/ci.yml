@@ -101,3 +101,14 @@ jobs:
       - name: Clippy over the windowed targets
         if: runner.os == 'macOS'
         run: cargo clippy -p onionskin-app --features shell,shell-test-support --all-targets -- -D warnings
+      # Reads the published accessibility tree back off a real NSView, which
+      # is also where the check that the gpui fork still defines no
+      # accessibility selectors of its own lives: it has to run on every fork
+      # bump, so it is a test rather than a note. Unlike the windowed tests
+      # above this opens real windows, so it needs the runner's window server.
+      # `continue-on-error` until one green run proves the runner provides
+      # one; drop it then, or drop the step.
+      - name: Accessibility probe
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: cargo test -p onionskin-app --features a11y-probe --test a11y_probe
