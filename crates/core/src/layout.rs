@@ -1,7 +1,46 @@
+//! Where pages sit, and the scroll metric that lets them sit there before
+//! they have been parsed.
+//!
+//! # The estimate-and-refine scroll metric
+//!
+//! Laying out a scroll of N pages needs N page heights, which contradicts the
+//! project's "never parse ahead of need" rule (PLAN.md decision 11). The
+//! resolution, and the single most load-bearing idea in this file:
+//!
+//! - **Page 0 is the sole estimate source.** [`Layout::estimate`] returns page
+//!   0's render size and nothing else; every unmeasured page is assumed to be
+//!   that size. No query answers anything until page 0 has been measured, so
+//!   the estimate never silently changes to a different page's size.
+//! - **A row top is a uniform baseline plus a correction.** [`Layout::row_top`]
+//!   places row `r` at `gap + r * (baseline + gap)` where `baseline` is the
+//!   estimated row height at the query zoom, then adds, for every *measured*
+//!   row before `r`, that row's real height minus the baseline. Rows are
+//!   therefore exact wherever they have been measured and estimated
+//!   everywhere else, in one expression.
+//! - **Refinement never moves an earlier row.** The correction for row `r`
+//!   sums only rows strictly before `r`, so measuring page 900 cannot move
+//!   pages 0..900. That is what keeps the scrollbar from jumping under a
+//!   reader: content above the viewport is already measured (it was scrolled
+//!   through), and content below it moving is invisible. Only re-measuring
+//!   page 0 itself, which changes the baseline, reflows everything, and that
+//!   happens once, on open.
+//! - **A jump to page 900 lands on page 900** with twelve pages measured,
+//!   because [`Layout::scroll_origin_for_page`] uses the same expression the
+//!   painter does. The offset is an estimate, not a lie: it is exactly where
+//!   page 900 is drawn.
+//!
+//! [`Layout::row_index`] caches the per-row corrections so the frame path
+//! does not walk every measured row; see [`RowIndex`].
+
+use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::{PageGeometry, PageIndex};
+
+/// Rows kept laid out on each side of the visible band, so a scroll of less
+/// than a row still finds a painted page to show.
+const GUARD_ROWS: usize = 1;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ViewPoint {
@@ -265,6 +304,10 @@ pub(crate) struct Layout {
     page_count: usize,
     page_gap: f32,
     measured: BTreeMap<PageIndex, PageGeometry>,
+    /// Bumped by every measurement, so [`RowIndex`] can tell a stale cache
+    /// from a current one without comparing the map.
+    revision: u64,
+    rows: RefCell<RowIndex>,
 }
 
 impl Layout {
@@ -276,6 +319,8 @@ impl Layout {
             page_count,
             page_gap,
             measured: BTreeMap::new(),
+            revision: 0,
+            rows: RefCell::new(RowIndex::default()),
         })
     }
 
@@ -295,6 +340,7 @@ impl Layout {
             return Err(LayoutError::InvalidPageSize { page });
         }
         self.measured.insert(page, geometry);
+        self.revision += 1;
         Ok(())
     }
 
@@ -314,10 +360,9 @@ impl Layout {
         query: LayoutQuery,
     ) -> Result<Option<PagePlacement>, LayoutError> {
         self.validate_query(query)?;
+        // An empty document has no page that survives `check_page`, so from
+        // here on `page_count` is known to be non-zero.
         self.check_page(page)?;
-        if self.page_count == 0 {
-            return Ok(None);
-        }
         let row = row_for_page(page, query.mode, query.show_cover);
         let active_row = row_for_page(query.current_page, query.mode, query.show_cover);
         if !query.mode.is_continuous() && row != active_row {
@@ -337,11 +382,14 @@ impl Layout {
         } else {
             1
         };
-        let width = if query.mode.is_continuous() {
+        let content_width = if query.mode.is_continuous() {
             self.max_row_width(query)?
         } else {
             self.row_size(active_row, query)?.width
-        } + self.page_gap * 2.0;
+        };
+        // `total_height` already includes the gap above and below the run of
+        // rows; the single-row and width cases have to add theirs.
+        let width = content_width + self.page_gap * 2.0;
         let height = if query.mode.is_continuous() {
             self.total_height(rows, query)?
         } else {
@@ -375,8 +423,8 @@ impl Layout {
             let first = self.first_row_reaching(visible.origin.y, total_rows, query)?;
             let last = self.first_row_reaching(visible.bottom(), total_rows, query)?;
             (
-                first.saturating_sub(1),
-                last.saturating_add(2).min(total_rows),
+                first.saturating_sub(GUARD_ROWS),
+                last.saturating_add(GUARD_ROWS + 1).min(total_rows),
             )
         } else {
             (active_row, active_row + 1)
@@ -400,8 +448,11 @@ impl Layout {
             return Ok(Vec::new());
         };
         let last_intersecting = intersecting.next_back().unwrap_or(first_intersecting);
-        let guarded_start = first_intersecting.saturating_sub(1);
-        let guarded_end = last_intersecting.saturating_add(2).min(total_rows);
+        // `GUARD_ROWS` on each side: the end is exclusive, hence the extra one.
+        let guarded_start = first_intersecting.saturating_sub(GUARD_ROWS);
+        let guarded_end = last_intersecting
+            .saturating_add(GUARD_ROWS + 1)
+            .min(total_rows);
         Ok(candidate_rows
             .into_iter()
             .filter(|(row, _)| (guarded_start..guarded_end).contains(row))
@@ -409,10 +460,17 @@ impl Layout {
             .collect())
     }
 
+    /// Where the view has to sit for `page` to be at `alignment`.
+    ///
+    /// `horizontal` is the caller's current x offset, kept and re-clamped
+    /// rather than reset: a vertical navigation must not also pan the reader
+    /// sideways, which it did while this returned a hardcoded `x: 0.0` and a
+    /// zoomed-in reader lost their horizontal position on every page jump.
     pub(crate) fn scroll_origin_for_page(
         &self,
         page: PageIndex,
         alignment: PageAlignment,
+        horizontal: f32,
         query: LayoutQuery,
     ) -> Result<ViewPoint, LayoutError> {
         self.validate_query(query)?;
@@ -440,7 +498,7 @@ impl Layout {
             }
         };
         Ok(ViewPoint {
-            x: 0.0,
+            x: horizontal.clamp(0.0, (extent.width - query.viewport.width).max(0.0)),
             y: y.clamp(0.0, (extent.height - query.viewport.height).max(0.0)),
         })
     }
@@ -492,6 +550,14 @@ impl Layout {
         Ok(())
     }
 
+    /// The size every unmeasured page is assumed to have.
+    ///
+    /// Page 0 is the sole source, by design: it is the page a lazy open has
+    /// already parsed, and pinning the estimate to one page is what makes the
+    /// scroll metric stable. An estimate that averaged the measured pages
+    /// would change on every measurement and reflow the whole document under
+    /// the reader. Absent page 0, every query fails with
+    /// [`LayoutError::MissingEstimate`] rather than guessing.
     fn estimate(&self) -> Result<ViewSize, LayoutError> {
         self.measured
             .get(&0)
@@ -504,39 +570,59 @@ impl Layout {
         page: PageIndex,
         rotation: ViewRotation,
     ) -> Result<(ViewSize, bool), LayoutError> {
-        let measured = self.measured.get(&page);
-        let size = measured.map(render_size).unwrap_or(self.estimate()?);
-        Ok((rotation.page_size(size), measured.is_some()))
+        let size = match self.measured.get(&page) {
+            Some(geometry) => render_size(geometry),
+            None => self.estimate()?,
+        };
+        Ok((rotation.page_size(size), self.measured.contains_key(&page)))
     }
 
-    fn row_size(&self, row: usize, query: LayoutQuery) -> Result<ViewSize, LayoutError> {
-        let pages = pages_in_row(row, self.page_count, query.mode, query.show_cover);
+    /// A row's pages at their own scale: summed widths and tallest height,
+    /// rotated but neither zoomed nor gapped.
+    ///
+    /// The unit [`RowIndex`] caches in, because zoom and gap are applied by
+    /// the caller and would otherwise make every cached value zoom-specific.
+    fn row_page_extent(
+        &self,
+        row: usize,
+        mode: PageLayoutMode,
+        show_cover: bool,
+        rotation: ViewRotation,
+    ) -> Result<ViewSize, LayoutError> {
         let mut width = 0.0;
         let mut height: f32 = 0.0;
-        for (position, page) in pages.iter().copied().enumerate() {
-            let (size, _) = self.page_size(page, query.rotation)?;
-            if position > 0 {
-                width += self.page_gap;
-            }
-            width += size.width * query.zoom;
-            height = height.max(size.height * query.zoom);
+        for page in pages_in_row(row, self.page_count, mode, show_cover) {
+            let (size, _) = self.page_size(page, rotation)?;
+            width += size.width;
+            height = height.max(size.height);
         }
         Ok(ViewSize { width, height })
     }
 
+    fn row_size(&self, row: usize, query: LayoutQuery) -> Result<ViewSize, LayoutError> {
+        let gaps = gaps_in_row(row, self.page_count, query.mode, query.show_cover);
+        let extent = self.row_page_extent(row, query.mode, query.show_cover, query.rotation)?;
+        Ok(ViewSize {
+            width: extent.width * query.zoom + gaps as f32 * self.page_gap,
+            height: extent.height * query.zoom,
+        })
+    }
+
+    /// Where row `row` starts, in document coordinates.
+    ///
+    /// The whole estimate-and-refine metric, in one expression: a uniform
+    /// baseline of estimated rows, plus the accumulated correction of every
+    /// *measured* row before this one. Because the sum stops at `row`,
+    /// measuring a later page never moves an earlier one, which is what keeps
+    /// the scrollbar still while the reader is reading. See the module docs.
     fn row_top(&self, row: usize, query: LayoutQuery) -> Result<f32, LayoutError> {
         if !query.mode.is_continuous() {
             let row_height = self.row_size(row, query)?.height;
             return Ok(((query.viewport.height - row_height) / 2.0).max(self.page_gap));
         }
         let baseline = query.rotation.page_size(self.estimate()?).height * query.zoom;
-        let mut top = self.page_gap + row as f32 * (baseline + self.page_gap);
-        for measured_row in self.measured_rows(query.mode, query.show_cover) {
-            if measured_row >= row {
-                break;
-            }
-            top += self.row_size(measured_row, query)?.height - baseline;
-        }
+        let correction = self.row_index(query)?.correction_before(row);
+        let top = self.page_gap + row as f32 * (baseline + self.page_gap) + correction * query.zoom;
         if !top.is_finite() {
             return Err(LayoutError::ExtentOverflow);
         }
@@ -548,12 +634,11 @@ impl Layout {
             return Ok(query.viewport.height);
         }
         let baseline = query.rotation.page_size(self.estimate()?).height * query.zoom;
-        let mut height = self.page_gap * 2.0
+        let correction = self.row_index(query)?.total_correction();
+        let height = self.page_gap * 2.0
             + rows as f32 * baseline
-            + rows.saturating_sub(1) as f32 * self.page_gap;
-        for row in self.measured_rows(query.mode, query.show_cover) {
-            height += self.row_size(row, query)?.height - baseline;
-        }
+            + rows.saturating_sub(1) as f32 * self.page_gap
+            + correction * query.zoom;
         if !height.is_finite() {
             return Err(LayoutError::ExtentOverflow);
         }
@@ -561,17 +646,54 @@ impl Layout {
     }
 
     fn max_row_width(&self, query: LayoutQuery) -> Result<f32, LayoutError> {
+        let estimate = query.rotation.page_size(self.estimate()?).width;
         let baseline = if query.mode.is_two_page() && self.page_count > 1 {
-            let size = query.rotation.page_size(self.estimate()?);
-            size.width * query.zoom * 2.0 + self.page_gap
+            estimate * query.zoom * 2.0 + self.page_gap
         } else {
-            query.rotation.page_size(self.estimate()?).width * query.zoom
+            estimate * query.zoom
         };
+        let index = self.row_index(query)?;
         let mut width = baseline;
-        for row in self.measured_rows(query.mode, query.show_cover) {
-            width = width.max(self.row_size(row, query)?.width);
+        for (gaps, widest) in index.widest_by_gaps.iter().enumerate() {
+            let Some(widest) = widest else { continue };
+            width = width.max(widest * query.zoom + gaps as f32 * self.page_gap);
         }
         Ok(width)
+    }
+
+    /// The cached row corrections for this query's layout shape, rebuilt if a
+    /// measurement or a shape change has invalidated them.
+    fn row_index(&self, query: LayoutQuery) -> Result<Ref<'_, RowIndex>, LayoutError> {
+        let shape = RowShape {
+            mode: query.mode,
+            show_cover: query.show_cover,
+            rotation: query.rotation,
+            revision: self.revision,
+        };
+        if self.rows.borrow().shape != Some(shape) {
+            let built = self.build_row_index(shape)?;
+            *self.rows.borrow_mut() = built;
+        }
+        Ok(self.rows.borrow())
+    }
+
+    fn build_row_index(&self, shape: RowShape) -> Result<RowIndex, LayoutError> {
+        let baseline = shape.rotation.page_size(self.estimate()?).height;
+        let mut index = RowIndex {
+            shape: Some(shape),
+            ..RowIndex::default()
+        };
+        let mut running = 0.0;
+        for row in self.measured_rows(shape.mode, shape.show_cover) {
+            let extent = self.row_page_extent(row, shape.mode, shape.show_cover, shape.rotation)?;
+            running += extent.height - baseline;
+            index.rows.push(row);
+            index.prefix.push(running);
+            let gaps = gaps_in_row(row, self.page_count, shape.mode, shape.show_cover);
+            let widest = &mut index.widest_by_gaps[gaps];
+            *widest = Some(widest.unwrap_or(extent.width).max(extent.width));
+        }
+        Ok(index)
     }
 
     fn measured_rows(&self, mode: PageLayoutMode, show_cover: bool) -> BTreeSet<usize> {
@@ -654,7 +776,64 @@ pub(crate) struct RowMetrics {
     pub(crate) between_pages: usize,
 }
 
-fn render_size(geometry: &PageGeometry) -> ViewSize {
+/// The layout shape a [`RowIndex`] was built for.
+///
+/// `revision` makes a measurement invalidate the index without the index
+/// having to know what changed.
+#[derive(Clone, Copy, PartialEq)]
+struct RowShape {
+    mode: PageLayoutMode,
+    show_cover: bool,
+    rotation: ViewRotation,
+    revision: u64,
+}
+
+/// Row corrections, precomputed so the frame path never walks the measured
+/// pages.
+///
+/// Without this, `row_top` summed every measured row before the one it was
+/// asked about, `visible_pages` called it once per candidate page, and
+/// `sync_current_page`, `anchor_at` and `page_point_at` each called
+/// `visible_pages` again: painting one frame of a fully measured 1000-page
+/// document cost millions of operations. Every value here is in unzoomed page
+/// units, so one index serves every zoom.
+struct RowIndex {
+    shape: Option<RowShape>,
+    /// The measured rows, ascending.
+    rows: Vec<usize>,
+    /// `prefix[i]` sums the height corrections of `rows[..i]`, so it always
+    /// holds one more entry than `rows`.
+    prefix: Vec<f32>,
+    /// The widest measured row's summed page widths, keyed by how many gaps
+    /// that row carries, because a gap is a constant the zoom does not scale.
+    widest_by_gaps: [Option<f32>; 2],
+}
+
+impl Default for RowIndex {
+    fn default() -> Self {
+        Self {
+            shape: None,
+            rows: Vec::new(),
+            // `prefix` is never empty: the sum over no rows is still an entry.
+            prefix: vec![0.0],
+            widest_by_gaps: [None; 2],
+        }
+    }
+}
+
+impl RowIndex {
+    /// The accumulated correction of every measured row before `row`.
+    fn correction_before(&self, row: usize) -> f32 {
+        self.prefix[self.rows.partition_point(|&measured| measured < row)]
+    }
+
+    /// The accumulated correction of every measured row.
+    fn total_correction(&self) -> f32 {
+        *self.prefix.last().expect("prefix is never empty")
+    }
+}
+
+pub(crate) fn render_size(geometry: &PageGeometry) -> ViewSize {
     ViewSize {
         width: geometry.render_size.0 as f32,
         height: geometry.render_size.1 as f32,
@@ -701,6 +880,17 @@ fn pages_in_row(
         row * 2
     };
     (first..first.saturating_add(2).min(page_count)).collect()
+}
+
+/// How many gaps sit between the pages of `row`.
+///
+/// Kept separate from the page widths because a gap is a screen constant: it
+/// is not multiplied by the zoom, so it cannot be folded into the cached row
+/// extents in [`RowIndex`].
+fn gaps_in_row(row: usize, page_count: usize, mode: PageLayoutMode, show_cover: bool) -> usize {
+    pages_in_row(row, page_count, mode, show_cover)
+        .len()
+        .saturating_sub(1)
 }
 
 #[cfg(test)]
@@ -921,19 +1111,19 @@ mod tests {
         let layout = layout(3);
         let q = query(PageLayoutMode::SinglePageContinuous);
         let start = layout
-            .scroll_origin_for_page(1, PageAlignment::Start, q)
+            .scroll_origin_for_page(1, PageAlignment::Start, 0.0, q)
             .unwrap();
         let center = layout
-            .scroll_origin_for_page(1, PageAlignment::Center, q)
+            .scroll_origin_for_page(1, PageAlignment::Center, 0.0, q)
             .unwrap();
         let end = layout
-            .scroll_origin_for_page(1, PageAlignment::End, q)
+            .scroll_origin_for_page(1, PageAlignment::End, 0.0, q)
             .unwrap();
         assert!(center.y < start.y);
         assert!(end.y < center.y);
         assert_eq!(
             layout
-                .scroll_origin_for_page(0, PageAlignment::End, q)
+                .scroll_origin_for_page(0, PageAlignment::End, 0.0, q)
                 .unwrap()
                 .y,
             0.0
@@ -941,7 +1131,7 @@ mod tests {
         let extent = layout.extent(q).unwrap();
         assert_eq!(
             layout
-                .scroll_origin_for_page(2, PageAlignment::End, q)
+                .scroll_origin_for_page(2, PageAlignment::End, 0.0, q)
                 .unwrap()
                 .y,
             extent.height - VIEWPORT.height
@@ -959,7 +1149,7 @@ mod tests {
         let mut q = query(PageLayoutMode::SinglePageContinuous);
         q.current_page = 899;
         let origin = layout
-            .scroll_origin_for_page(899, PageAlignment::Start, q)
+            .scroll_origin_for_page(899, PageAlignment::Start, 0.0, q)
             .unwrap();
         let visible = ViewRect {
             origin,

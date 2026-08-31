@@ -1,8 +1,11 @@
+use std::time::{Duration, Instant};
+
 use onionskin_core::{
     Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PagePoint,
     PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
     ZoomPolicy,
 };
+use onionskin_render::raster_size;
 
 const VIEWPORT: ViewSize = ViewSize {
     width: 1_100.0,
@@ -65,6 +68,21 @@ fn a_plain_scroll_pans_without_changing_zoom() {
     assert_eq!(after.origin.y, before.1.origin.y - 30.0);
 }
 
+/// A vertical navigation must not also pan the reader sideways.
+/// `scroll_origin_for_page` returned a hardcoded `x: 0.0`, so every page jump
+/// threw away the horizontal position of a reader zoomed in past the window.
+#[test]
+fn a_page_jump_keeps_the_horizontal_pan() {
+    let mut viewport = viewport(10);
+    viewport.zoom_to(2.0, center()).unwrap();
+    viewport.pan_by(ViewPoint { x: -200.0, y: 0.0 }).unwrap();
+    let panned = viewport.offset().x;
+    assert!(panned > 0.0, "the test needs a page wider than the window");
+
+    viewport.go_to_page(4, PageAlignment::Start).unwrap();
+    assert_eq!(viewport.offset().x, panned);
+}
+
 #[test]
 fn a_modified_scroll_zooms_and_holds_the_page_point_under_the_pointer() {
     let mut viewport = viewport(1);
@@ -96,16 +114,23 @@ fn a_pinch_zooms_by_its_factor_about_the_gesture_centre() {
     viewport.fit(FitMode::Page).unwrap();
     let centre = center();
     let before = render_point(&viewport, 0, centre);
-    assert!(viewport.pinch(1.5, centre).unwrap());
+    viewport.pinch(1.5, centre).unwrap();
     assert_point_close(render_point(&viewport, 0, centre), before);
 }
 
+/// `pinch` and `zoom_at` answer the same way to the same nonsense factor.
+/// `pinch` used to swallow it as `Ok(false)`, so a caller that checked its
+/// result saw a refusal from one and a no-op from the other.
 #[test]
-fn a_pinch_with_a_nonsense_delta_is_ignored() {
+fn a_pinch_with_a_nonsense_factor_is_refused_the_way_zoom_at_refuses_it() {
     let mut viewport = viewport(1);
     let before = viewport.snapshot();
     for factor in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        assert!(!viewport.pinch(factor, center()).unwrap());
+        assert!(matches!(
+            viewport.pinch(factor, center()),
+            Err(ViewportError::Layout(LayoutError::InvalidZoom(bad))) if bad.to_bits() == factor.to_bits()
+        ));
+        assert!(viewport.zoom_at(factor, center()).is_err());
     }
     assert_eq!(viewport.snapshot(), before);
 }
@@ -400,8 +425,12 @@ fn view_rotation_and_page_hit_testing_use_the_core_geometry_mapping() {
                 viewport.zoom(),
             )
             .unwrap();
-        assert!((actual.x - expected.x).abs() < 1e-5);
-        assert!((actual.y - expected.y).abs() < 1e-5);
+        // The whole mapping runs in `f32` over device pixels of a page that is
+        // ~4300 px on its long axis at these fit zooms, where one ulp is
+        // already ~5e-4 px; dividing back to user space leaves ~1e-4 pt of
+        // slack. Anything tighter tests the rounding, not the mapping.
+        assert!((actual.x - expected.x).abs() < 1e-3);
+        assert!((actual.y - expected.y).abs() < 1e-3);
     }
 }
 
@@ -738,4 +767,73 @@ fn geometry_pdf(rotation: i32) -> Vec<u8> {
         format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
     );
     out
+}
+
+#[test]
+fn a_measurement_under_fit_does_not_recentre_a_scrolled_page() {
+    let mut viewport = viewport(20);
+    viewport.fit(FitMode::Page).unwrap();
+    viewport.go_to_page(10, PageAlignment::Start).unwrap();
+    viewport.pan_by(ViewPoint { x: 0.0, y: -300.0 }).unwrap();
+    let before = viewport.offset();
+    let zoom = viewport.zoom();
+    viewport.measure_page(geometry(11, 850.0, 1_100.0)).unwrap();
+    assert_eq!(viewport.zoom_policy(), ZoomPolicy::Fit(FitMode::Page));
+    assert_eq!(viewport.zoom(), zoom);
+    assert_point_close(viewport.offset(), before);
+}
+
+#[test]
+fn the_largest_legal_page_stays_inside_what_the_renderer_can_rasterize() {
+    // 14400 pt is the largest page a PDF can declare. hayro sizes pixmaps with
+    // u16, so this page runs out of raster at about 4.5x, far below the 32x the
+    // zoom menu offers; asking for 32x has to be capped, not passed through.
+    let mut large = Viewport::new(1, VIEWPORT, 12.0).unwrap();
+    large.measure_page(geometry(0, 14_400.0, 14_400.0)).unwrap();
+    large.zoom_to(1_000.0, center()).unwrap();
+    assert!(
+        raster_size(14_400.0, 14_400.0, large.zoom()).is_ok(),
+        "zoomed to {} which the renderer cannot rasterize",
+        large.zoom()
+    );
+
+    // The floor comes off the same limit: under one pixel is unrenderable too.
+    let mut small = Viewport::new(1, VIEWPORT, 12.0).unwrap();
+    small.measure_page(geometry(0, 3.0, 4.0)).unwrap();
+    small.zoom_to(0.001, center()).unwrap();
+    assert!(
+        raster_size(3.0, 4.0, small.zoom()).is_ok(),
+        "zoomed to {} which the renderer cannot rasterize",
+        small.zoom()
+    );
+}
+
+#[test]
+fn painting_a_frame_does_not_walk_every_measured_page() {
+    const PAGES: usize = 1_000;
+    const FRAMES: usize = 1_000;
+
+    let mut viewport = Viewport::new(PAGES, VIEWPORT, 12.0).unwrap();
+    let template = geometry(0, 850.0, 1_100.0);
+    for index in 0..PAGES {
+        let mut page = template.clone();
+        page.index = index;
+        // Vary the heights so every row carries a correction of its own.
+        page.render_size = (850.0, 1_100.0 + (index % 7) as f64 * 10.0);
+        viewport.measure_page(page).unwrap();
+    }
+    viewport
+        .go_to_page(PAGES / 2, PageAlignment::Start)
+        .unwrap();
+
+    let start = Instant::now();
+    for _ in 0..FRAMES {
+        viewport.visible_pages().unwrap();
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(150),
+        "{FRAMES} frames over {PAGES} measured pages took {elapsed:?}: \
+         the layout is still walking the measured rows per frame"
+    );
 }

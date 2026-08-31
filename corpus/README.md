@@ -10,18 +10,21 @@ upstream, what is generated locally, and what is still to be built.
 |---|---|---|
 | `seeds/` | yes | `make-seeds.py`, committed output |
 | `malformed/` | no | `make-malformed.sh` from `seeds/` |
+| `bench/` | no | `make-bench.py`, no inputs |
 | `external/` | no | `fetch.sh` from pinned upstream revisions |
 | `js-forms/` | README only | not yet, see `js-forms/README.md` |
 | `tagged/` | README only | not yet, see `tagged/README.md` |
 
-`external/` and `malformed/` are gitignored. Nothing under them is vendored:
-they are reproducible from `fetch.sh` and `make-malformed.sh`.
+`external/`, `malformed/` and `bench/` are gitignored. Nothing under them is
+vendored: they are reproducible from `fetch.sh`, `make-malformed.sh` and
+`make-bench.py`.
 
 ## Quick start
 
 ```bash
 ./fetch.sh              # default sets, about 200 MB
 ./make-malformed.sh     # regenerate malformed/ from seeds/
+./make-bench.py         # regenerate bench/ from nothing
 ./fetch.sh --list       # every set and whether it is present
 ```
 
@@ -80,6 +83,24 @@ valid file with a malformed name. Re-running produces byte-identical output.
 For real-world damage rather than synthetic damage, `external/hayro/pdfs/load/`
 is the complement: 80 crash-regression files, 62 of which do not have `%PDF-` in
 their first 1024 bytes.
+
+### `bench/` (1 file, 2235141 bytes)
+
+One PDF written by `make-bench.py`: `pages-1000.pdf`, a thousand pages under a
+page tree that branches by ten, so reaching page 500 parses the four nodes on
+the path plus the siblings whose `/Count` lets them be skipped. Its text varies
+per page from a seeded vocabulary, so a renderer cannot cache its way from page
+1 to page 999, and its bytes are deterministic: no timestamps, no randomness,
+no compression, so two runs produce the same file and a bench can assert on
+numbers taken from it.
+
+The rest of the corpus is almost all single-level page trees, whose `/Pages`
+node has nothing but leaves under it and where the `/Count` subtree skip never
+fires, so `crates/cos/tests/pages.rs` uses this file for both the "the skip
+lands on the same pages a full walk does" check and the byte-count assertion
+behind decision 11's time-to-first-page budget. Absent, those two tests skip;
+under `ONIONSKIN_CORPUS_REQUIRED=1` they fail instead, rather than reporting a
+pass they did not earn.
 
 ### `external/hayro` (360 PDFs, 28 MB, default)
 
@@ -167,7 +188,7 @@ Guarantee test numbers refer to [`PLAN.md`](../PLAN.md), "Guarantee tests".
 | 6, repair | all of `malformed/`, plus `hayro/pdfs/load/` for real-world damage |
 | 7, forms compute | `js-forms/`, not built yet |
 | 8, tag integrity | `tagged/`, not built yet; `verapdf/PDF_UA-1` and `PDF_UA-2` are the raw material |
-| 9, performance budgets | `hayro-corpus` for large real-world files; the 67 MB scan is the natural worst case |
+| 9, performance budgets | `bench/pages-1000.pdf` for the thousand-page budgets in decision 11; `hayro-corpus` for large real-world files, where the 67 MB scan is the natural worst case |
 
 Tests 1, 2 and 6 walk directories, so a set added to `external/` is picked up
 without touching test code. Tests 3, 7 and 8 need per-file expectations and
@@ -192,7 +213,7 @@ choose to publish.
 
 | Set | License | Notes |
 |---|---|---|
-| `seeds/`, `malformed/` | Same as Onionskin | Generated here, no third-party content |
+| `seeds/`, `malformed/`, `bench/` | Same as Onionskin | Generated here, no third-party content |
 | `external/hayro` | Apache-2.0 OR MIT for hayro's own code | The test PDFs are not covered by that grant. They were aggregated from the pdf.js, PDFBox and PDFium issue trackers and from user reports, and carry no unified license. Treat them as third-party material for local testing and do not redistribute the set. `external/hayro/LICENSE-APACHE` and `LICENSE-MIT` are symlinks to the hayro repository root and dangle here, because only the `hayro-tests/` subtree is extracted; read the license text upstream. |
 | `external/hayro-corpus` and the other R2 sets | Unstated | Same caveat, plus the PDF Association large-scale corpus terms for `hayro-corpus`. Local testing only. |
 | `external/pdf-association/pdf20examples` | CC BY-SA 4.0 | Attribute the PDF Association; share-alike applies to derivatives |
@@ -238,5 +259,5 @@ tarball extraction has no meaningful partial state and a per-file download does:
 ## Requirements
 
 `fetch.sh` needs `curl`, `tar` and `python3`. `make-malformed.sh` needs `perl`.
-`make-seeds.py` needs python3 with no third-party packages. Both shell scripts
-run on bash 3.2, which is what macOS ships.
+`make-seeds.py` and `make-bench.py` need python3 with no third-party packages.
+Both shell scripts run on bash 3.2, which is what macOS ships.

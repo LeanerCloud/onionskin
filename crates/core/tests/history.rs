@@ -1,6 +1,30 @@
 use std::num::NonZeroUsize;
+use std::path::Path;
 
-use onionskin_core::{PageLayoutMode, ViewHistory, ViewPoint, ViewRotation, ViewState, ZoomPolicy};
+use onionskin_core::{
+    Document, PageAlignment, PageLayoutMode, ViewHistory, ViewPoint, ViewRotation, ViewSize,
+    ViewState, Viewport, ZoomPolicy,
+};
+
+const VIEWPORT: ViewSize = ViewSize {
+    width: 1_100.0,
+    height: 861.0,
+};
+
+/// A viewport over `pages` measured pages, so a restored offset means
+/// something: an unmeasured layout would answer every query from the estimate.
+fn measured_viewport(pages: usize) -> Viewport {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+    let mut document = Document::open_path(&path).expect("the seed opens");
+    let template = document.page_geometry(0).expect("geometry loads").clone();
+    let mut viewport = Viewport::new(pages, VIEWPORT, 12.0).expect("the viewport is valid");
+    for index in 0..pages {
+        let mut page = template.clone();
+        page.index = index;
+        viewport.measure_page(page).expect("the page is valid");
+    }
+    viewport
+}
 
 fn state(page: usize, zoom: f32, y: f32) -> ViewState {
     ViewState {
@@ -100,6 +124,38 @@ fn clear_removes_previous_and_forward_entries() {
     assert!(!history.can_next());
     assert_eq!(history.previous(page_5), None);
     assert_eq!(history.next(page_1), None);
+}
+
+/// The round trip the plan names for P6a, on a real `Viewport` rather than on
+/// hand-built `ViewState` values: snapshot, record, navigate away, previous,
+/// restore, and land on the zoom and offset the view was left at.
+#[test]
+fn previous_view_returns_to_the_zoom_and_offset_it_left() {
+    let mut viewport = measured_viewport(20);
+    viewport.go_to_page(3, PageAlignment::Start).unwrap();
+    viewport
+        .zoom_to(2.5, ViewPoint { x: 400.0, y: 300.0 })
+        .unwrap();
+    let left = viewport.snapshot();
+
+    let mut history = ViewHistory::new(NonZeroUsize::new(8).unwrap());
+    history.record(left);
+
+    viewport.go_to_page(11, PageAlignment::Start).unwrap();
+    viewport
+        .zoom_to(0.75, ViewPoint { x: 200.0, y: 150.0 })
+        .unwrap();
+    assert_ne!(viewport.snapshot(), left);
+
+    let target = history
+        .previous(viewport.snapshot())
+        .expect("a view was recorded");
+    viewport.restore(target).unwrap();
+
+    assert_eq!(viewport.snapshot(), left);
+    assert_eq!(viewport.zoom(), left.zoom);
+    assert_eq!(viewport.offset(), left.offset);
+    assert_eq!(viewport.current_page(), left.current_page);
 }
 
 #[test]

@@ -1,3 +1,15 @@
+//! What the user has picked out on a page, and what a find has matched.
+//!
+//! A [`Selection`] is one of two things, never both: a marquee region or a run
+//! of text quads. `set_region` and `set_text_quads` each clear the other for
+//! that reason, so no consumer has to decide which of two populated fields
+//! wins. Both are expressed in page user space, not device pixels, so a
+//! selection survives a zoom, a rotation and a re-render without being
+//! recomputed.
+//!
+//! Search state lives here rather than in the find UI because the same match
+//! set feeds the canvas highlight, the MCP verbs and the CLI.
+
 use onionskin_content as content;
 
 use crate::{PageIndex, PageQuad, PageRect, SearchOptions};

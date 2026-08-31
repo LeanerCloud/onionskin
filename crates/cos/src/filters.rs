@@ -37,6 +37,12 @@ impl Damaged {
     /// cross-reference stream covering ten million objects is tens of
     /// megabytes and legitimate; a page description, a font program or a CMap
     /// is orders of magnitude smaller than either figure.
+    ///
+    /// Exceeding it is an error under both, unlike a stream that merely ends
+    /// early. A payload cut at the ceiling is indistinguishable from one that
+    /// ended there, so handing it back would be the one silent degradation
+    /// `Salvage` is not allowed: partial output is worth having only when the
+    /// caller can tell it apart from the whole.
     fn ceiling(self) -> u64 {
         match self {
             Damaged::Refuse => 256 * 1024 * 1024,
@@ -81,10 +87,13 @@ pub(crate) fn decode(
             "ASCII85Decode" | "A85" => ascii85_decode(&data, damaged)?,
             "RunLengthDecode" | "RL" => run_length_decode(&data, damaged)?,
             // Identity /Crypt is a no-op marker and the default when
-            // `/DecodeParms /Name` is absent. A named handler is real
-            // encryption, which this build refuses at the trailer, so reaching
-            // one here means the bytes are ciphertext and passing them through
-            // would hand the caller garbage it could not tell from a page.
+            // `/DecodeParms /Name` is absent. A named handler is a key into
+            // the `/CF` dictionary of the trailer's `/Encrypt`, and every open
+            // path refuses a trailer that has one, so a document that got this
+            // far defines no such handler: the name resolves to nothing and
+            // the file does not say what, if anything, was applied to these
+            // bytes. Reading it as Identity is a guess about a file that
+            // contradicts itself, so it is refused by name instead.
             "Crypt" => {
                 let named = parm
                     .as_ref()
@@ -201,9 +210,11 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
         return Ok(Vec::new());
     }
 
+    // One byte past the ceiling, so a payload that stops exactly at it is a
+    // stream that ended rather than one that was cut.
     let mut zlib = Vec::new();
     let zlib_err = flate2::read::ZlibDecoder::new(trimmed)
-        .take(damaged.ceiling())
+        .take(damaged.ceiling() + 1)
         .read_to_end(&mut zlib)
         .err();
     if zlib_err.is_none() && !zlib.is_empty() {
@@ -212,11 +223,19 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
 
     let mut raw = Vec::new();
     let raw_err = flate2::read::DeflateDecoder::new(trimmed)
-        .take(damaged.ceiling())
+        .take(damaged.ceiling() + 1)
         .read_to_end(&mut raw)
         .err();
     if raw_err.is_none() && !raw.is_empty() {
         return bounded(raw, damaged);
+    }
+
+    // Neither wrapper produced bytes. A decode that reached a clean end of
+    // stream produced none because there were none: a blank compressed content
+    // stream is exactly that, and calling it a filter failure warned about
+    // every empty page.
+    if zlib_err.is_none() || raw_err.is_none() {
+        return Ok(Vec::new());
     }
 
     let failure = || Error::Filter {
@@ -243,7 +262,7 @@ fn inflate(data: &[u8], damaged: Damaged) -> Result<Vec<u8>> {
 
 fn bounded(data: Vec<u8>, damaged: Damaged) -> Result<Vec<u8>> {
     let ceiling = damaged.ceiling();
-    if damaged == Damaged::Refuse && data.len() as u64 >= ceiling {
+    if data.len() as u64 > ceiling {
         return Err(Error::Filter {
             filter: "FlateDecode".into(),
             detail: format!("inflated past the {ceiling} byte ceiling"),
@@ -254,7 +273,8 @@ fn bounded(data: Vec<u8>, damaged: Damaged) -> Result<Vec<u8>> {
 
 /// A sink that refuses to grow past `limit`. LZW expands without bound - a few
 /// kilobytes of codes reach gigabytes - so the decoder needs the ceiling that
-/// `inflate` gets from `Read::take`.
+/// `inflate` gets from `Read::take`, and like that one it is set a byte over so
+/// output stopping exactly at the ceiling is not mistaken for output that fits.
 struct Bounded<'a> {
     out: &'a mut Vec<u8>,
     limit: usize,
@@ -284,15 +304,22 @@ fn lzw(data: &[u8], early_change: bool, damaged: Damaged) -> Result<Vec<u8>> {
     } else {
         weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8)
     };
+    let ceiling = damaged.ceiling();
     let mut out = Vec::new();
     let mut sink = Bounded {
         out: &mut out,
-        limit: damaged.ceiling() as usize,
+        limit: ceiling as usize + 1,
     };
     let result = decoder.into_stream(&mut sink).decode_all(data);
+    if out.len() as u64 > ceiling {
+        return Err(Error::Filter {
+            filter: "LZWDecode".into(),
+            detail: format!("expanded past the {ceiling} byte ceiling"),
+        });
+    }
     if let Err(e) = result.status {
-        // Same rule as inflate: a truncated stream, or one stopped at the
-        // ceiling, keeps what decoded when the caller can use a partial page.
+        // Same rule as inflate: a stream that merely ends early keeps what
+        // decoded when the caller can use a partial page.
         if damaged == Damaged::Refuse || out.is_empty() {
             return Err(Error::Filter {
                 filter: "LZWDecode".into(),
@@ -673,6 +700,89 @@ mod tests {
         );
     }
 
+    /// A zlib stream of nothing is a stream of nothing, not a broken stream.
+    /// Producers emit one for a blank content stream, and reporting it as a
+    /// filter failure turned every blank page into a warning.
+    #[test]
+    fn an_empty_flate_stream_decodes_to_nothing() {
+        use flate2::write::ZlibEncoder;
+
+        let raw = ZlibEncoder::new(Vec::new(), flate2::Compression::default())
+            .finish()
+            .unwrap();
+
+        for damaged in [Damaged::Refuse, Damaged::Salvage] {
+            assert_eq!(
+                decode(&filter_dict("FlateDecode"), &raw, &identity, damaged).unwrap(),
+                Vec::<u8>::new(),
+                "{damaged:?} rejected a valid zlib stream of empty input"
+            );
+        }
+    }
+
+    /// The ceiling is the same answer for every filter and both callers: an
+    /// error naming the ceiling, never a silently truncated payload. A caller
+    /// handed exactly the ceiling could not tell a stream that ended from one
+    /// that was cut off, which is the silent degradation this crate does not
+    /// do.
+    ///
+    /// The fixtures are sized past the larger of the two ceilings so one set
+    /// clears both.
+    #[test]
+    fn every_ceiling_is_an_error_that_names_itself() {
+        let over = Damaged::Refuse.ceiling().max(Damaged::Salvage.ceiling()) + 4096;
+
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::copy(&mut std::io::repeat(b'A').take(over), &mut encoder)
+            .expect("the fixture encodes");
+        let flate = encoder.finish().expect("the fixture encodes");
+
+        let mut lzw_bytes = Vec::new();
+        weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+            .into_stream(&mut lzw_bytes)
+            .encode_all(std::io::BufReader::new(std::io::repeat(b'A').take(over)))
+            .status
+            .expect("the fixture encodes");
+
+        // 0x81 repeats the next byte 128 times, so clearing the ceiling costs
+        // a couple of megabytes of input.
+        let runs = (over as usize / 128) + 64;
+        let mut run_length = Vec::with_capacity(runs * 2);
+        for _ in 0..runs {
+            run_length.extend_from_slice(&[0x81, b'A']);
+        }
+
+        // Both bombs are small on disk, which is what makes them bombs: the
+        // source is a reader rather than a buffer, so only the output is ever
+        // allocated.
+        for (name, bomb) in [("flate", &flate), ("lzw", &lzw_bytes)] {
+            assert!(
+                (bomb.len() as u64) < over / 100,
+                "the {name} bomb is {} bytes of input for {over} of output, which is no bomb",
+                bomb.len()
+            );
+        }
+
+        for damaged in [Damaged::Refuse, Damaged::Salvage] {
+            for (name, raw) in [
+                ("FlateDecode", &flate),
+                ("LZWDecode", &lzw_bytes),
+                ("RunLengthDecode", &run_length),
+            ] {
+                let err = decode(&filter_dict(name), raw, &identity, damaged)
+                    .map(|out| out.len())
+                    .expect_err(&format!(
+                        "/{name} under {damaged:?} truncated instead of failing"
+                    ));
+                assert_eq!(err.category(), "filter-failed", "{err}");
+                assert!(
+                    err.to_string().contains("ceiling"),
+                    "/{name} under {damaged:?} does not name the ceiling: {err}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn unsupported_filter_fails_loud() {
         let err = decode(
@@ -724,28 +834,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_lzw_bomb_stops_at_the_ceiling() {
-        // A few kilobytes of LZW expanding past the ceiling. The source is a
-        // reader rather than a buffer, so only the output is ever allocated.
-        let ceiling = Damaged::Salvage.ceiling();
-        let mut compressed = Vec::new();
-        let source = std::io::BufReader::new(std::io::repeat(b'A').take(ceiling + 4096));
-        weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
-            .into_stream(&mut compressed)
-            .encode_all(source)
-            .status
-            .expect("the fixture encodes");
-        assert!(compressed.len() < 1_000_000, "the bomb is small on disk");
-
-        let out = lzw(&compressed, true, Damaged::Salvage).unwrap();
-        assert!(
-            out.len() as u64 <= ceiling,
-            "LZW expanded to {} bytes, past the {ceiling} byte ceiling",
-            out.len()
-        );
-    }
-
     /// The `Damaged` split again, on LZW: the decoder stops mid-stream, and
     /// what that means depends on who is asking.
     #[test]
@@ -775,8 +863,9 @@ mod tests {
     }
 
     /// `/Crypt` names the identity handler by default, which is a marker to
-    /// step over. A named handler means the bytes are ciphertext, and handing
-    /// those back as a decoded stream would be indistinguishable from a page.
+    /// step over. Any other name is a key into a `/CF` dictionary the document
+    /// does not have, since a file with `/Encrypt` never opens, so the file
+    /// does not say what these bytes are; guessing Identity is refused.
     #[test]
     fn an_identity_crypt_filter_passes_through_and_a_named_one_does_not() {
         let dict = filter_dict("Crypt");

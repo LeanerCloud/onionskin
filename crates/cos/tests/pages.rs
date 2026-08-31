@@ -5,7 +5,9 @@
 //! page. So the sweep here compares it against a naive walk that reads no
 //! `/Count` at all, and resolves the inheritable attributes by climbing back
 //! up the tree rather than by carrying them down. Same page, same object, same
-//! attributes, for every index of every multi-page corpus file.
+//! attributes, for the first and last [`PAGES_PER_END`] indices of every
+//! multi-page corpus file: the ends are where a `/Count` skip that is off by
+//! one shows up, and a file of 80 pages or fewer is covered whole.
 
 mod common;
 
@@ -19,15 +21,32 @@ use onionskin_cos::{CountingSource, Dict, Document, FileSource, ObjRef, Object};
 /// a hostile tree stops rather than about how deep it goes.
 const MAX_DEPTH: usize = 64;
 
-/// Pages compared per file. Enough to cross several subtree boundaries in a
-/// balanced tree; the bench file covers the thousand-page case on its own.
-const PAGES_PER_FILE: usize = 40;
+/// Pages compared at each end of a file, so a file of 80 pages or fewer is
+/// compared in full and a longer one is compared at both ends.
+///
+/// Sampling at all is a runtime call, and comparing both ends rather than one
+/// is what makes it honest: an off-by-one `/Count` skip renumbers everything
+/// after it, so the last page is the index most likely to disagree and the one
+/// a leading sample would never reach. Forty crosses several subtree
+/// boundaries in a balanced tree.
+const PAGES_PER_END: usize = 40;
+
+/// The indices compared for a file of `pages` pages: the first
+/// [`PAGES_PER_END`] and the last [`PAGES_PER_END`], without repeating any
+/// index when the two ranges meet.
+fn sampled(pages: usize) -> impl Iterator<Item = usize> {
+    let tail = pages.saturating_sub(PAGES_PER_END);
+    (0..pages).filter(move |index| *index < PAGES_PER_END || *index >= tail)
+}
 
 /// Visits one naive walk may make. It carries the accessor's hazard too: `seen`
 /// is a path set, so a node listed twice under one parent is walked twice, and
-/// a tree of those costs 2^depth. Smaller than the accessor's own budget,
-/// because a file that needs more than this is one the comparison should give
-/// up on rather than one it should race.
+/// a tree of those costs 2^depth.
+///
+/// A fixed cap rather than the accessor's own budget, which is derived from the
+/// file's object count and is never smaller than this one. The comparison
+/// therefore gives up first by construction: a file that needs more visits than
+/// this is one to abandon rather than one to race.
 const MAX_VISITS: usize = 200_000;
 
 /// A page tree read without believing anything it says about itself.
@@ -196,23 +215,6 @@ fn check(tally: &mut Tally, coverage: &mut Coverage, path: &Path) {
         return;
     };
 
-    // Page zero is the one `first_page` reaches by its own, shorter descent.
-    // Checked before the single-page skip below, because the corpus is mostly
-    // single-page files and they are as entitled to agree as the rest.
-    if let (Ok(node), Ok(first)) = (doc.page(0), doc.first_page()) {
-        if node.objref != first.objref {
-            tally.fail(
-                path,
-                "first-page-disagrees",
-                &format!(
-                    "page(0) is object {} and first_page() is {}",
-                    node.objref.number, first.objref.number
-                ),
-            );
-            return;
-        }
-    }
-
     // A one-page tree proves nothing about ordering.
     if naive.pages.len() < 2 {
         tally.skip(path, "single-page");
@@ -222,7 +224,8 @@ fn check(tally: &mut Tally, coverage: &mut Coverage, path: &Path) {
         coverage.nested += 1;
     }
 
-    for (index, want) in naive.pages.iter().enumerate().take(PAGES_PER_FILE) {
+    for index in sampled(naive.pages.len()) {
+        let want = &naive.pages[index];
         let node = match doc.page(index) {
             Ok(node) => node,
             Err(e) => {
@@ -355,10 +358,12 @@ fn the_indexed_accessor_agrees_with_a_walk_that_reads_no_count() {
 /// one path, so neither the depth cap nor the cycle guard sees anything wrong.
 ///
 /// Each internal node lists the same child twice. `seen` is a path set, so the
-/// second listing is descended again from scratch; forty levels of that is a
-/// trillion visits out of a file of forty objects. Before the visit budget this
-/// did not fail, it hung, and `Document::page` is reachable from the fuzz
-/// target.
+/// second listing is descended again from scratch; forty levels of that is
+/// about 2^41 visits out of a file of forty-two objects. Unbudgeted the walk
+/// does terminate rather than hang, but this test spends 0.15 seconds reaching
+/// the budget's first 200,000 visits, which puts the whole tree at weeks of
+/// walking. The budget is what turns that into an error a caller sees, and
+/// `Document::page` is reachable from the fuzz target.
 #[test]
 fn a_page_tree_that_doubles_at_every_level_is_refused_rather_than_walked() {
     const LEVELS: u32 = 40;
@@ -388,24 +393,53 @@ fn a_page_tree_that_doubles_at_every_level_is_refused_rather_than_walked() {
     );
 }
 
+/// A flat `/Kids` array is what LibreOffice and cairo emit, and a document
+/// with as many pages as anyone ships still has to reach its last one. The
+/// visit budget used to count leaves, so a flat tree of 200,000 pages ran out
+/// one visit short of page 199,999 and reported `depth-exceeded` for a file
+/// with no cycle, no repeated node and a depth of two.
+#[test]
+fn a_flat_page_tree_of_two_hundred_thousand_pages_reaches_its_last_page() {
+    const PAGES: u32 = 200_000;
+
+    let mut kids = String::with_capacity(PAGES as usize * 10);
+    for page in 3..(3 + PAGES) {
+        kids.push_str(&format!("{page} 0 R "));
+    }
+    let mut bodies: Vec<Vec<u8>> = Vec::with_capacity(PAGES as usize + 2);
+    bodies.push(b"<</Type/Catalog/Pages 2 0 R>>".to_vec());
+    bodies.push(format!("<</Type/Pages/Kids[{kids}]/Count {PAGES}>>").into_bytes());
+    for _ in 0..PAGES {
+        bodies.push(b"<</Type/Page/MediaBox[0 0 200 100]>>".to_vec());
+    }
+    let refs: Vec<&[u8]> = bodies.iter().map(Vec::as_slice).collect();
+
+    let doc = Document::open(Box::new(onionskin_cos::BytesSource::new(
+        common::classic_pdf(&refs, &[]),
+    )))
+    .expect("the fixture opens clean");
+
+    let last = PAGES as usize - 1;
+    let node = doc
+        .page(last)
+        .unwrap_or_else(|e| panic!("page {last} of a flat {PAGES}-page tree: {e}"));
+    assert_eq!(node.objref.number, PAGES + 2);
+}
+
 /// The thousand-page bench file, or `None` after saying why.
 ///
-/// `bench/` is generated by `corpus/make-bench.py` rather than fetched, so its
-/// absence is a loud skip and not an `ONIONSKIN_CORPUS_REQUIRED` failure: that
-/// flag guarantees the fetched corpus, and wiring the generator into CI belongs
-/// to the package that adds the benches.
+/// `bench/` is generated by `corpus/make-bench.py` rather than fetched, which
+/// is what `malformed/` is too, so it goes through the same door: absent, it is
+/// a loud skip locally and an `ONIONSKIN_CORPUS_REQUIRED` failure wherever that
+/// flag is set. A run that claims the corpus is complete and quietly proves
+/// nothing about the `/Count` skip is the outcome the flag exists to prevent.
 fn bench_file() -> Option<std::path::PathBuf> {
-    let root = corpus_root().or_else(|| {
-        common::missing("no corpus found; set ONIONSKIN_CORPUS");
-        None
-    })?;
-    let path = root.join("bench").join("pages-1000.pdf");
+    let path = corpus_dir("bench")?.join("pages-1000.pdf");
     if !path.is_file() {
-        eprintln!(
-            "SKIPPED: {} is absent; generate it with corpus/make-bench.py",
+        return common::missing(&format!(
+            "{} is absent; generate it with corpus/make-bench.py",
             path.display()
-        );
-        return None;
+        ));
     }
     Some(path)
 }
@@ -476,4 +510,41 @@ fn reaching_a_page_in_the_middle_reads_far_less_than_a_full_walk() {
         indexed * 50 < file_len,
         "page(500) read {indexed} bytes of a {file_len} byte file"
     );
+}
+
+/// `first_page` is `page(0)` under another name. Two trees where the two used
+/// to disagree: a `/Pages` node whose `/Kids` is empty, which is not a page
+/// however it is typed, and a `/Kids` array whose first entry is a direct
+/// dictionary, which the indexed accessor steps over on its way to the page
+/// after it.
+#[test]
+fn first_page_reaches_what_page_zero_reaches() {
+    let reached = |bodies: &[&[u8]]| {
+        let doc = Document::open(Box::new(onionskin_cos::BytesSource::new(
+            common::classic_pdf(bodies, &[]),
+        )))
+        .expect("the fixture opens clean");
+        (
+            doc.page(0)
+                .map(|node| node.objref)
+                .map_err(|e| e.category()),
+            doc.first_page()
+                .map(|parsed| parsed.objref)
+                .map_err(|e| e.category()),
+        )
+    };
+
+    let (indexed, first) = reached(&[
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 0>>",
+        b"<</Type/Pages/Kids[]/Count 0>>",
+    ]);
+    assert_eq!(indexed, first, "a node with no kids is not a page");
+
+    let (indexed, first) = reached(&[
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[<</Type/Page/MediaBox[0 0 200 100]>> 3 0 R]/Count 1>>",
+        b"<</Type/Page/MediaBox[0 0 200 100]>>",
+    ]);
+    assert_eq!(indexed, first, "a direct dictionary in /Kids is not a page");
 }

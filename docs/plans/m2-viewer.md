@@ -220,7 +220,7 @@ verbatim. `first_page` is the same descent for index 0.
 
 **Verification.**
 - `cargo test -p onionskin-cos` and `ONIONSKIN_CORPUS_REQUIRED=1 cargo test -p onionskin-content`: the content oracle tally must not regress by a single file. Capture the tally before and after and diff it; that is the real proof the decoder swap is behaviour preserving.
-- New `crates/cos/tests/pages.rs`: for every seed and every `external/` file with more than one page, `Document::page(i)` for all `i` agrees with a naive full walk, and `page(0)` agrees with `first_page()`.
+- New `crates/cos/tests/pages.rs`: for every seed and every `external/` file with more than one page, `Document::page(i)` agrees with a naive full walk at the first 40 and the last 40 indices, which is every index of a file of 80 pages or fewer. `first_page` calls `page(0)` rather than descending again, so their agreement is pinned by a fixture test on the trees where two descents used to differ, not by the sweep.
 - A lazy assertion: `Document::page(500)` on the P14 bench file, through `CountingSource`, reads fewer bytes than a full page-tree walk would.
 - `cargo clippy --workspace --all-targets -- -D warnings`.
 
@@ -462,12 +462,13 @@ P6a; `crates/app/src/main.rs` gains the windowed path;
 
 - All three runners get `CARGO_NET_GIT_FETCH_WITH_CLI: true` at the job level. It is needed on any runner whose git config rewrites https to ssh; harmless where it does not, and both the hayro and gpui pins are git revs.
 - macOS: `xcodebuild -downloadComponent MetalToolchain` (704 MB) before the build, or gpui's shader build script fails.
-- **Scope, per OS, stated rather than assumed.** The job is `cargo build -p onionskin-app --features shell` plus `cargo test -p onionskin-app --features shell` on all three, and **no test in it may open a window**: window-opening verification stays manual on the developer's macOS machine. GPUI on Linux needs a system dependency set (at minimum Vulkan loader and headers, `libxkbcommon`, wayland and xcb development packages) that nobody in this project has yet installed; **P6b's first task is to determine that set empirically on `ubuntu-latest` and write it into the workflow**, and if the Linux shell build cannot be made to work inside this package, the job is scoped to macOS and Windows with an issue filed, not left red.
+- **Scope, per OS, stated rather than assumed.** The job is `cargo build -p onionskin-app --features shell` plus `cargo test -p onionskin-app --features shell` on all three, and **no test in it may open an OS window**: opening a real window stays manual on the developer's macOS machine. The tests that drive gpui's `TestAppContext`, which allocates a `TestWindow` and no OS window, are gated on the `shell-test-support` feature and run on the macOS runner only, under `--features shell,shell-test-support`; the same feature set gets its own clippy step, or a lint failure inside one of those tests reaches main unchallenged. Locally: `cargo test -p onionskin-app --features shell,shell-test-support` and `cargo clippy -p onionskin-app --features shell,shell-test-support --all-targets -- -D warnings`. GPUI on Linux needs a system dependency set (at minimum Vulkan loader and headers, `libxkbcommon`, wayland and xcb development packages) that nobody in this project has yet installed; **P6b's first task is to determine that set empirically on `ubuntu-latest` and write it into the workflow**, and if the Linux shell build cannot be made to work inside this package, the job is scoped to macOS and Windows with an issue filed, not left red.
 
 **Depends on.** P6a, P5.
 
 **Verification.**
 - `cargo test -p onionskin-app --features shell` green on every runner the job covers.
+- `cargo test -p onionskin-app --features shell,shell-test-support` green on macOS, in CI and locally. Without the second feature the `TestAppContext` tests are compiled out, so `--features shell` alone reports 108 of the 111 lib tests and silently skips the three that drive a window.
 - `a_drag_released_outside_the_window_stops_panning`, as a unit test on the input state machine (the nit the spike left open).
 - A test that pointer coordinates reach `PointerInput` through P3's transform and not a local copy: assert the canvas calls `core`'s mapping, e.g. by making the mapping the only public path and having no float arithmetic in `input.rs`.
 - Manual: open a seed, a 152-page real file and `0041790.pdf`, screenshot at fit, at 400%, and mid-scroll. Screenshots go in the PR, not the repo.

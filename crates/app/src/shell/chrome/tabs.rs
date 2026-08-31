@@ -39,6 +39,12 @@ const CONTEXT_MENU_PADDING: f32 = 4.0;
 const CANVAS_CONTEXT_MENU_WIDTH: f32 = 300.0;
 const TAB_CONTEXT_MENU_WIDTH: f32 = 230.0;
 
+/// What the chrome says when a tool will not activate. The canvas status line
+/// carries the error itself; the search panel is drawn over it, so a selection
+/// made there needs a line of its own.
+const TOOL_ACTIVATION_FAILED: &str =
+    "This tool did not activate; the canvas status line has the reason";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TabError {
     OutOfRange { index: usize, count: usize },
@@ -723,7 +729,7 @@ impl ShellFrame {
                     return;
                 };
                 let rail_entry = self.active_rail_entry(index, cx);
-                let _ = self.activate_canvas_tool(index, rail_entry, cx);
+                self.activate_canvas_tool(index, other.label(), rail_entry, cx);
             }
         }
     }
@@ -792,9 +798,9 @@ impl ShellFrame {
 
     fn choose_search_result(&mut self, result: SearchResult, cx: &mut Context<Self>) {
         match result {
-            SearchResult::Tool { index, .. } => {
+            SearchResult::Tool { index, name, .. } => {
                 let entry = self.active_rail_entry(index, cx);
-                if self.activate_canvas_tool(index, entry, cx).is_ok() {
+                if self.activate_canvas_tool(index, name, entry, cx) {
                     self.search_feedback = None;
                     cx.notify();
                 }
@@ -823,12 +829,21 @@ impl ShellFrame {
             .unwrap_or_default()
     }
 
+    /// Activates a tool, and says so where the user asked for it when it will
+    /// not activate.
+    ///
+    /// Every entry point went through here and dropped the error, so a rail
+    /// icon or a quick action that could not take left the chrome silent. The
+    /// canvas records the error's own words on its status line; the chrome
+    /// gets [`TOOL_ACTIVATION_FAILED`] because the search panel is drawn over
+    /// that status line. Returns whether the tool is now active.
     fn activate_canvas_tool(
         &mut self,
         index: usize,
+        name: &str,
         entry: Option<RailEntry>,
         cx: &mut Context<Self>,
-    ) -> Result<bool, super::super::canvas::CanvasError> {
+    ) -> bool {
         let canvas = self
             .tabs
             .active()
@@ -842,14 +857,18 @@ impl ShellFrame {
         } else {
             canvas.update(cx, |canvas, cx| canvas.activate_tool(index, cx))
         };
-        if result.is_ok() {
-            cx.notify();
+        if result.is_err() {
+            self.search_feedback = Some(SearchResult::Unavailable {
+                label: name.to_owned(),
+                reason: TOOL_ACTIVATION_FAILED,
+            });
         }
-        result
+        cx.notify();
+        result.is_ok()
     }
 
     pub(super) fn select_rail_entry(&mut self, entry: RailEntry, cx: &mut Context<Self>) {
-        let _ = self.activate_canvas_tool(entry.registry_index, Some(entry), cx);
+        self.activate_canvas_tool(entry.registry_index, entry.name, Some(entry), cx);
     }
 
     pub(super) fn toggle_rail_expanded(&mut self, cx: &mut Context<Self>) {
@@ -882,7 +901,7 @@ impl ShellFrame {
             return;
         };
         let rail_entry = self.active_rail_entry(index, cx);
-        let _ = self.activate_canvas_tool(index, rail_entry, cx);
+        self.activate_canvas_tool(index, entry.action.label(), rail_entry, cx);
     }
 
     pub(super) fn toggle_quick_action_customization(&mut self, cx: &mut Context<Self>) {
@@ -2332,5 +2351,80 @@ mod tests {
             assert_eq!(message, "export failed: no png codec is installed");
         });
         std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    /// A tool that will not activate used to be silent in the chrome: the rail
+    /// and quick-action paths dropped the error with `let _ =`, and the search
+    /// panel only cleared its feedback on success, so a click there left the
+    /// panel showing whatever it said before. The canvas records the error's
+    /// own words underneath, but the panel is drawn over them.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_tool_that_will_not_activate_says_so_in_the_chrome(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        // The registry has no tools, so every index is out of range.
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.choose_search_result(
+                    SearchResult::Tool {
+                        index: 3,
+                        id: "onionskin.absent",
+                        name: "Absent",
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.update(|_window, app| {
+            assert_eq!(
+                frame.read(app).search_feedback,
+                Some(SearchResult::Unavailable {
+                    label: "Absent".to_owned(),
+                    reason: TOOL_ACTIVATION_FAILED,
+                }),
+                "the search panel said nothing about a tool that did not activate"
+            );
+        });
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.search_feedback = None;
+                frame.select_rail_entry(
+                    RailEntry {
+                        registry_index: 3,
+                        id: "onionskin.absent",
+                        name: "Absent",
+                        icon: "?",
+                        shortcut: None,
+                        group: "none",
+                        active: false,
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.update(|_window, app| {
+            assert!(
+                frame.read(app).search_feedback.is_some(),
+                "the rail dropped the activation error"
+            );
+        });
     }
 }

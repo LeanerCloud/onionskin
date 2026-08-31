@@ -1,4 +1,4 @@
-use gpui::{actions, App, Menu, MenuItem, WindowHandle};
+use gpui::{actions, Action, App, Menu, MenuItem, WindowHandle};
 use onionskin_core::{FitMode, PageLayoutMode};
 
 use super::quick_actions::QuickAction;
@@ -635,6 +635,12 @@ struct RunViewMenu {
     command: MenuCommand,
 }
 
+/// The route a disabled native item takes. Nothing handles it, which is how it
+/// stays greyed out; see [`native_menu_item`].
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = onionskin_shell, no_json)]
+struct UnavailableCommand;
+
 pub(in crate::shell) fn install_native_menus(
     cx: &mut App,
     window: WindowHandle<ShellFrame>,
@@ -665,29 +671,57 @@ fn native_menus(state: MenuState) -> Vec<Menu> {
         .into_iter()
         .map(|section| Menu {
             name: section.id.label().into(),
-            items: section
-                .entries
-                .into_iter()
-                .filter_map(native_menu_item)
-                .collect(),
+            items: section.entries.into_iter().map(native_menu_item).collect(),
         })
         .collect()
 }
 
-fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
-    if !entry.availability.is_enabled() {
-        return None;
-    }
-
+/// Every schema entry becomes a native item.
+///
+/// An entry the app cannot run right now is present and disabled, carrying its
+/// reason, never absent. Omitting them left Edit, Window and Help with no items
+/// at all, which reads as a broken application rather than as commands that
+/// have not landed yet.
+///
+/// gpui's `MenuItem` has no disabled form, so a disabled entry is routed to
+/// [`UnavailableCommand`], an action nothing registers a handler for. That is
+/// exactly what greys it out: gpui answers macOS's `validateMenuItem:` with
+/// `App::is_action_available`. The reason goes in the title because the native
+/// menu has nowhere else to put it.
+fn native_menu_item(entry: MenuEntry) -> MenuItem {
     let label = if entry.selected {
         format!("✓ {}", entry.label)
     } else {
         entry.label.to_owned()
     };
-    match entry.command {
-        MenuCommand::CloseTab => Some(MenuItem::action(label, CloseTab)),
-        MenuCommand::CloseOtherTabs => Some(MenuItem::action(label, CloseOtherTabs)),
-        MenuCommand::CloseAllTabs => Some(MenuItem::action(label, CloseAllTabs)),
+    match (entry.availability, native_action(entry.command)) {
+        (MenuAvailability::Enabled, Some(action)) => MenuItem::Action {
+            name: label.into(),
+            action,
+            os_action: None,
+        },
+        (MenuAvailability::Disabled(reason), _) => disabled_native_item(label, reason),
+        // An entry the schema calls enabled but that routes nowhere is a wiring
+        // mistake. Say so in the menu bar rather than dropping the item.
+        (MenuAvailability::Enabled, None) => {
+            disabled_native_item(label, "no command is wired to this entry")
+        }
+    }
+}
+
+fn disabled_native_item(label: String, reason: &str) -> MenuItem {
+    MenuItem::Action {
+        name: format!("{label} ({reason})").into(),
+        action: Box::new(UnavailableCommand),
+        os_action: None,
+    }
+}
+
+fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
+    match command {
+        MenuCommand::CloseTab => Some(Box::new(CloseTab)),
+        MenuCommand::CloseOtherTabs => Some(Box::new(CloseOtherTabs)),
+        MenuCommand::CloseAllTabs => Some(Box::new(CloseAllTabs)),
         MenuCommand::PreviousView
         | MenuCommand::NextView
         | MenuCommand::FirstPage
@@ -714,12 +748,7 @@ fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
         | MenuCommand::ThemeDark
         | MenuCommand::ReadMode
         | MenuCommand::FullScreen
-        | MenuCommand::Export(_) => Some(MenuItem::action(
-            label,
-            RunViewMenu {
-                command: entry.command,
-            },
-        )),
+        | MenuCommand::Export(_) => Some(Box::new(RunViewMenu { command })),
         MenuCommand::Open
         | MenuCommand::SaveAs
         | MenuCommand::Undo
@@ -823,14 +852,20 @@ mod tests {
         assert!(disabled.iter().any(|reason| reason.contains("P11")));
     }
 
+    fn item_names(menu: &Menu) -> Vec<String> {
+        menu.items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Action { name, .. } => name.to_string(),
+                _ => panic!("the schema emits actions only"),
+            })
+            .collect()
+    }
+
     #[test]
     fn native_menus_are_derived_from_the_same_five_section_schema() {
         let state = menu_state(2, None);
-        let expected_view_items = main_menu_schema(state)[2]
-            .entries
-            .iter()
-            .filter(|entry| entry.availability.is_enabled())
-            .count();
+        let schema = main_menu_schema(state);
         let menus = native_menus(state);
 
         assert_eq!(menus.len(), 5);
@@ -839,12 +874,44 @@ mod tests {
         assert_eq!(menus[2].name.as_ref(), "View");
         assert_eq!(menus[3].name.as_ref(), "Window");
         assert_eq!(menus[4].name.as_ref(), "Help");
-        // Close, Close Others, Close All, and the three export formats. Open
-        // and Save As are disabled, so they never reach the native menu.
-        assert_eq!(menus[0].items.len(), 6);
-        assert_eq!(menus[2].items.len(), expected_view_items);
-        assert!(menus[1].items.is_empty());
-        assert!(menus[3..].iter().all(|menu| menu.items.is_empty()));
+        for (section, menu) in schema.iter().zip(&menus) {
+            assert_eq!(menu.items.len(), section.entries.len());
+        }
+    }
+
+    /// A section whose entries are all deferred still renders its entries,
+    /// disabled and carrying the reason. They used to be filtered out, which
+    /// left Edit, Window and Help empty in the macOS menu bar: the app looked
+    /// broken rather than unfinished.
+    #[test]
+    fn a_deferred_entry_is_present_and_disabled_rather_than_absent() {
+        let menus = native_menus(menu_state(2, None));
+
+        for section in [1usize, 3, 4] {
+            assert!(
+                !menus[section].items.is_empty(),
+                "{} renders no items",
+                menus[section].name
+            );
+        }
+        assert_eq!(
+            item_names(&menus[3]),
+            vec!["New Window (Window management lands in M3)"]
+        );
+        assert_eq!(
+            item_names(&menus[1]),
+            vec![
+                "Undo (Document editing lands in M3)",
+                "Redo (Document editing lands in M3)",
+            ]
+        );
+        assert_eq!(
+            item_names(&menus[4]),
+            vec![
+                "About Onionskin (Help commands land in M2 P11)",
+                "Keyboard Shortcuts (Help commands land in M2 P11)",
+            ]
+        );
     }
 
     #[test]
@@ -860,8 +927,8 @@ mod tests {
             close_others.availability,
             MenuAvailability::Disabled("No other tabs are open")
         );
-        // Close and Close All, plus the three export formats.
-        assert_eq!(native_menus(menu_state(1, None))[0].items.len(), 5);
+        assert!(item_names(&native_menus(menu_state(1, None))[0])
+            .contains(&"Close Others (No other tabs are open)".to_owned()));
     }
 
     /// The three formats `codecs-common` registers reach the File menu, and
@@ -960,8 +1027,14 @@ mod tests {
                 ExportTarget::ALL.len()
             ]
         );
-        // Close and Close All only: nothing disabled reaches the native menu.
-        assert_eq!(native_menus(state)[0].items.len(), 2);
+        // The native menu shows them too, disabled and carrying the reason.
+        assert!(
+            item_names(&native_menus(state)[0])
+                .iter()
+                .filter(|name| name.contains("(The common codecs plugin is not installed)"))
+                .count()
+                == ExportTarget::ALL.len()
+        );
     }
 
     /// One codec missing disables its own entry and leaves the other two
@@ -999,23 +1072,19 @@ mod tests {
         let entries = &main_menu_schema(state)[2].entries;
         let expected_labels: Vec<_> = entries
             .iter()
-            .filter(|entry| entry.availability.is_enabled())
             .map(|entry| {
-                if entry.selected {
+                let label = if entry.selected {
                     format!("✓ {}", entry.label)
                 } else {
                     entry.label.to_owned()
+                };
+                match entry.availability {
+                    MenuAvailability::Enabled => label,
+                    MenuAvailability::Disabled(reason) => format!("{label} ({reason})"),
                 }
             })
             .collect();
-        let native_labels: Vec<_> = native_menus(state)[2]
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                MenuItem::Action { name, .. } => Some(name.to_string()),
-                _ => None,
-            })
-            .collect();
+        let native_labels = item_names(&native_menus(state)[2]);
 
         assert_eq!(native_labels, expected_labels);
         assert!(native_labels.contains(&"✓ Two Page".to_owned()));
@@ -1140,6 +1209,13 @@ mod tests {
         );
         assert_eq!(entry.command.view_action(view()), None);
         assert_eq!(entry.command.shell_view_action(), None);
-        assert!(native_menu_item(entry).is_none());
+        assert!(native_action(entry.command).is_none());
+        match native_menu_item(entry) {
+            MenuItem::Action { name, action, .. } => {
+                assert_eq!(name.as_ref(), "Line Weights (Line Weights land in M3)");
+                assert!(action.partial_eq(&UnavailableCommand));
+            }
+            _ => panic!("a deferred entry still emits an action item"),
+        }
     }
 }

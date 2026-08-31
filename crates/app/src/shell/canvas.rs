@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
@@ -22,6 +23,14 @@ use super::input::{
 
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+/// How long the canvas keeps polling a request nothing has answered.
+///
+/// The worker answers a page in milliseconds, and every answer restarts the
+/// clock, so this only expires on a request that will never be answered: a
+/// stopped worker, or a response the canvas dropped. Without it the poll had
+/// no exit but an answer, and a request that never came back left the app
+/// waking every 16 ms for the rest of the process.
+const PENDING_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct CanvasViewState {
@@ -102,6 +111,10 @@ pub enum CanvasError {
         page: PageIndex,
     },
     SnapshotEncode(String),
+    WorkerSilent {
+        pages: Vec<PageIndex>,
+        waited: Duration,
+    },
 }
 
 impl fmt::Display for CanvasError {
@@ -141,6 +154,11 @@ impl fmt::Display for CanvasError {
             }
             Self::UnknownCodec(id) => write!(f, "no {id} codec is installed"),
             Self::Export(error) => write!(f, "{error}"),
+            Self::WorkerSilent { pages, waited } => write!(
+                f,
+                "no answer for {pages:?} after {} seconds; the render worker stopped answering",
+                waited.as_secs()
+            ),
         }
     }
 }
@@ -162,7 +180,8 @@ impl std::error::Error for CanvasError {
             | Self::UnknownCodec(_)
             | Self::SnapshotUnrendered { .. }
             | Self::SnapshotEmpty { .. }
-            | Self::SnapshotEncode(_) => None,
+            | Self::SnapshotEncode(_)
+            | Self::WorkerSilent { .. } => None,
         }
     }
 }
@@ -276,6 +295,12 @@ pub struct CanvasModel {
     canvas_origin: ViewPoint,
     image_cache: TileImageCache,
     status: Option<CanvasStatus>,
+    /// How many responses had been applied when the current wait started, and
+    /// when that was. Only [`CanvasModel::poll_again`] reads it.
+    waiting: Option<(u64, Instant)>,
+    /// Responses applied since the canvas opened. Read only as "did this
+    /// change", which is what separates a slow answer from no answer.
+    responses: u64,
 }
 
 impl CanvasModel {
@@ -321,6 +346,8 @@ impl CanvasModel {
             canvas_origin: ViewPoint::default(),
             image_cache: TileImageCache::default(),
             status: None,
+            waiting: None,
+            responses: 0,
         })
     }
 
@@ -557,6 +584,38 @@ impl CanvasModel {
         !self.geometry_requests.is_empty() || self.has_pending_render()
     }
 
+    /// Whether the poll loop should wake again, given the clock.
+    ///
+    /// False once there is nothing outstanding, and false again once the
+    /// outstanding set has gone [`PENDING_WORK_TIMEOUT`] without a single
+    /// response, which is recorded as a [`CanvasStatus::Error`] naming the
+    /// pages nobody answered. Any response restarts the wait, so a document
+    /// that keeps the worker busy for hours never trips it.
+    pub fn poll_again(&mut self, now: Instant) -> bool {
+        if !self.has_pending_work() {
+            self.waiting = None;
+            return false;
+        }
+        let (responses, since) = *self.waiting.get_or_insert((self.responses, now));
+        if responses != self.responses {
+            self.waiting = Some((self.responses, now));
+            return true;
+        }
+        let waited = now.saturating_duration_since(since);
+        if waited < PENDING_WORK_TIMEOUT {
+            return true;
+        }
+        self.waiting = None;
+        let pages = self
+            .geometry_requests
+            .iter()
+            .copied()
+            .chain(self.requests.keys().copied())
+            .collect();
+        self.record_error(CanvasError::WorkerSilent { pages, waited });
+        false
+    }
+
     pub fn resize(&mut self, origin: ViewPoint, size: ViewSize) -> Result<(), CanvasError> {
         self.canvas_origin = origin;
         if self.viewport.size() != size {
@@ -575,8 +634,16 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// Drop a pinch the platform reports with a nonsense factor, and zoom by
+    /// anything else. The filter lives here, at the OS event boundary, rather
+    /// than in the viewport, which treats a non-positive factor as the error
+    /// it is.
     pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, CanvasError> {
-        Ok(self.viewport.pinch(factor, at)?)
+        if !(factor.is_finite() && factor > 0.0) {
+            return Ok(false);
+        }
+        self.viewport.pinch(factor, at)?;
+        Ok(true)
     }
 
     pub fn pointer_down(
@@ -746,15 +813,12 @@ impl CanvasModel {
         let mut displayed_images = BTreeSet::new();
 
         for placement in visible.into_iter().filter(|page| page.measured) {
-            let Some((source_zoom, raster_width, raster_height)) =
-                self.paint_source(placement.page, exact_zoom)?
-            else {
+            let Some(source_zoom) = self.paint_source(placement.page, exact_zoom)? else {
                 continue;
             };
             let source = RasterPaintSource {
                 page: placement.page,
                 zoom: source_zoom,
-                size: (raster_width, raster_height),
                 rect: placement.rect,
                 rotation,
             };
@@ -828,14 +892,25 @@ impl CanvasModel {
         true
     }
 
+    /// Requests geometry for every visible page that has none, and records
+    /// what it waits on.
+    ///
+    /// A page is recorded only when the session says the request went out.
+    /// `false` means the session is already holding one, so either this canvas
+    /// already recorded it or the two disagree; inventing a wait in the second
+    /// case is what left `has_pending_work` true with nothing on the way.
     fn queue_visible_geometry(&mut self) -> Result<usize, CanvasError> {
         let mut queued = 0;
         for placement in self.viewport.visible_pages()? {
-            if !placement.measured && !self.failed_geometry.contains(&placement.page) {
-                if self.document.request_page_geometry(placement.page)? {
-                    queued += 1;
-                }
+            if placement.measured
+                || self.failed_geometry.contains(&placement.page)
+                || self.geometry_requests.contains(&placement.page)
+            {
+                continue;
+            }
+            if self.document.request_page_geometry(placement.page)? {
                 self.geometry_requests.insert(placement.page);
+                queued += 1;
             }
         }
         Ok(queued)
@@ -846,6 +921,7 @@ impl CanvasModel {
         response: PageGeometryResponse,
     ) -> Result<(), CanvasError> {
         self.geometry_requests.remove(&response.page());
+        self.responses += 1;
         match response {
             PageGeometryResponse::Ready(geometry) => {
                 self.failed_geometry.remove(&geometry.index);
@@ -877,6 +953,11 @@ impl CanvasModel {
         self.signature = Some(signature);
         self.requests.clear();
         self.failed_renders.clear();
+        // Geometry failures go with them. Nothing re-requests a page the
+        // canvas is holding as failed, so the only response that could clear
+        // it never arrives, and a page that failed once stayed blank for the
+        // life of the process.
+        self.failed_geometry.clear();
         self.placeholders.clear();
         Ok(true)
     }
@@ -928,6 +1009,7 @@ impl CanvasModel {
         if self.requests.get(&request.page) != Some(&request) {
             return false;
         }
+        self.responses += 1;
 
         match response {
             RenderResponse::Placeholder(placeholder) => {
@@ -975,27 +1057,32 @@ impl CanvasModel {
         true
     }
 
+    /// The zoom whose cached raster this page paints from, or `None` when it
+    /// has none yet.
+    ///
+    /// Only the zoom, because that plus the page is the store's key and the
+    /// store owns the raster's dimensions. Reporting a size here as well gave
+    /// the paint two sources for one fact, and the one it reported came from
+    /// `sources` while the tiles it cut came from the store.
     fn paint_source(
         &mut self,
         page: PageIndex,
         exact_zoom: f32,
-    ) -> Result<Option<(f32, u32, u32)>, CanvasError> {
+    ) -> Result<Option<f32>, CanvasError> {
         if let Some(cache) = self.tiles.get(page, exact_zoom) {
             let source = cache.base().clone();
-            let size = (source.width(), source.height());
             self.sources.insert(page, source);
-            return Ok(Some((exact_zoom, size.0, size.1)));
+            return Ok(Some(exact_zoom));
         }
 
         let Some(source) = self.sources.get(&page).cloned() else {
             return Ok(None);
         };
         let source_zoom = source.zoom();
-        let size = (source.width(), source.height());
         if self.tiles.get(page, source_zoom).is_none() {
             self.tiles.insert(page, source);
         }
-        Ok(Some((source_zoom, size.0, size.1)))
+        Ok(Some(source_zoom))
     }
 
     /// What the active tool wants drawn this frame, in canvas coordinates.
@@ -1246,20 +1333,26 @@ struct RasterCrop {
 struct RasterPaintSource {
     page: PageIndex,
     zoom: f32,
-    size: (u32, u32),
     rect: ViewRect,
     rotation: ViewRotation,
 }
 
+/// The visible tiles of one page's cached raster.
+///
+/// The raster's dimensions come from the cache being cut, never from the
+/// caller: `cols` and `rows` are derived from them, so `col * TILE_SIZE` is
+/// below `raster_width` by construction and the remainder below cannot
+/// underflow. A caller that passed its own size could disagree with the store
+/// and did not have to be right.
 fn collect_tiles(
     store: &mut TileStore,
     source: RasterPaintSource,
     viewport_size: ViewSize,
 ) -> Vec<RawTile> {
-    let (raster_width, raster_height) = source.size;
     let cache = store
         .get(source.page, source.zoom)
         .expect("the selected paint source has a tile cache");
+    let (raster_width, raster_height) = (cache.base().width(), cache.base().height());
     let mut tiles = Vec::with_capacity((cache.cols() * cache.rows()) as usize);
     for row in 0..cache.rows() {
         for col in 0..cache.cols() {
@@ -2557,10 +2650,13 @@ mod tests {
         assert!(model.has_pending_render());
     }
 
-    #[test]
-    fn geometry_failure_is_visible() {
+    /// Fails page 1's geometry with the view already pinned, so nothing in
+    /// the test clears the failure on its own.
+    fn model_with_failed_geometry() -> CanvasModel {
         let mut model = model();
         model.viewport.go_to_page(1, PageAlignment::Start).unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
         model.geometry_requests.insert(1);
         model
             .apply_geometry_response(PageGeometryResponse::Failed {
@@ -2568,6 +2664,12 @@ mod tests {
                 error: CoreError::NoSuchPage { page: 1, count: 1 },
             })
             .unwrap();
+        model
+    }
+
+    #[test]
+    fn geometry_failure_is_visible() {
+        let mut model = model_with_failed_geometry();
 
         assert!(!model.geometry_requests.contains(&1));
         assert!(model.failed_geometry.contains(&1));
@@ -2577,9 +2679,128 @@ mod tests {
                 if message.contains("outside a 1-page document")
         ));
         assert_eq!(model.queue_visible_geometry().unwrap(), 0);
-        model.update().unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(!model.update_signature(&visible).unwrap());
         assert!(!model.geometry_requests.contains(&1));
         assert!(model.failed_geometry.contains(&1));
+    }
+
+    /// A failed render is retried when the view changes. Geometry was not, and
+    /// nothing else could retry it: the only thing that cleared
+    /// `failed_geometry` was a `Ready` response, and a page held as failed is
+    /// never requested again, so one transient failure blanked that page for
+    /// the life of the process.
+    #[test]
+    fn a_view_change_retries_a_page_whose_geometry_failed() {
+        let mut model = model_with_failed_geometry();
+        assert!(model.failed_geometry.contains(&1));
+
+        assert!(model.zoom_to(2.0).unwrap());
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(model.update_signature(&visible).unwrap());
+
+        assert!(!model.failed_geometry.contains(&1));
+        assert_eq!(model.queue_visible_geometry().unwrap(), 1);
+    }
+
+    /// `request_page_geometry` answers `false` when the session already holds
+    /// a request for that page. Recording a wait anyway means recording one
+    /// this canvas did not issue, and `has_pending_work` then reports work
+    /// that no response will ever clear, which is a 60 Hz poll with no end.
+    #[test]
+    fn only_a_geometry_request_that_went_out_is_waited_on() {
+        let mut model = model();
+        model.viewport.go_to_page(1, PageAlignment::Start).unwrap();
+        assert_eq!(model.queue_visible_geometry().unwrap(), 1);
+        assert!(model.geometry_requests.contains(&1));
+
+        // The two records disagreeing is the state to survive, so make them.
+        model.geometry_requests.clear();
+
+        assert_eq!(model.queue_visible_geometry().unwrap(), 0);
+        assert!(
+            model.geometry_requests.is_empty(),
+            "the canvas is waiting on a request it did not issue"
+        );
+        assert!(!model.has_pending_work());
+    }
+
+    /// The poll loop's only exit used to be an answer, so a request nobody
+    /// answers woke the app every 16 ms for the rest of the process.
+    #[test]
+    fn a_wait_nothing_answers_ends_in_an_error_rather_than_a_permanent_poll() {
+        let mut model = model();
+        model.geometry_requests.insert(1);
+        let start = Instant::now();
+
+        assert!(model.poll_again(start));
+        assert!(model.poll_again(start + PENDING_WORK_TIMEOUT / 2));
+        assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT));
+        assert!(matches!(
+            model.status(),
+            Some(CanvasStatus::Error { page: None, message })
+                if message.contains("[1]") && message.contains("stopped answering")
+        ));
+    }
+
+    /// A worker that keeps answering is not a worker that has stopped, however
+    /// long the queue stays occupied.
+    #[test]
+    fn a_wait_that_keeps_getting_answers_never_times_out() {
+        let mut model = model();
+        let start = Instant::now();
+        for step in 0..4 {
+            model.geometry_requests.insert(step);
+            let now = start + PENDING_WORK_TIMEOUT * step as u32;
+            assert!(model.poll_again(now), "gave up at step {step}");
+            model
+                .apply_geometry_response(PageGeometryResponse::Failed {
+                    page: step,
+                    error: CoreError::NoSuchPage {
+                        page: step,
+                        count: 1,
+                    },
+                })
+                .unwrap();
+        }
+        assert!(!model.has_pending_work());
+        assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT * 4));
+    }
+
+    /// `paint_source` and `collect_tiles` used to take the raster's size from
+    /// different places for the same `(page, zoom)`: the first from `sources`,
+    /// the second from the tile store. The store's `cols` and `rows` come from
+    /// its own base raster, so a disagreement made `raster_width - col *
+    /// TILE_SIZE` underflow and took the window down.
+    ///
+    /// No reachable sequence produces the disagreement in the current code, so
+    /// it is constructed here directly.
+    #[test]
+    fn the_tiles_of_a_page_are_cut_to_the_raster_the_store_holds() {
+        let mut model = model();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+        let source_zoom = 0.5_f32;
+        assert_ne!(model.viewport.zoom().to_bits(), source_zoom.to_bits());
+        model.tiles.begin_frame();
+        model.tiles.insert(
+            0,
+            BaseRaster::new(
+                TILE_SIZE * 2,
+                1,
+                source_zoom,
+                vec![255; (TILE_SIZE * 2 * 4) as usize],
+            ),
+        );
+        // A stale raster of a different size under the same key.
+        model
+            .sources
+            .insert(0, BaseRaster::new(8, 1, source_zoom, vec![255; 32]));
+
+        let paint = model.paint_list().expect("the page paints");
+
+        let tiles = paint.tiles.iter().filter(|tile| tile.page == 0).count();
+        assert_eq!(tiles, 2, "the store holds a raster two tiles wide");
     }
 
     #[test]
