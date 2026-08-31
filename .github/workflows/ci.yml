@@ -52,3 +52,17 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain
       - run: cargo build -p onionskin-app --features shell
       - run: cargo test -p onionskin-app --features shell
+      # The window tests are gated on `shell-test-support`, so `--features
+      # shell` alone compiles them nowhere and runs them nowhere: it reports
+      # 108 lib tests where this reports 111. They drive gpui's test platform,
+      # which allocates a TestWindow and no OS window, so they are safe on a
+      # headless runner; macOS is the runner the shell is developed against,
+      # so it is the one that owns them. Same command locally.
+      - name: Windowed shell tests
+        if: runner.os == 'macOS'
+        run: cargo test -p onionskin-app --features shell,shell-test-support
+      # Clippy must see the same targets, or a lint failure inside a
+      # `shell-test-support` test reaches main unchallenged.
+      - name: Clippy over the windowed targets
+        if: runner.os == 'macOS'
+        run: cargo clippy -p onionskin-app --features shell,shell-test-support --all-targets -- -D warnings
