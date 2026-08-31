@@ -398,8 +398,11 @@ impl ShellFrame {
     /// Ask where the export goes, then run it.
     ///
     /// Nothing is produced until the user has chosen a destination, and the
-    /// codec produces every page before this writes any of them, so a failure
-    /// part-way through an export leaves no files at all.
+    /// codec produces every page before this writes any of them, so a page
+    /// that fails to render leaves no files at all. A write that fails after
+    /// that is disk trouble, not a broken page: it stops on the file it was
+    /// on and names it, because the earlier files are already there and the
+    /// user needs to know how far the set got.
     fn start_export(&mut self, target: ExportTarget, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.active() else {
             return;
@@ -1282,7 +1285,7 @@ fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &m
         canvas.model.export(target.codec(), EXPORT_DPI)
     });
     let result = match exported {
-        Ok(files) => write_export(path, &files).map_err(ExportFailure::Write),
+        Ok(files) => write_export(path, &files),
         Err(error) => Err(ExportFailure::Codec(error)),
     };
     if let Err(failure) = result {
@@ -1290,9 +1293,11 @@ fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &m
     }
 }
 
-fn write_export(chosen: &Path, files: &[ExportedFile]) -> std::io::Result<()> {
+fn write_export(chosen: &Path, files: &[ExportedFile]) -> Result<(), ExportFailure> {
     for file in files {
-        std::fs::write(export_path(chosen, file.page, files.len()), &file.bytes)?;
+        let path = export_path(chosen, file.page, files.len());
+        std::fs::write(&path, &file.bytes)
+            .map_err(|source| ExportFailure::Write { path, source })?;
     }
     Ok(())
 }
@@ -1316,16 +1321,26 @@ fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf 
 }
 
 /// Everything that can go wrong once the user has chosen a destination.
+///
+/// A write names the file it was on. A per-page export is many files, so
+/// "export could not be written" alone would not tell the user which of them
+/// to look for, nor how far the set got.
+#[derive(Debug)]
 enum ExportFailure {
     Codec(CanvasError),
-    Write(std::io::Error),
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl fmt::Display for ExportFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Codec(error) => write!(f, "export failed: {error}"),
-            Self::Write(error) => write!(f, "export could not be written: {error}"),
+            Self::Write { path, source } => {
+                write!(f, "{} could not be written: {source}", path.display())
+            }
         }
     }
 }
@@ -1355,12 +1370,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[cfg(feature = "shell-test-support")]
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use onionskin_core::{Document, PageLayoutMode, ViewPoint, ViewRotation, ViewSize, ZoomPolicy};
     use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
 
     use super::*;
     use crate::shell::canvas::CanvasModel;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::canvas::CanvasStatus;
 
     struct OriginRecordingTool {
         inputs: Arc<Mutex<Vec<PointerInput>>>,
@@ -1759,5 +1776,254 @@ mod tests {
         assert_eq!(tabs.tabs(), &["two"]);
         assert_eq!(tabs.active_index(), Some(0));
         assert_eq!(feedback, None);
+    }
+
+    /// Text is one file and takes the name the user typed. So does a
+    /// single-page PNG: numbering `report.png` to `report-001.png` when there
+    /// is nothing to disambiguate it from would be surprising.
+    #[test]
+    fn a_one_file_export_keeps_the_name_the_user_chose() {
+        let chosen = Path::new("/exports/report.png");
+
+        assert_eq!(export_path(chosen, None, 1), PathBuf::from(chosen));
+        assert_eq!(export_path(chosen, Some(0), 1), PathBuf::from(chosen));
+    }
+
+    /// A per-page export numbers beside the chosen name, one-based like the
+    /// page controls and zero-padded so a directory listing sorts in page
+    /// order rather than putting page 10 before page 2.
+    #[test]
+    fn a_per_page_export_numbers_one_based_beside_the_chosen_name() {
+        let chosen = Path::new("/exports/report.png");
+
+        assert_eq!(
+            export_path(chosen, Some(0), 12),
+            PathBuf::from("/exports/report-001.png")
+        );
+        assert_eq!(
+            export_path(chosen, Some(9), 12),
+            PathBuf::from("/exports/report-010.png")
+        );
+        assert_eq!(
+            export_path(chosen, Some(1_233), 1_234),
+            PathBuf::from("/exports/report-1234.png")
+        );
+    }
+
+    #[test]
+    fn a_chosen_name_with_no_extension_still_numbers_its_pages() {
+        assert_eq!(
+            export_path(Path::new("/exports/report"), Some(1), 2),
+            PathBuf::from("/exports/report-002")
+        );
+    }
+
+    /// A name with dots in it keeps every one of them but the last: the stem
+    /// of `q1.2026.png` is `q1.2026`, not `q1`.
+    #[test]
+    fn a_dotted_name_numbers_on_its_last_extension_only() {
+        assert_eq!(
+            export_path(Path::new("/exports/q1.2026.png"), Some(0), 2),
+            PathBuf::from("/exports/q1.2026-001.png")
+        );
+    }
+
+    #[test]
+    fn a_multi_page_export_writes_one_numbered_file_per_page() {
+        let dir = std::env::temp_dir().join(format!("onionskin-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let chosen = dir.join("report.png");
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+        ];
+
+        write_export(&chosen, &files).expect("the export writes");
+
+        assert!(!chosen.exists(), "the undecorated name should not be used");
+        assert_eq!(std::fs::read(dir.join("report-001.png")).unwrap(), b"first");
+        assert_eq!(
+            std::fs::read(dir.join("report-002.png")).unwrap(),
+            b"second"
+        );
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    /// A write that fails names the file it was on, so a user whose disk
+    /// filled up mid-export knows how far the set got.
+    #[test]
+    fn a_write_failure_names_the_file_it_stopped_on() {
+        let chosen = Path::new("/onionskin-does-not-exist/report.png");
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+        ];
+
+        let failure = write_export(chosen, &files).expect_err("an unwritable path is refused");
+
+        assert!(
+            failure
+                .to_string()
+                .starts_with("/onionskin-does-not-exist/report-001.png could not be written: "),
+            "{failure}"
+        );
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn canvas_for_export(
+        registry: PluginRegistry,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Canvas>,
+        onionskin_render::BaseRaster,
+        &mut VisualTestContext,
+    ) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let mut document = Document::open_path(&path).expect("the seed opens");
+        // The pixels the canvas would composite for this page at the export's
+        // own resolution, taken before the document moves into the model so
+        // the comparison is against the same worker and options.
+        let on_screen = document
+            .render_page_now(0, EXPORT_DPI / 72.0)
+            .expect("the seed page renders")
+            .raster;
+        let model = CanvasModel::new(
+            document,
+            registry,
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas model builds");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark).tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+        (canvas, on_screen, cx)
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn export_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("onionskin-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        dir
+    }
+
+    /// The whole menu path bar the file dialog, which cannot be driven
+    /// headless: the codec id `MenuCommand::Export(Png)` carries, looked up in
+    /// the registry the canvas holds, exported and written. The bytes on disk
+    /// are the pixels the canvas composites, which is the point of routing
+    /// export through `core` rather than beside it.
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn the_png_menu_entry_writes_the_canvas_paths_own_pixels(cx: &mut TestAppContext) {
+        let mut registry = PluginRegistry::new();
+        registry.install(&onionskin_codecs_common::CommonCodecsPlugin);
+        let (canvas, on_screen, cx) = canvas_for_export(registry, cx);
+        let dir = export_dir("png-export");
+        let chosen = dir.join("hello.png");
+
+        cx.update(|_window, app| run_export(&canvas, ExportTarget::Png, &chosen, app));
+
+        let decoded = image::load_from_memory_with_format(
+            &std::fs::read(&chosen).expect("the export reached disk"),
+            image::ImageFormat::Png,
+        )
+        .expect("the export is a PNG")
+        .to_rgba8();
+        assert_eq!(
+            decoded.dimensions(),
+            (on_screen.width(), on_screen.height())
+        );
+        assert_eq!(decoded.into_raw(), on_screen.rgba());
+        cx.update(|_window, app| {
+            let status = canvas.read(app).model.status();
+            assert!(
+                !matches!(status, Some(CanvasStatus::Error { .. })),
+                "{status:?}"
+            );
+        });
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    /// Text is one file for the whole document, so it takes the chosen name
+    /// unnumbered.
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn the_text_menu_entry_writes_one_file_at_the_chosen_name(cx: &mut TestAppContext) {
+        let mut registry = PluginRegistry::new();
+        registry.install(&onionskin_codecs_common::CommonCodecsPlugin);
+        let (canvas, _, cx) = canvas_for_export(registry, cx);
+        let dir = export_dir("text-export");
+        let chosen = dir.join("hello.txt");
+
+        cx.update(|_window, app| run_export(&canvas, ExportTarget::Text, &chosen, app));
+
+        assert!(std::fs::read_to_string(&chosen)
+            .expect("the export reached disk")
+            .contains("Hello"));
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "a whole-document text export is one file"
+        );
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    /// A destination that cannot be written surfaces on the document the
+    /// export came from, naming the file, rather than only on stderr.
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn an_unwritable_destination_is_reported_on_the_document(cx: &mut TestAppContext) {
+        let mut registry = PluginRegistry::new();
+        registry.install(&onionskin_codecs_common::CommonCodecsPlugin);
+        let (canvas, _, cx) = canvas_for_export(registry, cx);
+        let chosen = Path::new("/onionskin-does-not-exist/hello.txt");
+
+        cx.update(|_window, app| run_export(&canvas, ExportTarget::Text, chosen, app));
+
+        cx.update(|_window, app| {
+            let Some(CanvasStatus::Error { page, message }) = canvas.read(app).model.status()
+            else {
+                panic!("the failure did not reach the document");
+            };
+            assert_eq!(*page, None);
+            assert!(
+                message.starts_with("/onionskin-does-not-exist/hello.txt could not be written: "),
+                "{message}"
+            );
+        });
+    }
+
+    /// With the plugin compiled out the menu entry is disabled, but the run
+    /// path still refuses by name rather than writing an empty file.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn exporting_without_the_codec_installed_says_which_one_is_missing(cx: &mut TestAppContext) {
+        let (canvas, _, cx) = canvas_for_export(PluginRegistry::new(), cx);
+        let dir = export_dir("absent-codec");
+        let chosen = dir.join("hello.png");
+
+        cx.update(|_window, app| run_export(&canvas, ExportTarget::Png, &chosen, app));
+
+        assert!(!chosen.exists(), "nothing should have been written");
+        cx.update(|_window, app| {
+            let Some(CanvasStatus::Error { message, .. }) = canvas.read(app).model.status() else {
+                panic!("the failure did not reach the document");
+            };
+            assert_eq!(message, "export failed: no png codec is installed");
+        });
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
     }
 }

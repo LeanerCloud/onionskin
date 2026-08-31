@@ -301,7 +301,11 @@ impl CanvasModel {
     /// their lifetimes right. Nothing is written to disk by this call, so a
     /// caller that fails to save has still not left a half-written export
     /// behind.
-    pub fn export(&mut self, codec: &'static str, dpi: f32) -> Result<Vec<ExportedFile>, CanvasError> {
+    pub fn export(
+        &mut self,
+        codec: &'static str,
+        dpi: f32,
+    ) -> Result<Vec<ExportedFile>, CanvasError> {
         let request = ExportRequest {
             pages: PageRange::whole(self.document.page_count())?,
             dpi,
