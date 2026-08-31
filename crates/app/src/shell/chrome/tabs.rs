@@ -10,6 +10,9 @@ use gpui::{
 };
 
 use super::super::canvas::{CanvasViewState, ViewAction};
+use super::super::context_menu::{
+    canvas_context_entries, tool_with, CanvasContextCommand, CanvasContextEntry,
+};
 use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, MenuState,
@@ -29,6 +32,10 @@ use super::tool_search::{
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
+const CONTEXT_MENU_ROW_HEIGHT: f32 = 30.0;
+const CONTEXT_MENU_PADDING: f32 = 4.0;
+const CANVAS_CONTEXT_MENU_WIDTH: f32 = 300.0;
+const TAB_CONTEXT_MENU_WIDTH: f32 = 230.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TabError {
@@ -75,6 +82,12 @@ pub(super) struct TabContextEntry {
 #[derive(Debug, Clone, Copy)]
 struct TabContextMenu {
     tab_index: usize,
+    origin: Point<Pixels>,
+}
+
+/// Where the canvas context menu was opened, in frame coordinates.
+#[derive(Debug, Clone, Copy)]
+struct CanvasContextMenu {
     origin: Point<Pixels>,
 }
 
@@ -174,6 +187,7 @@ pub(in crate::shell) struct ShellFrame {
     tabs: TabState<DocumentTab>,
     main_menu_open: bool,
     tab_context_menu: Option<TabContextMenu>,
+    canvas_context_menu: Option<CanvasContextMenu>,
     search_input: Entity<SearchInput>,
     search_feedback: Option<SearchResult>,
     page_input: Entity<SearchInput>,
@@ -265,6 +279,7 @@ impl ShellFrame {
             tabs,
             main_menu_open: false,
             tab_context_menu: None,
+            canvas_context_menu: None,
             search_input,
             search_feedback: None,
             page_input,
@@ -555,6 +570,7 @@ impl ShellFrame {
     fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
         self.main_menu_open = !self.main_menu_open;
         self.tab_context_menu = None;
+        self.canvas_context_menu = None;
         cx.notify();
     }
 
@@ -575,6 +591,7 @@ impl ShellFrame {
             return;
         }
         self.main_menu_open = false;
+        self.canvas_context_menu = None;
         self.tab_context_menu = Some(TabContextMenu {
             tab_index: index,
             origin: event.position,
@@ -586,7 +603,78 @@ impl ShellFrame {
     fn dismiss_menus(&mut self, cx: &mut Context<Self>) {
         self.main_menu_open = false;
         self.tab_context_menu = None;
+        self.canvas_context_menu = None;
         cx.notify();
+    }
+
+    fn open_canvas_context_menu(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        if self.tabs.active().is_none() {
+            return;
+        }
+        self.main_menu_open = false;
+        self.tab_context_menu = None;
+        self.canvas_context_menu = Some(CanvasContextMenu {
+            origin: event.position,
+        });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// The menu's live entries are the ones the registry and the selection
+    /// answer for, so running one asks the same two sources rather than a
+    /// second copy of the rules.
+    fn run_canvas_context_command(
+        &mut self,
+        command: CanvasContextCommand,
+        cx: &mut Context<Self>,
+    ) {
+        self.canvas_context_menu = None;
+        // The menu is closed above whatever the command turns out to do, so
+        // every exit below has to repaint.
+        cx.notify();
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        match command {
+            CanvasContextCommand::Copy => {
+                let Some(text) = canvas
+                    .read(cx)
+                    .model
+                    .selection_text()
+                    .map(str::to_owned)
+                    .filter(|text| !text.is_empty())
+                else {
+                    return;
+                };
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            CanvasContextCommand::RotateClockwise => {
+                self.run_view_action(ViewAction::RotateClockwise, cx)
+            }
+            other => {
+                let Some(index) = other
+                    .capability()
+                    .and_then(|capability| tool_with(canvas.read(cx).model.registry(), capability))
+                else {
+                    return;
+                };
+                let rail_entry = self.active_rail_entry(index, cx);
+                let _ = self.activate_canvas_tool(index, rail_entry, cx);
+            }
+        }
+    }
+
+    fn canvas_context_menu_entries(&self, cx: &App) -> Vec<CanvasContextEntry> {
+        self.tabs
+            .active()
+            .map(|tab| {
+                let model = &tab.canvas.read(cx).model;
+                canvas_context_entries(
+                    model.registry(),
+                    model.selection_text().is_some_and(|text| !text.is_empty()),
+                )
+            })
+            .unwrap_or_default()
     }
 
     fn render_global_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -925,31 +1013,35 @@ impl ShellFrame {
     fn render_tab_context_menu(
         &self,
         menu: TabContextMenu,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.shell_view_state.tokens();
+        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len())
+            .expect("context-menu targets are validated when opened");
+        let size = gpui::size(
+            px(TAB_CONTEXT_MENU_WIDTH),
+            px(entries.len() as f32 * CONTEXT_MENU_ROW_HEIGHT + 2.0 * CONTEXT_MENU_PADDING),
+        );
+        let origin = context_menu_origin(menu.origin, size, window.viewport_size());
         let mut panel = div()
             .absolute()
-            .left(menu.origin.x)
-            .top(menu.origin.y)
-            .w(px(230.0))
-            .p_1()
+            .left(origin.x)
+            .top(origin.y)
+            .w(size.width)
+            .p(px(CONTEXT_MENU_PADDING))
             .rounded_md()
             .bg(theme.raised)
             .text_color(theme.text);
 
-        for (row_index, entry) in tab_context_entries(menu.tab_index, self.tabs.tabs().len())
-            .expect("context-menu targets are validated when opened")
-            .into_iter()
-            .enumerate()
-        {
+        for (row_index, entry) in entries.into_iter().enumerate() {
             let enabled = entry.availability.is_enabled();
             let command = entry.command;
             let tab_index = entry.tab_index;
             panel = panel.child(
                 div()
                     .id(("tab-context-entry", row_index))
-                    .h(px(30.0))
+                    .h(px(CONTEXT_MENU_ROW_HEIGHT))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -971,6 +1063,70 @@ impl ShellFrame {
                             {
                                 eprintln!("onionskin: {error}");
                             }
+                        }
+                    }))
+                    .child(entry.label)
+                    .when_some(entry.availability.reason(), |row, reason| {
+                        row.child(
+                            div()
+                                .ml_2()
+                                .text_xs()
+                                .text_color(theme.muted_text)
+                                .child(reason),
+                        )
+                    }),
+            );
+        }
+        panel
+    }
+
+    fn render_canvas_context_menu(
+        &self,
+        menu: CanvasContextMenu,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = self.shell_view_state.tokens();
+        let entries = self.canvas_context_menu_entries(cx);
+        let size = gpui::size(
+            px(CANVAS_CONTEXT_MENU_WIDTH),
+            px(entries.len() as f32 * CONTEXT_MENU_ROW_HEIGHT + 2.0 * CONTEXT_MENU_PADDING),
+        );
+        let origin = context_menu_origin(menu.origin, size, window.viewport_size());
+        let mut panel = div()
+            .absolute()
+            .left(origin.x)
+            .top(origin.y)
+            .w(size.width)
+            .p(px(CONTEXT_MENU_PADDING))
+            .rounded_md()
+            .bg(theme.raised)
+            .text_color(theme.text);
+
+        for (row_index, entry) in entries.into_iter().enumerate() {
+            let enabled = entry.availability.is_enabled();
+            let command = entry.command;
+            panel = panel.child(
+                div()
+                    .id(("canvas-context-entry", row_index))
+                    .h(px(CONTEXT_MENU_ROW_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .rounded_sm()
+                    .text_color(if enabled {
+                        theme.text
+                    } else {
+                        theme.disabled_text
+                    })
+                    .when(enabled, |row| {
+                        row.cursor_pointer()
+                            .hover(move |row| row.bg(theme.selected))
+                    })
+                    .on_click(cx.listener(move |frame, _event, _window, cx| {
+                        if enabled {
+                            frame.run_canvas_context_command(command, cx);
                         }
                     }))
                     .child(entry.label)
@@ -1062,6 +1218,12 @@ impl Render for ShellFrame {
                 .h(document_bounds.size.height)
                 .min_w_0()
                 .min_h_0()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|frame, event, _window, cx| {
+                        frame.open_canvas_context_menu(event, cx);
+                    }),
+                )
                 .child(canvas)
                 .when(visibility.quick_actions, |view| view.child(quick_actions));
             let document_column = div()
@@ -1097,7 +1259,10 @@ impl Render for ShellFrame {
             .child(body);
 
         let mut root = div().size_full().relative().child(frame);
-        if self.main_menu_open || self.tab_context_menu.is_some() {
+        if self.main_menu_open
+            || self.tab_context_menu.is_some()
+            || self.canvas_context_menu.is_some()
+        {
             root = root.child(
                 div()
                     .id("menu-dismiss-layer")
@@ -1115,7 +1280,10 @@ impl Render for ShellFrame {
             root = root.child(self.render_main_menu(window, cx));
         }
         if let Some(menu) = self.tab_context_menu {
-            root = root.child(self.render_tab_context_menu(menu, cx));
+            root = root.child(self.render_tab_context_menu(menu, window, cx));
+        }
+        if let Some(menu) = self.canvas_context_menu {
+            root = root.child(self.render_canvas_context_menu(menu, window, cx));
         }
         if self.search_panel_visible(cx) {
             root = root.child(self.render_search_results(cx));
@@ -1154,6 +1322,23 @@ fn document_view_bounds(
             (viewport.width - rail - side_panel).max(px(0.0)),
             (viewport.height - header - page_controls).max(px(0.0)),
         ),
+    }
+}
+
+/// Where a context menu panel of `size` may sit after a click at `click`.
+///
+/// The canvas menu names all thirteen of parity row 225's entries, which is
+/// tall enough to run off the bottom of the window, so the clicked corner
+/// is a preference: the panel slides back inside rather than putting
+/// entries out of reach.
+fn context_menu_origin(
+    click: Point<Pixels>,
+    size: gpui::Size<Pixels>,
+    viewport: gpui::Size<Pixels>,
+) -> Point<Pixels> {
+    Point {
+        x: click.x.min(viewport.width - size.width).max(px(0.0)),
+        y: click.y.min(viewport.height - size.height).max(px(0.0)),
     }
 }
 
@@ -1318,6 +1503,128 @@ mod tests {
             }
         );
         assert_eq!(bounds.size, gpui::size(px(1_100.0), px(784.0)));
+    }
+
+    /// A click low enough that a thirteen-entry menu would overhang slides
+    /// the panel back inside; a click with room to spare is left alone.
+    #[test]
+    fn a_context_menu_never_opens_outside_the_window() {
+        let viewport = gpui::size(px(800.0), px(600.0));
+        let size = gpui::size(
+            px(CANVAS_CONTEXT_MENU_WIDTH),
+            px(
+                CanvasContextCommand::ALL.len() as f32 * CONTEXT_MENU_ROW_HEIGHT
+                    + 2.0 * CONTEXT_MENU_PADDING,
+            ),
+        );
+
+        let roomy = gpui::point(px(100.0), px(50.0));
+        assert_eq!(context_menu_origin(roomy, size, viewport), roomy);
+
+        let cornered = context_menu_origin(gpui::point(px(760.0), px(580.0)), size, viewport);
+        assert_eq!(cornered.x + size.width, viewport.width);
+        assert_eq!(cornered.y + size.height, viewport.height);
+
+        // A window too small for the panel still opens it at the top left,
+        // where the first entries are reachable, rather than off-screen.
+        let cramped = context_menu_origin(
+            gpui::point(px(10.0), px(10.0)),
+            size,
+            gpui::size(px(120.0), px(120.0)),
+        );
+        assert_eq!(cramped, gpui::point(px(0.0), px(0.0)));
+    }
+
+    /// The entries the menu shows come from the live model, and picking one
+    /// reaches the subsystem that owns it: Take A Snapshot activates the
+    /// registered snapshot tool, Rotate Clockwise turns the real view.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext) {
+        use onionskin_plugin_api::ToolCapability;
+
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            crate::build_registry(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        let right_click = MouseDownEvent {
+            button: MouseButton::Right,
+            position: gpui::point(px(300.0), px(300.0)),
+            ..Default::default()
+        };
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.open_canvas_context_menu(&right_click, cx);
+            });
+        });
+
+        let entries = cx.update(|_window, app| {
+            assert!(frame.read(app).canvas_context_menu.is_some());
+            frame.read(app).canvas_context_menu_entries(app)
+        });
+        let live = |command| {
+            entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("the entry is present")
+                .availability
+                .is_enabled()
+        };
+        assert_eq!(entries.len(), CanvasContextCommand::ALL.len());
+        assert!(live(CanvasContextCommand::TakeASnapshot));
+        assert!(live(CanvasContextCommand::RotateClockwise));
+        // Nothing is selected in a freshly opened document.
+        assert!(!live(CanvasContextCommand::Copy));
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_canvas_context_command(CanvasContextCommand::TakeASnapshot, cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let frame = frame.read(app);
+            assert!(frame.canvas_context_menu.is_none(), "picking closes it");
+            let model = &frame.tabs.active().unwrap().canvas.read(app).model;
+            assert_eq!(
+                model.active_tool(),
+                tool_with(model.registry(), ToolCapability::Snapshot)
+            );
+        });
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.open_canvas_context_menu(&right_click, cx);
+                frame.run_canvas_context_command(CanvasContextCommand::RotateClockwise, cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let frame = frame.read(app);
+            assert!(frame.canvas_context_menu.is_none());
+            let rotation = frame
+                .tabs
+                .active()
+                .unwrap()
+                .canvas
+                .read(app)
+                .model
+                .view_state()
+                .rotation;
+            assert_eq!(rotation, ViewRotation::Clockwise90);
+        });
     }
 
     #[cfg(feature = "shell-test-support")]

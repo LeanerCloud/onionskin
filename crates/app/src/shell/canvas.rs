@@ -315,6 +315,15 @@ impl CanvasModel {
         &self.registry
     }
 
+    /// The text the current selection covers, which is what the context
+    /// menu's Copy puts on the clipboard.
+    pub fn selection_text(&self) -> Option<&str> {
+        self.document
+            .selection()
+            .text()
+            .map(|selection| selection.text.as_str())
+    }
+
     pub fn active_tool(&self) -> Option<usize> {
         self.active_tool
     }

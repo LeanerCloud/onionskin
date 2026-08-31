@@ -70,7 +70,7 @@ pub(super) enum MenuCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuAvailability {
+pub(in crate::shell) enum MenuAvailability {
     Enabled,
     Disabled(&'static str),
 }
@@ -110,11 +110,11 @@ impl MenuState {
 }
 
 impl MenuAvailability {
-    pub(super) fn is_enabled(self) -> bool {
+    pub(in crate::shell) fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
     }
 
-    pub(super) fn reason(self) -> Option<&'static str> {
+    pub(in crate::shell) fn reason(self) -> Option<&'static str> {
         match self {
             Self::Enabled => None,
             Self::Disabled(reason) => Some(reason),

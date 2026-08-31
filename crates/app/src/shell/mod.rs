@@ -24,6 +24,7 @@ use self::chrome::{
 
 pub mod canvas;
 mod chrome;
+mod context_menu;
 pub mod input;
 
 const WINDOW_WIDTH: f32 = 1100.0;
