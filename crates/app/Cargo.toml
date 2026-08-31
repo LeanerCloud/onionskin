@@ -8,13 +8,8 @@ license.workspace = true
 name = "onionskin"
 path = "src/main.rs"
 
-# M1 spike (c). Behind `shell` so default builds and the headless tests never
-# pull GPUI.
-[[bin]]
-name = "shell_spike"
-path = "src/bin/shell_spike.rs"
-required-features = ["shell"]
-
+# M1 spike (b). Behind `a11y-spike` so default builds and the headless tests
+# never pull GPUI.
 [[bin]]
 name = "a11y_spike"
 path = "src/bin/a11y_spike.rs"
