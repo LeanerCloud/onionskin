@@ -21,6 +21,7 @@ use super::super::find_bar::{
     render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
     FindPreviousMatch, FindSummary,
 };
+use super::super::home::{render_home, HomeState, HomeView};
 use super::super::panes::{self, NavigationPanesState, PaneAction};
 use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
@@ -242,6 +243,7 @@ pub(in crate::shell) struct ShellFrame {
     notices: Vec<String>,
     dialog: Option<ShellDialog>,
     recent_menu_open: bool,
+    home: HomeState,
 }
 
 fn activate_tab<T>(
@@ -349,6 +351,7 @@ impl ShellFrame {
             notices,
             dialog: None,
             recent_menu_open: false,
+            home: HomeState::default(),
         };
         frame.sync_page_entry(cx);
         frame
@@ -559,7 +562,7 @@ impl ShellFrame {
     }
 
     /// Open a recent document by its position in the list.
-    pub(super) fn open_recent(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(in crate::shell) fn open_recent(&mut self, index: usize, cx: &mut Context<Self>) {
         self.recent_menu_open = false;
         let Some(path) = self
             .settings
@@ -784,6 +787,18 @@ impl ShellFrame {
         })
     }
 
+    pub(in crate::shell) fn set_home_view(&mut self, view: HomeView, cx: &mut Context<Self>) {
+        self.home.set_view(view, &self.settings.recents);
+        cx.notify();
+    }
+
+    /// Home's Open File button, which is File > Open by another name.
+    pub(in crate::shell) fn open_from_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(error) = self.run_main_menu_command(MenuCommand::Open, window, cx) {
+            eprintln!("onionskin: {error}");
+        }
+    }
+
     pub(in crate::shell) fn dismiss_notice(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.notices.len() {
             self.notices.remove(index);
@@ -836,23 +851,20 @@ impl ShellFrame {
         &mut self,
         command: TabCommand,
         index: usize,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
         self.main_menu_open = false;
         self.tab_context_menu = None;
         match command {
             TabCommand::Close => {
-                if close_tab(&mut self.tabs, &mut self.search_feedback, index)? {
-                    window.remove_window();
-                } else {
-                    self.navigation.document_changed();
-                    self.observed_view_state = self.active_view_state(cx);
-                    self.sync_page_entry(cx);
-                    self.refresh_find(cx);
-                    refresh_native_menus(cx, self.menu_state(cx));
-                    cx.notify();
-                }
+                close_tab(&mut self.tabs, &mut self.search_feedback, index)?;
+                self.navigation.document_changed();
+                self.observed_view_state = self.active_view_state(cx);
+                self.sync_page_entry(cx);
+                self.refresh_find(cx);
+                refresh_native_menus(cx, self.menu_state(cx));
+                cx.notify();
             }
             TabCommand::CloseOthers => {
                 close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
@@ -865,7 +877,12 @@ impl ShellFrame {
             }
             TabCommand::CloseAll => {
                 self.tabs.close_all();
-                window.remove_window();
+                self.search_feedback = None;
+                self.navigation.document_changed();
+                self.observed_view_state = None;
+                self.refresh_find(cx);
+                refresh_native_menus(cx, self.menu_state(cx));
+                cx.notify();
             }
             TabCommand::RevealPath => {
                 cx.reveal_path(self.tab_source(index)?);
@@ -2053,6 +2070,8 @@ impl Render for ShellFrame {
                     ))
                 });
             body = body.child(document_column);
+        } else {
+            body = body.child(render_home(&self.home, &self.settings.recents, theme, cx));
         }
         body = body.when(visibility.side_panel, |body| {
             body.child(render_side_panel(self.side_panel_state, theme, cx))
@@ -2870,6 +2889,59 @@ mod tests {
                     notices.contains(&summary),
                     "the notice does not carry the repair report: {notices}"
                 );
+            })
+            .unwrap();
+    }
+
+    /// Closing the last document leaves the window on Home rather than
+    /// taking the window down, which is what Acrobat does and what makes the
+    /// no-document state reachable at all.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn closing_the_last_document_returns_to_home(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.close"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(frame.tabs.is_empty());
+                assert!(frame.active_view_state(cx).is_none());
+                // And the menus follow: the document commands say so rather
+                // than pointing at a document that is not there.
+                assert_eq!(
+                    frame.command_unavailable(MenuCommand::SelectAll, cx),
+                    Some("No document is open")
+                );
+                assert_eq!(frame.command_unavailable(MenuCommand::Open, cx), None);
+            })
+            .expect("the window is still open");
+    }
+
+    /// Home's own controls: the toggle switches views and the recents rows
+    /// are the same list File > Open Recent reads.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn home_lists_the_recents_and_switches_to_thumbnails(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("home-view");
+        let _ = std::fs::remove_file(dir.join(crate::config::RECENTS_FILE));
+        let (window, _) = bound_window_in(&[], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_documents(std::slice::from_ref(&seed), cx);
+                frame
+                    .run_tab_command(TabCommand::CloseAll, 0, _window, cx)
+                    .unwrap();
+
+                assert!(frame.tabs.is_empty(), "back on Home");
+                assert_eq!(frame.settings.recents.documents().len(), 1);
+                assert_eq!(frame.home.view(), HomeView::List);
+
+                frame.set_home_view(HomeView::Thumbnail, cx);
+                assert_eq!(frame.home.view(), HomeView::Thumbnail);
             })
             .unwrap();
     }

@@ -13,8 +13,10 @@ fn main() -> ExitCode {
             println!("{}", onionskin_app::boot_summary(&registry));
             ExitCode::SUCCESS
         }
+        // No paths opens the Home view, which is where File > Open and the
+        // recents list are.
         #[cfg(feature = "shell")]
-        paths if !paths.is_empty() && paths.iter().all(|path| !path.starts_with('-')) => {
+        paths if paths.iter().all(|path| !path.starts_with('-')) => {
             match onionskin_app::shell::run(paths) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -33,7 +35,7 @@ fn main() -> ExitCode {
 fn usage() -> &'static str {
     #[cfg(feature = "shell")]
     {
-        "onionskin --headless-boot | onionskin <pdf-path> [<pdf-path> ...]"
+        "onionskin --headless-boot | onionskin [<pdf-path> ...]"
     }
     #[cfg(not(feature = "shell"))]
     {

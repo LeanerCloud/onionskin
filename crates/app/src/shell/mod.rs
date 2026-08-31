@@ -34,6 +34,7 @@ mod dialog;
 mod find_bar;
 #[cfg(test)]
 mod fixtures;
+mod home;
 pub mod input;
 mod panes;
 mod preferences_dialog;
@@ -45,7 +46,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Debug)]
 pub enum ShellError {
-    NoDocuments,
     Open {
         path: PathBuf,
         source: onionskin_core::Error,
@@ -61,7 +61,6 @@ pub enum ShellError {
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoDocuments => write!(f, "cannot open a window without a PDF path"),
             Self::Open { path, source } => {
                 write!(f, "cannot open PDF {}: {source}", path.display())
             }
@@ -80,7 +79,7 @@ impl std::error::Error for ShellError {
             Self::Open { source, .. } => Some(source),
             Self::ResolvePath { source, .. } => Some(source),
             Self::Canvas(error) => Some(error),
-            Self::NoDocuments | Self::Window(_) => None,
+            Self::Window(_) => None,
         }
     }
 }
@@ -684,9 +683,6 @@ where
         .into_iter()
         .map(|path| path.as_ref().to_path_buf())
         .collect();
-    if paths.is_empty() {
-        return Err(ShellError::NoDocuments);
-    }
 
     paths
         .into_iter()
@@ -824,12 +820,11 @@ mod tests {
         ));
     }
 
+    /// Starting with no path is the Home view, not a failure: Acrobat
+    /// opens on Home, and File > Open is how a user leaves it.
     #[test]
-    fn empty_startup_is_rejected_explicitly() {
-        assert!(matches!(
-            prepare_tabs(Vec::<PathBuf>::new()),
-            Err(ShellError::NoDocuments)
-        ));
+    fn empty_startup_prepares_no_tabs_rather_than_failing() {
+        assert!(prepare_tabs(Vec::<PathBuf>::new()).unwrap().is_empty());
     }
 
     #[test]
