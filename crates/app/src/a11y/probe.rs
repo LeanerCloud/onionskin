@@ -68,10 +68,13 @@ pub(crate) fn arm(cx: &mut App) {
         let started = Instant::now();
         loop {
             Timer::after(POLL).await;
-            // Reading the tree at all is what tells the shell an
-            // accessibility client exists, and the shell only pays for the
-            // page's text once something is listening. So the first read is
-            // also the request, and the text arrives on a later frame.
+            // The wait is for the layout and for the attach, not for the
+            // extraction: the shell extracts every visible page's text on
+            // every frame, and only the push to the platform is gated on a
+            // client being attached (`update_if_active`). A page has to be
+            // measured before its words have anywhere to be, and reading the
+            // tree at all is what attaches this probe as that client, so the
+            // first read is also the request and the text arrives later.
             let settled = cx
                 .update(|cx| {
                     let Some(view) = view_pointer(cx) else {
