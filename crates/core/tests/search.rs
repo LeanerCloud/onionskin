@@ -142,6 +142,63 @@ fn a_new_query_abandons_the_walk_in_flight() {
     assert!(!doc.search().is_running());
 }
 
+/// The same supersede, but with the first walk demonstrably streaming before
+/// the second one starts.
+///
+/// `a_new_query_abandons_the_walk_in_flight` sends both queries back to back
+/// and can win by a race: the worker often has not emitted a page before the
+/// second request lands, so the generation filter it means to exercise is
+/// never asked to drop anything. Here the first walk has already reported
+/// pages, and its results are in the channel when the second query supersedes
+/// it.
+#[test]
+fn results_from_a_superseded_walk_never_reach_the_state_that_replaced_it() {
+    let mut doc = Document::open_bytes(multi_page_pdf(PAGES, false)).expect("fixture opens");
+    let options = SearchOptions::default();
+
+    doc.start_search("alpha", options, 0)
+        .expect("the first search starts");
+    let deadline = Instant::now() + DEADLINE;
+    while doc.search().searched_pages() == 0 {
+        assert!(Instant::now() < deadline, "the first walk reported nothing");
+        doc.poll_search();
+    }
+    let abandoned_at = doc.search().searched_pages();
+    assert!(
+        abandoned_at < PAGES,
+        "the first walk finished too early to supersede"
+    );
+
+    assert!(doc
+        .start_search("marker007", options, 0)
+        .expect("the second search starts"));
+    // The count restarts with the walk. A page of the abandoned query counted
+    // here would mean its results were applied under the new needle.
+    assert_eq!(doc.search().searched_pages(), 0);
+
+    let mut seen = 0;
+    let deadline = Instant::now() + DEADLINE;
+    while doc.search().is_running() {
+        assert!(Instant::now() < deadline, "the walk never finished");
+        doc.poll_search();
+        let now = doc.search().searched_pages();
+        assert!(
+            now >= seen,
+            "the searched count went backwards: {seen} then {now}"
+        );
+        assert!(
+            now <= PAGES,
+            "{now} pages searched in a {PAGES} page document"
+        );
+        seen = now;
+    }
+
+    assert_eq!(doc.search().needle(), "marker007");
+    assert_eq!(doc.search().searched_pages(), PAGES);
+    assert_eq!(doc.search().len(), 1, "marker007 is on exactly one page");
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(7));
+}
+
 #[test]
 fn closing_the_find_bar_clears_the_query_and_its_results() {
     let mut doc = Document::open_bytes(multi_page_pdf(16, false)).expect("fixture opens");

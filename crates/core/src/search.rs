@@ -11,13 +11,17 @@
 //! as the render worker constructs its `render::Document`. Only the bytes cross
 //! the thread boundary, so nothing here needs `cos::Document` to be `Send`.
 //!
-//! Two properties the tests pin, because both are easy to lose:
+//! Two properties matter here, because both are easy to lose:
 //!
 //! * **Nothing accumulates.** One page's [`content::PageText`] exists at a time
 //!   and is dropped before the next page is read. A [`SearchMatch`] owns its
 //!   text and its quads, so keeping a hit does not keep the page it came from.
+//!   Structural, not tested: the peak is not observable from outside the
+//!   worker, and the memory ceiling it belongs to is the bench harness in P14.
 //! * **Nothing is silently skipped.** A page whose extraction fails is reported
-//!   as a failure the UI shows, not dropped from the walk.
+//!   as a failure the UI shows, not dropped from the walk. Pinned by
+//!   `a_page_that_cannot_be_read_is_reported_rather_than_skipped` in
+//!   `crates/core/tests/search.rs`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -500,7 +504,116 @@ fn drain(incoming: &mpsc::Receiver<Request>, queued: &mut Option<Box<Job>>) -> D
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
+
+    /// A PDF of `pages` identical one-line pages.
+    ///
+    /// The worker tests need a walk that is still running when the next
+    /// request is sent, which means a document long enough to still be walking
+    /// microseconds later. `crates/core/tests/search.rs` builds a richer
+    /// version of the same shape for the public-API tests: an integration test
+    /// and a unit test in the same crate cannot share a helper, so the two are
+    /// deliberate copies and each says so.
+    fn many_page_pdf(pages: usize) -> Vec<u8> {
+        let mut objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            Vec::new(), // 2: the page tree, once the kids are numbered
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut kids = Vec::new();
+        for page in 0..pages {
+            kids.push(format!("{} 0 R", objects.len() + 1));
+            objects.push(
+                format!(
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+                     /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
+                    objects.len() + 2
+                )
+                .into_bytes(),
+            );
+            let text = format!("BT /F1 12 Tf 20 100 Td (marker{page:03}) Tj ET");
+            let mut stream = format!("<< /Length {} >>\nstream\n", text.len()).into_bytes();
+            stream.extend_from_slice(text.as_bytes());
+            stream.extend_from_slice(b"\nendstream");
+            objects.push(stream);
+        }
+        objects[1] = format!(
+            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+            kids.join(" ")
+        )
+        .into_bytes();
+
+        let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        let size = objects.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
+        out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    /// A cancel arrives behind the search it supersedes, so the job queued
+    /// with it is one nobody is waiting for. Leaving it queued made Escape
+    /// start a walk instead of stopping one: every page read, every result
+    /// thrown away by generation, and the worker busy until it finished.
+    ///
+    /// Read on the raw channel, because that is the only place the difference
+    /// shows: the generation filter drops the queued walk's results either
+    /// way. The walk that was cancelled may still have pages in flight, which
+    /// is why its generation is allowed here and only the queued one is not.
+    ///
+    /// The quiet window can only make this test pass when it should fail, and
+    /// only if the worker is starved for the whole window: with the queue left
+    /// in place the abandoned job's first page lands about a millisecond after
+    /// the cancel.
+    #[test]
+    fn a_cancel_drops_the_search_queued_behind_the_walk_it_stops() {
+        const PAGES: usize = 400;
+        const QUIET: Duration = Duration::from_millis(750);
+        let options = SearchOptions::default();
+        let mut search = DocumentSearch::spawn(Arc::new(many_page_pdf(PAGES))).unwrap();
+
+        search.start("marker", options, 0, PAGES).unwrap();
+        let walking = search.generation;
+        // One page reported is proof the worker is inside the page loop, which
+        // is where the next two requests have to land to be drained together.
+        let (generation, _) = search
+            .updates
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the first page arrives");
+        assert_eq!(generation, walking);
+
+        search.start("marker", options, 0, PAGES).unwrap();
+        let queued = search.generation;
+        search.cancel();
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match search.updates.recv_timeout(QUIET) {
+                Ok((generation, _)) => {
+                    assert_ne!(generation, queued, "the walk the cancel dropped ran anyway");
+                    assert!(Instant::now() < deadline, "the worker never went quiet");
+                }
+                // Nothing more is coming: the worker is parked on its channel
+                // rather than walking a document nobody asked it to.
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the worker died"),
+            }
+        }
+    }
 
     fn hit(page: PageIndex, text: &str) -> SearchMatch {
         SearchMatch {
