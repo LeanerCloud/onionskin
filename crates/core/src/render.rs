@@ -711,6 +711,60 @@ mod tests {
         assert_eq!(pending.pop_front(), None);
     }
 
+    /// Thumbnails are a queue of their own, so a pane full of them cannot
+    /// take a turn ahead of the page on screen. A queue that pushed them in
+    /// with the interactive requests would still answer both, which is why
+    /// this asserts where they came out and not only that they did.
+    #[test]
+    fn a_thumbnail_waits_behind_every_interactive_render() {
+        let mut pending = PendingRequests::default();
+        pending.push_thumbnail(5, 0.2);
+        assert!(!pending.is_idle(), "a queued thumbnail is work to do");
+
+        pending.push(request(1, 1.0, 7));
+
+        assert_eq!(pending.pop_front(), Some(request(1, 1.0, 7)));
+        assert_eq!(
+            pending.pop_front(),
+            None,
+            "the thumbnail is not in the interactive queue"
+        );
+        assert_eq!(pending.pop_thumbnail(), Some((5, 0.2)));
+        assert!(pending.is_idle());
+    }
+
+    /// A pane that asks twice for a row costs one render, and the size it
+    /// asked for last is the one it gets: scrolling back over a row it has
+    /// already asked for must not queue it again, and a size change must not
+    /// leave the old zoom queued in front of the new one.
+    #[test]
+    fn asking_twice_for_a_row_queues_it_once_at_the_latest_size() {
+        let mut pending = PendingRequests::default();
+
+        pending.push_thumbnail(5, 0.2);
+        pending.push_thumbnail(6, 0.2);
+        pending.push_thumbnail(5, 0.36);
+
+        assert_eq!(pending.pop_thumbnail(), Some((5, 0.36)));
+        assert_eq!(pending.pop_thumbnail(), Some((6, 0.2)));
+        assert_eq!(pending.pop_thumbnail(), None);
+    }
+
+    /// A new generation replaces the interactive queue, which is the page on
+    /// screen changing. The thumbnails are pictures of pages, not of a view,
+    /// so nothing about scrolling the document invalidates them.
+    #[test]
+    fn advancing_the_generation_leaves_the_thumbnail_queue_alone() {
+        let mut pending = PendingRequests::default();
+        pending.push_thumbnail(5, 0.2);
+        pending.push(request(1, 1.0, 1));
+
+        pending.push(request(2, 1.0, 2));
+
+        assert_eq!(pending.pop_front(), Some(request(2, 1.0, 2)));
+        assert_eq!(pending.pop_thumbnail(), Some((5, 0.2)));
+    }
+
     #[test]
     fn a_generation_advance_prunes_placeholders_across_pages() {
         let (mut handle, _outgoing, _geometry_outgoing) = idle_handle();
