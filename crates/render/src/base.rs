@@ -38,7 +38,7 @@ pub fn raster_size(width: f32, height: f32, zoom: f32) -> Result<(u16, u16), Ren
 /// An opened PDF, held only for display. Nothing here is the semantic
 /// contract: `cos` owns what a save writes.
 pub struct Document {
-    pdf: Pdf,
+    pub(crate) pdf: Pdf,
 }
 
 /// The page-to-device mapping hayro uses at 72 dpi.

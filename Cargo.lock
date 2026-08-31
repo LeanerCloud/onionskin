@@ -2626,6 +2626,20 @@ version = "0.1.0"
 source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
 
 [[package]]
+name = "hayro-svg"
+version = "0.7.0"
+source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
+dependencies = [
+ "base64",
+ "hayro-interpret",
+ "image",
+ "kurbo 0.13.1",
+ "rustc-hash 2.1.3",
+ "siphasher",
+ "xmlwriter",
+]
+
+[[package]]
 name = "hayro-syntax"
 version = "0.7.2"
 source = "git+https://github.com/cristim/hayro?rev=67763e2ebe5d21e1df40f5e43a8f284b9fcc9368#67763e2ebe5d21e1df40f5e43a8f284b9fcc9368"
@@ -3976,7 +3990,10 @@ version = "0.1.0"
 name = "onionskin-codecs-common"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "onionskin-core",
  "onionskin-plugin-api",
+ "resvg",
 ]
 
 [[package]]
@@ -4042,6 +4059,7 @@ name = "onionskin-render"
 version = "0.1.0"
 dependencies = [
  "hayro",
+ "hayro-svg",
  "tiny-skia 0.12.0",
 ]
 

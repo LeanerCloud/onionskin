@@ -42,6 +42,36 @@ fn every_tool_id_is_unique() {
     assert_eq!(before, ids.len(), "duplicate tool ids");
 }
 
+/// A codec's extension is what the save dialog suggests and what names the
+/// file on disk, so an empty one is not a cosmetic defect.
+#[test]
+fn every_codec_has_a_name_and_a_filename_extension() {
+    for codec in build_registry().codecs() {
+        assert!(!codec.id().is_empty(), "a codec has an empty id");
+        assert!(!codec.name().is_empty(), "{} has no name", codec.id());
+        assert!(
+            !codec.extension().is_empty(),
+            "{} has no filename extension",
+            codec.id()
+        );
+        assert!(
+            !codec.extension().starts_with('.'),
+            "{} spells its extension with a leading dot",
+            codec.id()
+        );
+    }
+}
+
+#[test]
+fn every_codec_id_is_unique() {
+    let registry = build_registry();
+    let mut ids: Vec<&str> = registry.codecs().map(|c| c.id()).collect();
+    let before = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(before, ids.len(), "duplicate codec ids");
+}
+
 #[test]
 fn every_command_has_a_title_and_a_namespaced_id() {
     for command in build_registry().commands() {

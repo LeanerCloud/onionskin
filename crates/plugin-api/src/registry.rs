@@ -1,6 +1,6 @@
 //! The plugin registry: the kernel's catalog of everything installed.
 
-use crate::{Command, CommandPlugin, ToolPlugin};
+use crate::{CodecPlugin, Command, CommandPlugin, ToolPlugin};
 
 /// One plugin crate's entry point.
 pub trait PluginManifest {
@@ -25,6 +25,7 @@ pub struct PluginRegistry {
     plugins: Vec<PluginEntry>,
     tools: Vec<Box<dyn ToolPlugin>>,
     commands: Vec<Command>,
+    codecs: Vec<Box<dyn CodecPlugin>>,
 }
 
 impl PluginRegistry {
@@ -63,6 +64,26 @@ impl PluginRegistry {
         self.tools.push(tool);
     }
 
+    /// Record an export format.
+    ///
+    /// This is the surface a menu or a context menu binds an export entry to:
+    /// a `Command` cannot carry a destination or report which page failed, so
+    /// exports are looked up here and run through [`PluginRegistry::codec`].
+    pub fn register_codec(&mut self, codec: Box<dyn CodecPlugin>) {
+        assert!(!codec.id().is_empty(), "{} has an empty id", codec.name());
+        assert!(
+            !codec.extension().is_empty(),
+            "{} has no filename extension",
+            codec.id()
+        );
+        assert!(
+            !self.codecs.iter().any(|c| c.id() == codec.id()),
+            "duplicate codec id {}",
+            codec.id()
+        );
+        self.codecs.push(codec);
+    }
+
     pub fn register_commands(&mut self, plugin: &dyn CommandPlugin) {
         for command in plugin.commands() {
             assert!(!command.id.is_empty(), "{} has an empty id", command.title);
@@ -93,12 +114,20 @@ impl PluginRegistry {
     pub fn commands(&self) -> &[Command] {
         &self.commands
     }
+
+    pub fn codecs(&self) -> impl Iterator<Item = &dyn CodecPlugin> {
+        self.codecs.iter().map(|c| c.as_ref())
+    }
+
+    pub fn codec(&self, id: &str) -> Option<&dyn CodecPlugin> {
+        self.codecs().find(|codec| codec.id() == id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PointerInput, ToolCtx};
+    use crate::{Document, ExportError, ExportRequest, ExportedFile, PointerInput, ToolCtx};
 
     struct TestTool;
 
@@ -120,6 +149,51 @@ mod tests {
         fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
 
         fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {}
+    }
+
+    struct TestCodec;
+
+    impl CodecPlugin for TestCodec {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn name(&self) -> &'static str {
+            "Test"
+        }
+
+        fn extension(&self) -> &'static str {
+            "test"
+        }
+
+        fn export(
+            &self,
+            _doc: &mut Document,
+            _request: &ExportRequest,
+        ) -> Result<Vec<ExportedFile>, ExportError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn a_registered_codec_is_found_by_its_id() {
+        let mut registry = PluginRegistry::new();
+        registry.register_codec(Box::new(TestCodec));
+
+        assert_eq!(registry.codecs().count(), 1);
+        assert_eq!(
+            registry.codec("test").expect("codec is installed").id(),
+            "test"
+        );
+        assert!(registry.codec("png").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate codec id test")]
+    fn two_codecs_cannot_claim_one_format() {
+        let mut registry = PluginRegistry::new();
+        registry.register_codec(Box::new(TestCodec));
+        registry.register_codec(Box::new(TestCodec));
     }
 
     #[test]

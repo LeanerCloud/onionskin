@@ -29,9 +29,68 @@ impl MenuSectionId {
     }
 }
 
+/// The export formats the File menu offers, each backed by a codec the
+/// registry may or may not have: `codecs-common` can be compiled out, and
+/// then the entry ships disabled with that as its reason rather than
+/// silently missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExportTarget {
+    Text,
+    Png,
+    Svg,
+}
+
+impl ExportTarget {
+    pub(super) const ALL: [ExportTarget; 3] =
+        [ExportTarget::Text, ExportTarget::Png, ExportTarget::Svg];
+
+    /// The codec id this entry runs, as `codecs-common` registers it.
+    pub(super) fn codec(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Png => "png",
+            Self::Svg => "svg",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Text => 0,
+            Self::Png => 1,
+            Self::Svg => 2,
+        }
+    }
+
+    /// Acrobat words these "Export To ..."; the text entry says what it does
+    /// and does not, because document order is not reading order.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Text => "Export To Plain Text (Document Order)…",
+            Self::Png => "Export Pages To PNG…",
+            Self::Svg => "Export Pages To SVG…",
+        }
+    }
+}
+
+/// Which export codecs this build installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::shell) struct ExportCodecs([bool; ExportTarget::ALL.len()]);
+
+impl ExportCodecs {
+    pub(in crate::shell) fn installed(has_codec: impl Fn(&'static str) -> bool) -> Self {
+        Self(ExportTarget::ALL.map(|target| has_codec(target.codec())))
+    }
+
+    fn has(self, target: ExportTarget) -> bool {
+        self.0[target.index()]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuCommand {
     Open,
+    SaveAs,
+    Export(ExportTarget),
     CloseTab,
     CloseOtherTabs,
     CloseAllTabs,
@@ -82,6 +141,7 @@ pub(in crate::shell) struct MenuState {
     view: Option<CanvasViewState>,
     shell_view: ShellViewState,
     quick_actions_visible: [bool; QuickAction::ALL.len()],
+    export_codecs: ExportCodecs,
 }
 
 impl MenuState {
@@ -89,8 +149,15 @@ impl MenuState {
         tab_count: usize,
         view: Option<CanvasViewState>,
         shell_view: ShellViewState,
+        export_codecs: ExportCodecs,
     ) -> Self {
-        Self::new(tab_count, view, shell_view, [true; QuickAction::ALL.len()])
+        Self::new(
+            tab_count,
+            view,
+            shell_view,
+            [true; QuickAction::ALL.len()],
+            export_codecs,
+        )
     }
 
     pub(in crate::shell) fn new(
@@ -98,6 +165,7 @@ impl MenuState {
         view: Option<CanvasViewState>,
         shell_view: ShellViewState,
         quick_actions_visible: [bool; QuickAction::ALL.len()],
+        export_codecs: ExportCodecs,
     ) -> Self {
         Self {
             tab_count,
@@ -105,6 +173,7 @@ impl MenuState {
             view,
             shell_view,
             quick_actions_visible,
+            export_codecs,
         }
     }
 }
@@ -178,7 +247,16 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: document_command,
                     selected: false,
                 },
-            ],
+                MenuEntry {
+                    command: MenuCommand::SaveAs,
+                    label: "Save As…",
+                    availability: Disabled("Saving lands in M3"),
+                    selected: false,
+                },
+            ]
+            .into_iter()
+            .chain(export_entries(state))
+            .collect(),
         },
         MenuSection {
             id: MenuSectionId::Edit,
@@ -228,6 +306,27 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             ],
         },
     ]
+}
+
+/// The three export formats M2 owns. The full `File > Export To` menu, with
+/// the image and Office targets behind it, is an M3 row; these three are M2
+/// rows and need a surface to be reachable from.
+fn export_entries(state: MenuState) -> Vec<MenuEntry> {
+    use MenuAvailability::{Disabled, Enabled};
+
+    ExportTarget::ALL
+        .into_iter()
+        .map(|target| MenuEntry {
+            command: MenuCommand::Export(target),
+            label: target.label(),
+            availability: match (state.export_codecs.has(target), state.has_active_tab) {
+                (false, _) => Disabled("The common codecs plugin is not installed"),
+                (true, false) => Disabled("No document is open"),
+                (true, true) => Enabled,
+            },
+            selected: false,
+        })
+        .collect()
 }
 
 fn view_menu_entries(
@@ -464,6 +563,8 @@ impl MenuCommand {
             Self::TwoPageContinuous => ViewAction::SetLayout(PageLayoutMode::TwoPageContinuous),
             Self::ToggleCover => ViewAction::SetShowCover(!view.show_cover),
             Self::Open
+            | Self::SaveAs
+            | Self::Export(_)
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -493,6 +594,8 @@ impl MenuCommand {
             Self::ThemeDark => ShellViewAction::SetTheme(ThemePreference::Dark),
             Self::ReadMode => ShellViewAction::ToggleReadMode,
             Self::Open
+            | Self::SaveAs
+            | Self::Export(_)
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -610,13 +713,15 @@ fn native_menu_item(entry: MenuEntry) -> Option<MenuItem> {
         | MenuCommand::ThemeLight
         | MenuCommand::ThemeDark
         | MenuCommand::ReadMode
-        | MenuCommand::FullScreen => Some(MenuItem::action(
+        | MenuCommand::FullScreen
+        | MenuCommand::Export(_) => Some(MenuItem::action(
             label,
             RunViewMenu {
                 command: entry.command,
             },
         )),
         MenuCommand::Open
+        | MenuCommand::SaveAs
         | MenuCommand::Undo
         | MenuCommand::Redo
         | MenuCommand::LineWeights
@@ -647,12 +752,18 @@ mod tests {
         }
     }
 
+    /// A build that compiled `codecs-common` in, which is the default set.
+    fn all_codecs() -> ExportCodecs {
+        ExportCodecs::installed(|_| true)
+    }
+
     fn menu_state(tab_count: usize, view: Option<CanvasViewState>) -> MenuState {
         MenuState::new(
             tab_count,
             view,
             ShellViewState::new(WindowAppearance::Dark),
             [true; QuickAction::ALL.len()],
+            all_codecs(),
         )
     }
 
@@ -692,6 +803,7 @@ mod tests {
                 matches!(
                     entry.command,
                     MenuCommand::Open
+                        | MenuCommand::SaveAs
                         | MenuCommand::Undo
                         | MenuCommand::Redo
                         | MenuCommand::LineWeights
@@ -727,7 +839,9 @@ mod tests {
         assert_eq!(menus[2].name.as_ref(), "View");
         assert_eq!(menus[3].name.as_ref(), "Window");
         assert_eq!(menus[4].name.as_ref(), "Help");
-        assert_eq!(menus[0].items.len(), 3);
+        // Close, Close Others, Close All, and the three export formats. Open
+        // and Save As are disabled, so they never reach the native menu.
+        assert_eq!(menus[0].items.len(), 6);
         assert_eq!(menus[2].items.len(), expected_view_items);
         assert!(menus[1].items.is_empty());
         assert!(menus[3..].iter().all(|menu| menu.items.is_empty()));
@@ -746,7 +860,137 @@ mod tests {
             close_others.availability,
             MenuAvailability::Disabled("No other tabs are open")
         );
-        assert_eq!(native_menus(menu_state(1, None))[0].items.len(), 2);
+        // Close and Close All, plus the three export formats.
+        assert_eq!(native_menus(menu_state(1, None))[0].items.len(), 5);
+    }
+
+    /// The three formats `codecs-common` registers reach the File menu, and
+    /// the text entry says in its own label that it does not reorder into
+    /// reading order, which is the limitation the parity scoreboard defers to
+    /// M6. A user reads the menu, not the codec's doc comment.
+    #[test]
+    fn the_file_menu_offers_the_three_export_formats_this_milestone_ships() {
+        let file = &main_menu_schema(menu_state(1, Some(view())))[0];
+
+        let exports: Vec<_> = file
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.command, MenuCommand::Export(_)))
+            .map(|entry| (entry.command, entry.label, entry.availability))
+            .collect();
+
+        assert_eq!(
+            exports,
+            vec![
+                (
+                    MenuCommand::Export(ExportTarget::Text),
+                    "Export To Plain Text (Document Order)…",
+                    MenuAvailability::Enabled,
+                ),
+                (
+                    MenuCommand::Export(ExportTarget::Png),
+                    "Export Pages To PNG…",
+                    MenuAvailability::Enabled,
+                ),
+                (
+                    MenuCommand::Export(ExportTarget::Svg),
+                    "Export Pages To SVG…",
+                    MenuAvailability::Enabled,
+                ),
+            ]
+        );
+    }
+
+    /// The ids the menu looks up are the ids `codecs-common` registers.
+    /// Nothing else checks that: a rename on either side would otherwise ship
+    /// as a permanently disabled entry rather than as a build failure.
+    #[cfg(feature = "codecs-common")]
+    #[test]
+    fn every_export_entry_names_a_codec_the_default_build_installs() {
+        let registry = crate::build_registry();
+
+        for target in ExportTarget::ALL {
+            let codec = registry
+                .codec(target.codec())
+                .unwrap_or_else(|| panic!("no codec is registered as {}", target.codec()));
+            assert!(!codec.extension().is_empty());
+        }
+    }
+
+    #[test]
+    fn export_entries_wait_for_a_document_to_export() {
+        let file = &main_menu_schema(menu_state(0, None))[0];
+
+        let availability: Vec<_> = file
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.command, MenuCommand::Export(_)))
+            .map(|entry| entry.availability)
+            .collect();
+
+        assert_eq!(
+            availability,
+            vec![MenuAvailability::Disabled("No document is open"); ExportTarget::ALL.len()]
+        );
+    }
+
+    /// With the plugin compiled out the entries ship disabled saying so,
+    /// rather than offering a format that would fail when it was picked.
+    #[test]
+    fn a_build_without_the_codecs_plugin_says_so_on_every_export_entry() {
+        let state = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark),
+            [true; QuickAction::ALL.len()],
+            ExportCodecs::default(),
+        );
+
+        let availability: Vec<_> = main_menu_schema(state)[0]
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.command, MenuCommand::Export(_)))
+            .map(|entry| entry.availability)
+            .collect();
+
+        assert_eq!(
+            availability,
+            vec![
+                MenuAvailability::Disabled("The common codecs plugin is not installed");
+                ExportTarget::ALL.len()
+            ]
+        );
+        // Close and Close All only: nothing disabled reaches the native menu.
+        assert_eq!(native_menus(state)[0].items.len(), 2);
+    }
+
+    /// One codec missing disables its own entry and leaves the other two
+    /// alone, so the state is per format rather than all-or-nothing.
+    #[test]
+    fn a_missing_codec_disables_only_its_own_entry() {
+        let state = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark),
+            [true; QuickAction::ALL.len()],
+            ExportCodecs::installed(|id| id != "svg"),
+        );
+
+        let availability: Vec<_> = main_menu_schema(state)[0]
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.command, MenuCommand::Export(_)))
+            .map(|entry| entry.availability)
+            .collect();
+
+        assert_eq!(
+            availability,
+            vec![
+                MenuAvailability::Enabled,
+                MenuAvailability::Enabled,
+                MenuAvailability::Disabled("The common codecs plugin is not installed"),
+            ]
+        );
     }
 
     #[test]
@@ -839,7 +1083,13 @@ mod tests {
         shell_view.set_fullscreen(true);
         let mut quick_actions_visible = [true; QuickAction::ALL.len()];
         quick_actions_visible[QuickAction::Comment.index()] = false;
-        let state = MenuState::new(1, Some(view()), shell_view, quick_actions_visible);
+        let state = MenuState::new(
+            1,
+            Some(view()),
+            shell_view,
+            quick_actions_visible,
+            all_codecs(),
+        );
         let entries = &main_menu_schema(state)[2].entries;
         let native_labels: Vec<_> = native_menus(state)[2]
             .items

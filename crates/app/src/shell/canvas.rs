@@ -9,7 +9,9 @@ use onionskin_core::{
     PagePlacement, RenderRequest, RenderResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation,
     ViewSize, Viewport, ViewportError,
 };
-use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx};
+use onionskin_plugin_api::{
+    ExportError, ExportRequest, ExportedFile, PageRange, PluginRegistry, PointerInput, ToolCtx,
+};
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
@@ -87,6 +89,10 @@ pub enum CanvasError {
         index: usize,
         count: usize,
     },
+    /// The build has no codec for the format a menu entry asked for, because
+    /// the plugin that owns it was compiled out.
+    UnknownCodec(&'static str),
+    Export(ExportError),
 }
 
 impl fmt::Display for CanvasError {
@@ -113,6 +119,8 @@ impl fmt::Display for CanvasError {
             Self::ToolOutOfRange { index, count } => {
                 write!(f, "tool {index} is outside a {count}-tool registry")
             }
+            Self::UnknownCodec(id) => write!(f, "no {id} codec is installed"),
+            Self::Export(error) => write!(f, "{error}"),
         }
     }
 }
@@ -124,11 +132,13 @@ impl std::error::Error for CanvasError {
             Self::Viewport(error) => Some(error),
             Self::Input(error) => Some(error),
             Self::Render(error) => Some(error),
+            Self::Export(error) => Some(error),
             Self::EmptyDocument
             | Self::GenerationExhausted
             | Self::InvalidImageBuffer { .. }
             | Self::InvalidImageCrop { .. }
-            | Self::ToolOutOfRange { .. } => None,
+            | Self::ToolOutOfRange { .. }
+            | Self::UnknownCodec(_) => None,
         }
     }
 }
@@ -154,6 +164,12 @@ impl From<InputError> for CanvasError {
 impl From<onionskin_render::RenderError> for CanvasError {
     fn from(error: onionskin_render::RenderError) -> Self {
         Self::Render(error)
+    }
+}
+
+impl From<ExportError> for CanvasError {
+    fn from(error: ExportError) -> Self {
+        Self::Export(error)
     }
 }
 
@@ -271,6 +287,34 @@ impl CanvasModel {
 
     pub fn registry(&self) -> &PluginRegistry {
         &self.registry
+    }
+
+    /// True when this build has the codec a menu entry would run.
+    pub fn has_codec(&self, id: &str) -> bool {
+        self.registry.codec(id).is_some()
+    }
+
+    /// Export the whole document through the named codec.
+    ///
+    /// The registry and the document are paired here for the same reason
+    /// tool gestures are: the chrome should not have to hold both and get
+    /// their lifetimes right. Nothing is written to disk by this call, so a
+    /// caller that fails to save has still not left a half-written export
+    /// behind.
+    pub fn export(
+        &mut self,
+        codec: &'static str,
+        dpi: f32,
+    ) -> Result<Vec<ExportedFile>, CanvasError> {
+        let request = ExportRequest {
+            pages: PageRange::whole(self.document.page_count())?,
+            dpi,
+        };
+        let codec = self
+            .registry
+            .codec(codec)
+            .ok_or(CanvasError::UnknownCodec(codec))?;
+        Ok(codec.export(&mut self.document, &request)?)
     }
 
     pub fn active_tool(&self) -> Option<usize> {

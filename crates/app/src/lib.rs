@@ -52,9 +52,10 @@ fn first_party_manifests() -> Vec<Box<dyn PluginManifest>> {
 /// One-line summary of what an assembled registry holds.
 pub fn boot_summary(registry: &PluginRegistry) -> String {
     format!(
-        "onionskin: {} plugins, {} tools, {} commands",
+        "onionskin: {} plugins, {} tools, {} commands, {} codecs",
         registry.plugins().len(),
         registry.tools().count(),
-        registry.commands().len()
+        registry.commands().len(),
+        registry.codecs().count()
     )
 }
