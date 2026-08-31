@@ -671,8 +671,15 @@ pub(in crate::shell) fn install_native_menus(
     // Ctrl+F and Edit > Find arrive here rather than at an element listener:
     // action dispatch walks the focus path, and until the find bar opens
     // nothing in the shell holds focus for it to walk to.
+    //
+    // Deferred because a global listener runs inside the window update that
+    // dispatched the action, and a window is off the app's window list for
+    // the length of its own update. Running the command from here would look
+    // for the window that is dispatching it and fail to find it.
     cx.on_action(move |_: &OpenFindBar, cx| {
-        ShellFrame::run_native_command(window, MenuCommand::Find, cx);
+        cx.defer(move |cx| {
+            ShellFrame::run_native_command(window, MenuCommand::Find, cx);
+        });
     });
 
     refresh_native_menus(cx, state);

@@ -2001,6 +2001,58 @@ mod tests {
         });
     }
 
+    /// The headline binding, dispatched the way the user dispatches it.
+    ///
+    /// Everything else about the find bar was tested by calling its methods,
+    /// which is how two separate dead routes shipped: an element listener that
+    /// action dispatch never reached, and then a window-wide listener that ran
+    /// inside the dispatching window's own update and could not find it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_real_ctrl_f_keystroke_opens_the_find_bar(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let theme = shell_view.tokens();
+        let window = cx.add_window(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        // Both halves of the route the app installs at startup.
+        let state = window
+            .update(cx, |frame, _window, cx| frame.menu_state(cx))
+            .unwrap();
+        cx.update(|cx| {
+            crate::shell::find_bar::install_keybindings(cx);
+            super::super::global_bar::install_native_menus(cx, window, state);
+        });
+        window
+            .update(cx, |frame, _window, _cx| assert!(!frame.find.is_open()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "ctrl-f");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.find.is_open(),
+                    "ctrl-f did not reach the find bar in a real window"
+                );
+            })
+            .unwrap();
+    }
+
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
     fn the_document_search_route_opens_the_find_bar_and_escape_closes_it(cx: &mut TestAppContext) {
@@ -2654,7 +2706,7 @@ mod tests {
         });
 
         // The registry has no tools, so every index is out of range.
-        cx.update(|_window, app| {
+        cx.update(|window, app| {
             frame.update(app, |frame, cx| {
                 frame.choose_search_result(
                     SearchResult::Tool {
@@ -2662,6 +2714,7 @@ mod tests {
                         id: "onionskin.absent",
                         name: "Absent",
                     },
+                    window,
                     cx,
                 );
             });
