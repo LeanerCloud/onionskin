@@ -11,10 +11,10 @@ are represented on main. P12 accessibility is still active and unmerged. M2 also
 has confirmed correctness, lifecycle, release, performance-accounting, navigation,
 and documentation defects that must close before final acceptance.
 
-The Acrobat feature matrix is not current at this baseline. It still reports zero
-implemented rows even though most M2 packages have landed. The complete row-by-row
-reconciliation is the next atomic task in this package; this report does not
-pre-claim its resulting counts.
+At the reviewed baseline, the Acrobat feature matrix still reported zero
+implemented rows even though most M2 packages had landed. Audit Task 2 has since
+reconciled all 403 rows to 43 implemented, 23 partial, 257 planned, and 80 out of
+scope. B7 still owns private reference comparison and final acceptance.
 
 ## Method
 
@@ -97,6 +97,7 @@ regression test and real user path pass.
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Confirmed open | B3 | Already ledgered | Exactly 64 unknown preferences survive regardless of key ordering. |
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Confirmed open | B4 | Added by this audit | Attachment prompt error becomes visible and is distinct from cancel. |
 | APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
+| APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Confirmed open | B3 | Added during matrix reconciliation | Give the shared navigation flex item its existing open-state width and prove every pane body has rendered bounds before restoring affected parity rows. |
 
 The app audit also proved the native action-dispatch ledger entry stale: current
 `RunCommand`, close-tab, and view-menu paths defer correctly and have shell tests.
@@ -108,7 +109,7 @@ The entry is retained but marked resolved pending the package review.
 |---|---|---|---|---|---|---|
 | REPO-001 | Critical | `.github/workflows/release.yml:49-50`; `crates/app/Cargo.toml:64-100` | Confirmed release blocker | B6 | Added by this audit | Packaged artifact builds with `--features shell` and launches the real viewer. |
 | REPO-002 | Critical | no P12 merge; active P12 worktree | Confirmed M2 blocker | B5 | Existing VoiceOver/P12 entry | Preserve the spike, merge reviewed P12, pass probes and one real VoiceOver session. |
-| REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Confirmed acceptance blocker | B7 | Added by this audit | All 403 rows reviewed and summary totals mechanically match rows. |
+| REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Resolved in Audit Task 2 | B7 | Added and resolved by this audit | All 403 rows are reviewed and the summary totals mechanically match the rows; B7 retains REPO-010 and final acceptance. |
 | REPO-004 | High | `docs/plans/m2-viewer.md:3` at baseline | Resolved in this task | B7 | Added and resolved by this audit | M2 plan header now matches live merge history and open gates. |
 | REPO-005 | High | retained P10/agent branches and worktrees | Preserve, no cleanup | B0 | Added by this audit | Inventory remains reproducible; useful work reconciles additively only. |
 | REPO-006 | Medium | `~/.claude/projects.md` | Confirmed status defect | B7 | Added by this audit | External project registry describes the live Rust viewer state. |
@@ -183,7 +184,7 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-A11Y-001 | Deferred, confirmed gap | B5 | Stable IDs exist, but focus/semantics are absent outside `SearchInput` and the canvas is one unlabeled GPUI element. P12 owns it. |
 | HARD-PROC-001 | Historical | Process | The thin P2-P7 review trail cannot be repaired in source; the current package/review/evidence gates prevent recurrence. |
 | HARD-PROC-002 | Resolved | B3 | P10 registered real tools and current rail/quick-action tests exercise the live registry. |
-| HARD-PROC-003 | Confirmed | B7 | The matrix still reports zero implemented rows and is reconciled in the next atomic task. |
+| HARD-PROC-003 | Resolved in Audit Task 2 | B7 | All 403 rows are reconciled and mechanically recounted; B7 retains private reference comparison and final acceptance. |
 
 Resolved and superseded bullets stay in this table to preserve why they no longer
 justify code changes. B2/B3 plans must use these current lines and reject the broad
