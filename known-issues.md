@@ -47,6 +47,16 @@ referenced.
   reference. M3's tools-organize (per PLAN.md's milestone map) has to fix up
   the page tree itself.
 
+- Export runs on the UI thread and buffers every page in memory: a
+  whole-document PNG export of a large file freezes the shell for the full
+  render and holds all pages' bytes at once. The memory cost is documented on
+  the codec contract; the UI blocking is not. M3's export dialog should move
+  it to a background task with a page range. Also from the P13 review:
+  export_entries reports "codecs plugin not installed" when no document is
+  open (latent, a zero-tab window is currently unreachable); a failed save
+  dialog is swallowed like a cancel; numbered export files pad to {:03} so
+  above 999 pages they stop sorting in page order; derived numbered files
+  overwrite without the prompt the base name gets.
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
   string (a hair against no-invented-characters; tighten when touched);
