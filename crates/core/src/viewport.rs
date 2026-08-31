@@ -467,11 +467,29 @@ impl Viewport {
             width: geometry.render_size.0 as f32,
             height: geometry.render_size.1 as f32,
         };
-        let rotated = self.rotation.rotate_point(unrotated, page_size);
+        // The layout's placement is in document space, so the scroll offset
+        // still has to come off. `page_quad_rects` starts from a visible
+        // placement, which already has it.
+        let placed = self.place_on_page(placement.rect.origin, page_size, unrotated);
         Ok(Some(ViewPoint {
-            x: placement.rect.origin.x + rotated.x * self.zoom - self.offset.x,
-            y: placement.rect.origin.y + rotated.y * self.zoom - self.offset.y,
+            x: placed.x - self.offset.x,
+            y: placed.y - self.offset.y,
         }))
+    }
+
+    /// Where a point in a page's own unzoomed, unrotated device space lands,
+    /// given where that page is placed.
+    ///
+    /// The one place the page-to-viewport transform is written down. Both
+    /// mappings below it need the same rotation, the same scale and the same
+    /// origin, and they disagreed by the scroll offset the first time they
+    /// were written separately.
+    fn place_on_page(&self, origin: ViewPoint, page_size: ViewSize, point: ViewPoint) -> ViewPoint {
+        let rotated = self.rotation.rotate_point(point, page_size);
+        ViewPoint {
+            x: origin.x + rotated.x * self.zoom,
+            y: origin.y + rotated.y * self.zoom,
+        }
     }
 
     /// Where page-space quads land in the viewport right now, one rectangle per
@@ -514,17 +532,14 @@ impl Viewport {
             .map(|quad| {
                 let device = geometry.user_to_device(*quad, 1.0)?;
                 let corners = device.corners.map(|(x, y)| {
-                    let rotated = self.rotation.rotate_point(
+                    self.place_on_page(
+                        placement.rect.origin,
+                        page_size,
                         ViewPoint {
                             x: x as f32,
                             y: y as f32,
                         },
-                        page_size,
-                    );
-                    ViewPoint {
-                        x: placement.rect.origin.x + rotated.x * self.zoom,
-                        y: placement.rect.origin.y + rotated.y * self.zoom,
-                    }
+                    )
                 });
                 Ok(bounding_rect(corners))
             })

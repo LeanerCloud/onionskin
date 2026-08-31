@@ -755,6 +755,80 @@ fn a_quad_is_measured_in_view_pixels_and_bounds_the_glyphs_it_covers() {
     assert!((rect.origin.y - (page.origin.y + 60.0 * viewport.zoom())).abs() < 1e-3);
 }
 
+/// The two page-to-viewport mappings answer the same question from different
+/// domains: one from the layout, which is document space, and one from the
+/// placements the viewport is showing, which already carry the scroll offset.
+/// They now share one transform, and this is what says they agree: at a zoom
+/// and a scroll where a missing offset or a rotation applied in the wrong
+/// order would be tens of pixels, not a rounding error.
+#[test]
+fn both_page_mappings_agree_under_rotation_zoom_and_scroll() {
+    let mut viewport = viewport(2);
+    viewport.measure_page(geometry(1, 850.0, 1_100.0)).unwrap();
+
+    for rotation in [
+        ViewRotation::None,
+        ViewRotation::Clockwise90,
+        ViewRotation::HalfTurn,
+        ViewRotation::Clockwise270,
+    ] {
+        viewport.set_rotation(rotation).unwrap();
+        viewport.zoom_to(12.0, center()).unwrap();
+        viewport
+            .scroll(
+                ViewPoint {
+                    x: -37.0,
+                    y: -211.0,
+                },
+                false,
+                ViewPoint::default(),
+            )
+            .unwrap();
+
+        for page_index in [0, 1] {
+            let at = PagePoint {
+                page: page_index,
+                x: 120.0,
+                y: 300.0,
+            };
+            let Some(point) = viewport.view_point_for(at).unwrap() else {
+                continue;
+            };
+            // A quad with all four corners on that same page point maps to a
+            // rectangle with no area, sitting exactly where the point does.
+            let device = viewport
+                .page_geometry(page_index)
+                .unwrap()
+                .user_to_device_point(at, 1.0)
+                .unwrap();
+            let user = viewport
+                .page_geometry(page_index)
+                .unwrap()
+                .device_to_user(device.0, device.1, 1.0)
+                .unwrap();
+            let quad = PageQuad {
+                page: page_index,
+                corners: [
+                    (user.x, user.y),
+                    (user.x, user.y),
+                    (user.x, user.y),
+                    (user.x, user.y),
+                ],
+            };
+            let rect = viewport.page_quad_rects(page_index, &[quad]).unwrap()[0];
+
+            assert!(
+                (rect.origin.x - point.x).abs() < 1e-3,
+                "{rotation:?} page {page_index}: {rect:?} does not sit on {point:?}"
+            );
+            assert!(
+                (rect.origin.y - point.y).abs() < 1e-3,
+                "{rotation:?} page {page_index}: {rect:?} does not sit on {point:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_quad_has_nowhere_to_land_until_its_page_is_placed_and_measured() {
     let mut viewport = viewport(20);
