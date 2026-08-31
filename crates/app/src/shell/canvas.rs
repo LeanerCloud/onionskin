@@ -8,7 +8,8 @@ use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Document, FitMode, GeometryError, PageAlignment, PageGeometry, PageGeometryResponse, PageIndex,
     PageLayoutMode, PagePlacement, PagePoint, PageQuad, PageRect, RenderRequest, RenderResponse,
-    ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    SearchOptions, SearchState, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport,
+    ViewportError,
 };
 use onionskin_plugin_api::{
     ExportError, ExportRequest, ExportedFile, Overlay, PageRange, PluginRegistry, PointerInput,
@@ -256,11 +257,21 @@ pub enum OverlayPaint {
     AntsRect(ViewRect),
 }
 
+/// One search hit's box on a visible page. An overlay in the same sense: it is
+/// painted over the tiles rather than rendered into them, so highlighting
+/// costs no re-render.
+pub struct HighlightPaint {
+    pub rect: ViewRect,
+    /// The hit next/previous last landed on, drawn differently from the rest.
+    pub current: bool,
+}
+
 #[derive(Default)]
 pub struct PaintList {
     pub pages: Vec<PagePaint>,
     pub tiles: Vec<TilePaint>,
     pub overlays: Vec<OverlayPaint>,
+    pub highlights: Vec<HighlightPaint>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -301,6 +312,9 @@ pub struct CanvasModel {
     /// Responses applied since the canvas opened. Read only as "did this
     /// change", which is what separates a slow answer from no answer.
     responses: u64,
+    /// A hit waiting to be scrolled to. Set when the hit is chosen, applied
+    /// once its page has been measured, which is usually a later frame.
+    pending_reveal: Option<(PageIndex, Vec<PageQuad>)>,
 }
 
 impl CanvasModel {
@@ -348,6 +362,7 @@ impl CanvasModel {
             status: None,
             waiting: None,
             responses: 0,
+            pending_reveal: None,
         })
     }
 
@@ -513,6 +528,150 @@ impl CanvasModel {
         Ok(true)
     }
 
+    pub fn search(&self) -> &SearchState {
+        self.document.search()
+    }
+
+    /// Starts a document-wide find at the page in view, so the nearest hits
+    /// arrive first. Results stream in through [`CanvasModel::update`].
+    pub fn start_search(
+        &mut self,
+        needle: &str,
+        options: SearchOptions,
+    ) -> Result<bool, CanvasError> {
+        self.pending_reveal = None;
+        let start_page = self.viewport.current_page();
+        Ok(self.document.start_search(needle, options, start_page)?)
+    }
+
+    pub fn cancel_search(&mut self) {
+        self.pending_reveal = None;
+        self.document.cancel_search();
+    }
+
+    pub fn select_next_match(&mut self) -> Result<bool, CanvasError> {
+        if !self.document.select_next_match() {
+            return Ok(false);
+        }
+        self.reveal_as_navigation()?;
+        // The cursor moved even when the view did not: the hit drawn as the
+        // current one changed, and that is a repaint.
+        Ok(true)
+    }
+
+    pub fn select_previous_match(&mut self) -> Result<bool, CanvasError> {
+        if !self.document.select_previous_match() {
+            return Ok(false);
+        }
+        self.reveal_as_navigation()?;
+        Ok(true)
+    }
+
+    /// Stepping to a hit is a navigation the user asked for, so Previous View
+    /// comes back from it, and the whole reveal counts as the one entry. The
+    /// reveal a streaming result triggers records nothing: a walk restarts on
+    /// every keystroke, and those would bury the view the user typed from
+    /// under one entry per character.
+    fn reveal_as_navigation(&mut self) -> Result<(), CanvasError> {
+        let before = self.viewport.snapshot();
+        self.reveal_current_match()?;
+        // What the viewport did, not what the reveal asked for: a pan that
+        // clamped against the end of the document moved nothing, and Previous
+        // View should not offer to return to where the user already is.
+        if self.viewport.snapshot() != before {
+            self.view_history.record(before);
+        }
+        Ok(())
+    }
+
+    /// Applies whatever the search worker produced, and scrolls to the first
+    /// hit of a fresh walk as soon as it arrives. Only the first page to
+    /// report a hit places the cursor, so a cursor that moved here means that
+    /// page has just landed.
+    fn poll_search(&mut self) -> Result<(), CanvasError> {
+        let before = self.document.search().cursor();
+        if self.document.poll_search() && self.document.search().cursor() != before {
+            self.reveal_current_match()?;
+        }
+        Ok(())
+    }
+
+    /// Puts the current hit on screen. A hit on a page the viewport is already
+    /// showing is panned to, so the page does not jump under a user who can
+    /// see the hit already; only a hit somewhere else is worth the jump, and
+    /// the pan onto it then waits for that page to be measured.
+    ///
+    /// A hit with no quads, which is what a match on the separator between two
+    /// runs is, takes the same route: it has no bounds, so it goes to its page
+    /// and the pan onto it finds nothing to do.
+    ///
+    /// Nothing here records view history. Whether the view ended up somewhere
+    /// worth returning to is the caller's question, and only the caller knows
+    /// whether the user asked for the move.
+    fn reveal_current_match(&mut self) -> Result<(), CanvasError> {
+        self.pending_reveal = None;
+        let Some(hit) = self.document.search().current() else {
+            return Ok(());
+        };
+        let page = hit.page;
+        let quads = hit.quads.clone();
+        if let Some(bounds) = self.hit_bounds(page, &quads)? {
+            return self.pan_onto(bounds);
+        }
+        self.pending_reveal = Some((page, quads));
+        self.viewport.go_to_page(page, PageAlignment::Start)?;
+        self.apply_pending_reveal()
+    }
+
+    /// The pan the jump above could not do yet, once the page it jumped to has
+    /// been measured. Dropped rather than held when the page failed to measure
+    /// or the user has scrolled it off screen in the meantime.
+    fn apply_pending_reveal(&mut self) -> Result<(), CanvasError> {
+        let Some((page, quads)) = self.pending_reveal.take() else {
+            return Ok(());
+        };
+        if self.failed_geometry.contains(&page) {
+            return Ok(());
+        }
+        if self.viewport.page_geometry(page).is_none() {
+            if self.is_visible(page)? {
+                self.pending_reveal = Some((page, quads));
+            }
+            return Ok(());
+        }
+        let Some(bounds) = self.hit_bounds(page, &quads)? else {
+            return Ok(());
+        };
+        self.pan_onto(bounds)
+    }
+
+    /// Where a hit's quads sit in the viewport, or `None` when the page is not
+    /// laid out or not measured and the hit has nowhere to land yet.
+    fn hit_bounds(
+        &self,
+        page: PageIndex,
+        quads: &[PageQuad],
+    ) -> Result<Option<ViewRect>, CanvasError> {
+        Ok(union_rect(&self.viewport.page_quad_rects(page, quads)?))
+    }
+
+    fn pan_onto(&mut self, bounds: ViewRect) -> Result<(), CanvasError> {
+        let delta = scroll_delta_into_view(bounds, self.viewport.size());
+        if delta == ViewPoint::default() {
+            return Ok(());
+        }
+        self.viewport.pan_by(delta)?;
+        Ok(())
+    }
+
+    fn is_visible(&self, page: PageIndex) -> Result<bool, CanvasError> {
+        Ok(self
+            .viewport
+            .visible_pages()?
+            .iter()
+            .any(|placement| placement.page == page))
+    }
+
     fn apply_view_change(
         &mut self,
         change: impl FnOnce(&mut Viewport) -> Result<(), ViewportError>,
@@ -581,6 +740,12 @@ impl CanvasModel {
     }
 
     pub fn has_pending_work(&self) -> bool {
+        self.has_pending_pages() || self.document.search().is_running()
+    }
+
+    /// Work a page worker owes an answer for. Separate from the search, which
+    /// is pending work of its own and answers on a channel of its own.
+    fn has_pending_pages(&self) -> bool {
         !self.geometry_requests.is_empty() || self.has_pending_render()
     }
 
@@ -591,10 +756,21 @@ impl CanvasModel {
     /// response, which is recorded as a [`CanvasStatus::Error`] naming the
     /// pages nobody answered. Any response restarts the wait, so a document
     /// that keeps the worker busy for hours never trips it.
+    ///
+    /// The deadline watches page work only. A search walking a long document
+    /// keeps the loop awake without a page outstanding and without bumping
+    /// the response count, so watching it here would report the render worker
+    /// silent, name no pages, and stop polling the results still arriving. A
+    /// search that stops answering ends its own walk instead, and says so in
+    /// the find bar.
     pub fn poll_again(&mut self, now: Instant) -> bool {
         if !self.has_pending_work() {
             self.waiting = None;
             return false;
+        }
+        if !self.has_pending_pages() {
+            self.waiting = None;
+            return true;
         }
         let (responses, since) = *self.waiting.get_or_insert((self.responses, now));
         if responses != self.responses {
@@ -756,9 +932,11 @@ impl CanvasModel {
     }
 
     pub fn update(&mut self) -> Result<(), CanvasError> {
+        self.poll_search()?;
         self.drain_geometry_responses()?;
         self.queue_visible_geometry()?;
         self.drain_geometry_responses()?;
+        self.apply_pending_reveal()?;
 
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
@@ -806,6 +984,7 @@ impl CanvasModel {
                 .collect(),
             tiles: Vec::new(),
             overlays: Vec::new(),
+            highlights: self.highlights(&visible)?,
         };
         let rotation = self.viewport.rotation();
         let exact_zoom = self.viewport.zoom();
@@ -878,6 +1057,35 @@ impl CanvasModel {
         };
         let crop = raster_crop(geometry, request.region, source)?;
         encode_snapshot(source, crop, self.viewport.rotation()).map(Some)
+    }
+
+    /// Every hit on the pages currently on screen. Highlight-all is drawn from
+    /// the results found so far, so a walk still running highlights the pages
+    /// it has already reported.
+    fn highlights(&self, visible: &[PagePlacement]) -> Result<Vec<HighlightPaint>, CanvasError> {
+        let cursor = self.document.search().cursor();
+        let mut highlights = Vec::new();
+        // One mapping call per page, not per hit: each one re-walks the
+        // layout, and a page can carry hundreds of hits.
+        let mut quads: Vec<PageQuad> = Vec::new();
+        let mut is_current: Vec<bool> = Vec::new();
+        for placement in visible.iter().filter(|placement| placement.measured) {
+            let page = placement.page;
+            quads.clear();
+            is_current.clear();
+            for (index, hit) in self.document.search().matches_on(page).iter().enumerate() {
+                quads.extend(hit.quads.iter().copied());
+                is_current.resize(quads.len(), cursor == Some((page, index)));
+            }
+            highlights.extend(
+                self.viewport
+                    .page_quad_rects(page, &quads)?
+                    .into_iter()
+                    .zip(is_current.iter().copied())
+                    .map(|(rect, current)| HighlightPaint { rect, current }),
+            );
+        }
+        Ok(highlights)
     }
 
     pub fn record_error(&mut self, error: impl fmt::Display) -> bool {
@@ -1204,6 +1412,46 @@ impl CanvasModel {
             viewport,
         });
     }
+}
+
+/// The box around a hit's quads. A hit that wraps two lines is revealed as the
+/// one region it occupies, not as its first quad.
+fn union_rect(rects: &[ViewRect]) -> Option<ViewRect> {
+    let first = rects.first()?;
+    let mut left = first.origin.x;
+    let mut top = first.origin.y;
+    let mut right = first.origin.x + first.size.width;
+    let mut bottom = first.origin.y + first.size.height;
+    for rect in &rects[1..] {
+        left = left.min(rect.origin.x);
+        top = top.min(rect.origin.y);
+        right = right.max(rect.origin.x + rect.size.width);
+        bottom = bottom.max(rect.origin.y + rect.size.height);
+    }
+    Some(ViewRect {
+        origin: ViewPoint { x: left, y: top },
+        size: ViewSize {
+            width: right - left,
+            height: bottom - top,
+        },
+    })
+}
+
+/// How far to pan so `rect` is on screen, centring it on whichever axis it
+/// runs off. Zero when it is already visible: a hit the user can see does not
+/// move the page under them.
+fn scroll_delta_into_view(rect: ViewRect, viewport: ViewSize) -> ViewPoint {
+    ViewPoint {
+        x: axis_delta(rect.origin.x, rect.size.width, viewport.width),
+        y: axis_delta(rect.origin.y, rect.size.height, viewport.height),
+    }
+}
+
+fn axis_delta(origin: f32, extent: f32, viewport: f32) -> f32 {
+    if origin >= 0.0 && origin + extent <= viewport {
+        return 0.0;
+    }
+    (viewport - extent) / 2.0 - origin
 }
 
 fn window_point(point: Point<Pixels>) -> ViewPoint {
@@ -2767,6 +3015,38 @@ mod tests {
         assert!(!model.poll_again(start + PENDING_WORK_TIMEOUT * 4));
     }
 
+    /// A walk keeps the poll loop awake, and the loop's deadline is the render
+    /// worker's. Watching the search with it reported "no answer for [] after
+    /// 30 seconds", stopped the loop, and froze the results mid-stream on any
+    /// document big enough to take that long.
+    #[test]
+    fn a_long_walk_keeps_the_loop_awake_without_tripping_the_render_deadline() {
+        let mut model = search_model();
+        settle_geometry(&mut model);
+        // Nothing is owed by a page worker, which is the state a fully drawn
+        // view sits in while a find walks the rest of the document.
+        model.geometry_requests.clear();
+        model.requests.clear();
+        assert!(!model.has_pending_pages());
+
+        model
+            .start_search("Page", SearchOptions::default())
+            .expect("the search starts");
+        assert!(model.search().is_running());
+        assert!(model.has_pending_work());
+
+        let start = Instant::now();
+        assert!(model.poll_again(start));
+        assert!(
+            model.poll_again(start + PENDING_WORK_TIMEOUT * 4),
+            "the walk still has pages to report"
+        );
+        assert!(
+            model.status().is_none(),
+            "a walk in progress is not a silent render worker"
+        );
+    }
+
     /// `paint_source` and `collect_tiles` used to take the raster's size from
     /// different places for the same `(page, zoom)`: the first from `sources`,
     /// the second from the tile store. The store's `cols` and `rows` come from
@@ -3288,6 +3568,16 @@ mod tests {
         );
     }
 
+    /// Highlights are drawn in the same space as the page they sit on, so one
+    /// that escapes its page is a transform error rather than a stray glyph.
+    fn encloses(page: ViewRect, hit: ViewRect) -> bool {
+        const SLACK: f32 = 0.5;
+        hit.origin.x >= page.origin.x - SLACK
+            && hit.origin.y >= page.origin.y - SLACK
+            && hit.origin.x + hit.size.width <= page.origin.x + page.size.width + SLACK
+            && hit.origin.y + hit.size.height <= page.origin.y + page.size.height + SLACK
+    }
+
     fn assert_rect_close(actual: ViewRect, expected: ViewRect) {
         for (actual, expected) in [
             (actual.origin.x, expected.origin.x),
@@ -3297,6 +3587,552 @@ mod tests {
         ] {
             assert!((actual - expected).abs() < 1e-4, "{actual} != {expected}");
         }
+    }
+
+    /// A PDF assembled from content streams, for the two states the corpus
+    /// seeds cannot reach: a page tree that promises a page it does not have,
+    /// and a page whose runs sit far enough apart for the flattener to put a
+    /// separator between them.
+    ///
+    /// `crates/core/src/search.rs` and `crates/core/tests/search.rs` build the
+    /// same shape for core's own tests. Neither is visible from another crate,
+    /// and a fixture crate for three call sites is more machinery than the
+    /// duplication costs, so each copy names the others.
+    fn assembled_pdf(streams: &[&str], counted: usize) -> Vec<u8> {
+        let mut objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            Vec::new(), // 2: the page tree, once the kids are numbered
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut kids = Vec::new();
+        for stream in streams {
+            kids.push(format!("{} 0 R", objects.len() + 1));
+            objects.push(
+                format!(
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+                     /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
+                    objects.len() + 2
+                )
+                .into_bytes(),
+            );
+            let mut body = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
+            body.extend_from_slice(stream.as_bytes());
+            body.extend_from_slice(b"\nendstream");
+            objects.push(body);
+        }
+        objects[1] = format!(
+            "<< /Type /Pages /Kids [{}] /Count {counted} >>",
+            kids.join(" ")
+        )
+        .into_bytes();
+
+        let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        let size = objects.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
+        out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    fn model_from(bytes: Vec<u8>) -> CanvasModel {
+        CanvasModel::new(
+            Document::open_bytes(bytes).expect("fixture opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts")
+    }
+
+    fn search_model() -> CanvasModel {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
+        CanvasModel::new(
+            Document::open_path(&path).expect("seed opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts")
+    }
+
+    /// The walk runs on its own thread, so a test has to drive `update` until
+    /// it reports the walk finished rather than assume one call is enough.
+    fn drain_search(model: &mut CanvasModel) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while model.search().is_running() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the walk never finished"
+            );
+            model.update().expect("update succeeds while searching");
+        }
+    }
+
+    fn find(model: &mut CanvasModel, needle: &str, options: SearchOptions) {
+        model.start_search(needle, options).expect("search starts");
+        drain_search(model);
+    }
+
+    /// Runs updates until every visible page has been measured. Measurement
+    /// re-lays out and re-anchors the viewport, so a test that cares where the
+    /// view sits has to let that finish before it puts the view there.
+    fn settle_geometry(model: &mut CanvasModel) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            model.update().expect("update succeeds while measuring");
+            let waiting = !model.geometry_requests.is_empty()
+                || model
+                    .viewport
+                    .visible_pages()
+                    .expect("the viewport is laid out")
+                    .iter()
+                    .any(|placement| !placement.measured);
+            if !waiting {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the geometry never arrived"
+            );
+        }
+    }
+
+    fn measured_visible(model: &CanvasModel) -> Vec<PageIndex> {
+        model
+            .viewport
+            .visible_pages()
+            .expect("the viewport is laid out")
+            .into_iter()
+            .filter(|placement| placement.measured)
+            .map(|placement| placement.page)
+            .collect()
+    }
+
+    #[test]
+    fn every_hit_on_a_visible_page_becomes_a_highlight_and_the_current_one_is_marked() {
+        let mut model = search_model();
+        // The seed's two pages both fit on screen, so the walk has to start
+        // somewhere named rather than wherever the initial fit landed.
+        model.go_to_page(0).expect("the seed has a first page");
+        find(&mut model, "Page", SearchOptions::default());
+        model.update().expect("update succeeds");
+
+        let visible = measured_visible(&model);
+        let expected: usize = visible
+            .iter()
+            .flat_map(|page| model.search().matches_on(*page))
+            .map(|hit| hit.quads.len())
+            .sum();
+        let paint = model.paint_list().expect("paint list builds");
+
+        assert_eq!(model.search().len(), 2, "one hit per page of the seed");
+        assert!(expected > 0, "the visible pages carry hits to highlight");
+        assert_eq!(paint.highlights.len(), expected);
+        let placements = model
+            .viewport
+            .visible_pages()
+            .expect("the viewport is laid out");
+        for highlight in &paint.highlights {
+            assert!(
+                highlight.rect.size.width > 0.0 && highlight.rect.size.height > 0.0,
+                "a highlight with no area highlights nothing: {:?}",
+                highlight.rect
+            );
+            assert!(
+                placements
+                    .iter()
+                    .any(|placement| encloses(placement.rect, highlight.rect)),
+                "a highlight landed off every page: {:?}",
+                highlight.rect
+            );
+        }
+        let current = model
+            .search()
+            .current()
+            .expect("the walk reported a hit to be current");
+        assert_eq!(
+            paint
+                .highlights
+                .iter()
+                .filter(|highlight| highlight.current)
+                .count(),
+            current.quads.len(),
+            "the current hit marks every quad it owns and no others"
+        );
+    }
+
+    /// The page the tree promises and does not have fails extraction, and the
+    /// find bar has to name it. The mapping from the search state to what the
+    /// bar renders was the one link in that chain no test crossed.
+    #[test]
+    fn a_page_that_cannot_be_read_reaches_the_find_bar_by_name() {
+        let mut model = model_from(assembled_pdf(
+            &["BT /F1 12 Tf 20 100 Td (alpha) Tj ET"],
+            2, // one kid, and a /Count that claims two
+        ));
+        find(&mut model, "alpha", SearchOptions::default());
+
+        assert_eq!(
+            model.search().len(),
+            1,
+            "the page that is there is searched"
+        );
+        assert_eq!(model.search().failures().len(), 1);
+
+        let summary =
+            crate::shell::find_bar::FindSummary::new(model.search(), model.viewport.page_count());
+        let label = summary
+            .failure_label()
+            .expect("a page that could not be read is reported");
+        assert!(
+            label.contains("page 2"),
+            "the label does not name the page: {label}"
+        );
+    }
+
+    /// A hit whose match is entirely the separator the flattener puts between
+    /// two runs owns no glyphs, so it has no quads to scroll to. It still
+    /// names a page, and going there beats a Next that only moves the count.
+    #[test]
+    fn a_hit_with_no_quads_still_goes_to_its_page() {
+        let mut model = model_from(assembled_pdf(
+            &[
+                "BT /F1 12 Tf 20 100 Td (alpha) Tj ET",
+                "BT /F1 12 Tf 20 150 Td (beta) Tj 0 -40 Td (gamma) Tj ET",
+            ],
+            2,
+        ));
+        settle_geometry(&mut model);
+        model.go_to_page(0).expect("the fixture has a first page");
+        assert_eq!(model.viewport.current_page(), 0);
+
+        // Only the second page has two runs, and only between them is there a
+        // separator to match.
+        find(&mut model, "\n", SearchOptions::default());
+
+        let hit = model.search().current().expect("the separator is a hit");
+        assert_eq!(hit.page, 1);
+        assert!(
+            hit.quads.is_empty(),
+            "a separator belongs to no run, so it has no glyphs"
+        );
+        assert_eq!(
+            model.viewport.current_page(),
+            1,
+            "the reveal left the reader on the page the hit is not drawn on"
+        );
+    }
+
+    #[test]
+    fn a_closed_find_leaves_no_highlights_behind() {
+        let mut model = search_model();
+        find(&mut model, "Page", SearchOptions::default());
+        model.update().expect("update succeeds");
+        assert!(!model
+            .paint_list()
+            .expect("paint list builds")
+            .highlights
+            .is_empty());
+
+        model.cancel_search();
+        model.update().expect("update succeeds");
+
+        assert!(model
+            .paint_list()
+            .expect("paint list builds")
+            .highlights
+            .is_empty());
+        assert_eq!(model.search().len(), 0);
+    }
+
+    #[test]
+    fn next_and_previous_walk_the_hits_and_wrap_at_both_ends() {
+        let mut model = search_model();
+        model.go_to_page(0).expect("the seed has a first page");
+        assert_eq!(model.viewport.current_page(), 0);
+        find(&mut model, "Page", SearchOptions::default());
+
+        // The walk started on page 0, so its hit is the one in hand.
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
+        assert!(model.select_next_match().unwrap());
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+        assert!(model.select_next_match().unwrap());
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
+        assert!(model.select_previous_match().unwrap());
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+    }
+
+    #[test]
+    fn a_hit_already_on_screen_leaves_the_view_where_it_was() {
+        let mut model = search_model();
+        model.go_to_page(0).expect("the seed has a first page");
+        settle_geometry(&mut model);
+        // Scrolled past the top of the page, with the hit still on screen:
+        // anything that navigates to the page rather than to the hit snaps
+        // back to the page origin from here, and this test says so.
+        model
+            .viewport
+            .pan_by(ViewPoint { x: 0.0, y: -100.0 })
+            .expect("the seed page is taller than the pan");
+        let before = model.viewport.snapshot();
+        assert!(
+            before.offset.y > 0.0,
+            "the page origin has to be off screen for this to prove anything"
+        );
+
+        find(&mut model, "Page", SearchOptions::default());
+
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
+        assert_eq!(model.viewport.snapshot(), before);
+    }
+
+    #[test]
+    fn streaming_results_leave_no_view_history_but_stepping_to_a_hit_does() {
+        let mut model = search_model();
+        settle_geometry(&mut model);
+        let before_navigating = model.viewport.snapshot();
+        model.go_to_page(0).expect("the seed has a first page");
+        let on_page_one = model.viewport.snapshot();
+        assert_ne!(
+            on_page_one, before_navigating,
+            "the navigation has to move the view for its history entry to mean anything"
+        );
+
+        // Only the second page says "two", so each of these walks starts on
+        // page 1, wraps, and reveals a hit the view is not showing. Typing the
+        // word out restarts the walk on every keystroke.
+        for needle in ["t", "tw", "two"] {
+            find(&mut model, needle, SearchOptions::default());
+        }
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+        assert_ne!(
+            model.viewport.snapshot(),
+            on_page_one,
+            "the reveal has to have moved the view for this to prove anything"
+        );
+
+        // Previous View returns to where the user was before the navigation
+        // they asked for, not to a view a streamed result scrolled them to.
+        assert!(model.previous_view().unwrap());
+        assert_eq!(model.viewport.snapshot(), before_navigating);
+    }
+
+    #[test]
+    fn stepping_to_a_hit_is_a_view_to_come_back_from() {
+        let mut model = search_model();
+        settle_geometry(&mut model);
+        let before_navigating = model.viewport.snapshot();
+        model.go_to_page(0).expect("the seed has a first page");
+        find(&mut model, "two", SearchOptions::default());
+        let on_the_hit = model.viewport.snapshot();
+        assert_ne!(
+            on_the_hit, before_navigating,
+            "the reveal has to land somewhere else for the depth check to mean anything"
+        );
+
+        // One hit, so next wraps back onto it and moves nothing.
+        assert!(model.select_next_match().unwrap());
+        assert_eq!(model.viewport.snapshot(), on_the_hit);
+        // Depth, not presence: a step that moved nothing recording the view it
+        // did not move from would leave an entry that returns to where the
+        // user already is, and one Previous View would spend itself on it.
+        assert!(model.previous_view().unwrap());
+        assert_eq!(
+            model.viewport.snapshot(),
+            before_navigating,
+            "Previous View landed on an entry the reveal or the step left behind"
+        );
+
+        model.go_to_page(0).expect("the seed has a first page");
+        find(&mut model, "Page", SearchOptions::default());
+        let before_step = model.viewport.snapshot();
+        assert!(model.select_next_match().unwrap());
+        assert_ne!(
+            model.viewport.snapshot(),
+            before_step,
+            "the other page's hit is not on screen, so the step moves"
+        );
+        assert!(model.previous_view().unwrap());
+        assert_eq!(model.viewport.snapshot(), before_step);
+    }
+
+    #[test]
+    fn navigation_without_a_query_reports_nothing_rather_than_moving_the_view() {
+        let mut model = search_model();
+        let before = model.viewport.snapshot();
+
+        assert!(!model.select_next_match().unwrap());
+        assert!(!model.select_previous_match().unwrap());
+        assert_eq!(model.viewport.snapshot(), before);
+    }
+
+    #[test]
+    fn case_sensitivity_and_whole_word_cut_the_count_the_way_they_imply() {
+        let mut model = search_model();
+
+        find(&mut model, "page", SearchOptions::default());
+        assert_eq!(
+            model.search().len(),
+            2,
+            "the seed pages read \"Page one\" and \"Page two\""
+        );
+
+        find(
+            &mut model,
+            "page",
+            SearchOptions {
+                case_sensitive: true,
+                ..SearchOptions::default()
+            },
+        );
+        assert_eq!(model.search().len(), 0, "the document capitalises Page");
+
+        find(&mut model, "Pag", SearchOptions::default());
+        assert_eq!(model.search().len(), 2);
+
+        find(
+            &mut model,
+            "Pag",
+            SearchOptions {
+                whole_word: true,
+                ..SearchOptions::default()
+            },
+        );
+        assert_eq!(model.search().len(), 0, "Pag is only ever part of Page");
+    }
+
+    #[test]
+    fn any_of_the_words_finds_more_than_the_phrase_it_was_typed_as() {
+        let mut model = search_model();
+
+        find(&mut model, "one two", SearchOptions::default());
+        assert_eq!(model.search().len(), 0, "no page carries that phrase");
+
+        find(
+            &mut model,
+            "one two",
+            SearchOptions {
+                mode: onionskin_core::MatchMode::AnyWord,
+                ..SearchOptions::default()
+            },
+        );
+        assert_eq!(
+            model.search().len(),
+            2,
+            "one on the first page, two on the second"
+        );
+    }
+
+    #[test]
+    fn the_walk_starts_at_the_page_in_view_and_scrolls_to_the_hit_it_finds() {
+        let mut model = search_model();
+        model.go_to_page(1).expect("the seed has a second page");
+        model.update().expect("update succeeds");
+
+        find(&mut model, "two", SearchOptions::default());
+
+        assert_eq!(model.search().len(), 1);
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+        assert_eq!(model.viewport.current_page(), 1);
+    }
+
+    #[test]
+    fn a_hit_on_another_page_scrolls_that_page_into_view() {
+        let mut model = search_model();
+        model.go_to_page(0).expect("the seed has a first page");
+        model.update().expect("update succeeds");
+        assert_eq!(model.viewport.current_page(), 0);
+
+        find(&mut model, "two", SearchOptions::default());
+
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+        assert_eq!(model.viewport.current_page(), 1);
+        assert!(measured_visible(&model).contains(&1));
+    }
+
+    #[test]
+    fn a_visible_hit_does_not_move_the_page_under_the_user() {
+        let viewport = ViewSize {
+            width: 100.0,
+            height: 100.0,
+        };
+        let inside = ViewRect {
+            origin: ViewPoint { x: 10.0, y: 10.0 },
+            size: ViewSize {
+                width: 20.0,
+                height: 5.0,
+            },
+        };
+
+        assert_eq!(
+            scroll_delta_into_view(inside, viewport),
+            ViewPoint::default()
+        );
+    }
+
+    #[test]
+    fn a_hit_off_screen_is_centred_on_the_axis_it_ran_off() {
+        let viewport = ViewSize {
+            width: 100.0,
+            height: 100.0,
+        };
+        let below = ViewRect {
+            origin: ViewPoint { x: 10.0, y: 400.0 },
+            size: ViewSize {
+                width: 20.0,
+                height: 10.0,
+            },
+        };
+
+        let delta = scroll_delta_into_view(below, viewport);
+
+        assert_eq!(delta.x, 0.0, "the hit was already visible across");
+        // pan_by subtracts the delta from the offset, so a hit below the
+        // viewport asks for a negative one.
+        assert_eq!(delta.y, 45.0 - 400.0);
+        assert_eq!(below.origin.y + delta.y + below.size.height / 2.0, 50.0);
+    }
+
+    #[test]
+    fn a_hit_spanning_two_quads_is_revealed_as_one_region() {
+        let first = ViewRect {
+            origin: ViewPoint { x: 10.0, y: 20.0 },
+            size: ViewSize {
+                width: 30.0,
+                height: 5.0,
+            },
+        };
+        let second = ViewRect {
+            origin: ViewPoint { x: 5.0, y: 40.0 },
+            size: ViewSize {
+                width: 10.0,
+                height: 5.0,
+            },
+        };
+
+        assert_eq!(union_rect(&[]), None);
+        assert_eq!(union_rect(&[first]), Some(first));
+        assert_eq!(
+            union_rect(&[first, second]),
+            Some(ViewRect {
+                origin: ViewPoint { x: 5.0, y: 20.0 },
+                size: ViewSize {
+                    width: 35.0,
+                    height: 25.0,
+                },
+            })
+        );
     }
 
     fn red_values(bgra: &[u8]) -> Vec<u8> {

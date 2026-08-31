@@ -31,7 +31,6 @@ actions!(
 );
 
 const COMMAND_EXECUTION_UNAVAILABLE: &str = "Command execution lands in M2 P11";
-const DOCUMENT_SEARCH_UNAVAILABLE: &str = "Document search lands in M2 P9";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SearchResult {
@@ -119,12 +118,10 @@ pub(super) fn document_search_result(query: &str) -> Option<SearchResult> {
 
 pub(super) fn unavailable_selection(result: SearchResult) -> Option<SearchResult> {
     let (label, reason) = match result {
-        SearchResult::Tool { .. } => return None,
+        // Both are live: a tool through the registry, a document search
+        // through the find bar.
+        SearchResult::Tool { .. } | SearchResult::DocumentSearch { .. } => return None,
         SearchResult::Command { title, .. } => (title.to_owned(), COMMAND_EXECUTION_UNAVAILABLE),
-        SearchResult::DocumentSearch { query } => (
-            format!("Search document for \"{query}\""),
-            DOCUMENT_SEARCH_UNAVAILABLE,
-        ),
         unavailable @ SearchResult::Unavailable { .. } => return Some(unavailable),
     };
     Some(SearchResult::Unavailable { label, reason })
@@ -251,7 +248,7 @@ impl SearchBuffer {
     }
 }
 
-pub(super) struct SearchInput {
+pub(in crate::shell) struct SearchInput {
     element_id: &'static str,
     focus_handle: FocusHandle,
     buffer: SearchBuffer,
@@ -910,14 +907,13 @@ mod tests {
         assert!(search_registry(&registry, "needle only in the pdf").is_empty());
         let explicit = document_search_result("needle only in the pdf").unwrap();
         assert!(matches!(explicit, SearchResult::DocumentSearch { .. }));
-        assert!(matches!(
-            unavailable_selection(explicit),
-            Some(SearchResult::Unavailable { reason, .. }) if reason.contains("M2 P9")
-        ));
+        // Live since P9: the frame opens the find bar on it rather than
+        // reporting a milestone it is waiting for.
+        assert_eq!(unavailable_selection(explicit), None);
     }
 
     #[test]
-    fn tool_selection_is_live_while_deferred_routes_keep_typed_milestones() {
+    fn live_routes_report_nothing_while_deferred_ones_keep_typed_milestones() {
         assert_eq!(
             unavailable_selection(SearchResult::Tool {
                 index: 0,
@@ -941,10 +937,7 @@ mod tests {
             unavailable_selection(SearchResult::DocumentSearch {
                 query: "needle".to_owned(),
             }),
-            Some(SearchResult::Unavailable {
-                label: "Search document for \"needle\"".to_owned(),
-                reason: DOCUMENT_SEARCH_UNAVAILABLE,
-            })
+            None
         );
         let unavailable = SearchResult::Unavailable {
             label: "Already unavailable".to_owned(),

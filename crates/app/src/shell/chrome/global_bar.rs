@@ -5,6 +5,7 @@ use super::quick_actions::QuickAction;
 use super::theme::{ShellViewAction, ShellViewState, ThemePreference};
 use super::ShellFrame;
 use crate::shell::canvas::{CanvasViewState, ViewAction};
+use crate::shell::find_bar::OpenFindBar;
 
 actions!(onionskin_shell, [CloseTab, CloseOtherTabs, CloseAllTabs]);
 
@@ -96,6 +97,7 @@ pub(super) enum MenuCommand {
     CloseAllTabs,
     Undo,
     Redo,
+    Find,
     PreviousView,
     NextView,
     FirstPage,
@@ -271,6 +273,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     command: MenuCommand::Redo,
                     label: "Redo",
                     availability: Disabled("Document editing lands in M3"),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::Find,
+                    label: "Find…",
+                    availability: document_command,
                     selected: false,
                 },
             ],
@@ -568,6 +576,7 @@ impl MenuCommand {
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
+            | Self::Find
             | Self::Undo
             | Self::Redo
             | Self::ToggleNavigationPane
@@ -599,6 +608,7 @@ impl MenuCommand {
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
+            | Self::Find
             | Self::Undo
             | Self::Redo
             | Self::PreviousView
@@ -657,6 +667,19 @@ pub(in crate::shell) fn install_native_menus(
     });
     cx.on_action(move |action: &RunViewMenu, cx| {
         ShellFrame::run_native_command(window, action.command, cx);
+    });
+    // Ctrl+F and Edit > Find arrive here rather than at an element listener:
+    // action dispatch walks the focus path, and until the find bar opens
+    // nothing in the shell holds focus for it to walk to.
+    //
+    // Deferred because a global listener runs inside the window update that
+    // dispatched the action, and a window is off the app's window list for
+    // the length of its own update. Running the command from here would look
+    // for the window that is dispatching it and fail to find it.
+    cx.on_action(move |_: &OpenFindBar, cx| {
+        cx.defer(move |cx| {
+            ShellFrame::run_native_command(window, MenuCommand::Find, cx);
+        });
     });
 
     refresh_native_menus(cx, state);
@@ -722,6 +745,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         MenuCommand::CloseTab => Some(Box::new(CloseTab)),
         MenuCommand::CloseOtherTabs => Some(Box::new(CloseOtherTabs)),
         MenuCommand::CloseAllTabs => Some(Box::new(CloseAllTabs)),
+        MenuCommand::Find => Some(Box::new(OpenFindBar)),
         MenuCommand::PreviousView
         | MenuCommand::NextView
         | MenuCommand::FirstPage
@@ -903,6 +927,8 @@ mod tests {
             vec![
                 "Undo (Document editing lands in M3)",
                 "Redo (Document editing lands in M3)",
+                // Two tabs are open in this state, so Find is live.
+                "Find…",
             ]
         );
         assert_eq!(
@@ -911,6 +937,34 @@ mod tests {
                 "About Onionskin (Help commands land in M2 P11)",
                 "Keyboard Shortcuts (Help commands land in M2 P11)",
             ]
+        );
+    }
+
+    #[test]
+    fn find_is_live_in_the_edit_menu_only_while_a_document_is_open() {
+        let entry = |tabs| {
+            main_menu_schema(menu_state(tabs, None))[1]
+                .entries
+                .iter()
+                .find(|entry| entry.command == MenuCommand::Find)
+                .copied()
+                .expect("Edit carries Find")
+        };
+
+        assert_eq!(entry(1).availability, MenuAvailability::Enabled);
+        assert_eq!(
+            entry(0).availability,
+            MenuAvailability::Disabled("No document is open")
+        );
+        // Enabled means the native item carries an action to raise, and there
+        // is nothing to find in a window with no document.
+        assert_eq!(
+            item_names(&native_menus(menu_state(1, None))[1]).last(),
+            Some(&"Find…".to_owned())
+        );
+        assert_eq!(
+            item_names(&native_menus(menu_state(0, None))[1]).last(),
+            Some(&"Find… (No document is open)".to_owned())
         );
     }
 

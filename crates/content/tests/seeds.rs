@@ -201,8 +201,8 @@ fn search_over_a_seed_returns_quads_and_provenance() {
 
     // Whole-word finds it too; a strict prefix does not.
     let whole = onionskin_content::SearchOptions {
-        case_sensitive: false,
         whole_word: true,
+        ..Default::default()
     };
     assert_eq!(onionskin_content::search(&page, "onion", whole).len(), 0);
     assert_eq!(

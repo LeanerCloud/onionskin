@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use onionskin_core::{
     Document, FitMode, LayoutError, PageAlignment, PageGeometry, PageLayoutMode, PagePoint,
-    PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    PageQuad, PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
     ZoomPolicy,
 };
 use onionskin_render::raster_size;
@@ -692,6 +692,171 @@ fn rect_center(rect: ViewRect) -> ViewPoint {
         x: rect.origin.x + rect.size.width / 2.0,
         y: rect.origin.y + rect.size.height / 2.0,
     }
+}
+
+#[test]
+fn a_page_quad_lands_where_hit_testing_says_it_should_under_every_rotation() {
+    let mut document = Document::open_bytes(geometry_pdf(90)).unwrap();
+    let geometry = document.page_geometry(0).unwrap().clone();
+    let mut viewport = Viewport::new(1, VIEWPORT, 12.0).unwrap();
+    viewport.measure_page(geometry.clone()).unwrap();
+
+    for rotation in [
+        ViewRotation::None,
+        ViewRotation::Clockwise90,
+        ViewRotation::HalfTurn,
+        ViewRotation::Clockwise270,
+    ] {
+        viewport.set_rotation(rotation).unwrap();
+        viewport.fit(FitMode::Page).unwrap();
+        // A quad with all four corners on one point maps to one point, which
+        // the existing inverse can check exactly.
+        let user = geometry.device_to_user(40.0, 55.0, 1.0).unwrap();
+        let quad = PageQuad {
+            page: 0,
+            corners: [(user.x, user.y); 4],
+        };
+
+        let rects = viewport.page_quad_rects(0, &[quad]).unwrap();
+
+        assert_eq!(rects.len(), 1);
+        let back = viewport
+            .page_point_at(rects[0].origin)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{rotation:?} put the quad outside the page"));
+        assert!((back.x - user.x).abs() < 1e-3, "{rotation:?} x: {back:?}");
+        assert!((back.y - user.y).abs() < 1e-3, "{rotation:?} y: {back:?}");
+    }
+}
+
+#[test]
+fn a_quad_is_measured_in_view_pixels_and_bounds_the_glyphs_it_covers() {
+    let mut viewport = viewport(1);
+    viewport.zoom_to(2.0, center()).unwrap();
+    let geometry = viewport.page_geometry(0).unwrap().clone();
+    let low = geometry.device_to_user(30.0, 90.0, 1.0).unwrap();
+    let high = geometry.device_to_user(50.0, 60.0, 1.0).unwrap();
+    let quad = PageQuad {
+        page: 0,
+        corners: [
+            (low.x, high.y),
+            (high.x, high.y),
+            (low.x, low.y),
+            (high.x, low.y),
+        ],
+    };
+
+    let rect = viewport.page_quad_rects(0, &[quad]).unwrap()[0];
+
+    assert!((rect.size.width - 20.0 * viewport.zoom()).abs() < 1e-3);
+    assert!((rect.size.height - 30.0 * viewport.zoom()).abs() < 1e-3);
+    let page = page(&viewport, 0);
+    assert!((rect.origin.x - (page.origin.x + 30.0 * viewport.zoom())).abs() < 1e-3);
+    assert!((rect.origin.y - (page.origin.y + 60.0 * viewport.zoom())).abs() < 1e-3);
+}
+
+/// The two page-to-viewport mappings answer the same question from different
+/// domains: one from the layout, which is document space, and one from the
+/// placements the viewport is showing, which already carry the scroll offset.
+/// They now share one transform, and this is what says they agree: at a zoom
+/// and a scroll where a missing offset or a rotation applied in the wrong
+/// order would be tens of pixels, not a rounding error.
+#[test]
+fn both_page_mappings_agree_under_rotation_zoom_and_scroll() {
+    let mut viewport = viewport(2);
+    viewport.measure_page(geometry(1, 850.0, 1_100.0)).unwrap();
+
+    for rotation in [
+        ViewRotation::None,
+        ViewRotation::Clockwise90,
+        ViewRotation::HalfTurn,
+        ViewRotation::Clockwise270,
+    ] {
+        viewport.set_rotation(rotation).unwrap();
+        viewport.zoom_to(12.0, center()).unwrap();
+        viewport
+            .scroll(
+                ViewPoint {
+                    x: -37.0,
+                    y: -211.0,
+                },
+                false,
+                ViewPoint::default(),
+            )
+            .unwrap();
+
+        for page_index in [0, 1] {
+            let at = PagePoint {
+                page: page_index,
+                x: 120.0,
+                y: 300.0,
+            };
+            let Some(point) = viewport.view_point_for(at).unwrap() else {
+                continue;
+            };
+            // A quad with all four corners on that same page point maps to a
+            // rectangle with no area, sitting exactly where the point does.
+            let device = viewport
+                .page_geometry(page_index)
+                .unwrap()
+                .user_to_device_point(at, 1.0)
+                .unwrap();
+            let user = viewport
+                .page_geometry(page_index)
+                .unwrap()
+                .device_to_user(device.0, device.1, 1.0)
+                .unwrap();
+            let quad = PageQuad {
+                page: page_index,
+                corners: [
+                    (user.x, user.y),
+                    (user.x, user.y),
+                    (user.x, user.y),
+                    (user.x, user.y),
+                ],
+            };
+            let rect = viewport.page_quad_rects(page_index, &[quad]).unwrap()[0];
+
+            assert!(
+                (rect.origin.x - point.x).abs() < 1e-3,
+                "{rotation:?} page {page_index}: {rect:?} does not sit on {point:?}"
+            );
+            assert!(
+                (rect.origin.y - point.y).abs() < 1e-3,
+                "{rotation:?} page {page_index}: {rect:?} does not sit on {point:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_quad_has_nowhere_to_land_until_its_page_is_placed_and_measured() {
+    let mut viewport = viewport(20);
+    let quad = |page| PageQuad {
+        page,
+        corners: [(10.0, 10.0); 4],
+    };
+
+    // Placed by the layout, but not measured: no transform exists yet.
+    viewport.go_to_page(1, PageAlignment::Start).unwrap();
+    assert!(viewport.page_quad_rects(1, &[quad(1)]).unwrap().is_empty());
+    // Nowhere near the viewport.
+    assert!(viewport
+        .page_quad_rects(19, &[quad(19)])
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn a_quad_from_another_page_is_an_error_rather_than_a_wrong_rectangle() {
+    let mut viewport = viewport(2);
+    viewport.measure_page(geometry(1, 850.0, 1_100.0)).unwrap();
+    let quad = PageQuad {
+        page: 1,
+        corners: [(10.0, 10.0); 4],
+    };
+
+    assert!(viewport.page_quad_rects(0, &[quad]).is_err());
 }
 
 fn assert_point_close(actual: ViewPoint, expected: ViewPoint) {

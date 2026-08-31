@@ -4,15 +4,19 @@ use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, App, AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
+    div, px, App, AppContext as _, ClipboardItem, Context, Entity, Focusable as _,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
+    Point, Render, StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
 };
 use onionskin_plugin_api::{ExportedFile, PageIndex};
 
 use super::super::canvas::{CanvasError, CanvasViewState, ViewAction};
 use super::super::context_menu::{
     canvas_context_entries, tool_with, CanvasContextCommand, CanvasContextEntry,
+};
+use super::super::find_bar::{
+    render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
+    FindPreviousMatch, FindSummary,
 };
 use super::super::Canvas;
 use super::global_bar::{
@@ -198,6 +202,8 @@ pub(in crate::shell) struct ShellFrame {
     canvas_context_menu: Option<CanvasContextMenu>,
     search_input: Entity<SearchInput>,
     search_feedback: Option<SearchResult>,
+    find: FindBarState,
+    find_input: Entity<SearchInput>,
     page_input: Entity<SearchInput>,
     page_entry_error: Option<PageEntryError>,
     observed_view_state: Option<CanvasViewState>,
@@ -249,11 +255,17 @@ impl ShellFrame {
         shell_view_state.set_fullscreen(window.is_fullscreen());
         let theme = shell_view_state.tokens();
         let search_input = cx.new(|cx| SearchInput::new(theme, cx));
+        let find_input =
+            cx.new(|cx| SearchInput::with_placeholder("find-input", "Find in document", theme, cx));
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder("page-entry-input", "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
             frame.search_feedback = None;
             cx.notify();
+        })
+        .detach();
+        cx.observe(&find_input, |frame, _, cx| {
+            frame.find_query_changed(cx);
         })
         .detach();
         cx.observe(&page_input, |frame, _, cx| {
@@ -290,6 +302,8 @@ impl ShellFrame {
             canvas_context_menu: None,
             search_input,
             search_feedback: None,
+            find: FindBarState::default(),
+            find_input,
             page_input,
             page_entry_error: None,
             observed_view_state,
@@ -307,6 +321,7 @@ impl ShellFrame {
             self.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
             self.sync_page_entry(cx);
+            self.refresh_find(cx);
             refresh_native_menus(cx, self.menu_state(cx));
             cx.notify();
         }
@@ -405,6 +420,10 @@ impl ShellFrame {
                 self.start_export(target, cx);
                 Ok(())
             }
+            MenuCommand::Find => {
+                self.open_find_bar(None, window, cx);
+                Ok(())
+            }
             MenuCommand::Open
             | MenuCommand::SaveAs
             | MenuCommand::Undo
@@ -473,6 +492,7 @@ impl ShellFrame {
                 } else {
                     self.observed_view_state = self.active_view_state(cx);
                     self.sync_page_entry(cx);
+                    self.refresh_find(cx);
                     refresh_native_menus(cx, self.menu_state(cx));
                     cx.notify();
                 }
@@ -481,6 +501,7 @@ impl ShellFrame {
                 close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
+                self.refresh_find(cx);
                 refresh_native_menus(cx, self.menu_state(cx));
                 cx.notify();
             }
@@ -547,6 +568,8 @@ impl ShellFrame {
         let theme = self.shell_view_state.tokens();
         self.search_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
+        self.find_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
         self.page_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         for tab in self.tabs.tabs() {
@@ -603,6 +626,11 @@ impl ShellFrame {
     fn canvas_view_changed(&mut self, cx: &mut Context<Self>) {
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
+            // A running walk reports new hits without moving the view, and the
+            // bar's count has to follow them.
+            if self.find.is_open() {
+                cx.notify();
+            }
             return;
         }
         self.observed_view_state = view;
@@ -635,6 +663,147 @@ impl ShellFrame {
                 cx.notify();
             }
         }
+    }
+
+    /// Escape is bound window-wide so it closes the bar from wherever focus
+    /// sits, which means a closed bar has to hand the key back.
+    pub(in crate::shell) fn close_find_bar(
+        &mut self,
+        _: &CloseFindBar,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.find.is_open() {
+            cx.propagate();
+            return;
+        }
+        self.dismiss_find_bar(cx);
+    }
+
+    pub(in crate::shell) fn find_next_match(
+        &mut self,
+        _: &FindNextMatch,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_find(FindDirection::Next, cx);
+    }
+
+    pub(in crate::shell) fn find_previous_match(
+        &mut self,
+        _: &FindPreviousMatch,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_find(FindDirection::Previous, cx);
+    }
+
+    /// Opens the bar with the find field focused. A query replaces whatever
+    /// was typed before; `None` keeps it, so Ctrl+F on an open bar refocuses
+    /// the query it is already showing rather than clearing it.
+    pub(super) fn open_find_bar(
+        &mut self,
+        query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.find.open();
+        self.main_menu_open = false;
+        self.tab_context_menu = None;
+        if let Some(query) = query {
+            self.find_input
+                .update(cx, |input, cx| input.set_query(query, cx));
+        }
+        window.focus(&self.find_input.read(cx).focus_handle(cx));
+        self.run_find_query(cx);
+        cx.notify();
+    }
+
+    /// Closes the bar and drops every walk it started. Every tab, not just the
+    /// active one: a walk left running on a tab the user switched away from
+    /// would keep polling and keep highlighting.
+    pub(in crate::shell) fn dismiss_find_bar(&mut self, cx: &mut Context<Self>) {
+        self.find.close();
+        for canvas in self.canvases() {
+            cancel_find_on(&canvas, cx);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::shell) fn apply_find_option(
+        &mut self,
+        option: FindOption,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.find.apply(option) {
+            return;
+        }
+        self.run_find_query(cx);
+        cx.notify();
+    }
+
+    pub(in crate::shell) fn step_find(&mut self, direction: FindDirection, cx: &mut Context<Self>) {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        canvas.update(cx, |canvas, cx| {
+            let result = match direction {
+                FindDirection::Next => canvas.model.select_next_match(),
+                FindDirection::Previous => canvas.model.select_previous_match(),
+            };
+            canvas.handle_change(result, cx);
+        });
+        cx.notify();
+    }
+
+    fn find_query_changed(&mut self, cx: &mut Context<Self>) {
+        if !self.find.is_open() {
+            return;
+        }
+        self.run_find_query(cx);
+        cx.notify();
+    }
+
+    /// Results belong to the document the canvas holds, so a change of active
+    /// tab runs the query again rather than reading the new tab's empty state
+    /// as "no results".
+    fn refresh_find(&mut self, cx: &mut Context<Self>) {
+        if self.find.is_open() {
+            self.run_find_query(cx);
+        }
+    }
+
+    /// Runs the query on the document on screen, and only on it: the walk the
+    /// user left behind on another tab is cancelled rather than left running.
+    fn run_find_query(&mut self, cx: &mut Context<Self>) {
+        let typed = self.find_input.read(cx).query().to_owned();
+        // Blank input searches nothing, but a needle the user typed spaces
+        // into is the needle they meant.
+        let needle = if typed.trim().is_empty() {
+            String::new()
+        } else {
+            typed
+        };
+        let options = self.find.options();
+        let active = self.tabs.active_index();
+        for (index, canvas) in self.canvases().into_iter().enumerate() {
+            if Some(index) != active {
+                cancel_find_on(&canvas, cx);
+                continue;
+            }
+            canvas.update(cx, |canvas, cx| {
+                let result = canvas.model.start_search(&needle, options);
+                canvas.handle_change(result, cx);
+            });
+        }
+    }
+
+    fn canvases(&self) -> Vec<Entity<Canvas>> {
+        self.tabs
+            .tabs()
+            .iter()
+            .map(|tab| tab.canvas.clone())
+            .collect()
     }
 
     fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
@@ -796,7 +965,12 @@ impl ShellFrame {
         results
     }
 
-    fn choose_search_result(&mut self, result: SearchResult, cx: &mut Context<Self>) {
+    fn choose_search_result(
+        &mut self,
+        result: SearchResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match result {
             SearchResult::Tool { index, name, .. } => {
                 let entry = self.active_rail_entry(index, cx);
@@ -804,6 +978,10 @@ impl ShellFrame {
                     self.search_feedback = None;
                     cx.notify();
                 }
+            }
+            SearchResult::DocumentSearch { query } => {
+                self.search_feedback = None;
+                self.open_find_bar(Some(query), window, cx);
             }
             deferred => {
                 self.search_feedback = unavailable_selection(deferred);
@@ -984,8 +1162,8 @@ impl ShellFrame {
                     .rounded_sm()
                     .cursor_pointer()
                     .hover(move |row| row.bg(theme.selected))
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
-                        frame.choose_search_result(selection.clone(), cx);
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                        frame.choose_search_result(selection.clone(), window, cx);
                     }))
                     .child(result.label())
                     .child(
@@ -1294,6 +1472,15 @@ impl Render for ShellFrame {
                 theme,
                 cx,
             );
+            // Summarised only when the bar is on screen to read it.
+            let find_summary = self.find.is_open().then(|| {
+                FindSummary::new(
+                    tab.canvas.read(cx).model.search(),
+                    tab.canvas.read(cx).model.viewport().page_count(),
+                )
+            });
+            let find_state = self.find;
+            let find_input = self.find_input.clone();
             let canvas_view = div()
                 .id("document-view")
                 .relative()
@@ -1308,7 +1495,10 @@ impl Render for ShellFrame {
                     }),
                 )
                 .child(canvas)
-                .when(visibility.quick_actions, |view| view.child(quick_actions));
+                .when(visibility.quick_actions, |view| view.child(quick_actions))
+                .when_some(find_summary, |view, summary| {
+                    view.child(render_find_bar(find_state, find_input, &summary, theme, cx))
+                });
             let document_column = div()
                 .w(document_bounds.size.width)
                 .h_full()
@@ -1341,7 +1531,11 @@ impl Render for ShellFrame {
             .child(tab_bar)
             .child(body);
 
-        let mut root = div().size_full().relative().child(frame);
+        let mut root = div()
+            .size_full()
+            .relative()
+            .on_action(cx.listener(Self::close_find_bar))
+            .child(frame);
         if self.main_menu_open
             || self.tab_context_menu.is_some()
             || self.canvas_context_menu.is_some()
@@ -1373,6 +1567,18 @@ impl Render for ShellFrame {
         }
         root
     }
+}
+
+/// Drops a tab's walk, if it has one. Silent when it does not: cancelling a
+/// search nobody started would repaint every tab on every keystroke.
+fn cancel_find_on(canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) {
+    canvas.update(cx, |canvas, cx| {
+        if canvas.model.search().needle().is_empty() {
+            return;
+        }
+        canvas.model.cancel_search();
+        canvas.handle_change(Ok(true), cx);
+    });
 }
 
 fn document_view_bounds(
@@ -1792,6 +1998,126 @@ mod tests {
                 .view_state()
                 .rotation;
             assert_eq!(rotation, ViewRotation::Clockwise90);
+        });
+    }
+
+    /// The headline binding, dispatched the way the user dispatches it.
+    ///
+    /// Everything else about the find bar was tested by calling its methods,
+    /// which is how two separate dead routes shipped: an element listener that
+    /// action dispatch never reached, and then a window-wide listener that ran
+    /// inside the dispatching window's own update and could not find it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_real_ctrl_f_keystroke_opens_the_find_bar(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let theme = shell_view.tokens();
+        let window = cx.add_window(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        // Both halves of the route the app installs at startup.
+        let state = window
+            .update(cx, |frame, _window, cx| frame.menu_state(cx))
+            .unwrap();
+        cx.update(|cx| {
+            crate::shell::find_bar::install_keybindings(cx);
+            super::super::global_bar::install_native_menus(cx, window, state);
+        });
+        window
+            .update(cx, |frame, _window, _cx| assert!(!frame.find.is_open()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "ctrl-f");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.find.is_open(),
+                    "ctrl-f did not reach the find bar in a real window"
+                );
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_document_search_route_opens_the_find_bar_and_escape_closes_it(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(vec![(path, canvas)], shell_view, window, cx)
+        });
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame.choose_search_result(
+                    SearchResult::DocumentSearch {
+                        query: "Onionskin".to_owned(),
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            let open = frame.read(app);
+            assert!(open.find.is_open());
+            assert!(
+                open.search_feedback.is_none(),
+                "the document-text route is live, not a deferred milestone"
+            );
+            assert_eq!(open.find_input.read(app).query(), "Onionskin");
+            // The walk is the canvas's, and it carries the query the global
+            // bar typed rather than a copy the bar keeps in step by hand.
+            let canvas = open.tabs.active().unwrap().canvas.read(app);
+            assert_eq!(canvas.model.search().needle(), "Onionskin");
+        });
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame.close_find_bar(&CloseFindBar, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, app| {
+            let closed = frame.read(app);
+            assert!(!closed.find.is_open());
+            let canvas = closed.tabs.active().unwrap().canvas.read(app);
+            assert_eq!(
+                canvas.model.search().needle(),
+                "",
+                "closing the bar drops the walk and its highlights"
+            );
+            assert!(canvas.model.search().is_empty());
         });
     }
 
@@ -2380,7 +2706,7 @@ mod tests {
         });
 
         // The registry has no tools, so every index is out of range.
-        cx.update(|_window, app| {
+        cx.update(|window, app| {
             frame.update(app, |frame, cx| {
                 frame.choose_search_result(
                     SearchResult::Tool {
@@ -2388,6 +2714,7 @@ mod tests {
                         id: "onionskin.absent",
                         name: "Absent",
                     },
+                    window,
                     cx,
                 );
             });

@@ -1,21 +1,44 @@
 //! The find engine behind the viewer's Ctrl+F and, later, search-and-redact.
 //!
 //! Deliberately dumb: a literal substring search over the page's runs in
-//! document order, with the two options Acrobat's find bar has. No stemming,
-//! no fuzzy matching, no layout analysis. What it does owe the caller is exact
-//! provenance for every hit, so a highlight lands on the right glyphs and a
-//! redaction rewrites the right bytes.
+//! document order, with the options Acrobat's find bar and the current-document
+//! half of its Advanced Search have. No stemming, no fuzzy matching, no layout
+//! analysis. What it does owe the caller is exact provenance for every hit, so
+//! a highlight lands on the right glyphs and a redaction rewrites the right
+//! bytes.
+//!
+//! One thing it does not do, and the reason it is only half of the bidi story:
+//! a hit has to sit in one run. A producer that emits a right-to-left line as
+//! several visually ordered runs stores it in an order no substring search over
+//! the joined text can find, and reordering visual runs back to logical order
+//! needs a bidi implementation. Folding the presentation forms (below) covers
+//! the single-run case; `known-issues.md` carries the rest.
 
 use std::ops::Range;
 
+use unicode_normalization::UnicodeNormalization as _;
+
 use crate::run::{ByteProvenance, PageText, TextRun};
 use crate::{PageIndex, PageQuad};
+
+/// Acrobat's "Return Results Containing", for the current document.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MatchMode {
+    /// Match Exact Word Or Phrase: the needle, verbatim.
+    #[default]
+    Phrase,
+    /// Any Of The Words: every occurrence of every word in the needle.
+    AnyWord,
+    /// All Of The Words: the same, but only on a page carrying every word.
+    AllWords,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SearchOptions {
     pub case_sensitive: bool,
     /// The match must not be flanked by an alphanumeric character.
     pub whole_word: bool,
+    pub mode: MatchMode,
 }
 
 /// One hit, with everything a caller needs to draw it and to change it.
@@ -158,17 +181,45 @@ pub fn search_flattened(
     if needle.is_empty() {
         return Vec::new();
     }
-    let (haystack, offsets) = if options.case_sensitive {
-        (flat.text.clone(), None)
-    } else {
-        let (folded, map) = fold(&flat.text);
-        (folded, Some(map))
-    };
-    let pattern = if options.case_sensitive {
-        needle.to_string()
-    } else {
-        fold(needle).0
-    };
+    // The page folds once however many words are searched for: the fold walks
+    // every character of the page, and a three-word search would otherwise
+    // walk it three times.
+    let folded = fold(&flat.text, options.case_sensitive);
+    match options.mode {
+        MatchMode::Phrase => find_all(page, flat, &folded, needle, options),
+        MatchMode::AnyWord | MatchMode::AllWords => {
+            let mut out = Vec::new();
+            for word in needle.split_whitespace() {
+                let hits = find_all(page, flat, &folded, word, options);
+                if hits.is_empty() && options.mode == MatchMode::AllWords {
+                    return Vec::new();
+                }
+                out.extend(hits);
+            }
+            out.sort_by_key(|hit| (hit.range.start, hit.range.end));
+            out.dedup_by(|a, b| a.range == b.range);
+            out
+        }
+    }
+}
+
+/// Every occurrence of one literal needle, in document order, against the
+/// page folded once by the caller.
+fn find_all(
+    page: &PageText,
+    flat: &Flattened,
+    folded: &(String, Vec<usize>),
+    needle: &str,
+    options: SearchOptions,
+) -> Vec<Match> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let (haystack, offsets) = folded;
+    let pattern = fold(needle, options.case_sensitive).0;
+    if pattern.is_empty() {
+        return Vec::new();
+    }
 
     let mut out = Vec::new();
     let mut from = 0usize;
@@ -178,23 +229,20 @@ pub fn search_flattened(
         // Advance by one byte-boundary so overlapping occurrences are all
         // found; `find` on a UTF-8 boundary guarantees `start + 1` is safe to
         // clamp up to the next boundary.
-        from = next_boundary(&haystack, start + 1);
+        from = next_boundary(haystack, start + 1);
 
-        // Case folding is not length preserving and not even character
-        // preserving: the Turkish dotted capital I folds to two code points, so
-        // a needle can match a strict prefix of one source character's folded
-        // form. The hit is that whole character - mapping the folded end
-        // straight back would name an empty range inside it, which is a match
-        // with no text and no quads.
-        let range = match &offsets {
-            Some(map) => {
-                let (Some(first), Some(last)) = (map.get(start), map.get(end - 1)) else {
-                    continue;
-                };
-                let width = flat.text[*last..].chars().next().map_or(0, char::len_utf8);
-                *first..(last + width).min(flat.text.len())
-            }
-            None => start..end,
+        // Folding is not length preserving and not even character preserving:
+        // the Turkish dotted capital I folds to two code points, so a needle
+        // can match a strict prefix of one source character's folded form. The
+        // hit is that whole character - mapping the folded end straight back
+        // would name an empty range inside it, which is a match with no text
+        // and no quads.
+        let range = {
+            let (Some(first), Some(last)) = (offsets.get(start), offsets.get(end - 1)) else {
+                continue;
+            };
+            let width = flat.text[*last..].chars().next().map_or(0, char::len_utf8);
+            *first..(last + width).min(flat.text.len())
         };
         if range.start >= range.end {
             continue;
@@ -222,22 +270,47 @@ pub fn search_flattened(
     out
 }
 
-/// Lowercases a string and records, for every byte of the result, the byte
-/// offset it came from. Case folding is not length preserving, so a hit in the
-/// folded string has to be translated back before it can name glyphs.
-fn fold(text: &str) -> (String, Vec<usize>) {
+/// Folds a string for matching and records, for every byte of the result, the
+/// byte offset it came from. Neither fold below is length preserving, so a hit
+/// in the folded string has to be translated back before it can name glyphs.
+///
+/// Two folds, both applied one character at a time:
+///
+/// * **Compatibility composition (NFKC), always.** A producer stores what it
+///   shaped, so Arabic arrives as Presentation Forms-A and -B and `fi` arrives
+///   as one ligature glyph. A user types base letters. Folding both sides to
+///   the base letters is what makes the typed word match the drawn one.
+/// * **Lowercasing, unless the caller asked for case sensitivity.** Case is
+///   the only thing that option is about; a case-sensitive search still has to
+///   fold presentation forms, because the alphabets that use them have no case.
+///
+/// Per character rather than over the whole string on purpose: NFKC composes
+/// across character boundaries, and a fold that merged two source characters
+/// into one would leave the map unable to name either.
+fn fold(text: &str, case_sensitive: bool) -> (String, Vec<usize>) {
     let mut folded = String::with_capacity(text.len());
     let mut map = Vec::with_capacity(text.len() + 1);
     for (offset, ch) in text.char_indices() {
-        let before = folded.len();
-        for lower in ch.to_lowercase() {
-            folded.push(lower);
+        // ASCII is NFKC-stable, and most text is ASCII.
+        if ch.is_ascii() {
+            push_folded(&mut folded, ch, case_sensitive);
+        } else {
+            for composed in std::iter::once(ch).nfkc() {
+                push_folded(&mut folded, composed, case_sensitive);
+            }
         }
         map.resize(folded.len(), offset);
-        debug_assert!(folded.len() >= before);
     }
     map.push(text.len());
     (folded, map)
+}
+
+fn push_folded(out: &mut String, ch: char, case_sensitive: bool) {
+    if case_sensitive {
+        out.push(ch);
+    } else {
+        out.extend(ch.to_lowercase());
+    }
 }
 
 fn next_boundary(text: &str, mut index: usize) -> usize {
@@ -335,7 +408,7 @@ mod tests {
                 "hello",
                 SearchOptions {
                     case_sensitive: true,
-                    whole_word: false
+                    ..SearchOptions::default()
                 }
             )
             .len(),
@@ -347,8 +420,8 @@ mod tests {
     fn whole_word_rejects_a_substring_hit() {
         let p = page(vec![run("the theatre", 0.0, 0.0)]);
         let options = SearchOptions {
-            case_sensitive: false,
             whole_word: true,
+            ..SearchOptions::default()
         };
         let hits = search(&p, "the", options);
         assert_eq!(hits.len(), 1);
@@ -376,10 +449,173 @@ mod tests {
     #[test]
     fn folding_maps_back_through_a_length_changing_character() {
         // Turkish dotted capital I lowercases to two code points.
-        let (folded, map) = fold("A\u{0130}B");
+        let (folded, map) = fold("A\u{0130}B", false);
         assert!(folded.len() > "A\u{0130}B".len() - 1);
         assert_eq!(map[0], 0);
         assert_eq!(*map.last().unwrap(), "A\u{0130}B".len());
+    }
+
+    #[test]
+    fn the_offset_map_names_the_source_character_of_every_folded_byte() {
+        // One character per fold class: ASCII, a presentation form that grows
+        // (lam-alef is two letters), and one that stays one character.
+        let text = "a\u{FEFB}\u{FE8E}";
+        let (folded, map) = fold(text, true);
+
+        assert_eq!(folded, "a\u{0644}\u{0627}\u{0627}");
+        assert_eq!(map.len(), folded.len() + 1);
+        assert_eq!(map[0], 0);
+        for (byte, source) in map.iter().enumerate().take(folded.len()) {
+            assert!(text.is_char_boundary(*source), "byte {byte} names {source}");
+        }
+        assert_eq!(*map.last().unwrap(), text.len());
+    }
+
+    #[test]
+    fn presentation_forms_match_the_base_letters_a_user_types() {
+        // One word written with the Forms-B contextual glyphs a shaper emits:
+        // alef isolated, lam initial, lam medial, heh final.
+        let shaped = "\u{FE8D}\u{FEDF}\u{FEE0}\u{FEEA}";
+        let typed = "\u{0627}\u{0644}\u{0644}\u{0647}";
+        let p = page(vec![run(shaped, 0.0, 0.0)]);
+
+        let hits = search(&p, typed, SearchOptions::default());
+        assert_eq!(hits.len(), 1);
+        // The hit names the characters the page actually drew, and one quad
+        // per drawn glyph, not per folded character.
+        assert_eq!(hits[0].text, shaped);
+        assert_eq!(hits[0].quads.len(), shaped.chars().count());
+    }
+
+    #[test]
+    fn a_case_sensitive_search_still_folds_presentation_forms() {
+        let p = page(vec![run("\u{FEDF}\u{FEE0}", 0.0, 0.0)]);
+        let options = SearchOptions {
+            case_sensitive: true,
+            ..SearchOptions::default()
+        };
+
+        assert_eq!(search(&p, "\u{0644}\u{0644}", options).len(), 1);
+    }
+
+    #[test]
+    fn a_latin_ligature_matches_its_letters_and_keeps_one_quad() {
+        let p = page(vec![run("of\u{FB01}ce", 0.0, 0.0)]);
+
+        let hits = search(&p, "office", SearchOptions::default());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "of\u{FB01}ce");
+        // Five glyphs were drawn for six folded characters.
+        assert_eq!(hits[0].quads.len(), 5);
+    }
+
+    #[test]
+    fn a_needle_matching_one_letter_of_a_ligature_returns_the_whole_glyph() {
+        let p = page(vec![run("\u{FB01}n", 0.0, 0.0)]);
+
+        let hits = search(&p, "i", SearchOptions::default());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "\u{FB01}");
+        assert_eq!(hits[0].quads.len(), 1);
+    }
+
+    #[test]
+    fn a_right_to_left_phrase_split_across_runs_is_not_found() {
+        // The deferred half of bidi, pinned rather than skipped: the page draws
+        // the two words in visual order, so the logical phrase is not a
+        // substring of the joined text and no fold can make it one.
+        let p = page(vec![
+            run("\u{FEE4}\u{FEE0}", 0.0, 0.0),
+            run("\u{FEDF}\u{FEDF}", 40.0, 0.0),
+        ]);
+
+        assert_eq!(flatten(&p).text, "\u{FEE4}\u{FEE0} \u{FEDF}\u{FEDF}");
+        // The logical phrase reads the second run first.
+        assert_eq!(
+            search(
+                &p,
+                "\u{0644}\u{0644} \u{0645}\u{0644}",
+                SearchOptions::default()
+            )
+            .len(),
+            0
+        );
+        // Each word on its own is found, which is what run-local folding buys.
+        assert_eq!(
+            search(&p, "\u{0644}\u{0644}", SearchOptions::default()).len(),
+            1
+        );
+        assert_eq!(
+            search(&p, "\u{0645}\u{0644}", SearchOptions::default()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn any_of_the_words_finds_every_word_in_document_order() {
+        let p = page(vec![run("red green blue green", 0.0, 0.0)]);
+        let options = SearchOptions {
+            mode: MatchMode::AnyWord,
+            ..SearchOptions::default()
+        };
+
+        let hits = search(&p, "green red", options);
+        assert_eq!(
+            hits.iter().map(|hit| hit.range.start).collect::<Vec<_>>(),
+            vec![0, 4, 15]
+        );
+        assert_eq!(hits[0].text, "red");
+    }
+
+    #[test]
+    fn all_of_the_words_needs_every_word_on_the_page() {
+        let present = page(vec![run("red green blue", 0.0, 0.0)]);
+        let partial = page(vec![run("red blue", 0.0, 0.0)]);
+        let options = SearchOptions {
+            mode: MatchMode::AllWords,
+            ..SearchOptions::default()
+        };
+
+        assert_eq!(search(&present, "green red", options).len(), 2);
+        assert!(search(&partial, "green red", options).is_empty());
+    }
+
+    #[test]
+    fn a_word_repeated_in_the_needle_reports_each_hit_once() {
+        let p = page(vec![run("red red", 0.0, 0.0)]);
+        for mode in [MatchMode::AnyWord, MatchMode::AllWords] {
+            let options = SearchOptions {
+                mode,
+                ..SearchOptions::default()
+            };
+            assert_eq!(search(&p, "red red", options).len(), 2, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn word_modes_honour_whole_word_and_case() {
+        let p = page(vec![run("Theatre the", 0.0, 0.0)]);
+        let options = SearchOptions {
+            case_sensitive: false,
+            whole_word: true,
+            mode: MatchMode::AnyWord,
+        };
+
+        let hits = search(&p, "the", options);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].range.start, "Theatre ".len());
+        assert_eq!(
+            search(
+                &p,
+                "the",
+                SearchOptions {
+                    case_sensitive: true,
+                    ..options
+                }
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]

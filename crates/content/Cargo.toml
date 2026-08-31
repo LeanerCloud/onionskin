@@ -15,3 +15,9 @@ ttf-parser = { version = "0.25", default-features = false, features = [
     "std",
     "glyph-names",
 ] }
+
+# Search folds presentation forms to base letters through NFKC. The table is
+# large enough that hand-rolling the Arabic Presentation Forms-A and -B blocks
+# would be worse than the dependency, and NFKC is the definition of the fold
+# rather than an approximation of it.
+unicode-normalization = "0.1"

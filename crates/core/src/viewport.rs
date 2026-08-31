@@ -20,7 +20,7 @@ use crate::layout;
 use crate::layout::{Layout, LayoutError, LayoutQuery};
 use crate::{
     GeometryError, PageAlignment, PageGeometry, PageIndex, PageLayoutMode, PagePlacement,
-    PagePoint, PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize,
+    PagePoint, PageQuad, PageRenderRect, ViewPoint, ViewRect, ViewRotation, ViewSize,
 };
 use onionskin_render::MAX_RASTER_AXIS;
 
@@ -467,11 +467,83 @@ impl Viewport {
             width: geometry.render_size.0 as f32,
             height: geometry.render_size.1 as f32,
         };
-        let rotated = self.rotation.rotate_point(unrotated, page_size);
+        // The layout's placement is in document space, so the scroll offset
+        // still has to come off. `page_quad_rects` starts from a visible
+        // placement, which already has it.
+        let placed = self.place_on_page(placement.rect.origin, page_size, unrotated);
         Ok(Some(ViewPoint {
-            x: placement.rect.origin.x + rotated.x * self.zoom - self.offset.x,
-            y: placement.rect.origin.y + rotated.y * self.zoom - self.offset.y,
+            x: placed.x - self.offset.x,
+            y: placed.y - self.offset.y,
         }))
+    }
+
+    /// Where a point in a page's own unzoomed, unrotated device space lands,
+    /// given where that page is placed.
+    ///
+    /// The one place the page-to-viewport transform is written down. Both
+    /// mappings below it need the same rotation, the same scale and the same
+    /// origin, and they disagreed by the scroll offset the first time they
+    /// were written separately.
+    fn place_on_page(&self, origin: ViewPoint, page_size: ViewSize, point: ViewPoint) -> ViewPoint {
+        let rotated = self.rotation.rotate_point(point, page_size);
+        ViewPoint {
+            x: origin.x + rotated.x * self.zoom,
+            y: origin.y + rotated.y * self.zoom,
+        }
+    }
+
+    /// Where page-space quads land in the viewport right now, one rectangle per
+    /// quad, in the same order.
+    ///
+    /// This is the direction [`Viewport::page_point_at`] does not go, and what
+    /// turns a search hit into a highlight. The rectangle bounds the quad: text
+    /// drawn on a slant, or a page shown rotated, still highlights as an
+    /// upright box, which is what a viewer draws.
+    ///
+    /// Empty when the page is not currently laid out or has not been measured
+    /// yet - a highlight has nowhere to land until the page has geometry, and
+    /// the caller asks again when it arrives. A quad belonging to another page
+    /// is an error rather than an empty answer.
+    ///
+    /// Unlike [`Viewport::view_point_for`], which starts from the layout, this
+    /// starts from the placements the viewport is showing, so the offset is
+    /// already in them.
+    pub fn page_quad_rects(
+        &self,
+        page: PageIndex,
+        quads: &[PageQuad],
+    ) -> Result<Vec<ViewRect>, ViewportError> {
+        let Some(placement) = self
+            .visible_pages()?
+            .into_iter()
+            .find(|placement| placement.page == page)
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(geometry) = self.layout.geometry(page) else {
+            return Ok(Vec::new());
+        };
+        let page_size = ViewSize {
+            width: geometry.render_size.0 as f32,
+            height: geometry.render_size.1 as f32,
+        };
+        quads
+            .iter()
+            .map(|quad| {
+                let device = geometry.user_to_device(*quad, 1.0)?;
+                let corners = device.corners.map(|(x, y)| {
+                    self.place_on_page(
+                        placement.rect.origin,
+                        page_size,
+                        ViewPoint {
+                            x: x as f32,
+                            y: y as f32,
+                        },
+                    )
+                });
+                Ok(bounding_rect(corners))
+            })
+            .collect()
     }
 
     pub fn snapshot(&self) -> ViewState {
@@ -801,6 +873,24 @@ struct Anchor {
     page: PageIndex,
     local: ViewPoint,
     screen: ViewPoint,
+}
+
+fn bounding_rect(corners: [ViewPoint; 4]) -> ViewRect {
+    let (mut left, mut top) = (f32::INFINITY, f32::INFINITY);
+    let (mut right, mut bottom) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for corner in corners {
+        left = left.min(corner.x);
+        right = right.max(corner.x);
+        top = top.min(corner.y);
+        bottom = bottom.max(corner.y);
+    }
+    ViewRect {
+        origin: ViewPoint { x: left, y: top },
+        size: ViewSize {
+            width: right - left,
+            height: bottom - top,
+        },
+    }
 }
 
 fn validate_point(point: ViewPoint) -> Result<(), ViewportError> {

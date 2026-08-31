@@ -167,6 +167,8 @@ pub(in crate::shell) struct ThemeTokens {
     pub(in crate::shell) canvas_error_text: Rgba,
     pub(in crate::shell) error_text: Rgba,
     pub(in crate::shell) selection: Rgba,
+    pub(in crate::shell) search_highlight: Rgba,
+    pub(in crate::shell) search_highlight_current: Rgba,
     pub(in crate::shell) drag_preview: Rgba,
 }
 
@@ -192,6 +194,8 @@ impl ThemeTokens {
                 canvas_error_text: rgb(0xffffff),
                 error_text: rgb(0x991b1b),
                 selection: rgba(0x4f7cff44),
+                search_highlight: rgba(0xffd54f66),
+                search_highlight_current: rgba(0xff8f0099),
                 drag_preview: rgba(0x777a8066),
             },
             ResolvedTheme::Dark => Self {
@@ -213,6 +217,8 @@ impl ThemeTokens {
                 canvas_error_text: rgb(0xffffff),
                 error_text: rgb(0xfca5a5),
                 selection: rgba(0x4f7cff66),
+                search_highlight: rgba(0xffd54f55),
+                search_highlight_current: rgba(0xffa72688),
                 drag_preview: rgba(0x777a80aa),
             },
         }
