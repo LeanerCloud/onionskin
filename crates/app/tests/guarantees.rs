@@ -81,10 +81,7 @@ fn editing_a_tagged_document_leaves_its_structure_tree_valid() {
 /// catches and the benches themselves cannot.
 #[test]
 fn open_and_scroll_stay_within_the_performance_budgets() {
-    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crates/app sits two levels under the workspace root");
+    let workspace = workspace_root();
 
     let manifest = std::fs::read_to_string(workspace.join("crates/core/Cargo.toml"))
         .expect("core's manifest is readable");
@@ -158,6 +155,119 @@ fn open_and_scroll_stay_within_the_performance_budgets() {
         !bench_job.lines().any(|line| line.starts_with("    if:")),
         "the bench job is conditional, so there are pushes it does not gate"
     );
+}
+
+#[test]
+fn acrobat_parity_headline_matches_every_inventory_row() {
+    let parity = std::fs::read_to_string(workspace_root().join("ACROBAT-PARITY.md"))
+        .expect("the Acrobat parity matrix is readable");
+    let mut statuses = std::collections::BTreeMap::new();
+    let mut milestones = std::collections::BTreeMap::new();
+    let mut in_inventory = false;
+    let mut rows = 0;
+
+    for line in parity.lines() {
+        if line == "| Item | Status | Milestone | Notes |" {
+            in_inventory = true;
+            continue;
+        }
+        if !in_inventory {
+            continue;
+        }
+        if line == "|---|---|---|---|" {
+            continue;
+        }
+        let Some(row) = line
+            .strip_prefix('|')
+            .and_then(|line| line.strip_suffix('|'))
+        else {
+            in_inventory = false;
+            continue;
+        };
+        let columns = row.split('|').map(str::trim).collect::<Vec<_>>();
+        assert_eq!(
+            columns.len(),
+            4,
+            "Acrobat inventory row has {} columns instead of 4: {line}",
+            columns.len()
+        );
+        let status = columns[1];
+        assert!(
+            matches!(
+                status,
+                "implemented" | "planned" | "partial" | "out-of-scope"
+            ),
+            "unknown Acrobat parity status {status:?} in row: {line}"
+        );
+        let milestone = columns[2];
+        assert!(
+            matches!(
+                milestone,
+                "M0" | "M1" | "M2" | "M3" | "M4" | "M5" | "M6" | "post-1.0" | "-"
+            ),
+            "unknown Acrobat parity milestone {milestone:?} in row: {line}"
+        );
+        if status == "out-of-scope" {
+            assert_eq!(
+                milestone, "-",
+                "out-of-scope row must not claim a milestone: {line}"
+            );
+        } else {
+            assert_ne!(
+                milestone, "-",
+                "parity-target row needs a milestone: {line}"
+            );
+            *milestones.entry(milestone).or_insert(0usize) += 1;
+        }
+        *statuses.entry(status).or_insert(0usize) += 1;
+        rows += 1;
+    }
+
+    assert_eq!(
+        rows, 403,
+        "the Acrobat inventory denominator changed; reconcile it against a dated reference before updating this contract"
+    );
+    let count = |status| statuses.get(status).copied().unwrap_or_default();
+    let headline = format!(
+        "**{rows} rows: {} planned / {} partial / {} out-of-scope. {} implemented.**",
+        count("planned"),
+        count("partial"),
+        count("out-of-scope"),
+        count("implemented")
+    );
+    assert!(
+        parity.contains(&headline),
+        "Acrobat parity headline does not match its rows; expected {headline:?}"
+    );
+
+    let target_rows = rows - count("out-of-scope");
+    let target =
+        format!("{target_rows} rows (implemented plus planned and partial) are the parity target.");
+    assert!(
+        parity.contains(&target),
+        "Acrobat parity target total does not match its rows; expected {target:?}"
+    );
+
+    let milestone_summary = ["M0", "M1", "M2", "M3", "M4", "M5", "M6", "post-1.0"]
+        .into_iter()
+        .filter_map(|milestone| {
+            milestones
+                .get(milestone)
+                .map(|count| format!("{milestone} {count}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(
+        parity.contains(&format!("By milestone: {milestone_summary}.")),
+        "Acrobat parity milestone totals do not match its rows: {milestone_summary}"
+    );
+}
+
+fn workspace_root() -> &'static std::path::Path {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crates/app sits two levels under the workspace root")
 }
 
 /// One top-level job of a workflow: its header line and everything indented

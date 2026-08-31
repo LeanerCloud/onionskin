@@ -174,9 +174,13 @@ source IDs, severity, ownership, and required proof.
 - **Attachment prompt errors (APP-009, owner B4):** attachment save treats a prompt
   failure like cancel, unlike export. Surface the typed prompt error and test it.
 - **M2 parity acceptance (REPO-003/010; REPO-004 resolved):** this audit corrected
-  the M2 plan header. The Acrobat matrix still reports zero implemented rows, and
-  private reference screenshot evidence is absent. Audit Task 2 reconciles the
-  matrix as a B7 prerequisite; B7 owns final acceptance and private comparison.
+  the M2 plan header. Audit Task 2 reconciles all 403 Acrobat rows and adds an
+  executable totals contract. B7 still owns private reference comparison and final
+  acceptance.
+- **Stale context-menu milestone reasons (owner B3):** the canvas labels Edit Text,
+  Redact Text, and Create Link as M3 although all three are M5, and the thumbnails
+  menu's shared M3 reason also covers the M5 Crop command. Derive or test these
+  reasons against owning command metadata instead of duplicating milestone strings.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.

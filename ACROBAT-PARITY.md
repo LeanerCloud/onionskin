@@ -22,13 +22,13 @@ they say "Onionskin implements N of M rows".
   command, a navigation pane, a viewer capability. Sub-options of a single dialog
   are one row unless Acrobat gives them their own tool name.
 - **Status** is exactly one of:
-  - `planned` - intended in full, not built yet.
-  - `partial` - intended, but a deliberately reduced subset; the row will never
-    read "complete" and the Notes column says what is cut.
+  - `implemented` - the real user-facing path supports the row's current Onionskin
+    scope; a registry entry, placeholder, or disabled command is not enough.
+  - `planned` - intended, but no usable user-facing subset has shipped yet.
+  - `partial` - a usable subset has shipped, but some named behavior is missing;
+    the Notes column names the gap. A deliberately reduced future target stays
+    `planned` until its supported subset ships.
   - `out-of-scope` - will not be built. Every such row states why.
-- **Nothing is implemented yet.** There is no `implemented` value in this file
-  today. It gets added the first time a row ships, and from then on the headline
-  number is `implemented / total`.
 - **Milestone** maps to `PLAN.md`'s "Milestones" section (M0-M6, post-1.0). Where
   the plan names the feature, the milestone is the plan's. Where the plan names the
   owning plugin but not the individual command, the row inherits that plugin's
@@ -57,10 +57,10 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 311 planned / 12 partial / 80 out-of-scope. 0 implemented.**
+**403 rows: 257 planned / 16 partial / 80 out-of-scope. 50 implemented.**
 
-323 rows (planned plus partial) are the parity target. The other 80 are the
-deliberate no. By milestone: M2 66, M3 100, M4 2, M5 52, M6 46, post-1.0 57.
+323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
+deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
 M4 carries only two rows because its deliverables (the MCP server, the CUPS and
 Windows print backends) are mostly not Acrobat surface. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
@@ -71,23 +71,45 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
   END {for (k in c) print c[k], k}' ACROBAT-PARITY.md
 ```
 
+### 2026-08-31 implementation evidence
+
+The evidence keys in changed rows refer to these live paths at commit `721cdf5`.
+`M2-AUDIT-T1-001` in the screenshot manifest is the window-only visual baseline.
+This task remains incomplete until a separate evidence commit records its required
+Find-and-Thumbnails screenshot.
+
+| Evidence key | Live path | Automated or manual proof |
+|---|---|---|
+| M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |
+| M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs.rs` | Home list/thumbnail and recents tests. |
+| M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
+| M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |
+| M2-PANES | `crates/app/src/shell/panes/` | Pane action, rendering, and context-menu tests. |
+| M2-REPAIR | `crates/core/src/session.rs`, `crates/app/src/shell/chrome/tabs.rs` | Core repair tests and shell repaired-document notice test. |
+| M2-VIEWER | `crates/app/src/shell/canvas.rs`, `crates/render/src/base.rs` | Core/render integration tests and the window-only visual baseline. |
+| M2-LAZY | `crates/core/benches/open.rs`, `crates/cos/tests/lazy.rs` | Budgeted 1000-page open and lazy object-read tests. |
+| M2-BASIC | `plugins/tools-basic/src/` | Real gesture tests for Hand, selection, Snapshot, and Marquee Zoom. |
+| M2-SEARCH | `crates/app/src/shell/find_bar.rs`, `crates/app/src/shell/panes/results.rs`, `crates/app/src/shell/chrome/tool_search.rs` | Find routing, tool lookup, highlight, result navigation, and pane tests. |
+| M2-EXPORT | `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs.rs` | Codec contract/export tests and shell export-routing tests. |
+| M2-LAYERS | `crates/core/src/session.rs`, `crates/app/src/shell/panes/layers.rs` | Real-file render-change test and pane toggle-refresh tests. |
+
 ---
 
 ## Application shell
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Global bar (top bar) | planned | M2 | Plan: "quick-action top bar" from the first release. |
-| Hamburger / main menu button | planned | M2 | Houses File/Edit/View/Window/Help in the unified UI. |
-| Document tabs (multiple open documents) | planned | M2 | Plan pins tab-strip logic as unit tests. |
-| Document tab context menu (Close, Close Others, Close All, Show Containing Folder, Copy Path) | planned | M2 | Counted once for the whole menu per the context-menu carve-out. (judgment) |
-| All tools pane (left tool rail) | planned | M2 | Plan: "The plugin taxonomy IS Acrobat's tool rail." Registry `describe` output should read like this pane. |
-| "View more" / expand full tool list | planned | M2 | Same pane, collapsed state. |
-| Quick action toolbar (floating over the page) | planned | M2 | Acrobat's defaults: Select, Comment, Highlight, Draw, Fill text fields, Add Sign or Initials. Draggable within the document view. |
-| Right-hand side panel | planned | M2 | Contextual panel host; populated per toolset from M3 on. |
-| Page controls / bottom toolbar | planned | M2 | Page-number box, up/down arrows, rotate icon, "Display the page at 100% magnification" zoom control. |
-| Global search field (tools and document text) | planned | M2 | Text search is `content`'s full-text index; tool search is registry lookup. |
-| Convert (global bar entry point) | partial | M3 | Same surface class as File > Export To: the button ships whole, the target list behind it does not. |
+| Global bar (top bar) | implemented | M2 | Shipped with the quick-action top bar. Evidence: M2-SHELL. |
+| Hamburger / main menu button | implemented | M2 | Opens File/Edit/View/Window/Help in the unified UI. Evidence: M2-SHELL. |
+| Document tabs (multiple open documents) | implemented | M2 | Open, switch, and close paths are live. Evidence: M2-SHELL. |
+| Document tab context menu (Close, Close Others, Close All, Show Containing Folder, Copy Path) | implemented | M2 | All named entries are live. Counted once per the context-menu carve-out. Evidence: M2-SHELL. (judgment) |
+| All tools pane (left tool rail) | implemented | M2 | The registry-driven rail and tool activation are live. Evidence: M2-SHELL. |
+| "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
+| Quick action toolbar (floating over the page) | partial | M2 | Toolbar, dragging, customization, and Select are live; Comment, Highlight, Draw, Fill text fields, and Add Sign remain disabled until their owning milestones. Evidence: M2-SHELL. |
+| Right-hand side panel | implemented | M2 | The contextual host and open/close behavior are live; tool-specific content starts at M3. Evidence: M2-SHELL. |
+| Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, and fit controls are live. Evidence: M2-SHELL. |
+| Global search field (tools and document text) | implemented | M2 | Tool lookup and current-document text search are live. Evidence: M2-SEARCH. |
+| Convert (global bar entry point) | planned | M3 | The future button ships as one surface; its supported target list will remain deliberately smaller than Acrobat's. |
 | Get a link to the document | out-of-scope | - | Cloud-tethered link sharing. |
 | Undo / Redo icons on the global bar | planned | M3 | Same commands as the Edit menu; Acrobat surfaces both. |
 | Save / Save As in the global bar | planned | M3 | Save appends an incremental section (core invariant). |
@@ -96,25 +118,25 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
 | AI Assistant button | out-of-scope | - | Cloud-tethered generative service. Plan names AI Assistant explicitly as out of scope. |
 | Account / profile menu | out-of-scope | - | Requires an Adobe account; Onionskin has no account system. |
 | Acrobat notifications | out-of-scope | - | Cloud-tethered notification feed. |
-| Home view: Recents | planned | M2 | Local recents list only. |
+| Home view: Recents | implemented | M2 | Local recents list is live. Evidence: M2-HOME. |
 | Home view: Starred | planned | M3 | Local flag in app state. Acrobat stores starred files in Adobe cloud storage; Onionskin keeps the list on disk. (judgment) |
-| Home view: list view / thumbnail view toggle | planned | M2 | (judgment) |
+| Home view: list view / thumbnail view toggle | implemented | M2 | Both local Recents layouts are live. Evidence: M2-HOME. (judgment) |
 | Home view: Adobe cloud storage | out-of-scope | - | Cloud-tethered; Onionskin's counter-pitch is local and private. |
 | Home view: Box / Dropbox / Google Drive / OneDrive / SharePoint connectors | out-of-scope | - | Cloud-tethered third-party storage integrations. |
-| Display theme (light / dark / system) | planned | M2 | GPUI theming in `app`. |
-| Customize the quick action toolbar | planned | M2 | Which quick actions show, per Acrobat's toolbar customization. |
+| Display theme (light / dark / system) | implemented | M2 | All three theme choices are live and persisted. Evidence: M2-SHELL. |
+| Customize the quick action toolbar | implemented | M2 | Show/hide customization is live; disabled actions remain identifiable. Evidence: M2-SHELL. |
 | Manage Tools / customize the tool rail | planned | M3 | Registry-driven: shows/hides registered plugins. (judgment) |
 | Revert to the classic Acrobat interface | out-of-scope | - | Product-level decision: the unified UI is the parity target; the plan defers classic to a possible later theme, not a shipped toggle. |
-| Preferences dialog | partial | M2 | Acrobat's dialog carries roughly 30 categories (Accessibility, Commenting, Documents, Forms, Full Screen, General, Identity, JavaScript, Language, Measuring 2D/3D/Geo, Multimedia, Page Display, Reading, Reviewing, Search, Security, Security Enhanced, Signatures, Spelling, Tracker, Trust Manager, Units & Guides, Updater, and more). Onionskin mirrors the ones whose feature it builds: Accessibility, Commenting, Documents, Forms, Full Screen, General, Identity, JavaScript, Measuring, Page Display, Reading, Search, Security, Signatures, Spelling, Trust Manager, Units & Guides. Trust Manager is mirrored because it is the JavaScript and attachment trust surface decision 9 already commits to, and lands with `scripting` at M5. Adobe-account, cloud-storage, Tracker, Updater, Multimedia and 3D categories are out of scope, so the dialog is permanently a subset. Individual categories ship with their feature, not all at M2. |
-| Keyboard shortcut remapping | planned | M2 | Acrobat defaults, remappable via `keymap.json` (Schist's mechanism). |
+| Preferences dialog | partial | M2 | The live Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
+| Keyboard shortcut remapping | implemented | M2 | Acrobat defaults are remappable through `keymap.json`, and the shortcut reference shows the effective bindings. Evidence: M2-PREFS. |
 | Autosave and crash recovery | planned | M3 | Plan pins crash-recovery snapshot ranking as a unit test. |
 | Window menu (New Window, Cascade, Tile, Minimize) | planned | M3 | Shell logic, no document dependency. (judgment) |
-| Help menu (About, keyboard shortcuts) | planned | M2 | Online help targets are out of scope; local shortcut reference is not. (judgment) |
+| Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
 | UI localization | planned | post-1.0 | Plan lists localization plus bidi/vertical text as post-1.0. |
-| App-level accessibility tree (screen reader support for the UI) | planned | M2 | AccessKit into the GPUI fork; M1 spike de-risks it, live from the first release. |
-| Pinch-to-zoom and stylus pressure | planned | M2 | The IAmJSD GPUI fork exists for exactly this. |
-| Register `.pdf` as openable ("Open with") | planned | M2 | Plan: joins the "Open with" menu, never takes files off Acrobat. |
+| App-level accessibility tree (screen reader support for the UI) | planned | M2 | The retained M1 spike de-risks the path; P12 and a real screen-reader pass remain open. |
+| Pinch-to-zoom and stylus pressure | partial | M2 | Pinch zoom and pressure propagation are live; no shipped pressure-aware ink tool exists yet. Evidence: M2-SHELL. |
+| Register `.pdf` as openable ("Open with") | partial | M2 | macOS, Linux, and Windows declarations exist and never claim the default, but packaged platform smoke tests remain open and the release build lacks the shell feature. Evidence: M2-PACKAGE. |
 | Set as the default PDF viewer | out-of-scope | - | Deliberate product decision in the plan: never the default handler. |
 | Display PDF in a browser / browser extension | out-of-scope | - | A browser plug-in is a separate product with its own sandbox and update channel. |
 | Acrobat for Outlook / Office add-ins (PDFMaker) | out-of-scope | - | Requires shipping into Microsoft Office's add-in model and reading Office formats; a product in itself. |
@@ -126,59 +148,59 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| File > Open | planned | M2 | Including the repair path for malformed files (decision 10). |
-| File > Open Recent | planned | M2 | Local list. |
+| File > Open | implemented | M2 | File picker, path open, and repaired-document notice are live. Evidence: M2-SHELL and M2-REPAIR. |
+| File > Open Recent | implemented | M2 | The persisted local list is live. Evidence: M2-HOME. |
 | File > Create | planned | M3 | Sources limited: see "Create a PDF". |
 | File > Save | planned | M3 | Appends an incremental update section; a no-op save writes nothing. |
 | File > Save As | planned | M3 | Copy plus the same incremental discipline. |
-| File > Save as Other | partial | M3 | Only the sub-targets that have their own rows below; the PDF/X and Reader-Extended variants are out of scope. |
-| File > Export To | partial | M3 | The menu exists from M3 with the image and text targets; the Office and HTML targets stay partial forever. See "Export a PDF". |
+| File > Save as Other | planned | M3 | The future menu will expose only supported sub-targets; PDF/X and Reader-Extended variants remain out of scope. |
+| File > Export To | partial | M2 | The live menu exposes Text, PNG, and SVG; Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT. |
 | File > Revert | planned | M3 | Cheap here: truncate to the previous generation. |
-| File > Close / Close All | planned | M2 | |
+| File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | planned | M3 | `commands-core`. Acrobat's current unified UI documents five tabs: Description, Security, Fonts, Initial View, Custom. The classic Advanced tab is no longer listed; confirm against the screenshot corpus before building it. |
 | File > Print | planned | M3 | `crates/print`. |
 | File > Attach to Email | planned | M3 | Hands off to the OS mail client; no Adobe service involved. Plan does not name it; placed with `commands-core`. |
 | File > Share / Send for comments | out-of-scope | - | Cloud-tethered web review flow. |
 | File > Get Documents Signed | out-of-scope | - | Adobe Acrobat Sign, a cloud service. |
-| File > Exit / Quit | planned | M2 | |
+| File > Exit / Quit | implemented | M2 | The menu command exits through the shell action. Evidence: M2-SHELL. |
 | Edit > Undo / Redo | planned | M3 | Undo is dropping edit-graph overlay nodes, not restoring snapshots. |
 | Edit > Cut / Copy / Paste / Delete | planned | M3 | Scope is per active tool. |
-| Edit > Select All / Deselect All | planned | M2 | |
+| Edit > Select All / Deselect All | implemented | M2 | Both registry commands operate on the active document and page. Evidence: M2-SHELL. |
 | Edit > Copy File to Clipboard | planned | M3 | (judgment) |
-| Edit > Take a Snapshot | planned | M2 | `tools-basic` snapshot. |
-| Edit > Find (Ctrl+F) | planned | M2 | The plan's M2 line names Ctrl+F with whole-word and case options, highlight-all and next/previous. Acrobat adds Include bookmarks and Include comments. |
+| Edit > Take a Snapshot | implemented | M2 | The menu activates `tools-basic` Snapshot and copies the selected raster region. Evidence: M2-BASIC. |
+| Edit > Find (Ctrl+F) | implemented | M2 | Case, whole-word, highlight-all, next, and previous are live; bookmark/comment inclusion is not part of this row. Evidence: M2-SEARCH. |
 | Find toolbar > Replace text | planned | M5 | Find-and-replace is named in the plan's M5 list. It writes text, so it belongs to `tools-edit` rather than to viewer search. |
-| Edit > Advanced Search, current document | planned | M2 | Return Results Containing: Match Exact Word Or Phrase / Any Of The Words / All Of The Words, plus Stemming. |
+| Edit > Advanced Search, current document | partial | M2 | Current-document case, whole-word, phrase, any-word, all-word, and result paths are live; the dedicated Advanced Search surface and stemming remain missing. Evidence: M2-SEARCH. |
 | Advanced Search > include attachments | planned | M3 | Acrobat searches attached files two levels deep. (judgment) |
 | Advanced Search > document-property criteria (author, dates, keywords, metadata) | planned | M3 | (judgment) |
 | Edit > Advanced Search across multiple PDFs / a folder / an index | planned | post-1.0 | Needs the multi-document index; single-document search ships first. Boolean Query and Proximity are multi-document options in Acrobat and land here, not on the single-document row. |
 | Edit > Check Spelling (in comments and form fields) | planned | M5 | Spell check is named in the plan's M5 list. |
 | Edit > Look Up Selected Word | planned | post-1.0 | Platform dictionary only; the web lookup Acrobat uses is out of scope. |
-| Edit > Preferences | planned | M2 | |
-| View > Rotate View | planned | M2 | View-only rotation, distinct from page rotation. |
-| View > Page Display > Single Page | planned | M2 | |
-| View > Page Display > Single Page Continuous | planned | M2 | Default, and the mode the 60 fps scroll budget is measured in. |
-| View > Page Display > Two Page View | planned | M2 | |
-| View > Page Display > Two Page Scrolling | planned | M2 | |
-| View > Page Display > Show Cover Page in Two Page View | planned | M2 | |
+| Edit > Preferences | implemented | M2 | Opens the live persisted preference subset. Evidence: M2-PREFS. |
+| View > Rotate View | implemented | M2 | View-only rotation is live and remains distinct from page mutation. Evidence: M2-SHELL. |
+| View > Page Display > Single Page | implemented | M2 | Live layout mode. Evidence: M2-SHELL. |
+| View > Page Display > Single Page Continuous | implemented | M2 | Live default layout and scroll-budget mode. Evidence: M2-SHELL. |
+| View > Page Display > Two Page View | implemented | M2 | Live layout mode. Evidence: M2-SHELL. |
+| View > Page Display > Two Page Scrolling | implemented | M2 | Live layout mode. Evidence: M2-SHELL. |
+| View > Page Display > Show Cover Page in Two Page View | implemented | M2 | Live two-page cover toggle. Evidence: M2-SHELL. |
 | View > Page Display > Automatically Scroll | planned | M3 | (judgment) |
 | View > Page Display > Overprint Preview | planned | post-1.0 | A rendering toggle that simulates overprinting ink, so it belongs to `render`, not to the prepress Output Preview tool listed as out of scope. Deferred until hayro can express it. (judgment) |
-| View > Zoom > Zoom In / Zoom Out / Zoom To | planned | M2 | |
-| View > Zoom > Actual Size / Fit Page / Fit Width / Fit Height / Fit Visible | planned | M2 | |
-| View > Zoom > Marquee Zoom | planned | M2 | `tools-basic` zoom. |
+| View > Zoom > Zoom In / Zoom Out / Zoom To | partial | M2 | Zoom In and Zoom Out are live; the dedicated Zoom To command is missing. Evidence: M2-SHELL. |
+| View > Zoom > Actual Size / Fit Page / Fit Width / Fit Height / Fit Visible | partial | M2 | Actual Size, Fit Page, Fit Width, and Fit Height are live; Fit Visible has no menu command. Evidence: M2-SHELL. |
+| View > Zoom > Marquee Zoom | implemented | M2 | `tools-basic` click and marquee zoom are live. Evidence: M2-BASIC. |
 | View > Zoom > Dynamic Zoom | planned | M2 | |
 | View > Zoom > Loupe Tool | planned | post-1.0 | Loupe and Pan & Zoom windows are a named post-1.0 slot. |
 | View > Zoom > Pan & Zoom | planned | post-1.0 | Loupe and Pan & Zoom windows are a named post-1.0 slot. |
 | View > Zoom > Reflow | planned | post-1.0 | Viewer-side reflow shares the machinery the plan defers with reflowing text edit. |
-| View > Tools (open a toolset) | planned | M2 | |
-| View > Show/Hide > Navigation Panes | planned | M2 | Individual panes have their own rows. |
-| View > Show/Hide > Toolbar Items / Page Controls | planned | M2 | |
+| View > Tools (open a toolset) | implemented | M2 | Opens and closes the registry-driven tool rail. Evidence: M2-SHELL. |
+| View > Show/Hide > Navigation Panes | implemented | M2 | The pane host is live; individual pane rows state their scope. Evidence: M2-PANES. |
+| View > Show/Hide > Toolbar Items / Page Controls | implemented | M2 | Quick actions and page controls can be shown or hidden. Evidence: M2-SHELL. |
 | View > Show/Hide > Rulers, Grid, Guides, Snap to Grid | planned | M6 | Grouped with `tools-measure`, as Acrobat groups grids/guides with measuring. |
 | View > Show/Hide > Line Weights | planned | M3 | Moved from M2 in plan review: the hayro patch it needed was cut, and the correct semantics are constant hairline width when off, not a width floor. Ships disabled with a reason at M2. |
-| View > Page Navigation (First/Previous/Next/Last, Page..., Previous/Next View) | planned | M2 | |
-| View > Display Theme (System Theme, Light grey, Dark grey) | planned | M2 | Acrobat extends the theme to menus, context menus, scroll bars and the comments pane. |
-| View > Read Mode | planned | M2 | |
-| View > Full Screen Mode | planned | M2 | Named in the plan's M2 shell list. |
+| View > Page Navigation (First/Previous/Next/Last, Page..., Previous/Next View) | implemented | M2 | All named navigation paths are live. Evidence: M2-SHELL. |
+| View > Display Theme (System Theme, Light grey, Dark grey) | implemented | M2 | System, light, and dark themes cover the live shell surfaces. Evidence: M2-SHELL. |
+| View > Read Mode | partial | M2 | The command hides the tool rail, panes, quick actions, and page controls; the global and tab bars remain visible. Evidence: M2-SHELL. |
+| View > Full Screen Mode | partial | M2 | Native full-screen entry and exit are live; Acrobat-level chrome visibility and presentation semantics remain missing. Evidence: M2-SHELL. |
 | View > Read Out Loud | planned | M6 | `tools-accessibility` via platform TTS (AVSpeech / SAPI / speech-dispatcher). |
 | View > Split / Spreadsheet Split / Remove Split | planned | post-1.0 | Two panes, or four synchronized panes over one document. Not named in the plan. (judgment) |
 | View > New Window (second window on the same document) | planned | M3 | (judgment) |
@@ -188,19 +210,19 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Page thumbnails pane | planned | M2 | Named in the plan's M2 shell list. |
-| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | planned | M2 | The plan's M2 shell list names thumbnails with context-menu page commands, while the commands themselves belong to `tools-organize` at M3. Both readings are kept: the menu surface exists at M2 and its page-mutating entries activate at M3, disabled until then rather than absent. Counted once for the whole menu per the context-menu carve-out. |
-| Bookmarks pane (view and navigate) | planned | M2 | Named in the plan's M2 shell list. |
+| Page thumbnails pane | implemented | M2 | Lazy thumbnails, scrolling, selection, and navigation are live. Evidence: M2-PANES. |
+| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are live; page-mutating commands remain disabled until their M3/M5 owners. The shared disabled reason still mislabels Crop as M3. Evidence: M2-PANES. |
+| Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy and destination navigation are live. Evidence: M2-PANES. |
 | Bookmarks: create, rename, nest, set destination, delete | planned | M3 | Bookmark authoring is named in the plan's `commands-core` list. Acrobat's New Bookmarks From Structure needs the tagged tree and follows at M6. |
-| Attachments pane (list, open, save) | planned | M2 | Named in the plan's M2 shell list. |
+| Attachments pane (list, open, save) | partial | M2 | Listing and Save are live; Open remains disabled. Evidence: M2-PANES. |
 | Attachments: add and delete file attachments | planned | M3 | Attachment authoring is named in the plan's `commands-core` list. Distinct from attach-as-comment. |
 | Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | planned | M3 | Counted once for the whole menu per the context-menu carve-out; it activates with bookmark authoring in `commands-core`. New Bookmarks From Structure follows at M6 with the tagged tree. |
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | planned | M3 | Counted once for the whole menu; activates with attachment authoring in `commands-core`. |
-| Signatures pane | planned | M2 | Listing at M2; validation and status reporting at M6. |
+| Signatures pane | implemented | M2 | Signature listing and the M2 status surface are live; cryptographic validation remains M6. Evidence: M2-PANES. |
 | Comments pane (list, sort, filter, reply, status) | planned | M3 | Ships with `tools-comment`. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | planned | M3 | Counted once for the whole menu; ships with `tools-comment`. |
-| Layers pane (show/hide optional content groups) | planned | M2 | Named in the plan's M2 shell list: layers with OCG visibility toggles. |
-| Layers pane context menu (Layer Properties, visibility and default-state commands) | planned | M2 | Counted once for the whole menu. Its merge and flatten entries belong to post-1.0 layer editing and stay disabled until then. |
+| Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing and visibility toggles update rendering; nested `/D /Order` remains a known ordering defect. Evidence: M2-LAYERS. |
+| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, and Reset are live; Properties waits for M3, while merge/flatten remain post-1.0. Evidence: M2-PANES. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
 | Content pane (document object tree) | planned | M6 | With `tools-accessibility`. |
 | Tags pane (structure tree) | planned | M6 | `core` owns the tagged-PDF structure tree; this is its UI. |
@@ -216,16 +238,16 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Open a damaged or malformed PDF (repair on open) | planned | M2 | Decision 10; guarantee test 6. Acrobat-grade scan-and-rebuild in `cos`. |
-| Lazy open of very large documents | planned | M2 | Decision 11 budget: time-to-first-page under 200 ms on the 1000-page corpus file. |
-| Page rendering | planned | M2 | hayro base raster plus tiny-skia overlays, composited into damage-tracked tiles. |
-| Pan / Hand tool | planned | M2 | `tools-basic`. |
-| Text selection | planned | M2 | Via `content` byte-span mapping. |
-| Select region / Snapshot | planned | M2 | `tools-basic`. |
-| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | planned | M2 | Counted once for the whole menu per the context-menu carve-out. It exists at M2 with the viewer entries live; each editing entry activates with the plugin that owns it, the way the thumbnails menu does. |
+| Open a damaged or malformed PDF (repair on open) | implemented | M2 | Repair-on-open and the user notice are live; repaired incremental save remains a separate guarantee. Evidence: M2-REPAIR. |
+| Lazy open of very large documents | implemented | M2 | Lazy object loading and the 1000-page open budget are exercised. Evidence: M2-LAZY. |
+| Page rendering | implemented | M2 | hayro base raster, tiny-skia overlays, and damage-tracked tile composition are live. Evidence: M2-VIEWER. |
+| Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
+| Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
+| Select region / Snapshot | implemented | M2 | Region selection and clipboard PNG snapshot are live. Evidence: M2-BASIC. |
+| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, Snapshot, and view rotation are live; future editing/print commands remain disabled. Edit Text, Redact Text, and Create Link still show stale M3 reasons instead of M5. Evidence: M2-SHELL and M2-BASIC. |
 | Copy with formatting / Export selected text | planned | M3 | (judgment) |
-| Find toolbar (highlight all, next, previous) | planned | M2 | The in-document bar Edit > Find opens. Named in the plan's M2 line. |
-| Search results pane | planned | M2 | |
+| Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
+| Search results pane | implemented | M2 | Multi-hit results and click-to-navigate are live. Evidence: M2-SEARCH. |
 | Embedded search index (Manage Embedded Index) | planned | post-1.0 | Embedded search indexes are a named post-1.0 slot. |
 | Catalog (full-text index across a folder of PDFs) | out-of-scope | - | A batch indexing product in itself, with its own `.pdx` format and update lifecycle. |
 | Initial View settings (open zoom, layout, pane) | planned | M3 | Document Properties > Initial View. |
@@ -239,7 +261,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 |---|---|---|---|
 | Edit text (line-level) | planned | M5 | Backed by `text-engine` system-font matching and fallback, with fsType embedding permissions enforced. The reflow half of Acrobat's text editing is the next row, not a permanent reduction of this one. |
 | Reflowing text edit (text repours across the paragraph or page) | planned | post-1.0 | Named as a post-1.0 slot in the plan, and explicitly out of scope pre-1.0. |
-| Change font, size, colour, alignment, spacing of edited text | planned | M5 | Constrained at runtime by what the embedded subset and its fsType bits permit; the command itself is complete. |
+| Change font, size, colour, alignment, spacing of edited text | planned | M5 | The future command is constrained by what the embedded subset and its fsType bits permit. |
 | Add text (new text box) | planned | M5 | (judgment) |
 | Edit images and objects (move, resize, rotate, flip, crop, align) | planned | M5 | |
 | Replace image | planned | M5 | |
@@ -313,14 +335,14 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Export to Microsoft Word (.docx) | partial | post-1.0 | Plan: "Export-to-Office lands post-1.0 at best and is marked partial forever (full-fidelity DOCX export is a product in itself)." |
-| Export to Microsoft Excel (.xlsx) | partial | post-1.0 | Same reason; table recovery from a content stream is lossy by nature. |
-| Export to Microsoft PowerPoint (.pptx) | partial | post-1.0 | Same reason. |
-| Export to Rich Text Format (.rtf) | partial | post-1.0 | The plan marks Export-to-Office, RTF and HTML partial forever: full-fidelity document export is a product in itself. |
-| Export to HTML | partial | post-1.0 | The plan marks Export-to-Office, RTF and HTML partial forever: layout-to-flow conversion is lossy for the same reason. |
-| Export to plain text / accessible text | planned | M2 | Falls out of `content`'s byte-span text extraction; accessible text ordering improves at M6. |
-| Export pages to PNG | planned | M2 | Named in the plan's `codecs-common` list. |
-| Export pages to SVG | planned | M2 | Named in the plan's `codecs-common` list. |
+| Export to Microsoft Word (.docx) | planned | post-1.0 | The supported subset is a post-1.0 target and will remain deliberately lossy; no usable subset has shipped. |
+| Export to Microsoft Excel (.xlsx) | planned | post-1.0 | The supported subset will remain lossy because table recovery from a content stream is approximate; none has shipped. |
+| Export to Microsoft PowerPoint (.pptx) | planned | post-1.0 | A deliberately lossy post-1.0 target; no usable subset has shipped. |
+| Export to Rich Text Format (.rtf) | planned | post-1.0 | A deliberately lossy post-1.0 target; no usable subset has shipped. |
+| Export to HTML | planned | post-1.0 | Layout-to-flow conversion will remain deliberately lossy; no usable subset has shipped. |
+| Export to plain text / accessible text | partial | M2 | Plain document-order text export is live; tagged accessible reading order remains M6. Evidence: M2-EXPORT. |
+| Export pages to PNG | implemented | M2 | Multi-page numbered export is live. Evidence: M2-EXPORT. |
+| Export pages to SVG | implemented | M2 | Per-page vector export is live. Evidence: M2-EXPORT. |
 | Export pages to JPEG / JPEG2000 / TIFF | planned | M3 | Not named in the plan; same codec crate, one milestone later. |
 | Export all images in a document | planned | M3 | (judgment) |
 | Export to XML / XML spreadsheet | planned | post-1.0 | Low demand relative to cost, and no plan consumer. (judgment) |
@@ -368,7 +390,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Place a stamp | planned | M3 | Named in the plan's `tools-comment` list. |
 | Standard business stamps (Approved, Draft, Confidential, ...) | planned | M3 | Icon artwork redrawn in-house, per the plan's legal line. |
 | Sign Here stamp category | planned | M3 | |
-| Dynamic stamps (name, date, time from identity and clock) | planned | M3 | Acrobat drives these with the same `AF*` JavaScript helpers `scripting` implements at M5; at M3 Onionskin fills them natively from the system clock and the identity preference. |
+| Dynamic stamps (name, date, time from identity and clock) | planned | M3 | Acrobat drives these with the same `AF*` JavaScript helpers `scripting` will implement at M5; at M3 Onionskin will fill them natively from the system clock and identity preference. |
 | Create a custom stamp | planned | M3 | |
 | Manage stamps (delete stamps and categories) | planned | M3 | |
 | Paste clipboard image as stamp | planned | M3 | |
@@ -402,7 +424,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Digital signature field | planned | M5 | Field at M5; signing at M6. |
 | Barcode field | planned | post-1.0 | Barcode form fields are a named post-1.0 slot. |
 | Field properties: General, Appearance, Position, Options, Actions | planned | M5 | |
-| Field properties: Format, Validate, Calculate | partial | M5 | Backed by `scripting` (Boa) covering the Acrobat forms API subset: `AFNumber_Format`, `AFSimple_Calculate` and friends. Anything outside that subset gets a visible notice rather than silent wrong values. |
+| Field properties: Format, Validate, Calculate | planned | M5 | The intended subset will be backed by `scripting` (Boa): `AFNumber_Format`, `AFSimple_Calculate`, and related helpers. Anything outside that subset must get a visible notice rather than a silent wrong value. No usable subset has shipped. |
 | Tab order / form field navigation | planned | M5 | |
 | Fill in a form (as an end user) | planned | M5 | Guarantee test 7: the JS-forms corpus fills like Acrobat. |
 | Clear form | planned | M5 | |
@@ -411,8 +433,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Distribute a form (email or internal server) | out-of-scope | - | A distribution and response-collection workflow, cloud- and server-tethered. |
 | Track forms / Forms Tracker / collect responses | out-of-scope | - | A cloud- and server-tethered response-collection workflow; it only exists once a form has been distributed. |
 | Create a web form | out-of-scope | - | Cloud-hosted service. |
-| XFA / LiveCycle Designer forms | out-of-scope | - | Legal posture rule 5: XFA is Adobe-specified, deprecated in PDF 2.0 and outside the clean ISO patent story. Behaviour: detected on open and shown read-only with an explicit notice, nothing more. |
-| Document-level and interactive JavaScript beyond the forms API | out-of-scope | - | Decision 9: scope is the forms subset, sandboxed with no I/O and a fuel budget; anything beyond is surfaced as a visible notice. |
+| XFA / LiveCycle Designer forms | out-of-scope | - | Legal posture rule 5: XFA is Adobe-specified, deprecated in PDF 2.0, and outside the clean ISO patent story. Future open handling must detect it and show an explicit read-only notice; that notice has not shipped. |
+| Document-level and interactive JavaScript beyond the forms API | out-of-scope | - | Decision 9 limits future scripting to a forms subset with no I/O and a fuel budget. Unsupported JavaScript must eventually produce a visible notice; that notice has not shipped. |
 
 ## Toolset: Redact a PDF
 
@@ -570,7 +592,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Summarize comments in the print output | planned | M3 | (judgment) |
 | Print as image | planned | M3 | Named in the plan's print-parity list. |
 | Print to file / print to PDF | planned | M3 | The plan makes the print-to-PDF-file backend the first one, so print output is testable in CI. |
-| Advanced Print Setup dialog | partial | M3 | The plan splits this dialog by name: Print as Image and Print to File are in scope; Output, Marks and Bleeds, PostScript options and print colour management stay with the out-of-scope print-production surface. |
+| Advanced Print Setup dialog | planned | M3 | The future supported subset includes Print as Image and Print to File; Output, Marks and Bleeds, PostScript options, and print colour management remain out of scope. No usable subset has shipped. |
 | Print colour PDFs (separations, colour handling) | out-of-scope | - | Separation printing and colour handling are prepress work, permanently out of scope. |
 | Print a PDF Portfolio | planned | post-1.0 | Rides with portfolios. |
 
@@ -603,7 +625,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Add a 3D model (U3D / PRC) | out-of-scope | - | 3D is named out of scope in the plan's GUI parity bullet: no crate could own a 3D engine and a second geometry format family. |
 | View, rotate and cut away a 3D model | out-of-scope | - | Needs the same embedded 3D engine. |
 | 3D views, 3D comments, 3D measurement | out-of-scope | - | Needs the same embedded 3D engine. |
-| PDF layers (view and toggle) | planned | M2 | Optional content groups, visible from the M2 Layers pane; see that row. |
+| PDF layers (view and toggle) | implemented | M2 | Optional content groups are visible and toggle rendering through the M2 Layers pane; see that row. Evidence: M2-LAYERS. |
 | PDF articles (article threads) | planned | post-1.0 | Articles are a named post-1.0 slot, reading and authoring both. |
 | Geospatial PDFs | out-of-scope | - | Named out of scope in the plan's GUI parity bullet, alongside rich media and 3D. |
 | PDF Portfolios (create, customize, sort, publish, search) | planned | post-1.0 | A named post-1.0 slot. |
@@ -618,13 +640,13 @@ barcode fields, the full sanitize sweep, spell check, find-and-replace, the
 JS-disable preference, form auto-complete, scan enhancement, poster/tile, Full
 Screen, line weights, Loupe and Pan & Zoom, signature appearances, trusted
 identities, timestamping and LTV. Rich media, 3D, geospatial PDFs and the virtual
-printer driver are now named out of scope, and RTF and HTML are ratified as
-partial forever. What follows is the remainder: the rows above marked
+printer driver are now named out of scope, while RTF and HTML are deliberately
+lossy post-1.0 targets. What follows is the remainder: the rows above marked
 `(judgment)`, grouped. This is input to the next plan revision, not a backlog.
 
 | Area | Why it matters |
 |---|---|
-| The thumbnails context menu sits on both sides of an M2/M3 line | The plan's M2 shell list names "thumbnails with context-menu page commands", while every command in that menu belongs to `tools-organize` at M3. The scoreboard resolves it by shipping the menu at M2 with its page-mutating entries disabled until M3, and says so in the row rather than quietly picking one milestone. The plan should adopt that reading or move one of the two lines. |
+| The thumbnails context menu crosses M2/M3/M5 lines | The M2 shell ships the menu and thumbnail sizing. Most document mutations belong to `tools-organize` at M3, while Crop belongs to `tools-edit` at M5. Entries stay disabled until their owner ships, and the row states that split. |
 | Context menus as a class | The GUI parity section cites Acrobat's context menus as part of what transfers, but only the thumbnails menu is named anywhere. Seven context-menu surfaces now carry rows here (page canvas, thumbnails, bookmarks, attachments, comments list, layers, document tabs); their milestones are inherited, not stated. |
 | Viewer modes the M2 line does not enumerate | Split and Spreadsheet Split, page transitions and presentation setup, Overprint Preview, Automatically Scroll. Full Screen, line weights, Loupe and Pan & Zoom were the rest of this class and the plan now names them, which is why these four stand out. |
 | Home view | The plan describes the document window in detail and never mentions the no-document-open state: Recents, Starred, the list/thumbnail toggle. Acrobat users meet it first. |
