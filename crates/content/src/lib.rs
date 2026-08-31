@@ -53,7 +53,11 @@ mod search;
 mod tokenizer;
 
 pub use error::{Error, Result, Warning};
-pub use font::{Code, Font, FontId};
+/// `pdf_text_string` is exported for `core`'s navigation-pane readers: a
+/// bookmark title, an attachment name and a signer name are all PDF text
+/// strings, and decoding them a second time in `core` would be a second set
+/// of rules about UTF-16 byte order marks and PDFDoc encoding.
+pub use font::{pdf_text_string, Code, Font, FontId};
 pub use geometry::{PageIndex, PageQuad};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};

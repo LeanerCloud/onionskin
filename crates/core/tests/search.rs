@@ -295,6 +295,75 @@ fn drain_running(doc: &mut Document) {
     }
 }
 
+/// The search results pane picks a hit by the page it sits on and its
+/// position among that page's hits, and the cursor it moves is the one the
+/// find bar's next and previous move.
+///
+/// Both coordinates are asserted away from zero. A `select` that ignored
+/// them and put the cursor on the first hit would satisfy any test whose
+/// only successful selection was the first hit, which is how this went
+/// uncovered.
+#[test]
+fn a_hit_can_be_made_current_by_where_it_sits() {
+    let options = SearchOptions::default();
+    // Page `i` of the fixture carries `i % 3` occurrences of "alpha", so
+    // page 2 has two of them and page 1 has one.
+    let mut doc = Document::open_bytes(multi_page_pdf(6, false)).expect("fixture opens");
+    doc.start_search("alpha", options, 0)
+        .expect("the search worker starts");
+    drain_running(&mut doc);
+    assert_eq!(doc.search().matches_on(2).len(), 2);
+
+    assert!(doc.select_match(2, 1));
+
+    assert_eq!(doc.search().cursor(), Some((2, 1)));
+    let current = doc.search().current().expect("the hit is there");
+    assert_eq!(
+        current.page, 2,
+        "the cursor names the hit the pane clicked, not the first one"
+    );
+    // Page 1 has one hit and page 2 has two, so this is the third overall.
+    assert_eq!(doc.search().current_ordinal(), Some(3));
+
+    // A row clicked after a newer walk replaced the results names a hit that
+    // no longer exists. Moving nothing is the answer; moving to the first hit
+    // would send the reader somewhere they did not ask for.
+    assert!(!doc.select_match(2, 7), "page 2 has two hits, not eight");
+    assert!(!doc.select_match(600, 0), "there is no page 601");
+    assert_eq!(
+        doc.search().cursor(),
+        Some((2, 1)),
+        "a miss leaves the cursor where it was"
+    );
+}
+
+/// The pane's cursor and the find bar's are one cursor: stepping from a hit
+/// the pane chose continues from there rather than from wherever the walk
+/// had left it.
+#[test]
+fn stepping_from_a_hit_the_pane_chose_continues_from_it() {
+    let mut doc = Document::open_bytes(multi_page_pdf(6, false)).expect("fixture opens");
+    doc.start_search("alpha", SearchOptions::default(), 0)
+        .expect("the search worker starts");
+    drain_running(&mut doc);
+
+    assert!(doc.select_match(2, 0));
+    assert!(doc.select_next_match());
+
+    assert_eq!(
+        doc.search().cursor(),
+        Some((2, 1)),
+        "next from the first hit on a page with two is the second"
+    );
+
+    assert!(doc.select_next_match());
+    assert_eq!(
+        doc.search().cursor(),
+        Some((4, 0)),
+        "and then the first hit on the next page that has one"
+    );
+}
+
 /// `corpus/external` is gitignored, so it is absent from a fresh clone and from
 /// CI. Say so loudly rather than reporting a pass that was never earned.
 fn corpus_dir(relative: &str) -> Option<PathBuf> {

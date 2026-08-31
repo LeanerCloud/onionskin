@@ -18,6 +18,7 @@ use super::super::find_bar::{
     render_find_bar, CloseFindBar, FindBarState, FindDirection, FindNextMatch, FindOption,
     FindPreviousMatch, FindSummary,
 };
+use super::super::panes::{self, NavigationPanesState, PaneAction};
 use super::super::Canvas;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportCodecs, ExportTarget, MenuAvailability,
@@ -211,6 +212,7 @@ pub(in crate::shell) struct ShellFrame {
     rail_state: RailState,
     quick_actions_state: QuickActionsState,
     side_panel_state: SidePanelState,
+    navigation: NavigationPanesState,
 }
 
 fn activate_tab<T>(
@@ -311,6 +313,7 @@ impl ShellFrame {
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),
             side_panel_state: SidePanelState::default(),
+            navigation: NavigationPanesState::default(),
         };
         frame.sync_page_entry(cx);
         frame
@@ -318,6 +321,7 @@ impl ShellFrame {
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
         if activate_tab(&mut self.tabs, &mut self.search_feedback, index) {
+            self.navigation.document_changed();
             self.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
             self.sync_page_entry(cx);
@@ -490,6 +494,7 @@ impl ShellFrame {
                 if close_tab(&mut self.tabs, &mut self.search_feedback, index)? {
                     window.remove_window();
                 } else {
+                    self.navigation.document_changed();
                     self.observed_view_state = self.active_view_state(cx);
                     self.sync_page_entry(cx);
                     self.refresh_find(cx);
@@ -499,6 +504,7 @@ impl ShellFrame {
             }
             TabCommand::CloseOthers => {
                 close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
+                self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
                 self.refresh_find(cx);
@@ -623,7 +629,24 @@ impl ShellFrame {
         });
     }
 
+    /// Take whatever thumbnails the worker answered since the last repaint.
+    /// Called wherever the canvas notifies, because that is the only signal
+    /// the pane gets: the pictures answer on a channel of their own.
+    pub(in crate::shell) fn collect_thumbnails(&mut self, cx: &mut Context<Self>) {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        let navigation = &mut self.navigation;
+        if canvas.update(cx, |canvas, _cx| navigation.collect_thumbnails(canvas)) {
+            cx.notify();
+        }
+    }
+
     fn canvas_view_changed(&mut self, cx: &mut Context<Self>) {
+        // The canvas notifies whenever its poll loop applies anything, which
+        // is the only signal a thumbnail has landed: it answers on its own
+        // channel and changes nothing the view state would show.
+        self.collect_thumbnails(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
             // A running walk reports new hits without moving the view, and the
@@ -1110,6 +1133,7 @@ impl ShellFrame {
             viewport,
             visibility.rail,
             self.rail_state.expanded(),
+            self.navigation_width(visibility.navigation_pane),
             visibility.side_panel,
             self.side_panel_state,
             visibility.page_controls,
@@ -1121,6 +1145,57 @@ impl ShellFrame {
         let toolbar_size = self.quick_actions_state.toolbar_size(bounds.size);
         self.quick_actions_state
             .drag_to(id, pointer, bounds, toolbar_size);
+        cx.notify();
+    }
+
+    /// What the navigation column takes from the document view, which is
+    /// nothing at all when View > Show/Hide has it turned off.
+    fn navigation_width(&self, visible: bool) -> Pixels {
+        if visible {
+            self.navigation.width()
+        } else {
+            px(0.0)
+        }
+    }
+
+    /// The navigation column, for tests that drive a pane through a real
+    /// window and then ask what it holds.
+    #[cfg(test)]
+    pub(in crate::shell) fn navigation(&self) -> &NavigationPanesState {
+        &self.navigation
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn navigation_mut(&mut self) -> &mut NavigationPanesState {
+        &mut self.navigation
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn active_canvas(&self) -> Option<&Entity<Canvas>> {
+        self.tabs.active().map(|tab| &tab.canvas)
+    }
+
+    /// The panes' one way back into the frame. Everything a click in a
+    /// navigation pane does goes through here, so this file holds which tab
+    /// is active and `shell/panes/` holds what the click means.
+    pub(in crate::shell) fn run_pane_action(&mut self, action: PaneAction, cx: &mut Context<Self>) {
+        let canvas = self.tabs.active().map(|tab| tab.canvas.clone());
+        let directory = self
+            .tabs
+            .active()
+            .and_then(|tab| tab.source.parent().map(Path::to_path_buf));
+        panes::apply(&mut self.navigation, canvas.as_ref(), directory, action, cx);
+    }
+
+    /// Show what a pane's own asynchronous work could not do, in the pane
+    /// that asked for it. Saving an attachment is the only such work today:
+    /// it finishes after a file dialog, long after the click that started it.
+    pub(in crate::shell) fn report_pane_failure(
+        &mut self,
+        failure: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigation.report(failure);
         cx.notify();
     }
 
@@ -1414,6 +1489,7 @@ impl Render for ShellFrame {
             window.viewport_size(),
             visibility.rail,
             self.rail_state.expanded(),
+            self.navigation_width(visibility.navigation_pane),
             visibility.side_panel,
             self.side_panel_state,
             visibility.page_controls,
@@ -1458,6 +1534,21 @@ impl Render for ShellFrame {
             .when(visibility.rail, |body| {
                 body.child(render_rail(rail_entries, rail_expanded, theme, cx))
             });
+        if visibility.navigation_pane {
+            // The column is as tall as the body it sits in, which is the one
+            // thing the panes cannot work out for themselves and the one
+            // thing the thumbnails pane needs to know how many rows to show.
+            let height = (window.viewport_size().height - px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT))
+                .max(px(0.0));
+            let active_canvas = self.tabs.active().map(|tab| tab.canvas.clone());
+            body = body.child(panes::render_navigation_panes(
+                &mut self.navigation,
+                active_canvas.as_ref(),
+                height,
+                theme,
+                cx,
+            ));
+        }
         if let Some(tab) = self.tabs.active() {
             let canvas = tab.canvas.clone();
             let page_controls_state =
@@ -1585,6 +1676,7 @@ fn document_view_bounds(
     viewport: gpui::Size<Pixels>,
     rail_visible: bool,
     rail_expanded: bool,
+    navigation_width: Pixels,
     side_panel_visible: bool,
     side_panel: SidePanelState,
     page_controls_visible: bool,
@@ -1606,9 +1698,14 @@ fn document_view_bounds(
     };
     let header = px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT);
     gpui::Bounds {
-        origin: Point { x: rail, y: header },
+        // The navigation column sits between the rail and the document, so
+        // it moves the document's left edge as well as narrowing it.
+        origin: Point {
+            x: rail + navigation_width,
+            y: header,
+        },
         size: gpui::size(
-            (viewport.width - rail - side_panel).max(px(0.0)),
+            (viewport.width - rail - navigation_width - side_panel).max(px(0.0)),
             (viewport.height - header - page_controls).max(px(0.0)),
         ),
     }
@@ -1819,8 +1916,15 @@ mod tests {
     fn rails_and_the_side_panel_adjust_document_bounds_once() {
         let viewport = gpui::size(px(1_100.0), px(860.0));
 
-        let collapsed_closed =
-            document_view_bounds(viewport, true, false, true, SidePanelState::Closed, true);
+        let collapsed_closed = document_view_bounds(
+            viewport,
+            true,
+            false,
+            px(0.0),
+            true,
+            SidePanelState::Closed,
+            true,
+        );
         assert_eq!(
             collapsed_closed.origin,
             Point {
@@ -1830,8 +1934,15 @@ mod tests {
         );
         assert_eq!(collapsed_closed.size, gpui::size(px(972.0), px(736.0)));
 
-        let expanded_closed =
-            document_view_bounds(viewport, true, true, true, SidePanelState::Closed, true);
+        let expanded_closed = document_view_bounds(
+            viewport,
+            true,
+            true,
+            px(0.0),
+            true,
+            SidePanelState::Closed,
+            true,
+        );
         assert_eq!(
             expanded_closed.origin,
             Point {
@@ -1841,13 +1952,27 @@ mod tests {
         );
         assert_eq!(expanded_closed.size, gpui::size(px(820.0), px(736.0)));
 
-        let collapsed_open =
-            document_view_bounds(viewport, true, false, true, SidePanelState::OpenEmpty, true);
+        let collapsed_open = document_view_bounds(
+            viewport,
+            true,
+            false,
+            px(0.0),
+            true,
+            SidePanelState::OpenEmpty,
+            true,
+        );
         assert_eq!(collapsed_open.origin, collapsed_closed.origin);
         assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(736.0)));
 
-        let expanded_open =
-            document_view_bounds(viewport, true, true, true, SidePanelState::OpenEmpty, true);
+        let expanded_open = document_view_bounds(
+            viewport,
+            true,
+            true,
+            px(0.0),
+            true,
+            SidePanelState::OpenEmpty,
+            true,
+        );
         assert_eq!(expanded_open.origin, expanded_closed.origin);
         assert_eq!(expanded_open.size, gpui::size(px(580.0), px(736.0)));
         assert_eq!(
@@ -1858,12 +1983,47 @@ mod tests {
         );
     }
 
+    /// The column sits between the rail and the document, so it moves the
+    /// document's left edge as well as taking width from it. Subtracting it
+    /// from the width alone would leave the canvas drawing under the pane and
+    /// mapping every pointer position wrongly.
+    #[test]
+    fn the_navigation_column_moves_the_document_and_narrows_it_by_the_same_amount() {
+        let viewport = gpui::size(px(1_100.0), px(860.0));
+        let closed = NavigationPanesState::default().width();
+
+        let without = document_view_bounds(
+            viewport,
+            true,
+            false,
+            px(0.0),
+            true,
+            SidePanelState::Closed,
+            true,
+        );
+        let with_strip = document_view_bounds(
+            viewport,
+            true,
+            false,
+            closed,
+            true,
+            SidePanelState::Closed,
+            true,
+        );
+
+        assert!(closed > px(0.0), "the button strip is always on screen");
+        assert_eq!(with_strip.origin.x, without.origin.x + closed);
+        assert_eq!(with_strip.size.width, without.size.width - closed);
+        assert_eq!(with_strip.size.height, without.size.height);
+    }
+
     #[test]
     fn hidden_document_chrome_returns_its_space_to_the_canvas() {
         let bounds = document_view_bounds(
             gpui::size(px(1_100.0), px(860.0)),
             false,
             true,
+            px(0.0),
             false,
             SidePanelState::OpenEmpty,
             false,
@@ -2193,6 +2353,7 @@ mod tests {
             gpui::size(px(1_100.0), px(860.0)),
             true,
             false,
+            px(0.0),
             true,
             SidePanelState::OpenEmpty,
             true,

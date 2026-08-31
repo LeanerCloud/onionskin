@@ -210,6 +210,21 @@ impl SearchState {
         self.step(Direction::Backward)
     }
 
+    /// Moves to the hit at `index` on `page`, which is how the results pane
+    /// picks the row the user clicked.
+    ///
+    /// Returns whether there was a hit there. A row the user clicks after a
+    /// newer walk has replaced the results names a hit that no longer
+    /// exists; moving the cursor to it would put the find bar on a hit
+    /// nothing can draw.
+    pub(crate) fn select(&mut self, page: PageIndex, index: usize) -> bool {
+        if self.pages.get(&page).is_none_or(|hits| index >= hits.len()) {
+            return false;
+        }
+        self.cursor = Some((page, index));
+        true
+    }
+
     fn step(&mut self, direction: Direction) -> Option<&SearchMatch> {
         let (page, index) = self.cursor?;
         let hits = self.pages.get(&page)?.len();
