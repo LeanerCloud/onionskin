@@ -83,6 +83,12 @@ that wave integrates. Each item cites the audit finding it came from.
 
 ## Accessibility readiness (feeds P12)
 
+STATUS 2026-08-31: P12 shipped and closed most of this section - the tree,
+focus handles, a tab order, Escape dismissal, text labels for the glyph-only
+controls, checked state as state rather than a string prefix, and per-page
+nodes with the document's own words. What it did not ship is arrow-key
+navigation; see known-issues.md for that and the other P12 residuals.
+
 - The chrome is a GPUI element tree with stable ids, so a tree is derivable,
   but semantics are absent: one focus handle in the whole chrome
   (SearchInput), no tab order, no arrow-key navigation, no Escape dismissal

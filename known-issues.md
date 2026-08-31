@@ -132,9 +132,25 @@ referenced.
   of the queued generation before hearing the cancel. Harden by tolerating
   queued-generation updates that precede the cancel rather than forbidding
   them outright.
-- One real VoiceOver session is an M2 acceptance item; the AccessKit GO was
-  proven by direct view messaging only. Role::Document currently surfaces as
-  AXGroup and must be fixed in M2. See docs/spikes/m1-shell-accesskit.md.
+- One real VoiceOver session is the remaining M2 acceptance item: P12 built
+  the tree, the focus ring and an automated probe, but the probe messages the
+  view directly and never leaves the process, so the AX server path,
+  notification delivery and speech itself are unproven. Follow the 20-minute
+  script at docs/spikes/m2-voiceover-acceptance.md and record the result
+  there. Role::Document is fixed (the M1 spike misread it: the missing piece
+  was the role description, not the role) and verified by execution.
+- P12 residuals: arrow-key navigation was not shipped, so the focus ring is
+  flat and every visible pane row is a tab stop, which makes Tab cross an
+  open thumbnails pane in dozens of presses; a screen-reader press on an
+  occluded window is queued rather than honoured, because gpui runs a
+  window's display link only while macOS reports it visible and
+  refresh_windows merely marks the window dirty; the shell extracts every
+  visible page's text on every frame whether or not a client is listening,
+  so first-visit content-stream extraction runs on the UI thread during
+  scroll and P14's headless scroll bench cannot see it; two probe tests
+  (the platform half of the press, and the prepaint rectangles) are guarded
+  only by the continue-on-error probe job, which ci.yml plans to harden
+  after its first green run - hold that plan or those guards stay soft.
 - Linux packaging script and Windows NSIS installer have inspection-only
   confidence; the first tagged release is their real test.
 - Shell spike nit for M2: drag state not cleared on outside-window
