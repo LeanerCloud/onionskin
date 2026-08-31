@@ -1,3 +1,22 @@
+//! Previous view and next view: where the reader has been, not what they
+//! changed.
+//!
+//! This is emphatically not an edit history. A [`ViewState`] is a position
+//! (page, offset, zoom, layout mode, rotation) and nothing else, so replaying
+//! one can never alter a document; the edit graph lands in a later milestone
+//! and will own its own undo stack.
+//!
+//! The stacks hold whole states rather than deltas because a view position is
+//! seven `Copy` fields: reconstructing one from a delta would cost more than
+//! storing it, and a delta chain would have to be replayed against a layout
+//! that has since been refined by new measurements. Both stacks are bounded
+//! by the same capacity, so a long session cannot grow without limit.
+//!
+//! [`ViewHistory`] deliberately knows nothing about [`crate::Viewport`]. The
+//! caller snapshots, records, and restores; that keeps this file testable with
+//! no document and lets the app decide what counts as a navigation worth
+//! recording.
+
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 

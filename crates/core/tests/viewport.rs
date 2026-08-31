@@ -67,6 +67,21 @@ fn a_plain_scroll_pans_without_changing_zoom() {
     assert_eq!(after.origin.y, before.1.origin.y - 30.0);
 }
 
+/// A vertical navigation must not also pan the reader sideways.
+/// `scroll_origin_for_page` returned a hardcoded `x: 0.0`, so every page jump
+/// threw away the horizontal position of a reader zoomed in past the window.
+#[test]
+fn a_page_jump_keeps_the_horizontal_pan() {
+    let mut viewport = viewport(10);
+    viewport.zoom_to(2.0, center()).unwrap();
+    viewport.pan_by(ViewPoint { x: -200.0, y: 0.0 }).unwrap();
+    let panned = viewport.offset().x;
+    assert!(panned > 0.0, "the test needs a page wider than the window");
+
+    viewport.go_to_page(4, PageAlignment::Start).unwrap();
+    assert_eq!(viewport.offset().x, panned);
+}
+
 #[test]
 fn a_modified_scroll_zooms_and_holds_the_page_point_under_the_pointer() {
     let mut viewport = viewport(1);
@@ -98,16 +113,23 @@ fn a_pinch_zooms_by_its_factor_about_the_gesture_centre() {
     viewport.fit(FitMode::Page).unwrap();
     let centre = center();
     let before = render_point(&viewport, 0, centre);
-    assert!(viewport.pinch(1.5, centre).unwrap());
+    viewport.pinch(1.5, centre).unwrap();
     assert_point_close(render_point(&viewport, 0, centre), before);
 }
 
+/// `pinch` and `zoom_at` answer the same way to the same nonsense factor.
+/// `pinch` used to swallow it as `Ok(false)`, so a caller that checked its
+/// result saw a refusal from one and a no-op from the other.
 #[test]
-fn a_pinch_with_a_nonsense_delta_is_ignored() {
+fn a_pinch_with_a_nonsense_factor_is_refused_the_way_zoom_at_refuses_it() {
     let mut viewport = viewport(1);
     let before = viewport.snapshot();
     for factor in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        assert!(!viewport.pinch(factor, center()).unwrap());
+        assert!(matches!(
+            viewport.pinch(factor, center()),
+            Err(ViewportError::Layout(LayoutError::InvalidZoom(bad))) if bad.to_bits() == factor.to_bits()
+        ));
+        assert!(viewport.zoom_at(factor, center()).is_err());
     }
     assert_eq!(viewport.snapshot(), before);
 }
@@ -402,8 +424,12 @@ fn view_rotation_and_page_hit_testing_use_the_core_geometry_mapping() {
                 viewport.zoom(),
             )
             .unwrap();
-        assert!((actual.x - expected.x).abs() < 1e-5);
-        assert!((actual.y - expected.y).abs() < 1e-5);
+        // The whole mapping runs in `f32` over device pixels of a page that is
+        // ~4300 px on its long axis at these fit zooms, where one ulp is
+        // already ~5e-4 px; dividing back to user space leaves ~1e-4 pt of
+        // slack. Anything tighter tests the rounding, not the mapping.
+        assert!((actual.x - expected.x).abs() < 1e-3);
+        assert!((actual.y - expected.y).abs() < 1e-3);
     }
 }
 
@@ -730,7 +756,9 @@ fn painting_a_frame_does_not_walk_every_measured_page() {
         page.render_size = (850.0, 1_100.0 + (index % 7) as f64 * 10.0);
         viewport.measure_page(page).unwrap();
     }
-    viewport.go_to_page(PAGES / 2, PageAlignment::Start).unwrap();
+    viewport
+        .go_to_page(PAGES / 2, PageAlignment::Start)
+        .unwrap();
 
     let start = Instant::now();
     for _ in 0..FRAMES {

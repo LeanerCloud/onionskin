@@ -360,10 +360,9 @@ impl Layout {
         query: LayoutQuery,
     ) -> Result<Option<PagePlacement>, LayoutError> {
         self.validate_query(query)?;
+        // An empty document has no page that survives `check_page`, so from
+        // here on `page_count` is known to be non-zero.
         self.check_page(page)?;
-        if self.page_count == 0 {
-            return Ok(None);
-        }
         let row = row_for_page(page, query.mode, query.show_cover);
         let active_row = row_for_page(query.current_page, query.mode, query.show_cover);
         if !query.mode.is_continuous() && row != active_row {
@@ -383,11 +382,14 @@ impl Layout {
         } else {
             1
         };
-        let width = if query.mode.is_continuous() {
+        let content_width = if query.mode.is_continuous() {
             self.max_row_width(query)?
         } else {
             self.row_size(active_row, query)?.width
-        } + self.page_gap * 2.0;
+        };
+        // `total_height` already includes the gap above and below the run of
+        // rows; the single-row and width cases have to add theirs.
+        let width = content_width + self.page_gap * 2.0;
         let height = if query.mode.is_continuous() {
             self.total_height(rows, query)?
         } else {
@@ -421,8 +423,8 @@ impl Layout {
             let first = self.first_row_reaching(visible.origin.y, total_rows, query)?;
             let last = self.first_row_reaching(visible.bottom(), total_rows, query)?;
             (
-                first.saturating_sub(1),
-                last.saturating_add(2).min(total_rows),
+                first.saturating_sub(GUARD_ROWS),
+                last.saturating_add(GUARD_ROWS + 1).min(total_rows),
             )
         } else {
             (active_row, active_row + 1)
@@ -446,8 +448,11 @@ impl Layout {
             return Ok(Vec::new());
         };
         let last_intersecting = intersecting.next_back().unwrap_or(first_intersecting);
-        let guarded_start = first_intersecting.saturating_sub(1);
-        let guarded_end = last_intersecting.saturating_add(2).min(total_rows);
+        // `GUARD_ROWS` on each side: the end is exclusive, hence the extra one.
+        let guarded_start = first_intersecting.saturating_sub(GUARD_ROWS);
+        let guarded_end = last_intersecting
+            .saturating_add(GUARD_ROWS + 1)
+            .min(total_rows);
         Ok(candidate_rows
             .into_iter()
             .filter(|(row, _)| (guarded_start..guarded_end).contains(row))
@@ -455,10 +460,17 @@ impl Layout {
             .collect())
     }
 
+    /// Where the view has to sit for `page` to be at `alignment`.
+    ///
+    /// `horizontal` is the caller's current x offset, kept and re-clamped
+    /// rather than reset: a vertical navigation must not also pan the reader
+    /// sideways, which it did while this returned a hardcoded `x: 0.0` and a
+    /// zoomed-in reader lost their horizontal position on every page jump.
     pub(crate) fn scroll_origin_for_page(
         &self,
         page: PageIndex,
         alignment: PageAlignment,
+        horizontal: f32,
         query: LayoutQuery,
     ) -> Result<ViewPoint, LayoutError> {
         self.validate_query(query)?;
@@ -486,7 +498,7 @@ impl Layout {
             }
         };
         Ok(ViewPoint {
-            x: 0.0,
+            x: horizontal.clamp(0.0, (extent.width - query.viewport.width).max(0.0)),
             y: y.clamp(0.0, (extent.height - query.viewport.height).max(0.0)),
         })
     }
@@ -589,8 +601,7 @@ impl Layout {
 
     fn row_size(&self, row: usize, query: LayoutQuery) -> Result<ViewSize, LayoutError> {
         let gaps = gaps_in_row(row, self.page_count, query.mode, query.show_cover);
-        let extent =
-            self.row_page_extent(row, query.mode, query.show_cover, query.rotation)?;
+        let extent = self.row_page_extent(row, query.mode, query.show_cover, query.rotation)?;
         Ok(ViewSize {
             width: extent.width * query.zoom + gaps as f32 * self.page_gap,
             height: extent.height * query.zoom,
@@ -871,6 +882,17 @@ fn pages_in_row(
     (first..first.saturating_add(2).min(page_count)).collect()
 }
 
+/// How many gaps sit between the pages of `row`.
+///
+/// Kept separate from the page widths because a gap is a screen constant: it
+/// is not multiplied by the zoom, so it cannot be folded into the cached row
+/// extents in [`RowIndex`].
+fn gaps_in_row(row: usize, page_count: usize, mode: PageLayoutMode, show_cover: bool) -> usize {
+    pages_in_row(row, page_count, mode, show_cover)
+        .len()
+        .saturating_sub(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,19 +1111,19 @@ mod tests {
         let layout = layout(3);
         let q = query(PageLayoutMode::SinglePageContinuous);
         let start = layout
-            .scroll_origin_for_page(1, PageAlignment::Start, q)
+            .scroll_origin_for_page(1, PageAlignment::Start, 0.0, q)
             .unwrap();
         let center = layout
-            .scroll_origin_for_page(1, PageAlignment::Center, q)
+            .scroll_origin_for_page(1, PageAlignment::Center, 0.0, q)
             .unwrap();
         let end = layout
-            .scroll_origin_for_page(1, PageAlignment::End, q)
+            .scroll_origin_for_page(1, PageAlignment::End, 0.0, q)
             .unwrap();
         assert!(center.y < start.y);
         assert!(end.y < center.y);
         assert_eq!(
             layout
-                .scroll_origin_for_page(0, PageAlignment::End, q)
+                .scroll_origin_for_page(0, PageAlignment::End, 0.0, q)
                 .unwrap()
                 .y,
             0.0
@@ -1109,7 +1131,7 @@ mod tests {
         let extent = layout.extent(q).unwrap();
         assert_eq!(
             layout
-                .scroll_origin_for_page(2, PageAlignment::End, q)
+                .scroll_origin_for_page(2, PageAlignment::End, 0.0, q)
                 .unwrap()
                 .y,
             extent.height - VIEWPORT.height
@@ -1127,7 +1149,7 @@ mod tests {
         let mut q = query(PageLayoutMode::SinglePageContinuous);
         q.current_page = 899;
         let origin = layout
-            .scroll_origin_for_page(899, PageAlignment::Start, q)
+            .scroll_origin_for_page(899, PageAlignment::Start, 0.0, q)
             .unwrap();
         let visible = ViewRect {
             origin,
@@ -1166,15 +1188,4 @@ mod tests {
         );
         out
     }
-}
-
-/// How many gaps sit between the pages of `row`.
-///
-/// Kept separate from the page widths because a gap is a screen constant: it
-/// is not multiplied by the zoom, so it cannot be folded into the cached row
-/// extents in [`RowIndex`].
-fn gaps_in_row(row: usize, page_count: usize, mode: PageLayoutMode, show_cover: bool) -> usize {
-    pages_in_row(row, page_count, mode, show_cover)
-        .len()
-        .saturating_sub(1)
 }

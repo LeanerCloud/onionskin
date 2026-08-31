@@ -521,8 +521,16 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// Drop a pinch the platform reports with a nonsense factor, and zoom by
+    /// anything else. The filter lives here, at the OS event boundary, rather
+    /// than in the viewport, which treats a non-positive factor as the error
+    /// it is.
     pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, CanvasError> {
-        Ok(self.viewport.pinch(factor, at)?)
+        if !(factor.is_finite() && factor > 0.0) {
+            return Ok(false);
+        }
+        self.viewport.pinch(factor, at)?;
+        Ok(true)
     }
 
     pub fn pointer_down(

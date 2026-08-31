@@ -261,10 +261,10 @@ impl Viewport {
         self.reflow_after_change(anchor)
     }
 
+    /// Fit `mode`, and hold it: a later resize or measurement re-derives the
+    /// zoom rather than leaving a stale one.
     pub fn fit(&mut self, mode: FitMode) -> Result<(), ViewportError> {
-        self.apply_fit(mode)?;
-        self.zoom_policy = ZoomPolicy::Fit(mode);
-        Ok(())
+        self.apply_fit(mode)
     }
 
     pub fn actual_size(&mut self) -> Result<(), ViewportError> {
@@ -319,13 +319,15 @@ impl Viewport {
         }
     }
 
-    pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, ViewportError> {
-        validate_anchor(at, self.size)?;
-        if !(factor.is_finite() && factor > 0.0) {
-            return Ok(false);
-        }
-        self.zoom_at(factor, at)?;
-        Ok(true)
+    /// A pinch gesture: the named entry point for [`Self::zoom_at`].
+    ///
+    /// A factor that is not a positive finite number is an error here for the
+    /// same reason it is there. This used to answer `Ok(false)` instead, so
+    /// the same nonsense factor was a refusal through one door and a silent
+    /// no-op through the other. Deciding that a particular OS gesture is noise
+    /// worth dropping before it gets this far is the shell's job.
+    pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<(), ViewportError> {
+        self.zoom_at(factor, at)
     }
 
     pub fn dynamic_zoom(&mut self, delta_y: f32, at: ViewPoint) -> Result<(), ViewportError> {
@@ -352,7 +354,9 @@ impl Viewport {
             current_page: page,
             ..self.query()
         };
-        let offset = self.layout.scroll_origin_for_page(page, alignment, query)?;
+        let offset = self
+            .layout
+            .scroll_origin_for_page(page, alignment, self.offset.x, query)?;
         let zoom_policy = if matches!(
             self.zoom_policy,
             ZoomPolicy::Fit(FitMode::Visible(bounds)) if bounds.page() != page
@@ -423,18 +427,21 @@ impl Viewport {
             .layout
             .geometry(placement.page)
             .ok_or(ViewportError::UnmeasuredPage(placement.page))?;
+        // Unrotate in device pixels, the unit `device_to_user` wants, rather
+        // than dividing into page units only to multiply straight back out.
         let rotated = ViewPoint {
-            x: (point.x - placement.rect.origin.x) / self.zoom,
-            y: (point.y - placement.rect.origin.y) / self.zoom,
+            x: point.x - placement.rect.origin.x,
+            y: point.y - placement.rect.origin.y,
         };
-        let page_size = ViewSize {
-            width: geometry.render_size.0 as f32,
-            height: geometry.render_size.1 as f32,
+        let page_size = layout::render_size(geometry);
+        let device_size = ViewSize {
+            width: page_size.width * self.zoom,
+            height: page_size.height * self.zoom,
         };
-        let unrotated = self.rotation.unrotate_point(rotated, page_size);
+        let unrotated = self.rotation.unrotate_point(rotated, device_size);
         Ok(Some(geometry.device_to_user(
-            f64::from(unrotated.x * self.zoom),
-            f64::from(unrotated.y * self.zoom),
+            f64::from(unrotated.x),
+            f64::from(unrotated.y),
             self.zoom,
         )?))
     }
@@ -451,6 +458,17 @@ impl Viewport {
         }
     }
 
+    /// Put the view back exactly where a [`Self::snapshot`] left it.
+    ///
+    /// The offset is restored verbatim and deliberately not re-clamped to the
+    /// current extent. A snapshot's offset is frequently outside the scroll
+    /// clamps by design (an anchored zoom leaves a negative x when the page is
+    /// narrower than the viewport), and clamping it would make "previous view"
+    /// land somewhere the user never was. The caller invariant that makes this
+    /// safe: `state` came from `snapshot` on a viewport over *this* document.
+    /// Everything cross-document that can be checked is checked here (page
+    /// count, zoom range, and that a fit-visible rect still fits its page);
+    /// what cannot be checked is that the pages have the same sizes.
     pub fn restore(&mut self, state: ViewState) -> Result<(), ViewportError> {
         if !state.zoom.is_finite() || !(MIN_ZOOM..=MAX_ZOOM).contains(&state.zoom) {
             return Err(LayoutError::InvalidZoom(state.zoom).into());
@@ -489,10 +507,7 @@ impl Viewport {
                 bounds.page(),
                 bounds.origin(),
                 bounds.size(),
-                ViewSize {
-                    width: geometry.render_size.0 as f32,
-                    height: geometry.render_size.1 as f32,
-                },
+                layout::render_size(geometry),
             )?;
         }
         self.current_page = state.current_page;
@@ -623,6 +638,7 @@ impl Viewport {
             self.offset = self.layout.scroll_origin_for_page(
                 self.current_page,
                 PageAlignment::Center,
+                self.offset.x,
                 self.query(),
             )?;
             self.clamp_offset()
