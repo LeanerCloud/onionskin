@@ -93,6 +93,13 @@ referenced.
   bench job once a remote exists, or the budget gate binds the job and not
   the merge, and corpus/fetch.sh verifies no checksum for the R2-hosted
   objects the bench job now puts on the PR path.
+- P8 residuals: Reduce/Enlarge does not advance the thumbnail epoch, so a
+  page pending at the old size that falls outside the new band keeps a
+  wrong-size (content-correct) picture until eviction - one-line fix is to
+  clear pending or advance the epoch on a size change. The layers pane lists
+  /OCGs in flat file order rather than /D /Order's tree, so nesting and the
+  spec's intent that groups omitted from /Order stay hidden are both lost;
+  record this against parity row 202 when it flips to shipped.
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
   string (a hair against no-invented-characters; tighten when touched);
