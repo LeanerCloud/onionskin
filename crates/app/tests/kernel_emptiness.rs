@@ -54,9 +54,30 @@ fn a_kernel_with_no_plugins_registers_nothing_at_all() {
     assert_eq!(registry.plugins().len(), 0);
     assert_eq!(registry.tools().count(), 0);
     assert_eq!(registry.commands().len(), 0);
+    assert_eq!(registry.codecs().count(), 0);
     assert_eq!(
         boot_summary(&registry),
-        "onionskin: 0 plugins, 0 tools, 0 commands"
+        "onionskin: 0 plugins, 0 tools, 0 commands, 0 codecs"
+    );
+}
+
+/// The export formats are as much a part of what a build can do as its tools,
+/// so the honesty test counts them too: with `codecs-common` compiled out
+/// there is nothing to export to, and with it in there are exactly three.
+#[test]
+fn the_registry_holds_a_codec_only_when_the_plugin_that_owns_it_is_compiled_in() {
+    let registry = build_registry();
+
+    let expected = if cfg!(feature = "codecs-common") {
+        3
+    } else {
+        0
+    };
+    assert_eq!(
+        registry.codecs().count(),
+        expected,
+        "registered {:?}",
+        registry.codecs().map(|c| c.id()).collect::<Vec<_>>()
     );
 }
 
