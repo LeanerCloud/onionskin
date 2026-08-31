@@ -379,6 +379,18 @@ impl DocumentSearch {
         let _ = self.requests.send(Request::Cancel);
     }
 
+    /// Kills the worker the way a panic in page extraction would: the request
+    /// channel closes, the thread leaves, and the update channel disconnects
+    /// under the session. Only a test needs to reach this state on purpose.
+    #[cfg(test)]
+    pub(crate) fn kill(&mut self) {
+        let (dead, _) = mpsc::channel();
+        self.requests = dead;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+
     pub(crate) fn try_update(&mut self) -> Result<Option<SearchUpdate>, SearchWorkerError> {
         loop {
             match self.updates.try_recv() {
@@ -472,7 +484,13 @@ fn drain(incoming: &mpsc::Receiver<Request>, queued: &mut Option<Box<Job>>) -> D
                 *queued = Some(job);
                 abandoned = true;
             }
-            Ok(Request::Cancel) => abandoned = true,
+            // The cancel follows the search it supersedes down the same
+            // channel, and the generation has already moved past both, so a
+            // job still queued here is one nobody is waiting for.
+            Ok(Request::Cancel) => {
+                *queued = None;
+                abandoned = true;
+            }
             Ok(Request::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => return Drained::Stop,
             Err(mpsc::TryRecvError::Empty) if abandoned => return Drained::Abandoned,
             Err(mpsc::TryRecvError::Empty) => return Drained::Empty,

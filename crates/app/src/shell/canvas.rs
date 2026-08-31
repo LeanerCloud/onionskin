@@ -553,14 +553,18 @@ impl CanvasModel {
         if !self.document.select_next_match() {
             return Ok(false);
         }
-        self.reveal_as_navigation()
+        self.reveal_as_navigation()?;
+        // The cursor moved even when the view did not: the hit drawn as the
+        // current one changed, and that is a repaint.
+        Ok(true)
     }
 
     pub fn select_previous_match(&mut self) -> Result<bool, CanvasError> {
         if !self.document.select_previous_match() {
             return Ok(false);
         }
-        self.reveal_as_navigation()
+        self.reveal_as_navigation()?;
+        Ok(true)
     }
 
     /// Stepping to a hit is a navigation the user asked for, so Previous View
@@ -568,13 +572,16 @@ impl CanvasModel {
     /// reveal a streaming result triggers records nothing: a walk restarts on
     /// every keystroke, and those would bury the view the user typed from
     /// under one entry per character.
-    fn reveal_as_navigation(&mut self) -> Result<bool, CanvasError> {
+    fn reveal_as_navigation(&mut self) -> Result<(), CanvasError> {
         let before = self.viewport.snapshot();
-        let moved = self.reveal_current_match()?;
-        if moved {
+        self.reveal_current_match()?;
+        // What the viewport did, not what the reveal asked for: a pan that
+        // clamped against the end of the document moved nothing, and Previous
+        // View should not offer to return to where the user already is.
+        if self.viewport.snapshot() != before {
             self.view_history.record(before);
         }
-        Ok(moved)
+        Ok(())
     }
 
     /// Applies whatever the search worker produced, and scrolls to the first
@@ -593,53 +600,51 @@ impl CanvasModel {
     /// showing is panned to, so the page does not jump under a user who can
     /// see the hit already; only a hit somewhere else is worth the jump, and
     /// the pan onto it then waits for that page to be measured.
-    fn reveal_current_match(&mut self) -> Result<bool, CanvasError> {
+    ///
+    /// Nothing here records view history. Whether the view ended up somewhere
+    /// worth returning to is the caller's question, and only the caller knows
+    /// whether the user asked for the move.
+    fn reveal_current_match(&mut self) -> Result<(), CanvasError> {
         self.pending_reveal = None;
         let Some(hit) = self.document.search().current() else {
-            return Ok(false);
+            return Ok(());
         };
         let page = hit.page;
         let quads = hit.quads.clone();
         if quads.is_empty() {
-            return Ok(false);
+            // A hit whose glyphs could not be placed still names a page, and
+            // going there beats a Next that only moves the count.
+            self.viewport.go_to_page(page, PageAlignment::Start)?;
+            return Ok(());
         }
         if let Some(bounds) = self.hit_bounds(page, &quads)? {
             return self.pan_onto(bounds);
         }
         self.pending_reveal = Some((page, quads));
-        let before = self.viewport.snapshot();
         self.viewport.go_to_page(page, PageAlignment::Start)?;
-        let moved = self.viewport.snapshot() != before;
-        Ok(self.apply_pending_reveal()? || moved)
+        self.apply_pending_reveal()
     }
 
     /// The pan the jump above could not do yet, once the page it jumped to has
     /// been measured. Dropped rather than held when the page failed to measure
     /// or the user has scrolled it off screen in the meantime.
-    fn apply_pending_reveal(&mut self) -> Result<bool, CanvasError> {
+    fn apply_pending_reveal(&mut self) -> Result<(), CanvasError> {
         let Some((page, quads)) = self.pending_reveal.take() else {
-            return Ok(false);
+            return Ok(());
         };
         if self.failed_geometry.contains(&page) {
-            return Ok(false);
+            return Ok(());
         }
         if self.viewport.page_geometry(page).is_none() {
             if self.is_visible(page)? {
                 self.pending_reveal = Some((page, quads));
             }
-            return Ok(false);
+            return Ok(());
         }
         let Some(bounds) = self.hit_bounds(page, &quads)? else {
-            return Ok(false);
+            return Ok(());
         };
-        // The same navigation as the go_to_page that queued this, so it
-        // records no view-history entry of its own.
-        let delta = scroll_delta_into_view(bounds, self.viewport.size());
-        if delta == ViewPoint::default() {
-            return Ok(false);
-        }
-        self.viewport.pan_by(delta)?;
-        Ok(true)
+        self.pan_onto(bounds)
     }
 
     /// Where a hit's quads sit in the viewport, or `None` when the page is not
@@ -652,13 +657,13 @@ impl CanvasModel {
         Ok(union_rect(&self.viewport.page_quad_rects(page, quads)?))
     }
 
-    fn pan_onto(&mut self, bounds: ViewRect) -> Result<bool, CanvasError> {
+    fn pan_onto(&mut self, bounds: ViewRect) -> Result<(), CanvasError> {
         let delta = scroll_delta_into_view(bounds, self.viewport.size());
         if delta == ViewPoint::default() {
-            return Ok(false);
+            return Ok(());
         }
         self.viewport.pan_by(delta)?;
-        Ok(true)
+        Ok(())
     }
 
     fn is_visible(&self, page: PageIndex) -> Result<bool, CanvasError> {
@@ -3583,6 +3588,30 @@ mod tests {
         drain_search(model);
     }
 
+    /// Runs updates until every visible page has been measured. Measurement
+    /// re-lays out and re-anchors the viewport, so a test that cares where the
+    /// view sits has to let that finish before it puts the view there.
+    fn settle_geometry(model: &mut CanvasModel) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            model.update().expect("update succeeds while measuring");
+            let waiting = !model.geometry_requests.is_empty()
+                || model
+                    .viewport
+                    .visible_pages()
+                    .expect("the viewport is laid out")
+                    .iter()
+                    .any(|placement| !placement.measured);
+            if !waiting {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the geometry never arrived"
+            );
+        }
+    }
+
     fn measured_visible(model: &CanvasModel) -> Vec<PageIndex> {
         model
             .viewport
@@ -3690,11 +3719,20 @@ mod tests {
     fn a_hit_already_on_screen_leaves_the_view_where_it_was() {
         let mut model = search_model();
         model.go_to_page(0).expect("the seed has a first page");
-        model.update().expect("update succeeds");
+        settle_geometry(&mut model);
+        // Scrolled past the top of the page, with the hit still on screen:
+        // anything that navigates to the page rather than to the hit snaps
+        // back to the page origin from here, and this test says so.
+        model
+            .viewport
+            .pan_by(ViewPoint { x: 0.0, y: -100.0 })
+            .expect("the seed page is taller than the pan");
         let before = model.viewport.snapshot();
+        assert!(
+            before.offset.y > 0.0,
+            "the page origin has to be off screen for this to prove anything"
+        );
 
-        // The hit on page 0 is on screen already, so revealing it must not
-        // scroll the page to its top under a user who can see it.
         find(&mut model, "Page", SearchOptions::default());
 
         assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
@@ -3704,22 +3742,60 @@ mod tests {
     #[test]
     fn streaming_results_leave_no_view_history_but_stepping_to_a_hit_does() {
         let mut model = search_model();
-        model.update().expect("update succeeds");
-        // Typing restarts the walk on every keystroke, so the reveals those
-        // streamed results trigger must not record anything.
-        for needle in ["P", "Pa", "Page"] {
+        settle_geometry(&mut model);
+        let before_navigating = model.viewport.snapshot();
+        model.go_to_page(0).expect("the seed has a first page");
+        let on_page_one = model.viewport.snapshot();
+        assert_ne!(
+            on_page_one, before_navigating,
+            "the navigation has to move the view for its history entry to mean anything"
+        );
+
+        // Only the second page says "two", so each of these walks starts on
+        // page 1, wraps, and reveals a hit the view is not showing. Typing the
+        // word out restarts the walk on every keystroke.
+        for needle in ["t", "tw", "two"] {
             find(&mut model, needle, SearchOptions::default());
         }
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(1));
+        assert_ne!(
+            model.viewport.snapshot(),
+            on_page_one,
+            "the reveal has to have moved the view for this to prove anything"
+        );
 
-        assert!(
-            !model.can_previous_view(),
-            "a reveal the user did not ask for is not a view to come back from"
-        );
+        // Previous View returns to where the user was before the navigation
+        // they asked for, not to a view a streamed result scrolled them to.
+        assert!(model.previous_view().unwrap());
+        assert_eq!(model.viewport.snapshot(), before_navigating);
+    }
+
+    #[test]
+    fn stepping_to_a_hit_is_a_view_to_come_back_from() {
+        let mut model = search_model();
+        settle_geometry(&mut model);
+        model.go_to_page(0).expect("the seed has a first page");
+        find(&mut model, "two", SearchOptions::default());
+        let on_the_hit = model.viewport.snapshot();
+
+        // One hit, so next wraps back onto it and moves nothing.
         assert!(model.select_next_match().unwrap());
+        assert_eq!(model.viewport.snapshot(), on_the_hit);
         assert!(
-            model.can_previous_view(),
-            "stepping to a hit is a navigation to come back from"
+            !model.can_next_view(),
+            "a step that moved nothing records nothing"
         );
+
+        find(&mut model, "Page", SearchOptions::default());
+        let before_step = model.viewport.snapshot();
+        assert!(model.select_next_match().unwrap());
+        assert_ne!(
+            model.viewport.snapshot(),
+            before_step,
+            "the other page's hit is not on screen, so the step moves"
+        );
+        assert!(model.previous_view().unwrap());
+        assert_eq!(model.viewport.snapshot(), before_step);
     }
 
     #[test]

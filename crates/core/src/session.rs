@@ -359,7 +359,14 @@ impl Document {
             Some(worker) => worker,
             slot => slot.insert(DocumentSearch::spawn(Arc::clone(&self.bytes))?),
         };
-        worker.start(needle, options, start_page, self.page_count)?;
+        if let Err(error) = worker.start(needle, options, start_page, self.page_count) {
+            // The worker died since the last poll. Same policy as polling: the
+            // find is lost and says so, the handle goes, and the next query
+            // starts a fresh one, which a stopped walk allows even unchanged.
+            self.search_worker = None;
+            self.search.record_stopped(error.to_string());
+            return Ok(false);
+        }
         self.search.begin();
         Ok(true)
     }
@@ -508,7 +515,80 @@ impl<T> PageCache<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+
+    fn seed() -> Document {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        Document::open_path(&path).expect("seed opens")
+    }
+
+    fn drain(doc: &mut Document) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while doc.search().is_running() {
+            assert!(std::time::Instant::now() < deadline, "the walk never ended");
+            doc.poll_search();
+        }
+    }
+
+    /// The viewer polls the search inside the same update that paints pages,
+    /// so a dead worker must not be an error it has to survive every frame.
+    #[test]
+    fn a_dead_worker_ends_the_walk_and_the_next_query_starts_a_new_one() {
+        let mut doc = seed();
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("the search worker starts"));
+
+        doc.search_worker
+            .as_mut()
+            .expect("the first query spawned a worker")
+            .kill();
+
+        assert!(doc.poll_search(), "the loss is something to repaint for");
+        assert!(!doc.search().is_running());
+        assert!(doc.search().stopped().is_some());
+        assert!(
+            doc.search_worker.is_none(),
+            "the dead handle is dropped so the next query can replace it"
+        );
+
+        // The same query, which the state still holds, runs again on a fresh
+        // worker and finishes.
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("a second worker starts"));
+        drain(&mut doc);
+
+        assert_eq!(doc.search().stopped(), None);
+        assert_eq!(doc.search().len(), 1);
+        assert_eq!(doc.search().searched_pages(), 1);
+    }
+
+    /// Starting a find on a handle that went stale between polls follows the
+    /// same policy: reported, dropped, and replaced on the next try.
+    #[test]
+    fn a_query_on_a_dead_handle_is_reported_rather_than_raised() {
+        let mut doc = seed();
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("the search worker starts"));
+        doc.search_worker.as_mut().expect("a worker exists").kill();
+
+        assert!(!doc
+            .start_search("Hello", SearchOptions::default(), 0)
+            .expect("a dead worker is not an error the viewer has to handle"));
+
+        assert!(doc.search().stopped().is_some());
+        assert!(doc.search_worker.is_none());
+        assert!(doc
+            .start_search("Hello", SearchOptions::default(), 0)
+            .expect("the retry spawns a live worker"));
+        drain(&mut doc);
+        assert_eq!(doc.search().stopped(), None);
+        assert_eq!(doc.search().len(), 1);
+    }
 
     #[test]
     fn page_cache_is_lazy_and_bounded() {

@@ -178,6 +178,9 @@ pub fn search_flattened(
     needle: &str,
     options: SearchOptions,
 ) -> Vec<Match> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
     // The page folds once however many words are searched for: the fold walks
     // every character of the page, and a three-word search would otherwise
     // walk it three times.
