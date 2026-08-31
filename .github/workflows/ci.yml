@@ -29,6 +29,41 @@ jobs:
       # reached the registry.
       - run: cargo test -p onionskin-app --no-default-features --features tools-basic,commands-core
 
+  # Guarantee test 9: PLAN.md decision 11's budgets, as benches that fail the
+  # build when a budget is missed. One runner rather than the matrix: a budget
+  # is one claim, and measuring it on three machines is three chances to flake
+  # for it. Ubuntu, because every bench here is windowless and needs no GPU
+  # toolchain.
+  bench:
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      # A bench whose corpus is absent skips loudly and measures nothing. Here
+      # that has to be a failure: a green job that proved no budget is worse
+      # than no job at all.
+      ONIONSKIN_CORPUS_REQUIRED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # 159 MB of opt-in corpus for one file, so it is cached on the revisions
+      # pinned in fetch.sh rather than downloaded on every run.
+      - name: Cache the hayro corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-hayro-${{ hashFiles('corpus/fetch.sh') }}
+      # benches/paint.rs measures first paint on hayro-corpus/0041790.pdf, the
+      # heaviest page the M1 spike found. fetch.sh skips a set already on disk,
+      # so a cache hit makes this a no-op.
+      - name: Fetch the first-paint corpus file
+        run: ./corpus/fetch.sh hayro-corpus
+      # Generated from nothing, and gitignored like the rest of the corpus.
+      - name: Generate the thousand-page bench file
+        run: ./corpus/make-bench.py
+      - run: cargo bench -p onionskin-core
+
   shell:
     timeout-minutes: 45
     strategy:
