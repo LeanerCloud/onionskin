@@ -30,8 +30,6 @@ actions!(
     ]
 );
 
-const COMMAND_EXECUTION_UNAVAILABLE: &str = "Command execution lands in M2 P11";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SearchResult {
     Tool {
@@ -116,16 +114,28 @@ pub(super) fn document_search_result(query: &str) -> Option<SearchResult> {
     })
 }
 
-pub(super) fn unavailable_selection(result: SearchResult) -> Option<SearchResult> {
-    let (label, reason) = match result {
-        // Both are live: a tool through the registry, a document search
-        // through the find bar.
-        SearchResult::Tool { .. } | SearchResult::DocumentSearch { .. } => return None,
-        SearchResult::Command { title, .. } => (title.to_owned(), COMMAND_EXECUTION_UNAVAILABLE),
-        unavailable @ SearchResult::Unavailable { .. } => return Some(unavailable),
-    };
-    Some(SearchResult::Unavailable { label, reason })
+/// Why a result cannot be chosen, or `None` when it can.
+///
+/// Everything the panel lists is live now: a tool through the registry, a
+/// command through the registry, a document search through the find bar. A
+/// command still needs a document to act on, which is a state the panel can
+/// be in rather than a milestone it is waiting for.
+pub(super) fn unavailable_selection(
+    result: SearchResult,
+    has_document: bool,
+) -> Option<SearchResult> {
+    match result {
+        SearchResult::Tool { .. } | SearchResult::DocumentSearch { .. } => None,
+        SearchResult::Command { title, .. } if !has_document => Some(SearchResult::Unavailable {
+            label: title.to_owned(),
+            reason: NO_DOCUMENT,
+        }),
+        SearchResult::Command { .. } => None,
+        unavailable @ SearchResult::Unavailable { .. } => Some(unavailable),
+    }
 }
+
+const NO_DOCUMENT: &str = "No document is open";
 
 pub(in crate::shell) fn install_keybindings(cx: &mut App) {
     cx.bind_keys([
@@ -294,6 +304,14 @@ impl SearchInput {
 
     pub(super) fn query(&self) -> &str {
         &self.buffer.content
+    }
+
+    /// What the field has selected, for the test that checks a window-wide
+    /// binding does not take a keystroke away from a focused text field.
+    /// That test needs a window, hence the feature.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(super) fn selected_range(&self) -> std::ops::Range<usize> {
+        self.buffer.selected_range.clone()
     }
 
     pub(super) fn set_query(&mut self, query: impl Into<String>, cx: &mut Context<Self>) {
@@ -836,13 +854,13 @@ mod tests {
                     id: "pages.rotate",
                     title: "Rotate Clockwise",
                     keybind: None,
-                    run: Box::new(|_: &mut CommandCtx| {}),
+                    run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
                 Command {
                     id: "document.properties",
                     title: "Document Properties",
                     keybind: None,
-                    run: Box::new(|_: &mut CommandCtx| {}),
+                    run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
             ]
         }
@@ -909,34 +927,40 @@ mod tests {
         assert!(matches!(explicit, SearchResult::DocumentSearch { .. }));
         // Live since P9: the frame opens the find bar on it rather than
         // reporting a milestone it is waiting for.
-        assert_eq!(unavailable_selection(explicit), None);
+        assert_eq!(unavailable_selection(explicit, true), None);
     }
 
     #[test]
-    fn live_routes_report_nothing_while_deferred_ones_keep_typed_milestones() {
+    fn every_route_the_panel_offers_is_live_with_a_document_open() {
         assert_eq!(
-            unavailable_selection(SearchResult::Tool {
-                index: 0,
-                id: "view.select",
-                name: "Select Tool",
-            }),
+            unavailable_selection(
+                SearchResult::Tool {
+                    index: 0,
+                    id: "view.select",
+                    name: "Select Tool",
+                },
+                true
+            ),
             None
         );
         assert_eq!(
-            unavailable_selection(SearchResult::Command {
-                index: 0,
-                id: "pages.rotate",
-                title: "Rotate Clockwise",
-            }),
-            Some(SearchResult::Unavailable {
-                label: "Rotate Clockwise".to_owned(),
-                reason: COMMAND_EXECUTION_UNAVAILABLE,
-            })
+            unavailable_selection(
+                SearchResult::Command {
+                    index: 0,
+                    id: "pages.rotate",
+                    title: "Rotate Clockwise",
+                },
+                true
+            ),
+            None
         );
         assert_eq!(
-            unavailable_selection(SearchResult::DocumentSearch {
-                query: "needle".to_owned(),
-            }),
+            unavailable_selection(
+                SearchResult::DocumentSearch {
+                    query: "needle".to_owned(),
+                },
+                true
+            ),
             None
         );
         let unavailable = SearchResult::Unavailable {
@@ -944,24 +968,28 @@ mod tests {
             reason: "Pinned reason",
         };
         assert_eq!(
-            unavailable_selection(unavailable.clone()),
+            unavailable_selection(unavailable.clone(), true),
             Some(unavailable)
         );
     }
 
+    /// A command runs against a document, so with none open the panel says
+    /// that, rather than naming a milestone that has landed.
     #[test]
-    fn registry_tool_hits_are_live_but_command_hits_remain_deferred() {
+    fn a_command_hit_waits_for_a_document_rather_than_for_a_milestone() {
         let registry = registry();
-
-        let tool = search_registry(&registry, "select").remove(0);
-        assert_eq!(unavailable_selection(tool), None);
-
         let command = search_registry(&registry, "rotate").remove(0);
+
         assert!(matches!(
-            unavailable_selection(command),
+            unavailable_selection(command.clone(), false),
             Some(SearchResult::Unavailable { label, reason })
-                if label == "Rotate Clockwise" && reason == COMMAND_EXECUTION_UNAVAILABLE
+                if label == "Rotate Clockwise" && reason == "No document is open"
         ));
+        assert_eq!(unavailable_selection(command, true), None);
+        assert_eq!(
+            unavailable_selection(search_registry(&registry, "select").remove(0), true),
+            None
+        );
     }
 
     #[test]

@@ -1,13 +1,13 @@
-use gpui::{actions, Action, App, Menu, MenuItem, WindowHandle};
+use gpui::{Action, App, Menu, MenuItem, WindowHandle};
 use onionskin_core::{FitMode, PageLayoutMode};
+use onionskin_plugin_api::{PluginRegistry, ToolCapability};
 
 use super::quick_actions::QuickAction;
-use super::theme::{ShellViewAction, ShellViewState, ThemePreference};
+use super::theme::{ShellViewAction, ShellViewState};
 use super::ShellFrame;
+use crate::preferences::{layout_label, ThemePreference};
 use crate::shell::canvas::{CanvasViewState, ViewAction};
-use crate::shell::find_bar::OpenFindBar;
-
-actions!(onionskin_shell, [CloseTab, CloseOtherTabs, CloseAllTabs]);
+use crate::shell::context_menu::tool_with;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuSectionId {
@@ -35,7 +35,7 @@ impl MenuSectionId {
 /// then the entry ships disabled with that as its reason rather than
 /// silently missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ExportTarget {
+pub(in crate::shell) enum ExportTarget {
     Text,
     Png,
     Svg,
@@ -88,8 +88,10 @@ impl ExportCodecs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuCommand {
+pub(in crate::shell) enum MenuCommand {
     Open,
+    OpenRecent,
+    Quit,
     SaveAs,
     Export(ExportTarget),
     CloseTab,
@@ -97,7 +99,11 @@ pub(super) enum MenuCommand {
     CloseAllTabs,
     Undo,
     Redo,
+    SelectAll,
+    DeselectAll,
+    TakeSnapshot,
     Find,
+    Preferences,
     PreviousView,
     NextView,
     FirstPage,
@@ -116,6 +122,7 @@ pub(super) enum MenuCommand {
     TwoPage,
     TwoPageContinuous,
     ToggleCover,
+    Tools,
     ToggleNavigationPane,
     ToggleQuickAction(QuickAction),
     TogglePageControls,
@@ -128,6 +135,62 @@ pub(super) enum MenuCommand {
     NewWindow,
     About,
     KeyboardShortcuts,
+}
+
+/// What the Take a Snapshot entry says when no installed tool carries the
+/// capability, and what the frame says if one disappears between the menu
+/// being built and the entry being chosen.
+pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
+
+/// The menu entries a registered command runs, rather than shell code.
+const REGISTRY_BACKED: [MenuCommand; 2] = [MenuCommand::SelectAll, MenuCommand::DeselectAll];
+
+/// Which of those commands this build's plugins registered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct RegisteredCommands([bool; REGISTRY_BACKED.len()]);
+
+impl RegisteredCommands {
+    fn installed(has_command: impl Fn(&str) -> bool) -> Self {
+        // `registry_command_id` answers for exactly these two, but this runs
+        // on every menu refresh, and an entry added to REGISTRY_BACKED by
+        // mistake should read as "no plugin provides it" rather than take
+        // the window down.
+        Self(REGISTRY_BACKED.map(|command| command.registry_command_id().is_some_and(&has_command)))
+    }
+
+    fn has(self, command: MenuCommand) -> bool {
+        REGISTRY_BACKED
+            .iter()
+            .position(|backed| *backed == command)
+            .is_some_and(|index| self.0[index])
+    }
+}
+
+/// Everything the menus ask the registry, asked once.
+///
+/// An entry backed by a plugin is live because the plugin is installed, not
+/// because a table here says the milestone landed: a build with the plugin
+/// compiled out shows the entry saying so, and a plugin that arrives later
+/// makes it live with no change in the chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::shell) struct RegistryFacts {
+    codecs: ExportCodecs,
+    commands: RegisteredCommands,
+    snapshot_tool: bool,
+    any_tool: bool,
+}
+
+impl RegistryFacts {
+    pub(in crate::shell) fn of(registry: &PluginRegistry) -> Self {
+        Self {
+            codecs: ExportCodecs::installed(|id| registry.codec(id).is_some()),
+            commands: RegisteredCommands::installed(|id| {
+                registry.commands().iter().any(|command| command.id == id)
+            }),
+            snapshot_tool: tool_with(registry, ToolCapability::Snapshot).is_some(),
+            any_tool: registry.tools().next().is_some(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,31 +206,18 @@ pub(in crate::shell) struct MenuState {
     view: Option<CanvasViewState>,
     shell_view: ShellViewState,
     quick_actions_visible: [bool; QuickAction::ALL.len()],
-    export_codecs: ExportCodecs,
+    registry: RegistryFacts,
+    recent_count: usize,
 }
 
 impl MenuState {
-    pub(in crate::shell) fn initial(
-        tab_count: usize,
-        view: Option<CanvasViewState>,
-        shell_view: ShellViewState,
-        export_codecs: ExportCodecs,
-    ) -> Self {
-        Self::new(
-            tab_count,
-            view,
-            shell_view,
-            [true; QuickAction::ALL.len()],
-            export_codecs,
-        )
-    }
-
     pub(in crate::shell) fn new(
         tab_count: usize,
         view: Option<CanvasViewState>,
         shell_view: ShellViewState,
         quick_actions_visible: [bool; QuickAction::ALL.len()],
-        export_codecs: ExportCodecs,
+        registry: RegistryFacts,
+        recent_count: usize,
     ) -> Self {
         Self {
             tab_count,
@@ -175,7 +225,8 @@ impl MenuState {
             view,
             shell_view,
             quick_actions_visible,
-            export_codecs,
+            registry,
+            recent_count,
         }
     }
 }
@@ -228,7 +279,17 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 MenuEntry {
                     command: MenuCommand::Open,
                     label: "Open…",
-                    availability: Disabled("File Open lands in M2 P11"),
+                    availability: Enabled,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::OpenRecent,
+                    label: "Open Recent",
+                    availability: if state.recent_count > 0 {
+                        Enabled
+                    } else {
+                        Disabled("No documents have been opened yet")
+                    },
                     selected: false,
                 },
                 MenuEntry {
@@ -258,6 +319,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             ]
             .into_iter()
             .chain(export_entries(state))
+            .chain([MenuEntry {
+                command: MenuCommand::Quit,
+                label: "Exit",
+                availability: Enabled,
+                selected: false,
+            }])
             .collect(),
         },
         MenuSection {
@@ -276,16 +343,49 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
                 MenuEntry {
+                    command: MenuCommand::SelectAll,
+                    label: "Select All",
+                    availability: registry_command(state, MenuCommand::SelectAll),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::DeselectAll,
+                    label: "Deselect All",
+                    availability: registry_command(state, MenuCommand::DeselectAll),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::TakeSnapshot,
+                    label: "Take a Snapshot",
+                    availability: match (state.registry.snapshot_tool, state.has_active_tab) {
+                        (false, _) => Disabled(NO_SNAPSHOT_TOOL),
+                        (true, false) => Disabled("No document is open"),
+                        (true, true) => Enabled,
+                    },
+                    selected: false,
+                },
+                MenuEntry {
                     command: MenuCommand::Find,
                     label: "Find…",
                     availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::Preferences,
+                    label: "Preferences…",
+                    availability: Enabled,
                     selected: false,
                 },
             ],
         },
         MenuSection {
             id: MenuSectionId::View,
-            entries: view_menu_entries(state.view, state.shell_view, state.quick_actions_visible),
+            entries: view_menu_entries(
+                state.view,
+                state.shell_view,
+                state.quick_actions_visible,
+                state.registry.any_tool,
+            ),
         },
         MenuSection {
             id: MenuSectionId::Window,
@@ -302,18 +402,28 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 MenuEntry {
                     command: MenuCommand::About,
                     label: "About Onionskin",
-                    availability: Disabled("Help commands land in M2 P11"),
+                    availability: Enabled,
                     selected: false,
                 },
                 MenuEntry {
                     command: MenuCommand::KeyboardShortcuts,
                     label: "Keyboard Shortcuts",
-                    availability: Disabled("Help commands land in M2 P11"),
+                    availability: Enabled,
                     selected: false,
                 },
             ],
         },
     ]
+}
+
+/// An entry a plugin's command runs: live when that plugin registered the
+/// command and there is a document for it to act on.
+fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability {
+    match (state.registry.commands.has(command), state.has_active_tab) {
+        (false, _) => MenuAvailability::Disabled("No installed plugin provides this command"),
+        (true, false) => MenuAvailability::Disabled("No document is open"),
+        (true, true) => MenuAvailability::Enabled,
+    }
 }
 
 /// The three export formats M2 owns. The full `File > Export To` menu, with
@@ -327,7 +437,7 @@ fn export_entries(state: MenuState) -> Vec<MenuEntry> {
         .map(|target| MenuEntry {
             command: MenuCommand::Export(target),
             label: target.label(),
-            availability: match (state.export_codecs.has(target), state.has_active_tab) {
+            availability: match (state.registry.codecs.has(target), state.has_active_tab) {
                 (false, _) => Disabled("The common codecs plugin is not installed"),
                 (true, false) => Disabled("No document is open"),
                 (true, true) => Enabled,
@@ -341,6 +451,7 @@ fn view_menu_entries(
     view: Option<CanvasViewState>,
     shell_view: ShellViewState,
     quick_actions_visible: [bool; QuickAction::ALL.len()],
+    any_tool: bool,
 ) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -457,25 +568,25 @@ fn view_menu_entries(
         ),
         entry(
             MenuCommand::SinglePage,
-            "Single Page",
+            layout_label(PageLayoutMode::SinglePage),
             availability,
             layout == Some(PageLayoutMode::SinglePage),
         ),
         entry(
             MenuCommand::SinglePageContinuous,
-            "Single Page Continuous",
+            layout_label(PageLayoutMode::SinglePageContinuous),
             availability,
             layout == Some(PageLayoutMode::SinglePageContinuous),
         ),
         entry(
             MenuCommand::TwoPage,
-            "Two Page",
+            layout_label(PageLayoutMode::TwoPage),
             availability,
             layout == Some(PageLayoutMode::TwoPage),
         ),
         entry(
             MenuCommand::TwoPageContinuous,
-            "Two Page Continuous",
+            layout_label(PageLayoutMode::TwoPageContinuous),
             availability,
             layout == Some(PageLayoutMode::TwoPageContinuous),
         ),
@@ -486,6 +597,16 @@ fn view_menu_entries(
             show_cover,
         ),
     ];
+    entries.push(entry(
+        MenuCommand::Tools,
+        "Tools",
+        if any_tool {
+            Enabled
+        } else {
+            Disabled("No tools are installed")
+        },
+        false,
+    ));
     entries.push(entry(
         MenuCommand::ToggleNavigationPane,
         "Show Navigation Panes",
@@ -515,19 +636,19 @@ fn view_menu_entries(
         ),
         entry(
             MenuCommand::ThemeSystem,
-            "System Theme",
+            ThemePreference::System.label(),
             Enabled,
             shell_view.theme() == ThemePreference::System,
         ),
         entry(
             MenuCommand::ThemeLight,
-            "Light Theme",
+            ThemePreference::Light.label(),
             Enabled,
             shell_view.theme() == ThemePreference::Light,
         ),
         entry(
             MenuCommand::ThemeDark,
-            "Dark Theme",
+            ThemePreference::Dark.label(),
             Enabled,
             shell_view.theme() == ThemePreference::Dark,
         ),
@@ -571,14 +692,21 @@ impl MenuCommand {
             Self::TwoPageContinuous => ViewAction::SetLayout(PageLayoutMode::TwoPageContinuous),
             Self::ToggleCover => ViewAction::SetShowCover(!view.show_cover),
             Self::Open
+            | Self::OpenRecent
+            | Self::Quit
             | Self::SaveAs
             | Self::Export(_)
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
             | Self::Find
+            | Self::Preferences
             | Self::Undo
             | Self::Redo
+            | Self::SelectAll
+            | Self::DeselectAll
+            | Self::TakeSnapshot
+            | Self::Tools
             | Self::ToggleNavigationPane
             | Self::ToggleQuickAction(_)
             | Self::TogglePageControls
@@ -603,14 +731,21 @@ impl MenuCommand {
             Self::ThemeDark => ShellViewAction::SetTheme(ThemePreference::Dark),
             Self::ReadMode => ShellViewAction::ToggleReadMode,
             Self::Open
+            | Self::OpenRecent
+            | Self::Quit
             | Self::SaveAs
             | Self::Export(_)
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
             | Self::Find
+            | Self::Preferences
             | Self::Undo
             | Self::Redo
+            | Self::SelectAll
+            | Self::DeselectAll
+            | Self::TakeSnapshot
+            | Self::Tools
             | Self::PreviousView
             | Self::NextView
             | Self::FirstPage
@@ -639,10 +774,11 @@ impl MenuCommand {
     }
 }
 
+/// The route every runnable menu entry and every keystroke takes.
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(namespace = onionskin_shell, no_json)]
-struct RunViewMenu {
-    command: MenuCommand,
+pub(in crate::shell) struct RunCommand {
+    pub(in crate::shell) command: MenuCommand,
 }
 
 /// The route a disabled native item takes. Nothing handles it, which is how it
@@ -651,34 +787,27 @@ struct RunViewMenu {
 #[action(namespace = onionskin_shell, no_json)]
 struct UnavailableCommand;
 
+/// Route every command to the window, and put the menus up.
+///
+/// One app-level listener, not one per command: menu items and keystrokes
+/// both dispatch [`RunCommand`], and action dispatch walks the focus path,
+/// which no element in the chrome holds until something takes focus.
+///
+/// The body is deferred, and that is not optional. A global listener runs
+/// inside the window update that dispatched the action, and a window is off
+/// the app's window list for the length of its own update, so running the
+/// command from here would look for the window that is dispatching it and
+/// fail to find it. P9 hit this on Ctrl+F; the three per-command listeners
+/// this replaces had the same shape and the same latent failure.
 pub(in crate::shell) fn install_native_menus(
     cx: &mut App,
     window: WindowHandle<ShellFrame>,
     state: MenuState,
 ) {
-    cx.on_action(move |_: &CloseTab, cx| {
-        ShellFrame::run_native_command(window, MenuCommand::CloseTab, cx);
-    });
-    cx.on_action(move |_: &CloseOtherTabs, cx| {
-        ShellFrame::run_native_command(window, MenuCommand::CloseOtherTabs, cx);
-    });
-    cx.on_action(move |_: &CloseAllTabs, cx| {
-        ShellFrame::run_native_command(window, MenuCommand::CloseAllTabs, cx);
-    });
-    cx.on_action(move |action: &RunViewMenu, cx| {
-        ShellFrame::run_native_command(window, action.command, cx);
-    });
-    // Ctrl+F and Edit > Find arrive here rather than at an element listener:
-    // action dispatch walks the focus path, and until the find bar opens
-    // nothing in the shell holds focus for it to walk to.
-    //
-    // Deferred because a global listener runs inside the window update that
-    // dispatched the action, and a window is off the app's window list for
-    // the length of its own update. Running the command from here would look
-    // for the window that is dispatching it and fail to find it.
-    cx.on_action(move |_: &OpenFindBar, cx| {
+    cx.on_action(move |action: &RunCommand, cx| {
+        let command = action.command;
         cx.defer(move |cx| {
-            ShellFrame::run_native_command(window, MenuCommand::Find, cx);
+            ShellFrame::run_native_command(window, command, cx);
         });
     });
 
@@ -742,11 +871,21 @@ fn disabled_native_item(label: String, reason: &str) -> MenuItem {
 
 fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
     match command {
-        MenuCommand::CloseTab => Some(Box::new(CloseTab)),
-        MenuCommand::CloseOtherTabs => Some(Box::new(CloseOtherTabs)),
-        MenuCommand::CloseAllTabs => Some(Box::new(CloseAllTabs)),
-        MenuCommand::Find => Some(Box::new(OpenFindBar)),
-        MenuCommand::PreviousView
+        MenuCommand::Open
+        | MenuCommand::OpenRecent
+        | MenuCommand::Quit
+        | MenuCommand::CloseTab
+        | MenuCommand::CloseOtherTabs
+        | MenuCommand::CloseAllTabs
+        | MenuCommand::SelectAll
+        | MenuCommand::DeselectAll
+        | MenuCommand::TakeSnapshot
+        | MenuCommand::Find
+        | MenuCommand::Preferences
+        | MenuCommand::Tools
+        | MenuCommand::About
+        | MenuCommand::KeyboardShortcuts
+        | MenuCommand::PreviousView
         | MenuCommand::NextView
         | MenuCommand::FirstPage
         | MenuCommand::PreviousPage
@@ -772,15 +911,12 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ThemeDark
         | MenuCommand::ReadMode
         | MenuCommand::FullScreen
-        | MenuCommand::Export(_) => Some(Box::new(RunViewMenu { command })),
-        MenuCommand::Open
-        | MenuCommand::SaveAs
+        | MenuCommand::Export(_) => Some(Box::new(RunCommand { command })),
+        MenuCommand::SaveAs
         | MenuCommand::Undo
         | MenuCommand::Redo
         | MenuCommand::LineWeights
-        | MenuCommand::NewWindow
-        | MenuCommand::About
-        | MenuCommand::KeyboardShortcuts => None,
+        | MenuCommand::NewWindow => None,
     }
 }
 
@@ -805,27 +941,95 @@ mod tests {
         }
     }
 
-    /// A build that compiled `codecs-common` in, which is the default set.
-    fn all_codecs() -> ExportCodecs {
-        ExportCodecs::installed(|_| true)
+    /// A build with every plugin compiled in, which is the default set.
+    fn everything_installed() -> RegistryFacts {
+        RegistryFacts {
+            codecs: ExportCodecs::installed(|_| true),
+            commands: RegisteredCommands([true; REGISTRY_BACKED.len()]),
+            snapshot_tool: true,
+            any_tool: true,
+        }
     }
 
     fn menu_state(tab_count: usize, view: Option<CanvasViewState>) -> MenuState {
         MenuState::new(
             tab_count,
             view,
-            ShellViewState::new(WindowAppearance::Dark),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
-            all_codecs(),
+            everything_installed(),
+            2,
         )
+    }
+
+    fn entry(state: MenuState, command: MenuCommand) -> MenuEntry {
+        main_menu_schema(state)
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .find(|entry| entry.command == command)
+            .unwrap_or_else(|| panic!("{} has a menu entry", command.id()))
     }
 
     fn view_entries(view: Option<CanvasViewState>) -> Vec<MenuEntry> {
         view_menu_entries(
             view,
-            ShellViewState::new(WindowAppearance::Dark),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
+            true,
         )
+    }
+
+    /// Every command the enum has appears in the menus exactly once.
+    ///
+    /// Two things depend on it: the keymap resolves ids against this list,
+    /// and `command_unavailable` reads the schema to decide whether a
+    /// keystroke may run. A command missing from the schema would be bound
+    /// to a key and silently treated as always available.
+    #[test]
+    fn every_command_has_exactly_one_menu_entry() {
+        let entries: Vec<_> = main_menu_schema(menu_state(1, Some(view())))
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .collect();
+
+        for command in MenuCommand::all() {
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry.command == command)
+                    .count(),
+                1,
+                "{} is not in the menus exactly once",
+                command.id()
+            );
+        }
+        assert_eq!(entries.len(), MenuCommand::all().len());
+        assert!(entries.iter().all(|entry| !entry.label.is_empty()));
+    }
+
+    /// Nothing the registry holds can be unreachable, and a keystroke alone
+    /// does not count: a command only a keymap file mentions is invisible to
+    /// anyone who has not read it.
+    #[test]
+    fn every_registered_command_has_a_menu_entry() {
+        let registry = crate::build_registry();
+        let entries: Vec<_> = main_menu_schema(menu_state(1, Some(view())))
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .collect();
+
+        assert_eq!(
+            registry.commands().is_empty(),
+            cfg!(not(feature = "commands-core")),
+            "there is nothing to check"
+        );
+        for command in registry.commands() {
+            assert!(
+                entries.iter().any(|entry| entry.command.id() == command.id),
+                "{} is registered but no menu entry reaches it",
+                command.id
+            );
+        }
     }
 
     #[test]
@@ -855,25 +1059,174 @@ mod tests {
             .filter(|entry| {
                 matches!(
                     entry.command,
-                    MenuCommand::Open
-                        | MenuCommand::SaveAs
+                    MenuCommand::SaveAs
                         | MenuCommand::Undo
                         | MenuCommand::Redo
                         | MenuCommand::LineWeights
                         | MenuCommand::NewWindow
-                        | MenuCommand::About
-                        | MenuCommand::KeyboardShortcuts
                 )
             })
             .filter_map(|entry| entry.availability.reason())
             .collect();
 
         assert!(!disabled.is_empty());
-        assert!(disabled
-            .iter()
-            .all(|reason| reason.contains("M2") || reason.contains("M3")));
-        assert!(disabled.iter().any(|reason| reason.contains("M3")));
-        assert!(disabled.iter().any(|reason| reason.contains("P11")));
+        assert!(
+            disabled.iter().all(|reason| reason.contains("M3")),
+            "{disabled:?}"
+        );
+    }
+
+    /// What P11 delivered. Each of these was a menu entry that named this
+    /// package as the reason it was greyed out; none of them may name a
+    /// milestone now.
+    #[test]
+    fn the_entries_this_package_delivers_are_live() {
+        let state = menu_state(1, Some(view()));
+
+        for command in [
+            MenuCommand::Open,
+            MenuCommand::OpenRecent,
+            MenuCommand::Quit,
+            MenuCommand::SelectAll,
+            MenuCommand::DeselectAll,
+            MenuCommand::TakeSnapshot,
+            MenuCommand::Preferences,
+            MenuCommand::Tools,
+            MenuCommand::About,
+            MenuCommand::KeyboardShortcuts,
+        ] {
+            assert_eq!(
+                entry(state, command).availability,
+                MenuAvailability::Enabled,
+                "{} is not live",
+                command.id()
+            );
+            assert!(
+                native_action(command).is_some(),
+                "{} has no route to run it",
+                command.id()
+            );
+        }
+    }
+
+    /// The Edit entries are live because a plugin registered the command,
+    /// not because a table here says the milestone landed. Compiling the
+    /// plugin out has to change the answer, and the reason has to name the
+    /// plugin rather than a date.
+    #[test]
+    fn a_registry_command_entry_follows_the_registry() {
+        let without = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
+            [true; QuickAction::ALL.len()],
+            RegistryFacts {
+                commands: RegisteredCommands::installed(|_| false),
+                ..everything_installed()
+            },
+            0,
+        );
+
+        assert_eq!(
+            entry(without, MenuCommand::SelectAll).availability,
+            MenuAvailability::Disabled("No installed plugin provides this command")
+        );
+        assert_eq!(
+            entry(menu_state(1, Some(view())), MenuCommand::SelectAll).availability,
+            MenuAvailability::Enabled
+        );
+        // And with the command installed but nothing to run it against, the
+        // reason is the state, not the plugin.
+        assert_eq!(
+            entry(menu_state(0, None), MenuCommand::SelectAll).availability,
+            MenuAvailability::Disabled("No document is open")
+        );
+    }
+
+    /// Take a Snapshot asks for a capability, so the tool that carries it
+    /// can arrive from any plugin.
+    #[test]
+    fn take_a_snapshot_follows_the_capability_rather_than_a_tool_id() {
+        let without = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
+            [true; QuickAction::ALL.len()],
+            RegistryFacts {
+                snapshot_tool: false,
+                ..everything_installed()
+            },
+            0,
+        );
+
+        assert_eq!(
+            entry(without, MenuCommand::TakeSnapshot).availability,
+            MenuAvailability::Disabled("No installed tool takes a snapshot")
+        );
+        assert_eq!(
+            entry(menu_state(1, Some(view())), MenuCommand::TakeSnapshot).availability,
+            MenuAvailability::Enabled
+        );
+    }
+
+    /// The installed build answers the same way: this is the query the
+    /// chrome runs, against the registry the app assembles.
+    #[test]
+    fn the_installed_registry_answers_the_menus_questions() {
+        let facts = RegistryFacts::of(&crate::build_registry());
+
+        assert_eq!(
+            facts.commands.has(MenuCommand::SelectAll),
+            cfg!(feature = "commands-core")
+        );
+        assert_eq!(facts.snapshot_tool, cfg!(feature = "tools-basic"));
+        assert_eq!(facts.any_tool, cfg!(feature = "tools-basic"));
+    }
+
+    /// Open Recent is live when there is something to open, and says why
+    /// when there is not.
+    #[test]
+    fn open_recent_follows_the_recents_list() {
+        let empty = MenuState::new(
+            0,
+            None,
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
+            [true; QuickAction::ALL.len()],
+            everything_installed(),
+            0,
+        );
+
+        assert_eq!(
+            entry(empty, MenuCommand::OpenRecent).availability,
+            MenuAvailability::Disabled("No documents have been opened yet")
+        );
+        assert_eq!(
+            entry(menu_state(0, None), MenuCommand::OpenRecent).availability,
+            MenuAvailability::Enabled,
+            "a recents list makes it live even with no document open"
+        );
+    }
+
+    /// File > Open and the Help entries work with no document, which is the
+    /// only way out of an empty window.
+    #[test]
+    fn the_commands_that_need_no_document_stay_live_without_one() {
+        let state = menu_state(0, None);
+
+        for command in [
+            MenuCommand::Open,
+            MenuCommand::Quit,
+            MenuCommand::Preferences,
+            MenuCommand::About,
+            MenuCommand::KeyboardShortcuts,
+        ] {
+            assert_eq!(
+                entry(state, command).availability,
+                MenuAvailability::Enabled,
+                "{} needs no document",
+                command.id()
+            );
+        }
     }
 
     fn item_names(menu: &Menu) -> Vec<String> {
@@ -927,16 +1280,17 @@ mod tests {
             vec![
                 "Undo (Document editing lands in M3)",
                 "Redo (Document editing lands in M3)",
-                // Two tabs are open in this state, so Find is live.
+                // Two tabs are open in this state, so the rest are live.
+                "Select All",
+                "Deselect All",
+                "Take a Snapshot",
                 "Find…",
+                "Preferences…",
             ]
         );
         assert_eq!(
             item_names(&menus[4]),
-            vec![
-                "About Onionskin (Help commands land in M2 P11)",
-                "Keyboard Shortcuts (Help commands land in M2 P11)",
-            ]
+            vec!["About Onionskin", "Keyboard Shortcuts"]
         );
     }
 
@@ -958,14 +1312,9 @@ mod tests {
         );
         // Enabled means the native item carries an action to raise, and there
         // is nothing to find in a window with no document.
-        assert_eq!(
-            item_names(&native_menus(menu_state(1, None))[1]).last(),
-            Some(&"Find…".to_owned())
-        );
-        assert_eq!(
-            item_names(&native_menus(menu_state(0, None))[1]).last(),
-            Some(&"Find… (No document is open)".to_owned())
-        );
+        assert!(item_names(&native_menus(menu_state(1, None))[1]).contains(&"Find…".to_owned()));
+        assert!(item_names(&native_menus(menu_state(0, None))[1])
+            .contains(&"Find… (No document is open)".to_owned()));
     }
 
     #[test]
@@ -1062,9 +1411,13 @@ mod tests {
         let state = MenuState::new(
             1,
             Some(view()),
-            ShellViewState::new(WindowAppearance::Dark),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
-            ExportCodecs::default(),
+            RegistryFacts {
+                codecs: ExportCodecs::default(),
+                ..everything_installed()
+            },
+            0,
         );
 
         let availability: Vec<_> = main_menu_schema(state)[0]
@@ -1098,9 +1451,13 @@ mod tests {
         let state = MenuState::new(
             1,
             Some(view()),
-            ShellViewState::new(WindowAppearance::Dark),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
-            ExportCodecs::installed(|id| id != "svg"),
+            RegistryFacts {
+                codecs: ExportCodecs::installed(|id| id != "svg"),
+                ..everything_installed()
+            },
+            0,
         );
 
         let availability: Vec<_> = main_menu_schema(state)[0]
@@ -1198,7 +1555,7 @@ mod tests {
 
     #[test]
     fn shell_view_selections_and_native_labels_share_one_schema() {
-        let mut shell_view = ShellViewState::new(WindowAppearance::Dark);
+        let mut shell_view = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
         shell_view.apply(ShellViewAction::ToggleNavigationPane);
         shell_view.apply(ShellViewAction::TogglePageControls);
         shell_view.apply(ShellViewAction::SetTheme(ThemePreference::Light));
@@ -1211,7 +1568,8 @@ mod tests {
             Some(view()),
             shell_view,
             quick_actions_visible,
-            all_codecs(),
+            everything_installed(),
+            0,
         );
         let entries = &main_menu_schema(state)[2].entries;
         let native_labels: Vec<_> = native_menus(state)[2]

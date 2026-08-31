@@ -8,13 +8,13 @@ use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Attachment, Document, FitMode, GeometryError, Layer, ObjRef, OutlineItem, PageAlignment,
     PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement, PagePoint,
-    PageQuad, PageRect, RenderRequest, RenderResponse, SearchOptions, SearchState, SignatureField,
-    ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint, ViewRect, ViewRotation, ViewSize,
-    Viewport, ViewportError,
+    PageQuad, PageRect, Provenance, RenderRequest, RenderResponse, SearchOptions, SearchState,
+    SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint, ViewRect,
+    ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
-    ExportError, ExportRequest, ExportedFile, Overlay, PageRange, PluginRegistry, PointerInput,
-    ToolCtx,
+    CommandCtx, CommandError, ExportError, ExportRequest, ExportedFile, Overlay, PageRange,
+    PluginRegistry, PointerInput, ToolCtx,
 };
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
@@ -104,6 +104,10 @@ pub enum CanvasError {
     /// The build has no codec for the format a menu entry asked for, because
     /// the plugin that owns it was compiled out.
     UnknownCodec(&'static str),
+    /// The same, for a command: the entry that offered it asked the registry
+    /// first, so reaching this means the registry changed under the menu.
+    UnknownCommand(&'static str),
+    Command(CommandError),
     Export(ExportError),
     Geometry(GeometryError),
     SnapshotUnrendered {
@@ -155,6 +159,8 @@ impl fmt::Display for CanvasError {
                 write!(f, "tool {index} is outside a {count}-tool registry")
             }
             Self::UnknownCodec(id) => write!(f, "no {id} codec is installed"),
+            Self::UnknownCommand(id) => write!(f, "no plugin registers the {id} command"),
+            Self::Command(error) => write!(f, "{error}"),
             Self::Export(error) => write!(f, "{error}"),
             Self::WorkerSilent { pages, waited } => write!(
                 f,
@@ -173,6 +179,7 @@ impl std::error::Error for CanvasError {
             Self::Input(error) => Some(error),
             Self::Render(error) => Some(error),
             Self::Export(error) => Some(error),
+            Self::Command(error) => Some(error),
             Self::Geometry(error) => Some(error),
             Self::EmptyDocument
             | Self::GenerationExhausted
@@ -180,6 +187,7 @@ impl std::error::Error for CanvasError {
             | Self::InvalidImageCrop { .. }
             | Self::ToolOutOfRange { .. }
             | Self::UnknownCodec(_)
+            | Self::UnknownCommand(_)
             | Self::SnapshotUnrendered { .. }
             | Self::SnapshotEmpty { .. }
             | Self::SnapshotEncode(_)
@@ -418,6 +426,33 @@ impl CanvasModel {
             .codec(codec)
             .ok_or(CanvasError::UnknownCodec(codec))?;
         Ok(codec.export(&mut self.document, &request)?)
+    }
+
+    /// How this document was opened: clean, or repaired to make it open.
+    /// The shell owes the user a notice for the second case.
+    pub fn provenance(&self) -> &Provenance {
+        self.document.provenance()
+    }
+
+    /// Run a registered command against this document, on the page the
+    /// viewport is on.
+    ///
+    /// Paired here for the same reason `export` is: the chrome should not
+    /// have to hold the registry and the document at once and get their
+    /// lifetimes right. The command is found by the id the menu entry
+    /// carries, which is the id the availability query asked about.
+    pub fn run_command(&mut self, id: &'static str) -> Result<(), CanvasError> {
+        let command = self
+            .registry
+            .commands()
+            .iter()
+            .find(|command| command.id == id)
+            .ok_or(CanvasError::UnknownCommand(id))?;
+        (command.run)(&mut CommandCtx {
+            doc: &mut self.document,
+            page: self.viewport.current_page(),
+        })
+        .map_err(CanvasError::Command)
     }
 
     /// The text the current selection covers, which is what the context

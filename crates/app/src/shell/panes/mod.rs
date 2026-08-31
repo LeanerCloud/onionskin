@@ -553,6 +553,10 @@ fn menu_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "shell-test-support")]
+    use crate::preferences::ThemePreference;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::ShellSettings;
 
     /// The strip is always there, so the column never collapses to nothing
     /// and the buttons stay reachable with every pane closed.
@@ -630,13 +634,14 @@ mod tests {
             },
         )
         .expect("the canvas starts");
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark);
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
         let theme = shell_view.tokens();
         cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
                 vec![(PathBuf::from("fixture.pdf"), canvas)],
                 shell_view,
+                ShellSettings::defaults(),
                 window,
                 cx,
             )

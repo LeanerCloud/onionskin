@@ -4,32 +4,40 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     canvas as gpui_canvas, div, fill, outline, point, px, size, App, AppContext as _, Application,
     BorderStyle, Bounds, ClipboardItem, Context, DispatchPhase, Hsla, Image, ImageFormat,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point, Render,
-    ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase, Window, WindowBounds,
-    WindowOptions,
+    InteractiveElement as _, IntoElement, KeyBinding, Keystroke, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point,
+    Render, ScrollWheelEvent, Styled as _, Timer, TitlebarOptions, TouchPhase, Window,
+    WindowBounds, WindowOptions,
 };
-use onionskin_core::{Document, ViewPoint, ViewRect, ViewSize};
+use onionskin_core::{Document, Provenance, ViewPoint, ViewRect, ViewSize};
+use onionskin_plugin_api::PluginRegistry;
 
 use self::canvas::{CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList, ViewAction};
 use self::chrome::{
-    install_native_menus, install_search_keybindings, ExportCodecs, MenuState, ShellFrame,
-    ShellViewState, ThemeTokens,
+    command_defaults, command_for_id, install_native_menus, install_search_keybindings, MenuState,
+    QuickAction, RegistryFacts, RunCommand, ShellFrame, ShellViewState, ThemeTokens,
 };
+use crate::config::ConfigPaths;
+use crate::keymap::{platform_keystroke, Binding, Keymap};
+use crate::preferences::Preferences;
+use crate::recents::Recents;
 
 pub mod canvas;
 mod chrome;
 mod context_menu;
+mod dialog;
 mod find_bar;
 #[cfg(test)]
 mod fixtures;
+mod home;
 pub mod input;
 mod panes;
+mod preferences_dialog;
 
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 860.0;
@@ -38,7 +46,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Debug)]
 pub enum ShellError {
-    NoDocuments,
     Open {
         path: PathBuf,
         source: onionskin_core::Error,
@@ -54,7 +61,6 @@ pub enum ShellError {
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoDocuments => write!(f, "cannot open a window without a PDF path"),
             Self::Open { path, source } => {
                 write!(f, "cannot open PDF {}: {source}", path.display())
             }
@@ -73,7 +79,7 @@ impl std::error::Error for ShellError {
             Self::Open { source, .. } => Some(source),
             Self::ResolvePath { source, .. } => Some(source),
             Self::Canvas(error) => Some(error),
-            Self::NoDocuments | Self::Window(_) => None,
+            Self::Window(_) => None,
         }
     }
 }
@@ -82,6 +88,147 @@ impl From<CanvasError> for ShellError {
     fn from(error: CanvasError) -> Self {
         Self::Canvas(error)
     }
+}
+
+/// What the app read from disk before the window opened: the three config
+/// files, and everything that went wrong reading them.
+///
+/// Loaded once and handed to the frame, rather than read where each is
+/// needed, so a session's keymap and preferences cannot change under it and
+/// every failure is reportable in one place.
+pub(in crate::shell) struct ShellSettings {
+    pub(in crate::shell) paths: ConfigPaths,
+    pub(in crate::shell) preferences: Preferences,
+    pub(in crate::shell) recents: Recents,
+    /// What the app's own registry answers, for the menus to consult when no
+    /// document is open and there is no tab's registry to ask.
+    pub(in crate::shell) registry: RegistryFacts,
+    /// The keystrokes in force, already checked against GPUI's parser.
+    pub(in crate::shell) bindings: Vec<Binding>,
+    pub(in crate::shell) notices: Vec<String>,
+}
+
+impl ShellSettings {
+    pub(in crate::shell) fn load(paths: ConfigPaths, registry: &PluginRegistry) -> Self {
+        let mut notices = Vec::new();
+        let (preferences, preference_errors) = Preferences::load(paths.preferences.as_deref());
+        notices.extend(preference_errors.iter().map(ToString::to_string));
+        let (mut recents, recent_errors) = Recents::load(paths.recents.as_deref());
+        notices.extend(recent_errors.iter().map(ToString::to_string));
+        recents.truncate(preferences.recent_documents);
+
+        let defaults = command_defaults(
+            registry
+                .commands()
+                .iter()
+                .map(|command| (command.id, command.keybind)),
+        );
+        let macos = cfg!(target_os = "macos");
+        let keymap = Keymap::load(&defaults, paths.keymap.as_deref(), macos);
+        notices.extend(keymap.errors().iter().map(ToString::to_string));
+        let (bindings, unbindable) = bindable(keymap.bindings());
+        notices.extend(unbindable);
+
+        Self {
+            paths,
+            preferences,
+            recents,
+            registry: RegistryFacts::of(registry),
+            bindings,
+            notices,
+        }
+    }
+
+    /// Gated on the feature its callers are gated on: every test that uses
+    /// this is a windowed one, and a `--features shell` test build would
+    /// otherwise compile it with nothing calling it.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn defaults() -> Self {
+        Self::load(ConfigPaths::default(), &PluginRegistry::new())
+    }
+}
+
+/// The bindings GPUI can take, and a message for each one it cannot.
+///
+/// `KeyBinding::new` panics on a keystroke it cannot parse, and the
+/// keystrokes come from a file the user edits, so they are parsed here
+/// first. A binding naming a command with no home in the menus is dropped
+/// the same way: nothing would run it.
+fn bindable(bindings: &[Binding]) -> (Vec<Binding>, Vec<String>) {
+    let macos = cfg!(target_os = "macos");
+    let mut usable = Vec::new();
+    let mut rejected = Vec::new();
+    for binding in bindings {
+        let keystroke = platform_keystroke(&binding.keystroke, macos);
+        if Keystroke::parse(&keystroke).is_err() {
+            rejected.push(format!(
+                "{} is bound to {}, which is not a keystroke this platform can read",
+                binding.id, binding.keystroke
+            ));
+            continue;
+        }
+        if command_for_id(binding.id).is_none() {
+            rejected.push(format!(
+                "{} is bound to {}, but no menu entry runs it",
+                binding.id, binding.keystroke
+            ));
+            continue;
+        }
+        usable.push(binding.clone());
+    }
+    (usable, rejected)
+}
+
+/// Bind everything the keymap ended up with. Window-wide, with no key
+/// context: a shortcut works wherever focus sits, and a text field that
+/// wants a keystroke for itself binds it in its own context, which wins.
+pub(in crate::shell) fn install_command_keybindings(cx: &mut App, bindings: &[Binding]) {
+    let macos = cfg!(target_os = "macos");
+    cx.bind_keys(bindings.iter().filter_map(|binding| {
+        // Total over what `bindable` hands back: it drops and reports the
+        // bindings no menu entry runs, so nothing is dropped silently here.
+        let command = command_for_id(binding.id)?;
+        Some(KeyBinding::new(
+            &platform_keystroke(&binding.keystroke, macos),
+            RunCommand { command },
+            None,
+        ))
+    }));
+}
+
+/// Open a document the way the Page Display preferences say to.
+///
+/// Applied here rather than inside `CanvasModel::new` so the model keeps one
+/// opening behaviour and the preference stays the shell's: the same call
+/// runs for a document from the command line and one from File > Open.
+pub(in crate::shell) fn apply_page_display(
+    model: &mut CanvasModel,
+    preferences: &Preferences,
+) -> Result<(), CanvasError> {
+    model.set_layout_mode(preferences.layout)?;
+    match preferences.zoom.fit() {
+        Some(fit) => model.fit(fit)?,
+        None => model.actual_size()?,
+    };
+    Ok(())
+}
+
+/// What a repaired open owes the user: that the file was broken, and what
+/// was done about it.
+///
+/// Shown for every document that arrives repaired, whether it came from the
+/// command line or from File > Open. Decision 10 says a repaired file opens;
+/// it does not say it opens silently.
+pub(in crate::shell) fn repair_notice(path: &Path, provenance: &Provenance) -> Option<String> {
+    let report = provenance.report()?;
+    Some(format!(
+        "{} was repaired to open it: {}",
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned()
+        ),
+        report.summary()
+    ))
 }
 
 pub struct Canvas {
@@ -447,12 +594,39 @@ where
     P: AsRef<Path>,
 {
     let prepared = prepare_tabs(paths)?;
+    // Every tab builds its own registry; this one is the app's, and only its
+    // command list is read, to resolve the keymap against.
+    let mut settings = ShellSettings::load(ConfigPaths::resolve(), &crate::build_registry());
+    let mut prepared = prepared;
+    for (path, model) in &mut prepared {
+        settings
+            .notices
+            .extend(repair_notice(path, model.provenance()));
+        if let Err(error) = apply_page_display(model, &settings.preferences) {
+            settings.notices.push(format!(
+                "{} opened at the default view: {error}",
+                path.display()
+            ));
+        }
+    }
+    settings.notices.extend(record_opened(
+        &mut settings.recents,
+        prepared.iter().map(|(path, _)| path.as_path()),
+        settings.preferences.recent_documents,
+        settings.paths.recents.as_deref(),
+    ));
+    // On the notice bar for the user, and on stderr for whoever started the
+    // app from a terminal: a keymap that did not load is worth both.
+    for notice in &settings.notices {
+        eprintln!("onionskin: {notice}");
+    }
     let launch_error = Rc::new(RefCell::new(None));
     let error_slot = Rc::clone(&launch_error);
 
     Application::new().run(move |cx: &mut App| {
         install_search_keybindings(cx);
         find_bar::install_keybindings(cx);
+        install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {
             if should_quit_after_window_closed(cx.windows().len()) {
                 cx.quit();
@@ -460,17 +634,19 @@ where
         })
         .detach();
 
-        let shell_view_state = ShellViewState::new(cx.window_appearance());
+        let shell_view_state =
+            ShellViewState::new(cx.window_appearance(), settings.preferences.theme);
         let theme = shell_view_state.tokens();
-        let menu_state = MenuState::initial(
+        let menu_state = MenuState::new(
             prepared.len(),
             prepared.first().map(|(_, model)| model.view_state()),
             shell_view_state,
-            prepared
-                .first()
-                .map_or_else(ExportCodecs::default, |(_, model)| {
-                    ExportCodecs::installed(|id| model.has_codec(id))
-                }),
+            // Every quick action is on until the user hides one.
+            [true; QuickAction::ALL.len()],
+            prepared.first().map_or(settings.registry, |(_, model)| {
+                RegistryFacts::of(model.registry())
+            }),
+            settings.recents.documents().len(),
         );
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         let result = cx.open_window(
@@ -487,7 +663,7 @@ where
                     .into_iter()
                     .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model, theme))))
                     .collect();
-                cx.new(|cx| ShellFrame::new(tabs, shell_view_state, window, cx))
+                cx.new(|cx| ShellFrame::new(tabs, shell_view_state, settings, window, cx))
             },
         );
         match result {
@@ -518,9 +694,6 @@ where
         .into_iter()
         .map(|path| path.as_ref().to_path_buf())
         .collect();
-    if paths.is_empty() {
-        return Err(ShellError::NoDocuments);
-    }
 
     paths
         .into_iter()
@@ -545,6 +718,32 @@ where
             Ok((source_path, model))
         })
         .collect()
+}
+
+/// Record documents as opened and save the list, reporting a save that
+/// failed rather than dropping it.
+pub(in crate::shell) fn record_opened<'a>(
+    recents: &mut Recents,
+    paths: impl Iterator<Item = &'a Path>,
+    limit: usize,
+    file: Option<&Path>,
+) -> Vec<String> {
+    let now = SystemTime::now();
+    let mut changed = false;
+    let mut notices = Vec::new();
+    for path in paths {
+        match recents.record(path, now, limit) {
+            Ok(recorded) => changed |= recorded,
+            Err(error) => notices.push(error.to_string()),
+        }
+    }
+    let Some(file) = file.filter(|_| changed) else {
+        return notices;
+    };
+    if let Err(error) = recents.save(file) {
+        notices.push(error.to_string());
+    }
+    notices
 }
 
 fn should_quit_after_window_closed(open_window_count: usize) -> bool {
@@ -636,12 +835,11 @@ mod tests {
         ));
     }
 
+    /// Starting with no path is the Home view, not a failure: Acrobat
+    /// opens on Home, and File > Open is how a user leaves it.
     #[test]
-    fn empty_startup_is_rejected_explicitly() {
-        assert!(matches!(
-            prepare_tabs(Vec::<PathBuf>::new()),
-            Err(ShellError::NoDocuments)
-        ));
+    fn empty_startup_prepares_no_tabs_rather_than_failing() {
+        assert!(prepare_tabs(Vec::<PathBuf>::new()).unwrap().is_empty());
     }
 
     #[test]
