@@ -638,7 +638,7 @@ The selection tool exposes `ToolCapability::Select`, making P7b's Select
 quick action live through the registry without a P7 application-code change.
 
 Also the page canvas and text-selection context menu. Live at M2: Copy, Copy
-With Formatting, Export Selection As (through P13), Take A Snapshot, Rotate
+With Formatting, Export Selection As (M3: P13's ExportRequest takes a page range with no selection input, so there is no honest query to write), Take A Snapshot, Rotate
 (view rotation, P6a), Add Bookmark is **not** live (bookmark authoring is
 `commands-core`, M3). **Print is not live either**: File > Print is parity row
 139, M3, and needs `crates/print`, which does not exist. Every non-live entry

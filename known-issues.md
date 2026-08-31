@@ -57,6 +57,23 @@ referenced.
   dialog is swallowed like a cancel; numbered export files pad to {:03} so
   above 999 pages they stop sorting in page order; derived numbered files
   overwrite without the prompt the base name gets.
+- P10/foundation review follow-ups (app shell): a snapshot error can
+  overwrite a pointer error in the single status slot (keep-first or queue);
+  PNG snapshot encode is synchronous on the UI thread with no size cap; a
+  second right-click while the canvas context menu is open is swallowed
+  entirely by the occluding dismiss layer rather than repositioning as
+  Acrobat does; the NaN-quad guard in raster_crop and the corner-by-corner
+  overlay mapping both lack tests that would fail a bounding-rect
+  implementation; zoom_limits derives the raster ceiling from the current
+  page only, so a larger visible neighbour can still hit UnrenderableSize at
+  an allowed zoom (handled gracefully via failed_renders and the status
+  line); RowIndex::widest_by_gaps is a two-element array that would panic if
+  a future layout mode put three pages in a row (loud, currently
+  unreachable); the canvas poll's waiting set survives an error exit from
+  the loop, so a much later re-arm can name just-requested pages in
+  WorkerSilent; SearchResult::Unavailable::reason is &'static str so the
+  tool palette shows a fixed pointer to the status line rather than the
+  actual activation error - widen it after P9 lands, since P9 owns that file.
 - content residual nits from review: the UTF-8 BOM path in pdf_text_string
   uses from_utf8_lossy, which can introduce U+FFFD into an /ActualText
   string (a hair against no-invented-characters; tighten when touched);
