@@ -3978,6 +3978,8 @@ dependencies = [
  "onionskin-tools-organize",
  "onionskin-tools-protect",
  "raw-window-handle",
+ "serde",
+ "serde_json",
  "smallvec",
  "unicode-segmentation",
 ]

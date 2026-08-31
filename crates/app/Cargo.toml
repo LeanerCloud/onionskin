@@ -16,9 +16,17 @@ path = "src/bin/a11y_spike.rs"
 required-features = ["a11y-spike"]
 
 [dependencies]
-onionskin-core = { workspace = true, optional = true }
+# Not optional: `plugin-api` depends on it unconditionally, so every build
+# already links it, and the preferences and recents files are expressed in
+# its types.
+onionskin-core.workspace = true
 onionskin-plugin-api.workspace = true
 onionskin-render = { workspace = true, optional = true }
+
+# The keymap, preferences and recents files. Not optional: they are app
+# state, and the headless build carries them so their tests run without GPUI.
+serde.workspace = true
+serde_json.workspace = true
 
 # Fork of gpui 0.2.2 adding PinchEvent/on_pinch and stylus pressure, pinned
 # by rev exactly as Schist pins it (PLAN.md key decision 5).
@@ -43,11 +51,6 @@ onionskin-tools-form = { workspace = true, optional = true }
 onionskin-tools-measure = { workspace = true, optional = true }
 onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
-
-# The registry-exhaustive tests drive every registered tool against a real
-# session, which needs `core` even in the headless, GPUI-free build.
-[dev-dependencies]
-onionskin-core.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = { version = "0.26", optional = true }
@@ -93,7 +96,6 @@ shell = [
     "dep:image",
     "dep:smallvec",
     "dep:unicode-segmentation",
-    "dep:onionskin-core",
     "dep:onionskin-render",
 ]
 shell-test-support = ["shell", "gpui/test-support"]

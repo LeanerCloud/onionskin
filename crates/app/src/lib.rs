@@ -4,6 +4,10 @@
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
+pub mod config;
+pub mod keymap;
+pub mod preferences;
+pub mod recents;
 #[cfg(feature = "shell")]
 pub mod shell;
 
