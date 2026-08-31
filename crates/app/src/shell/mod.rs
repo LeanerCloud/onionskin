@@ -25,6 +25,7 @@ use self::chrome::{
 pub mod canvas;
 mod chrome;
 mod context_menu;
+mod find_bar;
 pub mod input;
 
 const WINDOW_WIDTH: f32 = 1100.0;
@@ -448,6 +449,7 @@ where
 
     Application::new().run(move |cx: &mut App| {
         install_search_keybindings(cx);
+        find_bar::install_keybindings(cx);
         cx.on_window_closed(|cx| {
             if should_quit_after_window_closed(cx.windows().len()) {
                 cx.quit();
