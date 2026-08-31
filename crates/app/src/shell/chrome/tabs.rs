@@ -4830,7 +4830,10 @@ mod tests {
         let (window, _) = bound_window(&["two-page.pdf"], cx);
         cx.run_until_parked();
         let before = current_page(window, cx);
-        assert!(before > 0, "the fixture opens on the first page");
+        assert!(
+            before > 0,
+            "the fixture opens past the first page, which is what leaves Previous Page live"
+        );
 
         window
             .update(cx, |frame, _window, cx| {
