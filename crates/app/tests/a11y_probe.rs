@@ -31,6 +31,9 @@ struct Tree {
     /// has one by that name.
     fork_view_class: Option<String>,
     fork_defines_accessibility_selectors: bool,
+    /// Whether the platform accepted the press this run asked for, or `None`
+    /// when it asked for none.
+    pressed: Option<bool>,
     nodes: Vec<Node>,
 }
 
@@ -84,33 +87,48 @@ fn seed(name: &str) -> PathBuf {
 }
 
 /// Run the app in probe mode over a seed, once per seed for the whole suite.
+fn probe(name: &str) -> &'static Tree {
+    probed(name, None)
+}
+
+/// The same, having first pressed the named control the way VoiceOver
+/// presses one.
+fn probe_pressing(name: &str, control: &str) -> &'static Tree {
+    probed(name, Some(control))
+}
+
+/// One run per seed and press, shared by every test that asks for it.
 ///
 /// Once, because every run opens a real window and because the app writes its
-/// recents file: eleven concurrent copies would race each other over it.
-fn probe(name: &str) -> &'static Tree {
+/// recents file: a dozen concurrent copies would race each other over it. The
+/// lock is held across the run, so the copies are sequential as well as
+/// shared.
+fn probed(name: &str, press: Option<&str>) -> &'static Tree {
     static PROBED: OnceLock<Mutex<BTreeMap<String, &'static Tree>>> = OnceLock::new();
     let probed = PROBED.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut probed = probed.lock().expect("the probe cache is not poisoned");
-    if let Some(tree) = probed.get(name) {
+    let key = format!("{name} pressing {}", press.unwrap_or("nothing"));
+    if let Some(tree) = probed.get(&key) {
         return tree;
     }
-    let tree: &'static Tree = Box::leak(Box::new(run_probe(name)));
-    probed.insert(name.to_owned(), tree);
+    let tree: &'static Tree = Box::leak(Box::new(run_probe(name, press)));
+    probed.insert(key, tree);
     tree
 }
 
-fn run_probe(name: &str) -> Tree {
+fn run_probe(name: &str, press: Option<&str>) -> Tree {
     // The probe is a build of the real app, so it reads and writes the same
     // three config files. Point it at a directory of its own so it neither
     // reads the developer's settings nor records these seeds in their
     // recents list.
     let config = std::env::temp_dir().join("onionskin-a11y-probe");
     std::fs::create_dir_all(&config).expect("the probe's config directory is writable");
-    let output = Command::new(env!("CARGO_BIN_EXE_onionskin"))
-        .arg(seed(name))
-        .env("XDG_CONFIG_HOME", &config)
-        .output()
-        .expect("the probe build of the app runs");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_onionskin"));
+    command.arg(seed(name)).env("XDG_CONFIG_HOME", &config);
+    if let Some(control) = press {
+        command.env("ONIONSKIN_A11Y_PRESS", control);
+    }
+    let output = command.output().expect("the probe build of the app runs");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let start = stdout.find('{').unwrap_or_else(|| {
         panic!(
@@ -131,6 +149,7 @@ fn run_probe(name: &str) -> Tree {
         fork_defines_accessibility_selectors: parsed["forkDefinesAccessibilitySelectors"]
             .as_bool()
             .expect("the probe reports the fork check"),
+        pressed: parsed["pressed"].as_bool(),
         nodes: parsed["nodes"]
             .as_array()
             .expect("the probe reports a node list")
@@ -342,6 +361,36 @@ fn a_control_that_cannot_be_used_says_why_instead_of_disappearing() {
 
     assert_eq!(tree.field(node, "title"), "Previous Page");
     assert_eq!(tree.field(node, "help"), "This is the first page");
+}
+
+/// The press: how a VoiceOver user operates a control, and the one path with
+/// no keyboard and no mouse in it. It leaves through AccessKit's action
+/// handler rather than coming back through a getter, so nothing else in this
+/// file can see it.
+///
+/// Actual Size rather than a page turn, because what it does is visible in the
+/// tree whatever size the window opens at: the zoom reads 100 percent
+/// afterwards and something else before.
+#[test]
+fn a_press_through_the_platform_runs_the_control_it_landed_on() {
+    let before = probe("hello.pdf");
+    let after = probe_pressing("hello.pdf", "actual-size");
+
+    assert_eq!(
+        after.pressed,
+        Some(true),
+        "the platform did not accept a press on Actual Size"
+    );
+    assert_ne!(
+        before.field(before.by_id("zoom-level"), "title"),
+        "Zoom 100 percent",
+        "the view was already at actual size, so this press could not show anything"
+    );
+    assert_eq!(
+        after.field(after.by_id("zoom-level"), "title"),
+        "Zoom 100 percent",
+        "a press through the platform did not run the control"
+    );
 }
 
 /// The rail draws each tool's `icon()` string as visible text, which is an

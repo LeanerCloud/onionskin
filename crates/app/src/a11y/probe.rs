@@ -59,6 +59,20 @@ const POLL: Duration = Duration::from_millis(100);
 /// missing.
 const DEADLINE: Duration = Duration::from_secs(20);
 
+/// The element key of a control to press before the tree is read, named by
+/// `crates/app/tests/a11y_probe.rs`.
+///
+/// Reading proves what a screen reader is told. A press is the other half:
+/// it leaves through AccessKit's action handler rather than coming back
+/// through a getter, and it is how a VoiceOver user operates a control.
+const PRESS: &str = "ONIONSKIN_A11Y_PRESS";
+
+/// Frames to let go by after a press before reading the tree.
+///
+/// The request is recorded by the action handler, drained by the frame after
+/// it, and described by the frame after that.
+const FRAMES_AFTER_A_PRESS: usize = 5;
+
 /// Read the tree once the shell has settled, print it, and quit.
 ///
 /// Called from `shell::run` after the window is activated, so the probe walks
@@ -89,9 +103,23 @@ pub(crate) fn arm(cx: &mut App) {
                 break;
             }
         }
+        let mut pressed = None;
+        if let Ok(key) = std::env::var(PRESS) {
+            pressed = Some(
+                cx.update(|cx| match view_pointer(cx) {
+                    Some(view) => unsafe { press(view, &key) },
+                    None => false,
+                })
+                .unwrap_or(false),
+            );
+            for _ in 0..FRAMES_AFTER_A_PRESS {
+                Timer::after(POLL).await;
+                let _ = cx.update(gpui::App::refresh_windows);
+            }
+        }
         let reported = cx.update(|cx| {
             match view_pointer(cx) {
-                Some(view) => println!("{}", unsafe { dump(view) }),
+                Some(view) => println!("{}", unsafe { dump(view, pressed) }),
                 None => println!("{{\"error\":\"the shell opened no window with a native view\"}}"),
             }
             cx.quit();
@@ -121,24 +149,43 @@ const PAGE_TEXT: &str = "-text-";
 /// # Safety
 /// `view` must be a live `NSView` and this must run on the main thread.
 unsafe fn has_page_text(view: *mut c_void) -> bool {
-    let mut identifiers = Vec::new();
-    unsafe { collect_identifiers(view.cast::<AnyObject>(), &mut identifiers) };
-    identifiers.iter().any(|id| id.contains(PAGE_TEXT))
+    unsafe { first(view.cast::<AnyObject>(), &|id| id.contains(PAGE_TEXT)) }.is_some()
 }
 
+/// Press the control the key names, the way VoiceOver presses one.
+///
+/// Answers whether the press was accepted: AccessKit refuses one on a node
+/// that publishes no click action, which is what a disabled control is.
+///
+/// # Safety
+/// `view` must be a live `NSView` and this must run on the main thread.
+unsafe fn press(view: *mut c_void, key: &str) -> bool {
+    let Some(element) = (unsafe { first(view.cast::<AnyObject>(), &|id| id == key) }) else {
+        return false;
+    };
+    unsafe { msg_send![element, accessibilityPerformPress] }
+}
+
+/// The first descendant whose `accessibilityIdentifier` the predicate accepts.
+///
 /// # Safety
 /// `element` must be a live accessibility element.
-unsafe fn collect_identifiers(element: *mut AnyObject, out: &mut Vec<String>) {
+unsafe fn first(element: *mut AnyObject, matches: &dyn Fn(&str) -> bool) -> Option<*mut AnyObject> {
     let children: *mut AnyObject = unsafe { msg_send![element, accessibilityChildren] };
     if children.is_null() {
-        return;
+        return None;
     }
     let count: usize = unsafe { msg_send![children, count] };
     for index in 0..count {
         let child: *mut AnyObject = unsafe { msg_send![children, objectAtIndex: index] };
-        out.push(unsafe { ns_string(msg_send![child, accessibilityIdentifier]) });
-        unsafe { collect_identifiers(child, out) };
+        if matches(&unsafe { ns_string(msg_send![child, accessibilityIdentifier]) }) {
+            return Some(child);
+        }
+        if let Some(found) = unsafe { first(child, matches) } {
+            return Some(found);
+        }
     }
+    None
 }
 
 /// The `NSView` gpui is drawing the shell into.
@@ -162,7 +209,7 @@ fn view_pointer(cx: &mut App) -> Option<*mut c_void> {
 ///
 /// # Safety
 /// `view` must be a live `NSView` and this must run on the main thread.
-unsafe fn dump(view: *mut c_void) -> String {
+unsafe fn dump(view: *mut c_void, pressed: Option<bool>) -> String {
     let view = view.cast::<AnyObject>();
     let class: *mut AnyObject = unsafe { msg_send![view, class] };
     let mut out = String::from("{\n");
@@ -184,6 +231,15 @@ unsafe fn dump(view: *mut c_void) -> String {
     out.push_str(&format!(
         "  \"forkDefinesAccessibilitySelectors\": {},\n",
         fork_class.is_some_and(defines_accessibility_selectors)
+    ));
+    // Reported so a test that asked for a press can tell "the control ran"
+    // from "there was nothing there to press".
+    out.push_str(&format!(
+        "  \"pressed\": {},\n",
+        match pressed {
+            Some(accepted) => accepted.to_string(),
+            None => "null".to_owned(),
+        }
     ));
     out.push_str("  \"nodes\": [\n");
     let mut nodes = Vec::new();
