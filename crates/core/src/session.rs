@@ -344,7 +344,11 @@ impl Document {
                 count: self.page_count,
             });
         }
-        if !self.search.set_query(needle, options) {
+        // A walk that died is worth repeating even when the query has not
+        // changed: the state below would otherwise report the loss forever,
+        // and the only way out would be editing the needle and editing it back.
+        let died = self.search.stopped().is_some();
+        if !self.search.set_query(needle, options) && !died {
             return Ok(false);
         }
         if needle.is_empty() {
