@@ -15,6 +15,7 @@
 //! carries none of it.
 
 use std::ffi::{c_char, c_void, CStr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{App, Timer};
@@ -67,11 +68,22 @@ const DEADLINE: Duration = Duration::from_secs(20);
 /// through a getter, and it is how a VoiceOver user operates a control.
 const PRESS: &str = "ONIONSKIN_A11Y_PRESS";
 
-/// Frames to let go by after a press before reading the tree.
+/// Action requests the platform's handler has delivered to the shell.
 ///
-/// The request is recorded by the action handler, drained by the frame after
-/// it, and described by the frame after that.
-const FRAMES_AFTER_A_PRESS: usize = 5;
+/// A press leaves through AccessKit and arrives at the shell's own queue, and
+/// nothing outside the process can see that it did. Counting it here is what
+/// lets a test tell "the press reached the shell" from "AccessKit refused it",
+/// without waiting for the frame that runs it: gpui stops drawing a window
+/// macOS reports as not visible, so on a machine where something else is in
+/// front the request is queued and stays queued until the window draws again.
+/// What running it does is `crates/app/src/shell/chrome/tabs.rs`, in a window
+/// the test owns.
+static DELIVERED: AtomicUsize = AtomicUsize::new(0);
+
+/// Count one delivery. Called by the platform adapter's action handler.
+pub(crate) fn record_delivery() {
+    DELIVERED.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Read the tree once the shell has settled, print it, and quit.
 ///
@@ -112,10 +124,11 @@ pub(crate) fn arm(cx: &mut App) {
                 })
                 .unwrap_or(false),
             );
-            for _ in 0..FRAMES_AFTER_A_PRESS {
-                Timer::after(POLL).await;
-                let _ = cx.update(gpui::App::refresh_windows);
-            }
+            // One more frame if the window is drawing at all, so a machine
+            // where it is runs the press before the tree is read.
+            Timer::after(POLL).await;
+            let _ = cx.update(gpui::App::refresh_windows);
+            Timer::after(POLL).await;
         }
         let reported = cx.update(|cx| {
             match view_pointer(cx) {
@@ -240,6 +253,10 @@ unsafe fn dump(view: *mut c_void, pressed: Option<bool>) -> String {
             Some(accepted) => accepted.to_string(),
             None => "null".to_owned(),
         }
+    ));
+    out.push_str(&format!(
+        "  \"delivered\": {},\n",
+        DELIVERED.load(Ordering::Relaxed)
     ));
     out.push_str("  \"nodes\": [\n");
     let mut nodes = Vec::new();

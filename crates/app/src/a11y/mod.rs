@@ -57,6 +57,8 @@ impl Shared {
     /// Record what a screen reader asked for. The platform's action handler
     /// does nothing else, and the tests come through the same door.
     fn record(&self, request: ActionRequest) {
+        #[cfg(all(feature = "a11y-probe", target_os = "macos"))]
+        probe::record_delivery();
         self.requests.borrow_mut().push(request);
     }
 }

@@ -34,6 +34,8 @@ struct Tree {
     /// Whether the platform accepted the press this run asked for, or `None`
     /// when it asked for none.
     pressed: Option<bool>,
+    /// How many action requests reached the shell's own queue during the run.
+    delivered: u64,
     nodes: Vec<Node>,
 }
 
@@ -157,6 +159,9 @@ fn run_probe(name: &str, press: Option<&str>) -> Tree {
             .as_bool()
             .expect("the probe reports the fork check"),
         pressed: parsed["pressed"].as_bool(),
+        delivered: parsed["delivered"]
+            .as_u64()
+            .expect("the probe reports how many requests reached the shell"),
         nodes: parsed["nodes"]
             .as_array()
             .expect("the probe reports a node list")
@@ -377,32 +382,33 @@ fn a_control_that_cannot_be_used_says_why_instead_of_disappearing() {
 }
 
 /// The press: how a VoiceOver user operates a control, and the one path with
-/// no keyboard and no mouse in it. It leaves through AccessKit's action
-/// handler rather than coming back through a getter, so nothing else in this
-/// file can see it.
+/// no keyboard and no mouse in it. It leaves through the real
+/// `accessibilityPerformPress` selector, through AccessKit's action handler,
+/// and arrives at the shell's own queue.
 ///
-/// Actual Size rather than a page turn, because what it does is visible in the
-/// tree whatever size the window opens at: the zoom reads 100 percent
-/// afterwards and something else before.
+/// What this does not assert is the control running, because running it takes
+/// a frame and gpui stops drawing a window macOS reports as not visible, which
+/// is any run on a machine with something else in front. The request is not
+/// lost there, it waits for the window to draw. That the shell runs what it
+/// drains is `a_screen_reader_press_runs_the_control_it_named`, in a window
+/// the test owns.
 #[test]
-fn a_press_through_the_platform_runs_the_control_it_landed_on() {
+fn a_press_through_the_platform_reaches_the_shell() {
     let before = probe("hello.pdf");
     let after = probe_pressing("hello.pdf", "actual-size");
 
     assert_eq!(
-        after.pressed,
-        Some(true),
-        "the platform did not accept a press on Actual Size"
-    );
-    assert_ne!(
-        before.field(before.by_id("zoom-level"), "title"),
-        "Zoom 100 percent",
-        "the view was already at actual size, so this press could not show anything"
+        before.delivered, 0,
+        "a run that pressed nothing still delivered a request"
     );
     assert_eq!(
-        after.field(after.by_id("zoom-level"), "title"),
-        "Zoom 100 percent",
-        "a press through the platform did not run the control"
+        after.pressed,
+        Some(true),
+        "the platform refused a press on Actual Size"
+    );
+    assert_eq!(
+        after.delivered, 1,
+        "the press did not reach the shell's queue"
     );
 }
 
