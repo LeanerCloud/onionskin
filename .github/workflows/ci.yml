@@ -54,13 +54,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # 159 MB of opt-in corpus for one file, so it is cached on the revisions
-      # pinned in fetch.sh and its checksum manifest rather than downloaded on
-      # every run.
+      # pinned in fetch.sh, its helper scripts, and its checksum manifest rather
+      # than downloaded on every run.
       - name: Cache the hayro corpus
         uses: actions/cache@v4
         with:
           path: corpus/external
-          key: corpus-hayro-${{ hashFiles('corpus/fetch.sh', 'corpus/checksums/hayro-corpus.sha256') }}
+          key: corpus-hayro-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
       # benches/paint.rs measures first paint on hayro-corpus/0041790.pdf, the
       # heaviest page the M1 spike found. fetch.sh skips a set already on disk,
       # so a cache hit makes this a no-op.

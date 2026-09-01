@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly EXTERNAL_DIR="$SCRIPT_DIR/external"
 readonly CHECKSUM_DIR="$SCRIPT_DIR/checksums"
+readonly R2_HELPER="$SCRIPT_DIR/r2.py"
 readonly SHA256_VERIFIER="$SCRIPT_DIR/verify-sha256.py"
 readonly STAMP_NAME=".fetch-stamp"
 
@@ -174,29 +175,14 @@ fetch_tarball() {
 	log "fetched $dest"
 }
 
-# Read the pdf ids out of one of hayro's manifest files. Entries are either a
-# bare string or an object with an "id" key; anything else is a manifest format
-# change and should stop the fetch rather than silently produce a short set.
+# Read the pdf ids out of one of hayro's manifest files. The helper validates
+# the whole manifest before anything reaches a URL or a filesystem path.
 manifest_ids() {
 	local manifest="$1"
 	local python
+	require_r2_helper
 	python="$(python_exe)"
-	"$python" - "$manifest" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    entries = json.load(handle)
-
-for entry in entries:
-    if isinstance(entry, str):
-        print(entry)
-    elif isinstance(entry, dict) and "id" in entry:
-        print(entry["id"])
-    else:
-        sys.exit(f"unrecognised manifest entry in {path}: {entry!r}")
-PY
+	PYTHONDONTWRITEBYTECODE=1 "$python" "$R2_HELPER" ids "$manifest"
 }
 
 checksum_manifest_for_remote_set() {
@@ -220,20 +206,42 @@ verify_remote_set() {
 
 	require_checksum_inputs "$manifest"
 	python="$(python_exe)"
-	"$python" "$SHA256_VERIFIER" "$manifest" "$dest" ||
+	PYTHONDONTWRITEBYTECODE=1 "$python" "$SHA256_VERIFIER" "$manifest" "$dest" ||
 		die "checksum verification failed for $dest using $manifest"
+}
+
+require_r2_helper() {
+	[[ -f "$R2_HELPER" ]] || die "R2 helper missing: $R2_HELPER"
 }
 
 require_checksum_inputs() {
 	local manifest="$1"
 
 	[[ -f "$manifest" ]] || die "checksum manifest missing: $manifest"
+	require_r2_helper
 	[[ -f "$SHA256_VERIFIER" ]] || die "checksum verifier missing: $SHA256_VERIFIER"
 }
 
+r2_destination_state() {
+	local dest="$1"
+	local python
+	require_r2_helper
+	python="$(python_exe)"
+	PYTHONDONTWRITEBYTECODE=1 "$python" "$R2_HELPER" check-dest "$dest"
+}
+
+publish_r2_set() {
+	local staging="$1" dest="$2" source="$3" revision="$4" checksum_manifest="$5"
+	local python
+	require_r2_helper
+	python="$(python_exe)"
+	PYTHONDONTWRITEBYTECODE=1 "$python" "$R2_HELPER" publish \
+		"$staging" "$dest" "$source" "$revision" "$checksum_manifest"
+}
+
 # Fetch one of hayro's R2-hosted sets, one pdf per id in the pinned manifest.
-# Individual files are skipped when already on disk, so an interrupted run
-# resumes instead of starting over.
+# Downloads land in a per-run staging directory and are published only after
+# destination and checksum validation have both passed.
 fetch_hayro_remote_set() {
 	local kind="$1"
 	local dest="$EXTERNAL_DIR/hayro-$kind"
@@ -243,7 +251,10 @@ fetch_hayro_remote_set() {
 		readonly checksum_manifest
 	fi
 
-	if is_present "$dest"; then
+	local dest_state
+	dest_state="$(r2_destination_state "$dest")" ||
+		die "invalid R2 destination: $dest"
+	if [[ "$dest_state" == "stamped" ]]; then
 		if [[ -n "$checksum_manifest" ]]; then
 			verify_remote_set "$dest" "$checksum_manifest"
 		else
@@ -258,6 +269,10 @@ fetch_hayro_remote_set() {
 	fi
 
 	ensure_set hayro
+	dest_state="$(r2_destination_state "$dest")" ||
+		die "invalid R2 destination after fetching hayro manifest set: $dest"
+	[[ "$dest_state" == "absent" ]] ||
+		die "R2 destination changed before download: $dest"
 	[[ -f "$manifest" ]] || die "manifest missing after fetching hayro: $manifest"
 
 	# Read the ids through a file rather than a process substitution, so a
@@ -274,16 +289,15 @@ fetch_hayro_remote_set() {
 	done <"$id_list"
 	[[ "${#ids[@]}" -gt 0 ]] || die "manifest lists no ids: $manifest"
 
-	mkdir -p -- "$dest"
+	[[ -d "$SCRATCH_DIR" ]] || die "scratch directory was never created"
+	local staging="$SCRATCH_DIR/hayro-$kind"
+	rm -rf -- "$staging"
+	mkdir -p -- "$staging"
 	log "downloading ${#ids[@]} files from $HAYRO_ASSETS_BASE/$kind/"
 
-	local downloaded=0 cached=0 id target
+	local downloaded=0 id target
 	for id in "${ids[@]}"; do
-		target="$dest/$id.pdf"
-		if [[ -s "$target" ]]; then
-			cached=$((cached + 1))
-			continue
-		fi
+		target="$staging/$id.pdf"
 		curl --fail --show-error --silent --location --retry 3 \
 			--output "$target.partial" "$HAYRO_ASSETS_BASE/$kind/$id.pdf" ||
 			die "download failed: $HAYRO_ASSETS_BASE/$kind/$id.pdf"
@@ -291,14 +305,22 @@ fetch_hayro_remote_set() {
 		downloaded=$((downloaded + 1))
 	done
 
+	local unchecked=false
+	local publish_checksum_manifest="--no-checksum"
 	if [[ -n "$checksum_manifest" ]]; then
-		verify_remote_set "$dest" "$checksum_manifest"
+		verify_remote_set "$staging" "$checksum_manifest"
+		publish_checksum_manifest="$checksum_manifest"
 	else
+		unchecked=true
+	fi
+	publish_r2_set "$staging" "$dest" \
+		"$HAYRO_ASSETS_BASE/$kind/ (ids from hayro manifest_$kind.json)" \
+		"$HAYRO_REV" "$publish_checksum_manifest" ||
+		die "could not publish fetched R2 set: $dest"
+	if [[ "$unchecked" == true ]]; then
 		log "fetched without checksum enforcement: $dest"
 	fi
-	write_stamp "$dest" "$HAYRO_ASSETS_BASE/$kind/ (ids from hayro manifest_$kind.json)" \
-		"$HAYRO_REV"
-	log "fetched $dest ($downloaded downloaded, $cached already present)"
+	log "fetched $dest ($downloaded downloaded)"
 }
 
 # --- Sets ---------------------------------------------------------------------

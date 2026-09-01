@@ -3,13 +3,14 @@
 //! suite has its final shape from day one and each one lands by deleting
 //! an `#[ignore]`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{env, fs, process};
 
 const ALPHA_SHA256: &str = "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060";
+const REPLACEMENT_SHA256: &str = "1d054714357ce5ee01723ed91fcaa69206e221faaf9c1fad64f73be2e5d051da";
 const TINY_PDF_SHA256: &str = "98704aee8801c3738f9b38577f4c7917b82da5d770a8f4c1c162293e49c0d172";
 
 /// Guarantee 1, round-trip: for every corpus file, open then save with no
@@ -163,8 +164,8 @@ fn open_and_scroll_stay_within_the_performance_budgets() {
         "the bench job runs corpus fetch validation but does not install Python"
     );
     assert!(
-        bench_job.contains("hashFiles('corpus/fetch.sh', 'corpus/checksums/hayro-corpus.sha256')"),
-        "the bench corpus cache key does not include the checksum manifest"
+        bench_job.contains("hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"),
+        "the bench corpus cache key does not include the fetch helpers and checksum manifest"
     );
     // A job-level condition sits at four spaces, a step's at eight. A gate that
     // only runs on some events is not a gate on the others.
@@ -252,6 +253,20 @@ fn checksum_verifier_rejects_portable_manifest_and_tree_errors() {
         write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha:stream.pdf")]);
     });
     assert_checksum_failure(
+        "checksum-windows-reserved",
+        "reserved",
+        |manifest, _root| {
+            write_manifest(manifest, &[&format!("{ALPHA_SHA256}  con.pdf")]);
+        },
+    );
+    assert_checksum_failure(
+        "checksum-control-character",
+        "control",
+        |manifest, _root| {
+            write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha\t.pdf")]);
+        },
+    );
+    assert_checksum_failure(
         "checksum-empty-manifest",
         "no entries",
         |manifest, _root| {
@@ -287,6 +302,149 @@ fn checksum_verifier_rejects_portable_manifest_and_tree_errors() {
         fs::write(root.join("alpha.pdf"), b"beta\n").expect("test PDF is written");
         write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
     });
+}
+
+#[test]
+fn checksum_helpers_fail_closed_without_a_secure_backend() {
+    let temp = TempTree::new("checksum-unsupported-backend");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("checksum root is created");
+    fs::write(root.join("alpha.pdf"), b"alpha\n").expect("checksum PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let driver = temp.path().join("unsupported_backend_driver.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import pathlib
+import sys
+
+verifier_path = pathlib.Path(sys.argv[1])
+manifest = pathlib.Path(sys.argv[2])
+root = pathlib.Path(sys.argv[3])
+staging = pathlib.Path(sys.argv[4])
+dest = pathlib.Path(sys.argv[5])
+
+sys.path.insert(0, str(verifier_path.parent))
+spec = importlib.util.spec_from_file_location("verify_sha256_under_test", verifier_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+module.r2.can_use_dir_fd = lambda: False
+module.r2.can_publish_with_dir_fd = lambda: False
+module.r2.has_windows_handles = lambda: False
+
+errors, _ = module.verify(manifest, root)
+if not any("unsupported platform" in error for error in errors):
+    raise SystemExit(f"expected verifier unsupported-backend failure, got {errors!r}")
+
+try:
+    module.r2.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+except module.r2.R2Error as error:
+    if "unsupported platform" in str(error):
+        raise SystemExit(0)
+    raise SystemExit(f"unexpected publisher error: {error}")
+raise SystemExit("publisher succeeded without a secure backend")
+"#,
+    )
+    .expect("unsupported backend driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/verify-sha256.py"))
+        .arg(&manifest)
+        .arg(&root)
+        .arg(&staging)
+        .arg(&dest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("unsupported backend driver is runnable");
+    assert!(
+        output.status.success(),
+        "helpers did not fail closed without a secure backend\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_verifier_rejects_a_root_identity_change_before_dir_fd_open() {
+    let temp = TempTree::new("checksum-root-identity-change-dir-fd");
+    let root = temp.path().join("root");
+    let old_root = temp.path().join("old-root");
+    let replacement = temp.path().join("replacement-root");
+    fs::create_dir(&root).expect("original root is created");
+    fs::create_dir(&replacement).expect("replacement root is created");
+    fs::write(root.join("alpha.pdf"), b"original\n").expect("original PDF is written");
+    fs::write(replacement.join("alpha.pdf"), b"replacement\n").expect("replacement PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{REPLACEMENT_SHA256}  alpha.pdf")]);
+
+    let driver = temp.path().join("root_identity_dir_fd_driver.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+verifier_path = pathlib.Path(sys.argv[1])
+manifest = pathlib.Path(sys.argv[2])
+root = pathlib.Path(sys.argv[3])
+old_root = pathlib.Path(sys.argv[4])
+replacement = pathlib.Path(sys.argv[5])
+
+sys.path.insert(0, str(verifier_path.parent))
+spec = importlib.util.spec_from_file_location("verify_sha256_under_test", verifier_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.r2.can_use_dir_fd():
+    raise SystemExit("dir-fd verification is unavailable on this platform")
+
+original_read_manifest = module.read_manifest
+
+def swapping_read_manifest(path):
+    result = original_read_manifest(path)
+    os.rename(root, old_root)
+    os.rename(replacement, root)
+    return result
+
+module.read_manifest = swapping_read_manifest
+errors, _ = module.verify(manifest, root)
+if not any("root directory changed during verification" in error for error in errors):
+    raise SystemExit(f"expected dir-fd root identity failure, got {errors!r}")
+"#,
+    )
+    .expect("dir-fd root identity driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/verify-sha256.py"))
+        .arg(&manifest)
+        .arg(&root)
+        .arg(&old_root)
+        .arg(&replacement)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("dir-fd root identity driver is runnable");
+    assert!(
+        output.status.success(),
+        "verifier did not reject pre-open root identity substitution\n{}",
+        output_text(&output)
+    );
 }
 
 #[cfg(unix)]
@@ -359,6 +517,1717 @@ fn checksum_verifier_rejects_a_windows_junction_root() {
     assert!(text.contains("reparse point not allowed"), "{text}");
 }
 
+#[cfg(windows)]
+#[test]
+fn checksum_verifier_rejects_a_windows_reparse_pdf_entry() {
+    let temp = TempTree::new("checksum-windows-reparse-pdf");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("test root is created");
+    let target = temp.path().join("target.pdf");
+    fs::write(&target, b"alpha\n").expect("target PDF is written");
+    create_windows_reparse_for_file_role(&root.join("alpha.pdf"), &target);
+
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+    let output = run_checksum_verifier(&manifest, &root);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "Windows reparse PDF entry unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("reparse point not allowed"), "{text}");
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_verifier_windows_root_handle_denies_rename_during_verification() {
+    let temp = TempTree::new("checksum-windows-root-rename-denial");
+    let root = temp.path().join("root");
+    let old_root = temp.path().join("old-root");
+    fs::create_dir(&root).expect("checksum root is created");
+    fs::write(root.join("alpha.pdf"), b"alpha\n").expect("checksum PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+
+    let driver = temp.path().join("windows_root_rename_denial.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+verifier_path = pathlib.Path(sys.argv[1])
+manifest = pathlib.Path(sys.argv[2])
+root = pathlib.Path(sys.argv[3])
+old_root = pathlib.Path(sys.argv[4])
+
+sys.path.insert(0, str(verifier_path.parent))
+spec = importlib.util.spec_from_file_location("verify_sha256_under_test", verifier_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.r2.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+rename_denied = False
+original_reader = module.root_pdfs_from_windows
+
+def racing_reader(path):
+    global rename_denied
+    try:
+        os.rename(root, old_root)
+    except OSError:
+        rename_denied = True
+    else:
+        os.rename(old_root, root)
+        raise SystemExit("root rename succeeded while verifier handle was held")
+    return original_reader(path)
+
+module.root_pdfs_from_windows = racing_reader
+errors, _ = module.verify(manifest, root)
+if errors:
+    raise SystemExit(f"verification failed unexpectedly: {errors!r}")
+if not rename_denied:
+    raise SystemExit("root rename was not attempted")
+"#,
+    )
+    .expect("Windows root rename-denial driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/verify-sha256.py"))
+        .arg(&manifest)
+        .arg(&root)
+        .arg(&old_root)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows root rename-denial driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows verifier root handle did not deny rename\n{}",
+        output_text(&output)
+    );
+}
+
+#[test]
+fn checksum_r2_helper_validates_manifest_ids_and_destination_state() {
+    let temp = TempTree::new("checksum-r2-helper-validation");
+
+    let valid = temp.path().join("valid.json");
+    fs::write(&valid, r#"[{"id":"tiny"}]"#).expect("valid R2 manifest is written");
+    let valid_output = run_r2_helper(&[OsStr::new("ids"), valid.as_os_str()]);
+    assert!(
+        valid_output.status.success(),
+        "valid object manifest did not produce ids\n{}",
+        output_text(&valid_output)
+    );
+    assert_eq!(valid_output.stdout, b"tiny\n");
+
+    for (name, contents, diagnostic) in [
+        (
+            "top-level-object",
+            r#"{"id":"tiny"}"#,
+            "top-level JSON array",
+        ),
+        ("non-string-id", r#"[{"id":7}]"#, "id is not a string"),
+        ("traversal-id", r#"["../escape"]"#, "traversal"),
+        ("slash-id", r#"["dir/file"]"#, "path separators"),
+        ("control-id", r#"["line\nfeed"]"#, "control"),
+        ("case-duplicate-id", r#"["Tiny","tiny"]"#, "duplicate"),
+        ("reserved-id", r#"["CON"]"#, "reserved"),
+    ] {
+        let manifest = temp.path().join(format!("{name}.json"));
+        fs::write(&manifest, contents).expect("invalid R2 manifest is written");
+        let output = run_r2_helper(&[OsStr::new("ids"), manifest.as_os_str()]);
+        let text = output_text(&output);
+        assert!(
+            !output.status.success(),
+            "invalid R2 manifest {name} unexpectedly passed\n{text}"
+        );
+        assert!(
+            text.contains(diagnostic),
+            "invalid R2 manifest {name} did not mention {diagnostic:?}\n{text}"
+        );
+    }
+
+    let invalid_utf = temp.path().join("invalid-utf.json");
+    fs::write(&invalid_utf, b"[\"ok\", \"\xff\"]").expect("invalid UTF-8 manifest is written");
+    let invalid_utf_output = run_r2_helper(&[OsStr::new("ids"), invalid_utf.as_os_str()]);
+    let invalid_utf_text = output_text(&invalid_utf_output);
+    assert!(
+        !invalid_utf_output.status.success(),
+        "invalid UTF-8 R2 manifest unexpectedly passed\n{invalid_utf_text}"
+    );
+    assert!(
+        invalid_utf_text.contains("manifest is not UTF-8"),
+        "{invalid_utf_text}"
+    );
+    assert!(
+        !invalid_utf_text.contains("Traceback"),
+        "invalid UTF-8 manifest leaked a Python traceback\n{invalid_utf_text}"
+    );
+
+    let nonregular_manifest = temp.path().join("manifest-directory.json");
+    fs::create_dir(&nonregular_manifest).expect("non-regular manifest path is created");
+    let nonregular_output = run_r2_helper(&[OsStr::new("ids"), nonregular_manifest.as_os_str()]);
+    let nonregular_text = output_text(&nonregular_output);
+    assert!(
+        !nonregular_output.status.success(),
+        "non-regular R2 manifest unexpectedly passed\n{nonregular_text}"
+    );
+    assert!(
+        nonregular_text.contains("not a regular file"),
+        "{nonregular_text}"
+    );
+
+    let absent = temp.path().join("absent-dest");
+    let absent_output = run_r2_helper(&[OsStr::new("check-dest"), absent.as_os_str()]);
+    assert!(
+        absent_output.status.success(),
+        "absent destination should be publishable\n{}",
+        output_text(&absent_output)
+    );
+    assert_eq!(absent_output.stdout, b"absent\n");
+
+    let missing_parent = temp.path().join("missing-parent/hayro-corpus");
+    let missing_parent_output =
+        run_r2_helper(&[OsStr::new("check-dest"), missing_parent.as_os_str()]);
+    assert!(
+        missing_parent_output.status.success(),
+        "destination under a missing parent should remain an absent preflight\n{}",
+        output_text(&missing_parent_output)
+    );
+    assert_eq!(missing_parent_output.stdout, b"absent\n");
+
+    let regular_file = temp.path().join("regular-dest");
+    fs::write(&regular_file, b"not a directory").expect("regular destination file is written");
+    let regular_output = run_r2_helper(&[OsStr::new("check-dest"), regular_file.as_os_str()]);
+    let regular_text = output_text(&regular_output);
+    assert!(
+        !regular_output.status.success(),
+        "regular-file destination unexpectedly passed\n{regular_text}"
+    );
+    assert!(regular_text.contains("not a directory"), "{regular_text}");
+
+    let unstamped = temp.path().join("unstamped-dest");
+    fs::create_dir(&unstamped).expect("unstamped destination is created");
+    let unstamped_output = run_r2_helper(&[OsStr::new("check-dest"), unstamped.as_os_str()]);
+    let unstamped_text = output_text(&unstamped_output);
+    assert!(
+        !unstamped_output.status.success(),
+        "unstamped destination unexpectedly passed\n{unstamped_text}"
+    );
+    assert!(
+        unstamped_text.contains("no .fetch-stamp"),
+        "{unstamped_text}"
+    );
+
+    let stamped = temp.path().join("stamped-dest");
+    fs::create_dir(&stamped).expect("stamped destination is created");
+    write_fetch_stamp(&stamped);
+    let stamped_output = run_r2_helper(&[OsStr::new("check-dest"), stamped.as_os_str()]);
+    assert!(
+        stamped_output.status.success(),
+        "stamped destination did not pass\n{}",
+        output_text(&stamped_output)
+    );
+    assert_eq!(stamped_output.stdout, b"stamped\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rejects_a_manifest_symlink_without_leaking_target_contents() {
+    const SENTINEL: &str = "r2-private-manifest-target-must-not-be-read";
+
+    let temp = TempTree::new("checksum-r2-manifest-symlink");
+    let target = temp.path().join("manifest-target.json");
+    fs::write(&target, SENTINEL).expect("manifest target is written");
+    let manifest = temp.path().join("manifest.json");
+    std::os::unix::fs::symlink(&target, &manifest).expect("manifest symlink is created");
+
+    let output = run_r2_helper(&[OsStr::new("ids"), manifest.as_os_str()]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "R2 manifest symlink unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+    assert!(
+        !text.contains(SENTINEL),
+        "R2 manifest symlink target leaked into diagnostics\n{text}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_rejects_a_windows_reparse_manifest() {
+    let temp = TempTree::new("checksum-r2-windows-manifest-reparse");
+    let target = temp.path().join("manifest-target.json");
+    fs::write(&target, r#"["tiny"]"#).expect("manifest target is written");
+    let manifest = temp.path().join("manifest-link.json");
+    create_windows_reparse_for_file_role(&manifest, &target);
+
+    let output = run_r2_helper(&[OsStr::new("ids"), manifest.as_os_str()]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "Windows R2 manifest reparse point unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("reparse point not allowed"), "{text}");
+}
+
+#[test]
+fn checksum_r2_helper_rejects_non_regular_staged_entries() {
+    let temp = TempTree::new("checksum-r2-nonregular-staging");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::create_dir(staging.join("tiny.pdf")).expect("non-regular staged entry is created");
+    let dest = temp.path().join("dest");
+
+    let output = run_r2_helper(&[
+        OsStr::new("publish"),
+        staging.as_os_str(),
+        dest.as_os_str(),
+        OsStr::new("test-source"),
+        OsStr::new("test-revision"),
+        OsStr::new("--no-checksum"),
+    ]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "non-regular staged entry unexpectedly published\n{text}"
+    );
+    assert!(text.contains("not a regular file"), "{text}");
+    assert!(
+        !dest.exists(),
+        "destination was created after staged-entry validation failed"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rejects_a_visible_parent_swap_before_unix_publish_returns() {
+    let temp = TempTree::new("checksum-r2-unix-parent-swap");
+    let parent = temp.path().join("external");
+    let old_parent = temp.path().join("old-external");
+    let replacement_parent = temp.path().join("replacement-external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    fs::create_dir(&replacement_parent).expect("replacement parent is created");
+
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+
+    let driver = temp.path().join("r2_unix_parent_swap_driver.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+old_parent = pathlib.Path(sys.argv[4])
+replacement_parent = pathlib.Path(sys.argv[5])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+original_write_stamp = module.write_stamp_to_fd
+
+def swapping_write_stamp(descriptor, source, revision):
+    original_write_stamp(descriptor, source, revision)
+    os.rename(dest.parent, old_parent)
+    os.rename(replacement_parent, dest.parent)
+
+module.write_stamp_to_fd = swapping_write_stamp
+try:
+    module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+except module.R2Error as error:
+    if "parent directory changed during publication" in str(error):
+        raise SystemExit(0)
+    raise SystemExit(f"unexpected R2 error: {error}")
+raise SystemExit("detached parent publication reported success")
+"#,
+    )
+    .expect("Unix parent-swap driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(parent.join("hayro-corpus"))
+        .arg(&old_parent)
+        .arg(&replacement_parent)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Unix parent-swap driver is runnable");
+    assert!(
+        output.status.success(),
+        "R2 publication did not reject visible parent substitution\n{}",
+        output_text(&output)
+    );
+}
+
+#[test]
+fn checksum_r2_helper_uses_exclusive_handle_relative_publication() {
+    let source = fs::read_to_string(workspace_root().join("corpus/r2.py"))
+        .expect("R2 helper source is readable");
+    assert!(
+        source.contains("renameat2") && source.contains("RENAME_NOREPLACE"),
+        "Unix publication no longer names the Linux exclusive finalizer"
+    );
+    assert!(
+        source.contains("renameatx_np") && source.contains("0x4"),
+        "Unix publication no longer names the macOS exclusive finalizer"
+    );
+    assert!(
+        source.contains("SetFileInformationByHandle")
+            && source.contains("FILE_RENAME_INFO_CLASS")
+            && source.contains("RootDirectory"),
+        "Windows publication no longer uses handle-based FileRenameInfo"
+    );
+    assert!(
+        !source.contains("os.rename(") && !source.contains("MoveFileEx"),
+        "publication must not use path-only rename fallbacks"
+    );
+    assert!(
+        !source.contains("create_windows_directory"),
+        "Windows publication must not create the public destination directly"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rejects_a_competing_destination_at_unix_finalization() {
+    let temp = TempTree::new("checksum-r2-unix-finalizer-competitor");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let dest = parent.join("hayro-corpus");
+
+    let driver = temp.path().join("r2_unix_finalizer_competitor.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+original_finalize = module.finalize_payload_directory_unix
+
+def racing_finalize(private_fd, parent_fd, publish_dest):
+    os.mkdir(publish_dest)
+    (publish_dest / "competitor.txt").write_text("competitor", encoding="utf-8")
+    return original_finalize(private_fd, parent_fd, publish_dest)
+
+module.finalize_payload_directory_unix = racing_finalize
+try:
+    module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+except module.R2Error as error:
+    if "destination appeared before publication" not in str(error):
+        raise SystemExit(f"unexpected R2 error: {error}")
+else:
+    raise SystemExit("publication replaced a competing destination")
+
+if (dest / "competitor.txt").read_text(encoding="utf-8") != "competitor":
+    raise SystemExit("competing destination contents were replaced")
+leaks = [path.name for path in dest.parent.iterdir() if path.name.startswith("r2publish-")]
+if leaks:
+    raise SystemExit(f"private publication directory leaked after finalizer failure: {leaks}")
+"#,
+    )
+    .expect("Unix finalizer competitor driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&dest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Unix finalizer competitor driver is runnable");
+    assert!(
+        output.status.success(),
+        "R2 publication did not reject finalization-time competitor\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_keeps_the_public_destination_absent_until_finalization() {
+    let temp = TempTree::new("checksum-r2-unix-no-public-before-finalize");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let dest = parent.join("hayro-corpus");
+
+    let driver = temp.path().join("r2_unix_no_public_before_finalize.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+original_copy = module.copy_file_from_fd_to_fd
+
+def observing_copy(source_fd, source_root, name, payload_fd):
+    if dest.exists():
+        raise SystemExit("visible final destination existed before finalization")
+    return original_copy(source_fd, source_root, name, payload_fd)
+
+module.copy_file_from_fd_to_fd = observing_copy
+module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+if (dest / "tiny.pdf").read_bytes() != b"%PDF-1.4\n%tiny\n":
+    raise SystemExit("published bytes changed")
+leaks = [path.name for path in dest.parent.iterdir() if path.name.startswith("r2publish-")]
+if leaks:
+    raise SystemExit(f"private publication directory leaked after success: {leaks}")
+"#,
+    )
+    .expect("Unix no-public-before-finalize driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&dest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Unix no-public-before-finalize driver is runnable");
+    assert!(
+        output.status.success(),
+        "R2 publication exposed the final destination before finalization\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_anchors_the_staging_root_during_publication() {
+    let temp = TempTree::new("checksum-r2-unix-staging-root-anchor");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let staging = temp.path().join("staging");
+    let old_staging = temp.path().join("old-staging");
+    let attacker = temp.path().join("attacker-staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::create_dir(&attacker).expect("attacker staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    fs::write(attacker.join("tiny.pdf"), b"%PDF-1.4\nattacker\n").expect("attacker PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{TINY_PDF_SHA256}  tiny.pdf")]);
+    let dest = parent.join("hayro-corpus");
+
+    let driver = temp.path().join("r2_unix_staging_root_anchor.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+old_staging = pathlib.Path(sys.argv[3])
+attacker = pathlib.Path(sys.argv[4])
+dest = pathlib.Path(sys.argv[5])
+manifest = pathlib.Path(sys.argv[6])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+original_staged = module.staged_pdf_names_from_fd
+swapped = False
+
+def swapping_staged(path, descriptor):
+    global swapped
+    names = original_staged(path, descriptor)
+    if path == staging and not swapped:
+        os.rename(staging, old_staging)
+        os.rename(attacker, staging)
+        swapped = True
+    return names
+
+module.staged_pdf_names_from_fd = swapping_staged
+module.publish_staged_set(staging, dest, "test-source", "test-revision", manifest)
+if not swapped:
+    raise SystemExit("staging root swap was not attempted")
+if (dest / "tiny.pdf").read_bytes() != b"%PDF-1.4\n%tiny\n":
+    raise SystemExit("publication copied from the swapped visible staging root")
+"#,
+    )
+    .expect("Unix staging-root anchor driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&old_staging)
+        .arg(&attacker)
+        .arg(&dest)
+        .arg(&manifest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Unix staging-root anchor driver is runnable");
+    assert!(
+        output.status.success(),
+        "R2 publication was not anchored to the opened staging root\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rechecks_private_hashes_after_copy_and_cleans_failure() {
+    let temp = TempTree::new("checksum-r2-unix-private-hash-recheck");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let changed = temp.path().join("changed.pdf");
+    fs::write(&changed, b"%PDF-1.4\nchanged\n").expect("replacement PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{TINY_PDF_SHA256}  tiny.pdf")]);
+    let dest = parent.join("hayro-corpus");
+
+    let driver = temp.path().join("r2_unix_private_hash_recheck.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+changed = pathlib.Path(sys.argv[3])
+dest = pathlib.Path(sys.argv[4])
+manifest = pathlib.Path(sys.argv[5])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+original_copy = module.copy_file_from_fd_to_fd
+swapped = False
+
+def swapping_copy(source_fd, source_root, name, payload_fd):
+    global swapped
+    if not swapped:
+        os.replace(changed, source_root / name)
+        swapped = True
+    return original_copy(source_fd, source_root, name, payload_fd)
+
+module.copy_file_from_fd_to_fd = swapping_copy
+try:
+    module.publish_staged_set(staging, dest, "test-source", "test-revision", manifest)
+except module.R2Error as error:
+    if "sha256 mismatch" not in str(error):
+        raise SystemExit(f"unexpected R2 error: {error}")
+else:
+    raise SystemExit("publication succeeded after staged bytes changed")
+if not swapped:
+    raise SystemExit("staged file replacement was not attempted")
+if dest.exists():
+    raise SystemExit("destination exists after checksum mismatch")
+leaks = [path.name for path in dest.parent.iterdir() if path.name.startswith("r2publish-")]
+if leaks:
+    raise SystemExit(f"private publication directory leaked after checksum mismatch: {leaks}")
+"#,
+    )
+    .expect("Unix private hash recheck driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&changed)
+        .arg(&dest)
+        .arg(&manifest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Unix private hash recheck driver is runnable");
+    assert!(
+        output.status.success(),
+        "R2 publication did not recheck copied private bytes\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_cleans_private_publication_failures() {
+    for mode in [
+        "private-validation",
+        "exact-name-recheck",
+        "copy",
+        "stamp",
+        "private-symlink",
+        "unsupported-finalizer",
+        "private-name-swap",
+    ] {
+        let temp = TempTree::new(&format!("checksum-r2-unix-cleanup-{mode}"));
+        let parent = temp.path().join("external");
+        fs::create_dir(&parent).expect("destination parent is created");
+        let staging = temp.path().join("staging");
+        fs::create_dir(&staging).expect("staging directory is created");
+        fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+        let dest = parent.join("hayro-corpus");
+
+        let driver = temp.path().join("r2_unix_cleanup_failure.py");
+        fs::write(
+            &driver,
+            r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+mode = sys.argv[4]
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.can_publish_with_dir_fd():
+    raise SystemExit("dir-fd publication is unavailable on this platform")
+
+expected = "forced"
+if mode == "private-validation":
+    def failing_validate(root, root_fd, names, expected_checksums):
+        raise module.R2Error(expected + " private validation")
+    module.validate_private_contents_from_fd = failing_validate
+elif mode == "exact-name-recheck":
+    original_validate = module.validate_private_contents_from_fd
+    def extra_name(root, root_fd, names, expected_checksums):
+        descriptor = os.open("extra.pdf", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=root_fd)
+        os.close(descriptor)
+        return original_validate(root, root_fd, names, expected_checksums)
+    module.validate_private_contents_from_fd = extra_name
+    expected = "unexpected extra.pdf"
+elif mode == "copy":
+    def failing_copy(source_fd, source_root, name, payload_fd):
+        raise module.R2Error(expected + " copy")
+    module.copy_file_from_fd_to_fd = failing_copy
+elif mode == "stamp":
+    def failing_stamp(payload_fd, source, revision):
+        raise module.R2Error(expected + " stamp")
+    module.write_stamp_to_fd = failing_stamp
+elif mode == "private-symlink":
+    def symlink_then_fail(payload_fd, source, revision):
+        os.symlink("/tmp/onionskin-r2-cleanup-target", "link.pdf", dir_fd=payload_fd)
+        raise module.R2Error(expected + " private symlink")
+    module.write_stamp_to_fd = symlink_then_fail
+    expected = "symlink not allowed"
+elif mode == "unsupported-finalizer":
+    module.sys.platform = "freebsd13"
+    expected = "exclusive finalization unsupported"
+elif mode == "private-name-swap":
+    original_create_payload = module.create_payload_directory_from_private
+    def swapped_private(private_fd, private_path):
+        saved = private_path.parent / (private_path.name + "-saved")
+        os.rename(private_path, saved)
+        os.mkdir(private_path)
+        (private_path / "attacker.txt").write_text("attacker", encoding="utf-8")
+        raise module.R2Error(expected + " private-name swap")
+    module.create_payload_directory_from_private = swapped_private
+    expected = "leaving"
+else:
+    raise SystemExit(f"unknown mode {mode}")
+
+try:
+    module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+except module.R2Error as error:
+    if expected not in str(error):
+        raise SystemExit(f"mode {mode}: unexpected R2 error: {error}")
+else:
+    raise SystemExit(f"mode {mode}: publication succeeded unexpectedly")
+
+if dest.exists():
+    raise SystemExit(f"mode {mode}: destination exists after failed publication")
+leaks = [path for path in dest.parent.iterdir() if path.name.startswith("r2publish-")]
+if mode == "private-name-swap":
+    if not any((path / "attacker.txt").exists() for path in leaks):
+        raise SystemExit("swapped private directory was not preserved")
+elif mode == "private-symlink":
+    if not any((path / "payload" / "link.pdf").is_symlink() for path in leaks):
+        raise SystemExit("private payload symlink was not preserved for manual inspection")
+else:
+    if leaks:
+        raise SystemExit(f"mode {mode}: private publication directory leaked: {[path.name for path in leaks]}")
+"#,
+        )
+        .expect("Unix cleanup failure driver is written");
+
+        let output = Command::new(python_interpreter())
+            .arg(&driver)
+            .arg(workspace_root().join("corpus/r2.py"))
+            .arg(&staging)
+            .arg(&dest)
+            .arg(mode)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .expect("Unix cleanup failure driver is runnable");
+        assert!(
+            output.status.success(),
+            "R2 cleanup proof failed for {mode}\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rejects_a_symlink_destination() {
+    let temp = TempTree::new("checksum-r2-symlink-dest");
+    let target = temp.path().join("target");
+    fs::create_dir(&target).expect("symlink target is created");
+    let dest = temp.path().join("dest");
+    std::os::unix::fs::symlink(&target, &dest).expect("destination symlink is created");
+
+    let output = run_r2_helper(&[OsStr::new("check-dest"), dest.as_os_str()]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "symlink destination unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_r2_helper_rejects_a_symlinked_destination_parent() {
+    let temp = TempTree::new("checksum-r2-symlink-parent");
+    let redirect = temp.path().join("redirect");
+    fs::create_dir(&redirect).expect("redirect parent target is created");
+    let external = temp.path().join("external");
+    std::os::unix::fs::symlink(&redirect, &external).expect("external symlink is created");
+    let dest = external.join("hayro-corpus");
+
+    let check = run_r2_helper(&[OsStr::new("check-dest"), dest.as_os_str()]);
+    let check_text = output_text(&check);
+    assert!(
+        !check.status.success(),
+        "symlinked destination parent unexpectedly passed check-dest\n{check_text}"
+    );
+    assert!(check_text.contains("symlink not allowed"), "{check_text}");
+
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let publish = run_r2_helper(&[
+        OsStr::new("publish"),
+        staging.as_os_str(),
+        dest.as_os_str(),
+        OsStr::new("test-source"),
+        OsStr::new("test-revision"),
+        OsStr::new("--no-checksum"),
+    ]);
+    let publish_text = output_text(&publish);
+    assert!(
+        !publish.status.success(),
+        "symlinked destination parent unexpectedly published\n{publish_text}"
+    );
+    assert!(
+        publish_text.contains("symlink not allowed"),
+        "{publish_text}"
+    );
+    assert_eq!(
+        fs::read_dir(&redirect)
+            .expect("redirect target is readable")
+            .count(),
+        0,
+        "helper publication wrote through the symlinked parent"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_rejects_a_windows_junction_destination() {
+    let temp = TempTree::new("checksum-r2-junction-dest");
+    let target = temp.path().join("target");
+    fs::create_dir(&target).expect("junction target is created");
+    let dest = temp.path().join("dest-junction");
+    let created = Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(&dest)
+        .arg(&target)
+        .output()
+        .expect("Windows junction command is runnable");
+    assert!(
+        created.status.success(),
+        "Windows junction creation failed\n{}",
+        output_text(&created)
+    );
+
+    let output = run_r2_helper(&[OsStr::new("check-dest"), dest.as_os_str()]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "junction destination unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("reparse point not allowed"), "{text}");
+
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let publish = run_r2_helper(&[
+        OsStr::new("publish"),
+        staging.as_os_str(),
+        dest.as_os_str(),
+        OsStr::new("test-source"),
+        OsStr::new("test-revision"),
+        OsStr::new("--no-checksum"),
+    ]);
+    let publish_text = output_text(&publish);
+    assert!(
+        !publish.status.success(),
+        "junction destination unexpectedly published\n{publish_text}"
+    );
+    assert!(
+        publish_text.contains("reparse point not allowed"),
+        "{publish_text}"
+    );
+    assert_eq!(
+        fs::read_dir(&target)
+            .expect("junction target is readable")
+            .count(),
+        0,
+        "helper publication wrote through the junction"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_publishes_a_valid_set_with_windows_handles() {
+    let temp = TempTree::new("checksum-r2-windows-valid-publish");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let output = run_r2_helper(&[
+        OsStr::new("publish"),
+        staging.as_os_str(),
+        dest.as_os_str(),
+        OsStr::new("test-source"),
+        OsStr::new("test-revision"),
+        OsStr::new("--no-checksum"),
+    ]);
+    let text = output_text(&output);
+    assert!(
+        output.status.success(),
+        "Windows handle publication failed\n{text}"
+    );
+    assert_eq!(
+        fs::read(dest.join("tiny.pdf")).expect("published PDF is readable"),
+        b"%PDF-1.4\n%tiny\n"
+    );
+    assert!(
+        dest.join(".fetch-stamp").is_file(),
+        "Windows handle publication did not write a stamp"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_rejects_a_windows_reparse_staged_pdf() {
+    let temp = TempTree::new("checksum-r2-windows-staged-reparse");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    let target = temp.path().join("target.pdf");
+    fs::write(&target, b"%PDF-1.4\n%tiny\n").expect("target PDF is written");
+    create_windows_reparse_for_file_role(&staging.join("tiny.pdf"), &target);
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let output = run_r2_helper(&[
+        OsStr::new("publish"),
+        staging.as_os_str(),
+        dest.as_os_str(),
+        OsStr::new("test-source"),
+        OsStr::new("test-revision"),
+        OsStr::new("--no-checksum"),
+    ]);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "Windows reparse staged PDF unexpectedly published\n{text}"
+    );
+    assert!(text.contains("reparse point not allowed"), "{text}");
+    assert!(
+        !dest.exists(),
+        "destination was created after staged reparse validation failed"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_windows_parent_handle_denies_rename_during_publication() {
+    let temp = TempTree::new("checksum-r2-windows-parent-rename-denial");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let external = temp.path().join("external");
+    let old_external = temp.path().join("old-external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let driver = temp.path().join("windows_parent_rename_denial.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+old_parent = pathlib.Path(sys.argv[4])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+rename_denied = False
+original_create_private = module.create_windows_private_directory
+
+def racing_create_private(parent, publish_dest):
+    global rename_denied
+    result = original_create_private(parent, publish_dest)
+    try:
+        os.rename(dest.parent, old_parent)
+    except OSError:
+        rename_denied = True
+    else:
+        os.rename(old_parent, dest.parent)
+        raise SystemExit("parent rename succeeded while publisher handle was held")
+    return result
+
+module.create_windows_private_directory = racing_create_private
+module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+if not rename_denied:
+    raise SystemExit("parent rename was not attempted")
+if (dest / "tiny.pdf").read_bytes() != b"%PDF-1.4\n%tiny\n":
+    raise SystemExit("published bytes changed during rename-denial proof")
+if not (dest / ".fetch-stamp").is_file():
+    raise SystemExit("publication stamp missing")
+"#,
+    )
+    .expect("Windows parent rename-denial driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&dest)
+        .arg(&old_external)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows parent rename-denial driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows publisher parent handle did not deny rename\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_windows_rename_info_abi_and_handle_transfer_are_strict() {
+    let temp = TempTree::new("checksum-r2-windows-rename-abi");
+    let driver = temp.path().join("windows_rename_info_abi.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+module.validate_windows_rename_info_abi()
+module.validate_windows_disposition_info_abi()
+if module.FILE_RENAME_INFO.RootDirectory.offset != 8:
+    raise SystemExit("RootDirectory offset changed")
+if module.FILE_RENAME_INFO.FileNameLength.offset != 16:
+    raise SystemExit("FileNameLength offset changed")
+if module.FILE_RENAME_INFO.FileName.offset != 20:
+    raise SystemExit("FileName offset changed")
+if module.ctypes.sizeof(module.FILE_RENAME_INFO) != 24:
+    raise SystemExit("FileRenameInfo size changed")
+if module.FILE_DISPOSITION_INFO.DeleteFile.offset != 0:
+    raise SystemExit("DeleteFile offset changed")
+if module.ctypes.sizeof(module.FILE_DISPOSITION_INFO) != 1:
+    raise SystemExit("FileDispositionInfo size changed")
+
+closed = []
+real_close = module.kernel32.CloseHandle
+real_open = module.msvcrt.open_osfhandle
+
+def fake_close(handle):
+    closed.append(handle)
+    return 1
+
+def fake_open(handle, flags):
+    if not flags & getattr(os, "O_NOINHERIT", 0):
+        raise SystemExit("O_NOINHERIT was not passed to open_osfhandle")
+    raise OSError("forced open_osfhandle failure")
+
+module.kernel32.CloseHandle = fake_close
+module.msvcrt.open_osfhandle = fake_open
+try:
+    try:
+        module.windows_handle_to_descriptor(module.WindowsHandle(12345), os.O_RDONLY, pathlib.Path("x.pdf"))
+    except module.R2Error as error:
+        if "cannot wrap file handle" not in str(error):
+            raise SystemExit(f"unexpected handle-transfer error: {error}")
+    else:
+        raise SystemExit("open_osfhandle failure unexpectedly succeeded")
+finally:
+    module.kernel32.CloseHandle = real_close
+    module.msvcrt.open_osfhandle = real_open
+
+if closed != [12345]:
+    raise SystemExit(f"raw handle was not closed exactly once: {closed!r}")
+"#,
+    )
+    .expect("Windows rename ABI driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows rename ABI driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows FileRenameInfo ABI or handle transfer changed\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_windows_cleanup_keeps_identity_handles_open_until_delete() {
+    let temp = TempTree::new("checksum-r2-windows-cleanup-handle-lifetime");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let private = parent.join("r2publish-hayro-corpus-test");
+    let payload = private.join("payload");
+    fs::create_dir(&private).expect("private publication directory is created");
+    fs::create_dir(&payload).expect("private payload directory is created");
+    fs::write(payload.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n")
+        .expect("private payload file is written");
+
+    let driver = temp.path().join("windows_cleanup_handle_lifetime.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+parent = pathlib.Path(sys.argv[2])
+private = pathlib.Path(sys.argv[3])
+payload = private / "payload"
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+private_handle, private_identity = module.open_windows_private_directory(private)
+private_handle.close()
+payload_handle, payload_identity = module.open_windows_private_directory(payload)
+payload_handle.close()
+
+real_mark = module.mark_windows_directory_for_delete
+marked = []
+
+def recording_mark(path, handle, identity, expected):
+    if handle.handle is None:
+        raise SystemExit(f"{path}: cleanup closed identity handle before delete")
+    marked.append(path.name)
+    return real_mark(path, handle, identity, expected)
+
+module.mark_windows_directory_for_delete = recording_mark
+message = module.cleanup_private_publication_windows(
+    parent, private.name, private_identity, payload_identity
+)
+if message is not None:
+    raise SystemExit(f"cleanup failed unexpectedly: {message}")
+if marked != ["payload", private.name]:
+    raise SystemExit(f"cleanup did not delete payload then private: {marked!r}")
+if private.exists():
+    raise SystemExit("private publication directory still exists")
+"#,
+    )
+    .expect("Windows cleanup handle-lifetime driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&parent)
+        .arg(&private)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows cleanup handle-lifetime driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows cleanup did not retain identity handles until delete\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_windows_cleanup_preserves_substituted_private_directory() {
+    let temp = TempTree::new("checksum-r2-windows-cleanup-private-substitution");
+    let parent = temp.path().join("external");
+    fs::create_dir(&parent).expect("destination parent is created");
+    let private = parent.join("r2publish-hayro-corpus-test");
+    let saved_private = parent.join("saved-private-publication");
+    let payload = private.join("payload");
+    fs::create_dir(&private).expect("private publication directory is created");
+    fs::create_dir(&payload).expect("private payload directory is created");
+    fs::write(payload.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n")
+        .expect("private payload file is written");
+
+    let driver = temp.path().join("windows_cleanup_private_substitution.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+parent = pathlib.Path(sys.argv[2])
+private = pathlib.Path(sys.argv[3])
+saved_private = pathlib.Path(sys.argv[4])
+payload = private / "payload"
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+private_handle, private_identity = module.open_windows_private_directory(private)
+private_handle.close()
+payload_handle, payload_identity = module.open_windows_private_directory(payload)
+payload_handle.close()
+
+os.rename(private, saved_private)
+os.mkdir(private)
+(private / "attacker.txt").write_text("attacker", encoding="utf-8")
+
+message = module.cleanup_private_publication_windows(
+    parent, private.name, private_identity, payload_identity
+)
+if message is None:
+    raise SystemExit("cleanup deleted or accepted a substituted private directory")
+if "private publication directory changed" not in message:
+    raise SystemExit(f"unexpected cleanup diagnostic: {message}")
+if (private / "attacker.txt").read_text(encoding="utf-8") != "attacker":
+    raise SystemExit("substituted private directory contents were removed")
+if not (saved_private / "payload" / "tiny.pdf").is_file():
+    raise SystemExit("original private payload was not preserved")
+"#,
+    )
+    .expect("Windows cleanup private-substitution driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&parent)
+        .arg(&private)
+        .arg(&saved_private)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows cleanup private-substitution driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows cleanup did not preserve substituted private directory\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_rejects_a_competing_destination_at_windows_finalization() {
+    let temp = TempTree::new("checksum-r2-windows-finalizer-competitor");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let driver = temp.path().join("windows_finalizer_competitor.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+dest = pathlib.Path(sys.argv[3])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+original_finalize = module.finalize_payload_directory_windows
+
+def racing_finalize(payload_handle, parent_handle, publish_dest):
+    os.mkdir(publish_dest)
+    (publish_dest / "competitor.txt").write_text("competitor", encoding="utf-8")
+    return original_finalize(payload_handle, parent_handle, publish_dest)
+
+module.finalize_payload_directory_windows = racing_finalize
+try:
+    module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+except module.R2Error as error:
+    if "destination appeared before publication" not in str(error):
+        raise SystemExit(f"unexpected R2 error: {error}")
+else:
+    raise SystemExit("publication replaced a competing destination")
+
+if (dest / "competitor.txt").read_text(encoding="utf-8") != "competitor":
+    raise SystemExit("competing destination contents were replaced")
+leaks = [path.name for path in dest.parent.iterdir() if path.name.startswith("r2publish-")]
+if leaks:
+    raise SystemExit(f"private publication directory leaked after finalizer failure: {leaks}")
+"#,
+    )
+    .expect("Windows finalizer competitor driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&dest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows finalizer competitor driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows publication did not reject finalization-time competitor\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_r2_helper_windows_staging_handle_denies_rename_during_publication() {
+    let temp = TempTree::new("checksum-r2-windows-staging-rename-denial");
+    let staging = temp.path().join("staging");
+    let old_staging = temp.path().join("old-staging");
+    fs::create_dir(&staging).expect("staging directory is created");
+    fs::write(staging.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("staged PDF is written");
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("destination parent is created");
+    let dest = external.join("hayro-corpus");
+
+    let driver = temp.path().join("windows_staging_rename_denial.py");
+    fs::write(
+        &driver,
+        r#"
+import importlib.util
+import os
+import pathlib
+import sys
+
+r2_path = pathlib.Path(sys.argv[1])
+staging = pathlib.Path(sys.argv[2])
+old_staging = pathlib.Path(sys.argv[3])
+dest = pathlib.Path(sys.argv[4])
+
+spec = importlib.util.spec_from_file_location("r2_under_test", r2_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+if not module.has_windows_handles():
+    raise SystemExit("Windows handle backend is unavailable")
+
+rename_denied = False
+original_copy = module.copy_file_to_windows_path
+
+def racing_copy(source, target):
+    global rename_denied
+    try:
+        os.rename(staging, old_staging)
+    except OSError:
+        rename_denied = True
+    else:
+        os.rename(old_staging, staging)
+        raise SystemExit("staging rename succeeded while publisher handle was held")
+    return original_copy(source, target)
+
+module.copy_file_to_windows_path = racing_copy
+module.publish_staged_set(staging, dest, "test-source", "test-revision", None)
+if not rename_denied:
+    raise SystemExit("staging rename was not attempted")
+if (dest / "tiny.pdf").read_bytes() != b"%PDF-1.4\n%tiny\n":
+    raise SystemExit("published bytes changed during staging rename-denial proof")
+"#,
+    )
+    .expect("Windows staging rename-denial driver is written");
+
+    let output = Command::new(python_interpreter())
+        .arg(&driver)
+        .arg(workspace_root().join("corpus/r2.py"))
+        .arg(&staging)
+        .arg(&old_staging)
+        .arg(&dest)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("Windows staging rename-denial driver is runnable");
+    assert!(
+        output.status.success(),
+        "Windows publisher staging handle did not deny rename\n{}",
+        output_text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_rejects_malformed_r2_manifest_ids_before_invoking_curl() {
+    for (name, contents, diagnostic) in [
+        (
+            "top-level-object",
+            r#"{"id":"tiny"}"#,
+            "top-level JSON array",
+        ),
+        ("non-string-id", r#"[{"id":7}]"#, "id is not a string"),
+        ("traversal-id", r#"["../escape"]"#, "traversal"),
+        ("slash-id", r#"["dir/file"]"#, "path separators"),
+        ("control-id", r#"["line\nfeed"]"#, "control"),
+        ("case-duplicate-id", r#"["Tiny","tiny"]"#, "duplicate"),
+        ("reserved-id", r#"["CON"]"#, "reserved"),
+    ] {
+        let temp = TempTree::new(&format!("checksum-fetch-bad-manifest-{name}"));
+        let corpus = temp.path().join("corpus");
+        copy_corpus_tools(&corpus);
+        let checksums = corpus.join("checksums");
+        fs::create_dir_all(&checksums).expect("checksum directory is created");
+        write_manifest(
+            &checksums.join("hayro-corpus.sha256"),
+            &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
+        );
+        write_hayro_manifest(&corpus, "corpus", contents);
+
+        let bin = temp.path().join("bin");
+        fs::create_dir(&bin).expect("fake bin directory is created");
+        write_failing_fake_curl(&bin.join("curl"));
+        let path = path_with_fake_bin(&bin);
+
+        let output = run_fetch(&corpus, &path, "hayro-corpus");
+        let text = output_text(&output);
+        assert!(
+            !output.status.success(),
+            "invalid R2 manifest {name} unexpectedly passed\n{text}"
+        );
+        assert!(
+            text.contains(diagnostic),
+            "invalid R2 manifest {name} did not mention {diagnostic:?}\n{text}"
+        );
+        assert!(
+            !text.contains("fake curl must not be invoked"),
+            "invalid R2 manifest {name} reached curl\n{text}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_rejects_preexisting_r2_destination_symlink_before_invoking_curl() {
+    let temp = TempTree::new("checksum-fetch-preexisting-symlink");
+    let corpus = temp.path().join("corpus");
+    copy_corpus_tools(&corpus);
+    let checksums = corpus.join("checksums");
+    fs::create_dir_all(&checksums).expect("checksum directory is created");
+    write_manifest(
+        &checksums.join("hayro-corpus.sha256"),
+        &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
+    );
+    write_hayro_manifest(&corpus, "corpus", r#"[{"id":"tiny"}]"#);
+    let redirect = temp.path().join("redirect");
+    fs::create_dir(&redirect).expect("redirect target is created");
+    let dest = corpus.join("external/hayro-corpus");
+    std::os::unix::fs::symlink(&redirect, &dest).expect("destination symlink is created");
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    write_failing_fake_curl(&bin.join("curl"));
+    let path = path_with_fake_bin(&bin);
+
+    let output = run_fetch(&corpus, &path, "hayro-corpus");
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "pre-existing symlink destination unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+    assert!(
+        !text.contains("fake curl must not be invoked"),
+        "pre-existing symlink destination reached curl\n{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_rejects_symlinked_external_parent_before_invoking_curl() {
+    let temp = TempTree::new("checksum-fetch-symlink-parent");
+    let corpus = temp.path().join("corpus");
+    copy_corpus_tools(&corpus);
+    let redirect = temp.path().join("redirect");
+    fs::create_dir(&redirect).expect("redirect parent target is created");
+    std::os::unix::fs::symlink(&redirect, corpus.join("external"))
+        .expect("external symlink is created");
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    write_failing_fake_curl(&bin.join("curl"));
+    let path = path_with_fake_bin(&bin);
+
+    let output = run_fetch(&corpus, &path, "hayro-corpus");
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "symlinked external parent unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+    assert!(
+        !text.contains("fake curl must not be invoked"),
+        "symlinked external parent reached curl\n{text}"
+    );
+    assert_eq!(
+        fs::read_dir(&redirect)
+            .expect("redirect target is readable")
+            .count(),
+        0,
+        "fetch wrote through the symlinked external parent"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_rejects_a_destination_swap_after_download_before_publication() {
+    let temp = TempTree::new("checksum-fetch-publication-swap");
+    let corpus = temp.path().join("corpus");
+    copy_corpus_tools(&corpus);
+    let checksums = corpus.join("checksums");
+    fs::create_dir_all(&checksums).expect("checksum directory is created");
+    write_manifest(
+        &checksums.join("hayro-corpus.sha256"),
+        &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
+    );
+    write_hayro_manifest(&corpus, "corpus", r#"[{"id":"tiny"}]"#);
+
+    let redirect = temp.path().join("redirect");
+    fs::create_dir(&redirect).expect("redirect target is created");
+    fs::write(redirect.join("tiny.pdf"), b"unchanged\n").expect("redirect sentinel is written");
+    let dest = corpus.join("external/hayro-corpus");
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    write_destination_swap_curl(&bin.join("curl"));
+    let path = path_with_fake_bin(&bin);
+
+    let output = Command::new("bash")
+        .arg(corpus.join("fetch.sh"))
+        .arg("hayro-corpus")
+        .env("PATH", &path)
+        .env("PYTHON", python_interpreter())
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("ONIONSKIN_DEST_TO_SWAP", &dest)
+        .env("ONIONSKIN_SWAP_TARGET", &redirect)
+        .output()
+        .expect("copied fetch.sh is runnable for the destination-swap proof");
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "post-download destination swap unexpectedly passed\n{text}"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+    assert_eq!(
+        fs::read(redirect.join("tiny.pdf")).expect("redirect sentinel is readable"),
+        b"unchanged\n",
+        "publication followed the swapped destination symlink"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_downloads_checked_hayro_corpus_through_staging() {
+    let temp = TempTree::new("checksum-fetch-checked-r2");
+    let corpus = temp.path().join("corpus");
+    copy_corpus_tools(&corpus);
+    let checksums = corpus.join("checksums");
+    fs::create_dir_all(&checksums).expect("checksum directory is created");
+    write_manifest(
+        &checksums.join("hayro-corpus.sha256"),
+        &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
+    );
+    write_hayro_manifest(&corpus, "corpus", r#"[{"id":"tiny"}]"#);
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    write_pdf_curl(&bin.join("curl"));
+    let path = path_with_fake_bin(&bin);
+
+    let output = run_fetch(&corpus, &path, "hayro-corpus");
+    let text = output_text(&output);
+    assert!(
+        output.status.success(),
+        "checked R2 corpus fetch failed\n{text}"
+    );
+    assert!(
+        text.contains("verified 1 files"),
+        "checked R2 corpus fetch did not verify staged bytes\n{text}"
+    );
+    let dest = corpus.join("external/hayro-corpus");
+    assert_eq!(
+        fs::read(dest.join("tiny.pdf")).expect("published checked PDF is readable"),
+        b"%PDF-1.4\n%tiny\n"
+    );
+    assert!(
+        dest.join(".fetch-stamp").is_file(),
+        "checked R2 corpus fetch did not write a completion stamp"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_downloads_unchecked_optional_sets_through_staging() {
+    let temp = TempTree::new("checksum-fetch-unchecked-r2");
+    let corpus = temp.path().join("corpus");
+    copy_corpus_tools(&corpus);
+    write_hayro_manifest(&corpus, "pdfjs", r#"[{"id":"tiny"}]"#);
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    write_pdf_curl(&bin.join("curl"));
+    let path = path_with_fake_bin(&bin);
+
+    let output = run_fetch(&corpus, &path, "hayro-pdfjs");
+    let text = output_text(&output);
+    assert!(
+        output.status.success(),
+        "unchecked optional R2 fetch failed\n{text}"
+    );
+    assert!(
+        text.contains("fetched without checksum enforcement"),
+        "unchecked optional R2 fetch did not report checksum absence\n{text}"
+    );
+    let dest = corpus.join("external/hayro-pdfjs");
+    assert_eq!(
+        fs::read(dest.join("tiny.pdf")).expect("published unchecked PDF is readable"),
+        b"%PDF-1.4\n%tiny\n"
+    );
+    assert!(
+        dest.join(".fetch-stamp").is_file(),
+        "unchecked optional R2 fetch did not write a completion stamp"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl() {
@@ -366,26 +2235,12 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
     let corpus = temp.path().join("corpus");
     let checksums = corpus.join("checksums");
     let root = corpus.join("external/hayro-corpus");
+    copy_corpus_tools(&corpus);
     fs::create_dir_all(&checksums).expect("checksum directory is created");
     fs::create_dir_all(&root).expect("cached corpus directory is created");
 
-    fs::copy(
-        workspace_root().join("corpus/fetch.sh"),
-        corpus.join("fetch.sh"),
-    )
-    .expect("fetch.sh is copied into the test corpus tree");
-    let verifier = workspace_root().join("corpus/verify-sha256.py");
-    assert!(
-        verifier.is_file(),
-        "checksum verifier missing: {}",
-        verifier.display()
-    );
-    fs::copy(&verifier, corpus.join("verify-sha256.py"))
-        .expect("checksum verifier is copied into the test corpus tree");
-
     fs::write(root.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("cached PDF is written");
-    fs::write(root.join(".fetch-stamp"), "source=test\nrevision=test\n")
-        .expect("cached stamp is written");
+    write_fetch_stamp(&root);
     write_manifest(
         &checksums.join("hayro-corpus.sha256"),
         &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
@@ -393,13 +2248,6 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
 
     let bin = temp.path().join("bin");
     fs::create_dir(&bin).expect("fake bin directory is created");
-    let make_executable = |path: &Path| {
-        let mut permissions = fs::metadata(path)
-            .expect("fake executable metadata is readable")
-            .permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-        fs::set_permissions(path, permissions).expect("fake executable is made executable");
-    };
     let fake_curl = bin.join("curl");
     fs::write(
         &fake_curl,
@@ -408,10 +2256,7 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
     .expect("fake curl is written");
     make_executable(&fake_curl);
 
-    let old_path = env::var_os("PATH").unwrap_or_default();
-    let mut path = OsString::from(&bin);
-    path.push(":");
-    path.push(old_path);
+    let path = path_with_fake_bin(&bin);
 
     let workspace_corpus = workspace_root().join("corpus");
     assert_ne!(
@@ -423,6 +2268,7 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
         .arg("hayro-corpus")
         .env("PATH", &path)
         .env("PYTHON", python_interpreter())
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .expect("copied fetch.sh is runnable through bash");
     let text = output_text(&output);
@@ -447,6 +2293,7 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
         .arg("hayro-corpus")
         .env("PATH", &path)
         .env("PYTHON", python_interpreter())
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .expect("copied fetch.sh is runnable for the corrupted-cache proof");
     let corrupt_text = output_text(&corrupt);
@@ -473,6 +2320,7 @@ fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl(
         .arg("hayro-corpus")
         .env("PATH", &path)
         .env("PYTHON", &fake_python)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .expect("copied fetch.sh is runnable for the fake-interpreter proof");
     let no_python_text = output_text(&no_python);
@@ -664,6 +2512,33 @@ fn assert_checksum_failure(
     );
 }
 
+fn copy_corpus_tools(corpus: &Path) {
+    fs::create_dir_all(corpus).expect("copied corpus directory is created");
+    for tool in ["fetch.sh", "verify-sha256.py", "r2.py"] {
+        let source = workspace_root().join("corpus").join(tool);
+        assert!(
+            source.is_file(),
+            "corpus helper missing from workspace: {}",
+            source.display()
+        );
+        fs::copy(&source, corpus.join(tool))
+            .unwrap_or_else(|error| panic!("failed to copy {}: {error}", source.display()));
+    }
+}
+
+fn write_fetch_stamp(root: &Path) {
+    fs::write(root.join(".fetch-stamp"), "source=test\nrevision=test\n")
+        .expect("fetch stamp is written");
+}
+
+fn write_hayro_manifest(corpus: &Path, kind: &str, contents: &str) {
+    let hayro = corpus.join("external/hayro");
+    fs::create_dir_all(&hayro).expect("hayro manifest directory is created");
+    write_fetch_stamp(&hayro);
+    fs::write(hayro.join(format!("manifest_{kind}.json")), contents)
+        .expect("hayro R2 manifest is written");
+}
+
 fn write_manifest(path: &Path, lines: &[&str]) {
     fs::write(path, format!("{}\n", lines.join("\n"))).expect("checksum manifest is written");
 }
@@ -679,8 +2554,159 @@ fn run_checksum_verifier(manifest: &Path, root: &Path) -> Output {
         .arg(&verifier)
         .arg(manifest)
         .arg(root)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .expect("checksum verifier process is spawned")
+}
+
+fn run_r2_helper(args: &[&OsStr]) -> Output {
+    let helper = workspace_root().join("corpus/r2.py");
+    assert!(helper.is_file(), "R2 helper missing: {}", helper.display());
+    Command::new(python_interpreter())
+        .arg(&helper)
+        .args(args)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("R2 helper process is spawned")
+}
+
+#[cfg(unix)]
+fn run_fetch(corpus: &Path, path: &OsString, set: &str) -> Output {
+    Command::new("bash")
+        .arg(corpus.join("fetch.sh"))
+        .arg(set)
+        .env("PATH", path)
+        .env("PYTHON", python_interpreter())
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("copied fetch.sh is runnable through bash")
+}
+
+#[cfg(unix)]
+fn path_with_fake_bin(bin: &Path) -> OsString {
+    let old_path = env::var_os("PATH").unwrap_or_default();
+    let mut path = bin.as_os_str().to_os_string();
+    path.push(":");
+    path.push(old_path);
+    path
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    let mut permissions = fs::metadata(path)
+        .expect("fake executable metadata is readable")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(path, permissions).expect("fake executable is made executable");
+}
+
+#[cfg(unix)]
+fn write_failing_fake_curl(path: &Path) {
+    fs::write(
+        path,
+        "#!/bin/sh\nprintf '%s\\n' 'fake curl must not be invoked' >&2\nexit 42\n",
+    )
+    .expect("failing fake curl is written");
+    make_executable(path);
+}
+
+#[cfg(unix)]
+fn write_pdf_curl(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+output=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --output)
+            shift
+            output="$1"
+            ;;
+    esac
+    shift || exit 64
+done
+if [ -z "$output" ]; then
+    printf '%s\n' 'missing --output' >&2
+    exit 64
+fi
+printf '%s' '%PDF-1.4
+%tiny
+' > "$output"
+"#,
+    )
+    .expect("PDF fake curl is written");
+    make_executable(path);
+}
+
+#[cfg(unix)]
+fn write_destination_swap_curl(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+output=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --output)
+            shift
+            output="$1"
+            ;;
+    esac
+    shift || exit 64
+done
+if [ -z "$output" ]; then
+    printf '%s\n' 'missing --output' >&2
+    exit 64
+fi
+ln -s "$ONIONSKIN_SWAP_TARGET" "$ONIONSKIN_DEST_TO_SWAP" 2>/dev/null || true
+printf '%s' '%PDF-1.4
+%tiny
+' > "$output"
+"#,
+    )
+    .expect("destination-swap fake curl is written");
+    make_executable(path);
+}
+
+#[cfg(windows)]
+fn create_windows_reparse_for_file_role(link: &Path, target_file: &Path) {
+    let file_link = Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg(link)
+        .arg(target_file)
+        .output()
+        .expect("Windows file symlink command is runnable");
+    if file_link.status.success() {
+        return;
+    }
+
+    let link_name = link
+        .file_name()
+        .expect("Windows reparse test link has a file name")
+        .to_string_lossy();
+    let target_dir = target_file
+        .parent()
+        .expect("Windows reparse test target has a parent")
+        .join(format!("{link_name}.junction-target"));
+    fs::create_dir(&target_dir).expect("junction target is created");
+    create_windows_junction(link, &target_dir);
+}
+
+#[cfg(windows)]
+fn create_windows_junction(link: &Path, target: &Path) {
+    let created = Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .output()
+        .expect("Windows junction command is runnable");
+    assert!(
+        created.status.success(),
+        "Windows junction creation failed\n{}",
+        output_text(&created)
+    );
 }
 
 fn python_interpreter() -> OsString {

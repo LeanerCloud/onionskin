@@ -267,13 +267,16 @@ tarball extraction has no meaningful partial state and a per-file download does:
   without a stamp therefore cannot be resumed, and `fetch.sh` refuses to touch
   it rather than deleting it. Remove it by hand and re-run.
 - **R2 sets** (`hayro-corpus`, `hayro-pdfjs`, `hayro-pdfbox`, `hayro-pdfium`)
-  deliberately adopt an unstamped directory and resume into it. Each pdf is
-  downloaded to `<id>.pdf.partial` and renamed on success, and a file already on
-  disk is never re-fetched or overwritten, so a killed run costs at most the one
-  file in flight. For `hayro-corpus`, every file is then checked against the
-  tracked SHA-256 manifest before the stamp is written. The stamp is written
-  only when every id in the manifest is present and, where checksums exist,
-  verified.
+  are downloaded into a per-run staging directory outside the final set
+  directory, then copied into a private publication directory and moved into the
+  final name with no-replace semantics. The final destination must be absent
+  before download and again at publication time; an unstamped final directory is
+  preserved but rejected rather than adopted or resumed. For `hayro-corpus`, the
+  staged files are checked against the tracked SHA-256 manifest before anything
+  is published, then the private copy is rechecked against the same manifest
+  immediately before publication. The optional R2 sets without checksums use the
+  same staging and publication path, but are explicitly reported as unchecked;
+  they only pin the id list, not object bytes.
 
 ## Requirements
 
