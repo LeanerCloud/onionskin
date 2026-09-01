@@ -119,10 +119,6 @@ source IDs, severity, ownership, and required proof.
   a softened harness with a stray assert. Branch protection must REQUIRE the
   bench job through an enforceable hosted rule; `origin` now exists but the
   rule is not verified, so the budget gate binds the job and not the merge.
-- P8 residuals: Reduce/Enlarge does not advance the thumbnail epoch, so a
-  page pending at the old size that falls outside the new band keeps a
-  wrong-size (content-correct) picture until eviction - one-line fix is to clear
-  pending or advance the epoch on a size change.
 - P11 residuals: keymap's NAMED_KEYS whitelist is a subset of gpui's real key
   set (f19 through f35, back and forward are missing), so binding f19 on an
   Apple extended keyboard is refused with "names a key this build cannot

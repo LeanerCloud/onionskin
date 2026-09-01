@@ -57,3 +57,11 @@ absolute paths when needed; this tracked manifest records filenames only.
   with `could not create image from window`; exact window-bounds
   `screencapture -R` failed with `could not create image from rect`. No
   full-screen fallback was taken. No B3.2 screenshot is recorded as evidence.
+- B3.3 thumbnail stale-size reclassification, 2026-09-01T18:38Z: focused
+  regression `a_thumbnail_rendered_at_the_previous_size_is_dropped_when_it_arrives`
+  passed, proving APP-004 is stale against current code. The fresh app window
+  was PID 23650, CoreGraphics window ID 8856, with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` failed
+  with `could not create image from window`; exact window-bounds
+  `screencapture -R` failed with `could not create image from rect`. No
+  full-screen fallback was taken. No B3.3 screenshot is recorded as evidence.

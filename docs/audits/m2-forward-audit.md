@@ -88,7 +88,7 @@ regression test and real user path pass.
 | APP-001 | Medium | `crates/app/src/shell/chrome/tabs.rs:873,891,907`; `crates/app/src/shell/panes/attachments.rs:65,78,84` | Confirmed open | B4 | Added by this audit | Resolve prompt after close/switch and prove no stale-tab export/attachment write occurs. |
 | APP-002 | Medium | `crates/app/src/shell/chrome/tabs.rs:2357,2360,2376` | Confirmed open | B4 | Existing export entry, corrected | Confirm every derived overwrite and derive numbering width from the exported page count. |
 | APP-003 | Medium | `crates/core/src/layers.rs:53,81` | Resolved in B3.2 | B3 | Removed from known issues | Nested `/D /Order` fixture renders hierarchy and hides omitted groups. |
-| APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Confirmed open | B3 | Already ledgered | Old-size thumbnail response is rejected after Reduce/Enlarge. |
+| APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Resolved before B3.3; reverified in B3.3 | B3 | Removed from known issues | Existing regression proves old-size thumbnail responses are rejected after Reduce/Enlarge. |
 | APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Resolved in B2.4 | B2 | Updated by B2.4 | First error is preserved, stale worker wait timing is reset after poll update errors, oversized snapshots are refused before allocation, and PNG encoding runs on the background executor with stale completion protection. |
 | APP-006 | Low | `crates/app/src/shell/chrome/tabs.rs:2177,2189` | Resolved in B2.3 | B2 | Updated by B2.3 | Second right-click inside document bounds repositions the open canvas context menu; right-click outside document bounds dismisses it. |
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Confirmed open | B3 | Already ledgered | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
@@ -133,6 +133,9 @@ restoring the rows whose only remaining gap was the hidden pane body.
 B3.2 reads nested `/D /Order` as the pane order, carries layer depth, and omits
 groups not named by `/Order`; the focused core regression covers nested ordering
 and omitted groups while existing app layer tests cover pane behavior.
+B3.3 reverified the existing
+`a_thumbnail_rendered_at_the_previous_size_is_dropped_when_it_arrives`
+regression, proving APP-004 was stale against current code.
 
 ### Repository, documentation, CI, packaging, and retained state
 
