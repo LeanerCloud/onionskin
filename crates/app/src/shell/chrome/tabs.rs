@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::fmt;
-use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -2930,37 +2929,88 @@ fn write_export(chosen: &Path, files: &[ExportedFile]) -> Result<(), ExportFailu
         if !seen.insert(path.clone()) {
             return Err(ExportFailure::Duplicate { path: path.clone() });
         }
-        if export_destination_exists(path).map_err(|source| ExportFailure::Write {
-            path: path.clone(),
-            source,
-        })? {
-            return Err(ExportFailure::Exists { path: path.clone() });
+    }
+    let mut reserved = Vec::new();
+    for path in paths {
+        match reserve_export_destination(&path) {
+            Ok(file) => reserved.push((path, file)),
+            Err(failure) => {
+                let cleanup_paths = reserved.into_iter().map(|(path, _)| path).collect();
+                return match remove_export_paths(cleanup_paths) {
+                    Ok(()) => Err(failure),
+                    Err(cleanup) => Err(ExportFailure::Cleanup {
+                        primary: Box::new(failure),
+                        path: cleanup.path,
+                        source: cleanup.source,
+                    }),
+                };
+            }
         }
     }
-    for (path, file) in paths.iter().zip(files) {
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|source| ExportFailure::Write {
-                path: path.clone(),
-                source,
-            })?
-            .write_all(&file.bytes)
-            .map_err(|source| ExportFailure::Write {
-                path: path.clone(),
-                source,
-            })?;
+    write_reserved_exports(reserved, files)
+}
+
+fn reserve_export_destination(path: &Path) -> Result<File, ExportFailure> {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => Ok(file),
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(ExportFailure::Exists {
+                path: path.to_path_buf(),
+            })
+        }
+        Err(source) => Err(ExportFailure::Write {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn write_reserved_exports<W: std::io::Write>(
+    mut reserved: Vec<(PathBuf, W)>,
+    files: &[ExportedFile],
+) -> Result<(), ExportFailure> {
+    let mut index = 0;
+    while index < files.len() {
+        let result = {
+            let (path, writer) = &mut reserved[index];
+            writer
+                .write_all(&files[index].bytes)
+                .map_err(|source| (path.clone(), source))
+        };
+        if let Err((path, source)) = result {
+            let failure = ExportFailure::Write { path, source };
+            let cleanup_paths = reserved.drain(index..).map(|(path, _)| path).collect();
+            return match remove_export_paths(cleanup_paths) {
+                Ok(()) => Err(failure),
+                Err(cleanup) => Err(ExportFailure::Cleanup {
+                    primary: Box::new(failure),
+                    path: cleanup.path,
+                    source: cleanup.source,
+                }),
+            };
+        }
+        index += 1;
     }
     Ok(())
 }
 
-fn export_destination_exists(path: &Path) -> Result<bool, std::io::Error> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
+fn remove_export_paths(paths: Vec<PathBuf>) -> Result<(), ExportCleanupFailure> {
+    let mut first_error = None;
+    for path in paths {
+        if let Err(source) = std::fs::remove_file(&path) {
+            first_error.get_or_insert(ExportCleanupFailure { path, source });
+        }
     }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+#[derive(Debug)]
+struct ExportCleanupFailure {
+    path: PathBuf,
+    source: std::io::Error,
 }
 
 /// Where one exported file goes. A single file takes the name the user chose;
@@ -3001,6 +3051,11 @@ enum ExportFailure {
         path: PathBuf,
         source: std::io::Error,
     },
+    Cleanup {
+        primary: Box<ExportFailure>,
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl fmt::Display for ExportFailure {
@@ -3020,6 +3075,15 @@ impl fmt::Display for ExportFailure {
             Self::Write { path, source } => {
                 write!(f, "{} could not be written: {source}", path.display())
             }
+            Self::Cleanup {
+                primary,
+                path,
+                source,
+            } => write!(
+                f,
+                "{primary}; additionally {} could not be removed: {source}",
+                path.display()
+            ),
         }
     }
 }
@@ -4698,6 +4762,143 @@ mod tests {
                 .starts_with("/onionskin-does-not-exist/report-01.png could not be written: "),
             "{failure}"
         );
+    }
+
+    #[test]
+    fn a_mid_write_failure_removes_unwritten_reserved_exports() {
+        struct Writer {
+            fail: bool,
+        }
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.fail {
+                    Err(std::io::Error::other("disk full"))
+                } else {
+                    Ok(bytes.len())
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let dir =
+            std::env::temp_dir().join(format!("onionskin-export-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let first = dir.join("report-01.png");
+        let second = dir.join("report-02.png");
+        let third = dir.join("report-03.png");
+        for path in [&first, &second, &third] {
+            File::create(path).expect("the reserved output is visible on disk");
+        }
+        let reserved = vec![
+            (first.clone(), Writer { fail: false }),
+            (second.clone(), Writer { fail: true }),
+            (third.clone(), Writer { fail: false }),
+        ];
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+            ExportedFile {
+                page: Some(2),
+                bytes: b"third".to_vec(),
+            },
+        ];
+
+        let failure = write_reserved_exports(reserved, &files).expect_err("the second write fails");
+
+        assert!(
+            failure.to_string().starts_with(&format!(
+                "{} could not be written: disk full",
+                second.display()
+            )),
+            "{failure}"
+        );
+        assert!(first.exists(), "the completed page is kept");
+        assert!(!second.exists(), "the partial page is removed");
+        assert!(!third.exists(), "the unwritten reservation is removed");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[test]
+    fn a_cleanup_failure_is_reported_with_the_write_failure() {
+        struct Writer {
+            fail: bool,
+        }
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.fail {
+                    Err(std::io::Error::other("disk full"))
+                } else {
+                    Ok(bytes.len())
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let dir =
+            std::env::temp_dir().join(format!("onionskin-export-cleanup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let first = dir.join("report-01.png");
+        let second = dir.join("report-02.png");
+        let third = dir.join("report-03.png");
+        File::create(&first).expect("the first reservation is visible on disk");
+        std::fs::create_dir(&second).expect("the second cleanup target will reject remove_file");
+        File::create(&third).expect("the third reservation is visible on disk");
+        let reserved = vec![
+            (first.clone(), Writer { fail: false }),
+            (second.clone(), Writer { fail: true }),
+            (third.clone(), Writer { fail: false }),
+        ];
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+            ExportedFile {
+                page: Some(2),
+                bytes: b"third".to_vec(),
+            },
+        ];
+
+        let failure =
+            write_reserved_exports(reserved, &files).expect_err("the write and cleanup fail");
+        let message = failure.to_string();
+
+        assert!(
+            message.contains(&format!(
+                "{} could not be written: disk full",
+                second.display()
+            )),
+            "{message}"
+        );
+        assert!(
+            message.contains(&format!(
+                "additionally {} could not be removed:",
+                second.display()
+            )),
+            "{message}"
+        );
+        assert!(first.exists(), "the completed page is kept");
+        assert!(second.exists(), "the failed cleanup target remains visible");
+        assert!(!third.exists(), "cleanup still removes later pending files");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
     }
 
     #[cfg(feature = "shell-test-support")]
