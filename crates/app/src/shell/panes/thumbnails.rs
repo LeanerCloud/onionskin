@@ -123,6 +123,7 @@ impl ThumbnailsCommand {
                 state.size + 1 < SIZES.len(),
                 "Already at the largest thumbnail size",
             ),
+            Self::CropPages => MenuAvailability::Disabled("Available in M5 tools-organize"),
             _ => MenuAvailability::Disabled("Available in M3 tools-organize"),
         }
     }
@@ -724,32 +725,32 @@ mod tests {
         }
     }
 
-    /// The page-mutating entries wait on M3 and say so. Asserted on the
-    /// milestone rather than the whole sentence: pinning the prose would keep
-    /// passing once `tools-organize` lands, which is the state this test
-    /// exists to catch.
+    /// The page-mutating entries wait on their owning milestones and say so.
+    /// Asserted on the milestone rather than the whole sentence: pinning the
+    /// prose would keep passing once the owner lands, which is the state this
+    /// test exists to catch.
     #[test]
-    fn every_page_editing_entry_is_disabled_and_names_the_milestone() {
+    fn every_page_editing_entry_is_disabled_and_names_its_milestone() {
         let pane = state(DEFAULT_SIZE, 0.0);
 
-        for command in [
-            ThumbnailsCommand::InsertPages,
-            ThumbnailsCommand::ExtractPages,
-            ThumbnailsCommand::ReplacePages,
-            ThumbnailsCommand::DeletePages,
-            ThumbnailsCommand::RotatePages,
-            ThumbnailsCommand::CropPages,
-            ThumbnailsCommand::PageProperties,
-            ThumbnailsCommand::EmbedThumbnails,
-            ThumbnailsCommand::RemoveThumbnails,
+        for (command, milestone) in [
+            (ThumbnailsCommand::InsertPages, "M3"),
+            (ThumbnailsCommand::ExtractPages, "M3"),
+            (ThumbnailsCommand::ReplacePages, "M3"),
+            (ThumbnailsCommand::DeletePages, "M3"),
+            (ThumbnailsCommand::RotatePages, "M3"),
+            (ThumbnailsCommand::CropPages, "M5"),
+            (ThumbnailsCommand::PageProperties, "M3"),
+            (ThumbnailsCommand::EmbedThumbnails, "M3"),
+            (ThumbnailsCommand::RemoveThumbnails, "M3"),
         ] {
             let reason = command
                 .availability(&pane)
                 .reason()
                 .expect("a page-editing entry is disabled");
             assert!(
-                reason.contains("M3"),
-                "{} should name the milestone it waits on, said {reason:?}",
+                reason.contains(milestone),
+                "{} should name {milestone}, said {reason:?}",
                 command.label()
             );
         }

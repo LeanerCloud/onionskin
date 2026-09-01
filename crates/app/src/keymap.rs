@@ -281,10 +281,9 @@ fn unbindable(keystroke: &str) -> Option<&'static str> {
     Some("names a key this build cannot produce")
 }
 
-/// The key names GPUI translates, from its own platform table. A name
-/// outside this and not a single character reaches nothing, whatever it
-/// parses as.
-const NAMED_KEYS: [&str; 33] = [
+/// The named key strings this build accepts for GPUI bindings. A name outside
+/// this and not a single character reaches nothing, whatever it parses as.
+const NAMED_KEYS: [&str; 52] = [
     "space",
     "backspace",
     "escape",
@@ -318,6 +317,25 @@ const NAMED_KEYS: [&str; 33] = [
     "f16",
     "f17",
     "f18",
+    "f19",
+    "f20",
+    "f21",
+    "f22",
+    "f23",
+    "f24",
+    "f25",
+    "f26",
+    "f27",
+    "f28",
+    "f29",
+    "f30",
+    "f31",
+    "f32",
+    "f33",
+    "f34",
+    "f35",
+    "back",
+    "forward",
 ];
 
 /// One keystroke's identity, for deciding whether two bindings collide.
@@ -661,6 +679,17 @@ mod tests {
     #[test]
     fn named_keys_and_the_separator_key_still_bind() {
         for keystroke in ["f4", "cmd-pagedown", "cmd--", "alt-left", "cmd-shift-="] {
+            assert_eq!(
+                unbindable(keystroke),
+                None,
+                "{keystroke} was refused and should not be"
+            );
+        }
+    }
+
+    #[test]
+    fn extended_function_and_navigation_keys_still_bind() {
+        for keystroke in ["f19", "shift-f35", "cmd-back", "cmd-forward"] {
             assert_eq!(
                 unbindable(keystroke),
                 None,

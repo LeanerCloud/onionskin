@@ -119,16 +119,9 @@ source IDs, severity, ownership, and required proof.
   a softened harness with a stray assert. Branch protection must REQUIRE the
   bench job through an enforceable hosted rule; `origin` now exists but the
   rule is not verified, so the budget gate binds the job and not the merge.
-- P11 residuals: keymap's NAMED_KEYS whitelist is a subset of gpui's real key
-  set (f19 through f35, back and forward are missing), so binding f19 on an
-  Apple extended keyboard is refused with "names a key this build cannot
-  produce", which is false on that hardware; the comment claiming the table
-  comes from gpui's own platform table overstates it. The preferences
-  carry-forward cap is 64..=71 rather than 64, because take() runs over a
-  prefix that may sort all unknown keys first - filter out the build's own
-  keys before take(). Informational: a pre-existing 0755 config directory
-  keeps its mode (only newly created ones get 0700), and the save-time rescue
-  copy is silent because keep_unreadable's note is discarded there.
+- P11 residuals: a pre-existing 0755 config directory keeps its mode (only newly
+  created ones get 0700), and the save-time rescue copy is silent because
+  keep_unreadable's note is discarded there.
 - P8 residual: six dead-code warnings under --features shell alone
   (fixtures.rs x4, panes/mod.rs, panes/thumbnails.rs) - CI lints only
   --workspace --all-targets and the app under shell,shell-test-support, so
@@ -211,10 +204,6 @@ source IDs, severity, ownership, and required proof.
   the M2 plan header. Audit Task 2 reconciles all 403 Acrobat rows and adds an
   executable totals contract. B7 still owns private reference comparison and final
   acceptance.
-- **Stale context-menu milestone reasons (owner B3):** the canvas labels Edit Text,
-  Redact Text, and Create Link as M3 although all three are M5, and the thumbnails
-  menu's shared M3 reason also covers the M5 Crop command. Derive or test these
-  reasons against owning command metadata instead of duplicating milestone strings.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.

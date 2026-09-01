@@ -459,8 +459,16 @@ fn carry_forward(path: &Path, file: &mut serde_json::Map<String, serde_json::Val
         crate::config::keep_unreadable(path);
         return;
     };
-    for (setting, value) in existing.into_iter().take(file.len() + MAX_CARRIED_SETTINGS) {
-        file.entry(setting).or_insert(value);
+    let mut carried = 0;
+    for (setting, value) in existing {
+        if file.contains_key(&setting) {
+            continue;
+        }
+        if carried >= MAX_CARRIED_SETTINGS {
+            break;
+        }
+        file.insert(setting, value);
+        carried += 1;
     }
 }
 
@@ -684,6 +692,38 @@ mod tests {
             "the save dropped a setting this build does not have: {written}"
         );
         assert!(written.contains("\"light\""), "{written}");
+    }
+
+    #[test]
+    fn exactly_sixty_four_unknown_settings_survive_regardless_of_key_order() {
+        fn exercise(prefix: &str) {
+            let path = crate::config::test_dir(&format!("preferences-unknown-cap-{prefix}"))
+                .join("preferences.json");
+            let mut entries = vec![r#""theme": "dark""#.to_owned()];
+            for index in 0..80 {
+                entries.push(format!(r#""{prefix}_unknown_{index:02}": {index}"#));
+            }
+            std::fs::write(&path, format!("{{{}}}", entries.join(",")))
+                .expect("the test writes its file");
+
+            let (preferences, errors) = Preferences::load(Some(&path));
+            assert_eq!(errors.len(), 80, "{errors:?}");
+
+            preferences.save(&path).expect("preferences save");
+
+            let written = std::fs::read_to_string(&path).expect("the file reads back");
+            let saved =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&written)
+                    .expect("saved preferences parse");
+            assert_eq!(
+                saved.keys().filter(|key| key.contains("_unknown_")).count(),
+                MAX_CARRIED_SETTINGS,
+                "wrong unknown carry-forward count for {prefix}: {written}"
+            );
+        }
+
+        exercise("aaa");
+        exercise("zzz");
     }
 
     /// A file that became unparseable between load and save is about to be

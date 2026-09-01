@@ -91,8 +91,8 @@ regression test and real user path pass.
 | APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Resolved before B3.3; reverified in B3.3 | B3 | Removed from known issues | Existing regression proves old-size thumbnail responses are rejected after Reduce/Enlarge. |
 | APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Resolved in B2.4 | B2 | Updated by B2.4 | First error is preserved, stale worker wait timing is reset after poll update errors, oversized snapshots are refused before allocation, and PNG encoding runs on the background executor with stale completion protection. |
 | APP-006 | Low | `crates/app/src/shell/chrome/tabs.rs:2177,2189` | Resolved in B2.3 | B2 | Updated by B2.3 | Second right-click inside document bounds repositions the open canvas context menu; right-click outside document bounds dismisses it. |
-| APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Confirmed open | B3 | Already ledgered | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
-| APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Confirmed open | B3 | Already ledgered | Exactly 64 unknown preferences survive regardless of key ordering. |
+| APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Resolved in B3.4 | B3 | Removed from known issues | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
+| APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Resolved in B3.5 | B3 | Removed from known issues | Exactly 64 unknown preferences survive regardless of key ordering. |
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Confirmed open | B4 | Added by this audit | Attachment prompt error becomes visible and is distinct from cancel. |
 | APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
 | APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
@@ -136,6 +136,14 @@ and omitted groups while existing app layer tests cover pane behavior.
 B3.3 reverified the existing
 `a_thumbnail_rendered_at_the_previous_size_is_dropped_when_it_arrives`
 regression, proving APP-004 was stale against current code.
+B3.4 extends the canonical key whitelist through `f35` and adds `back` and
+`forward`; focused keymap tests prove the names bind and unknown names remain
+refused.
+B3.5 filters known settings before applying the unknown-key carry-forward cap;
+focused preferences tests prove exactly 64 unknown settings survive regardless
+of key ordering.
+B3.6 gives canvas and thumbnail context menu entries command-specific milestone
+reasons, including M5 for Edit Text, Redact Text, Create Link, and Crop Pages.
 
 ### Repository, documentation, CI, packaging, and retained state
 

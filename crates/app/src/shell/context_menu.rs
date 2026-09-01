@@ -114,11 +114,10 @@ impl CanvasContextCommand {
             Self::CopyWithFormatting | Self::ExportSelectionAs => {
                 Requirement::Milestone("Available in M3 with rich-text export")
             }
-            Self::EditText => Requirement::Milestone("Available in M3 tools-edit"),
-            Self::RedactText => Requirement::Milestone("Available in M3 redact"),
-            Self::CreateLink | Self::AddBookmark => {
-                Requirement::Milestone("Available in M3 commands-core")
-            }
+            Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
+            Self::RedactText => Requirement::Milestone("Available in M5 redact"),
+            Self::CreateLink => Requirement::Milestone("Available in M5 commands-core"),
+            Self::AddBookmark => Requirement::Milestone("Available in M3 commands-core"),
             Self::Print => Requirement::Milestone("Available in M3 with crates/print"),
             Self::PageCommands => Requirement::Milestone("Available in M3 tools-organize"),
         }
@@ -255,6 +254,33 @@ mod tests {
         ] {
             assert!(
                 reason(command).contains("M3"),
+                "{} should name the milestone it waits on, said {:?}",
+                command.label(),
+                reason(command)
+            );
+        }
+    }
+
+    #[test]
+    fn future_editing_entries_name_their_m5_milestone() {
+        let entries = canvas_context_entries(&crate::build_registry(), true);
+        let reason = |command| {
+            entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("the entry is present")
+                .availability
+                .reason()
+                .expect("a disabled entry says why")
+        };
+
+        for command in [
+            CanvasContextCommand::EditText,
+            CanvasContextCommand::RedactText,
+            CanvasContextCommand::CreateLink,
+        ] {
+            assert!(
+                reason(command).contains("M5"),
                 "{} should name the milestone it waits on, said {:?}",
                 command.label(),
                 reason(command)

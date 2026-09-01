@@ -65,3 +65,24 @@ absolute paths when needed; this tracked manifest records filenames only.
   with `could not create image from window`; exact window-bounds
   `screencapture -R` failed with `could not create image from rect`. No
   full-screen fallback was taken. No B3.3 screenshot is recorded as evidence.
+- B3.4 canonical key names, 2026-09-01T18:43Z: focused extended-key regression,
+  keymap filter, format check, and shell build passed. The fresh app window was
+  PID 25860, CoreGraphics window ID 8861, with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` failed
+  with `could not create image from window`; exact window-bounds
+  `screencapture -R` failed with `could not create image from rect`. No
+  full-screen fallback was taken. No B3.4 screenshot is recorded as evidence.
+- B3.5 preference carry-forward cap, 2026-09-01T18:47Z: focused unknown-key cap
+  regression, preferences filter, format check, and shell build passed. The
+  fresh app window was PID 26491, CoreGraphics window ID 8866, with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` failed
+  with `could not create image from window`; exact window-bounds
+  `screencapture -R` failed with `could not create image from rect`. No
+  full-screen fallback was taken. No B3.5 screenshot is recorded as evidence.
+- B3.6 command-specific disabled reasons, 2026-09-01T18:45Z: focused context
+  menu regressions, matrix headline check, format check, and shell build passed.
+  The fresh app window was PID 27984, CoreGraphics window ID 8871, with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` failed
+  with `could not create image from window`; exact window-bounds
+  `screencapture -R` failed with `could not create image from rect`. No
+  full-screen fallback was taken. No B3.6 screenshot is recorded as evidence.
