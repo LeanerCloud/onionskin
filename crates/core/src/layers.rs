@@ -15,6 +15,7 @@ use crate::{Error, ObjRef, Result};
 /// Enough for every real file; a bound so a crafted `/OCGs` array cannot make
 /// the pane grow without end.
 const MAX_LAYERS: usize = 10_000;
+const MAX_ORDER_DEPTH: usize = 32;
 
 /// One optional content group.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub struct Layer {
     /// names it too.
     pub id: ObjRef,
     pub name: String,
+    pub depth: usize,
     pub visible: bool,
     /// Listed in `/OCProperties /D /Locked`. The file is saying the user may
     /// not change this group's visibility, so the pane disables the control
@@ -77,8 +79,21 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Layer>> {
         None => Vec::new(),
     };
 
+    let ordered = match config.as_ref().and_then(|config| config.get(b"Order")) {
+        Some(order) => Some(order_references(doc, order)?),
+        None => None,
+    };
+    let listed_groups = groups.clone();
+    let entries: Vec<(ObjRef, usize)> = match ordered {
+        Some(ordered) => ordered,
+        None => groups.into_iter().map(|id| (id, 0)).collect(),
+    };
+
     let mut layers = Vec::new();
-    for id in groups.into_iter().take(MAX_LAYERS) {
+    for (id, depth) in entries.into_iter().take(MAX_LAYERS) {
+        if !listed_groups.contains(&id) {
+            continue;
+        }
         if layers.iter().any(|layer: &Layer| layer.id == id) {
             continue;
         }
@@ -107,6 +122,7 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Layer>> {
         layers.push(Layer {
             id,
             name,
+            depth,
             visible,
             locked: locked.contains(&id),
         });
@@ -163,6 +179,56 @@ fn references(doc: &CosDocument, value: Option<&Object>) -> Result<Vec<ObjRef>> 
     Ok(found)
 }
 
+/// The optional-content groups named by `/D /Order`, with nesting depth.
+///
+/// If `/Order` is present, it is the pane's list. Groups named only by `/OCGs`
+/// are still renderable, but the document did not ask the UI to show them.
+fn order_references(doc: &CosDocument, value: &Object) -> Result<Vec<(ObjRef, usize)>> {
+    let mut found = Vec::new();
+    let Some(entries) = doc.resolve(value)?.as_array().map(<[Object]>::to_vec) else {
+        return Ok(found);
+    };
+    for entry in entries {
+        collect_order_entry(entry, 0, &mut found);
+        if found.len() >= MAX_LAYERS {
+            break;
+        }
+    }
+    Ok(found)
+}
+
+fn collect_order_entry(entry: Object, depth: usize, found: &mut Vec<(ObjRef, usize)>) {
+    if depth >= MAX_ORDER_DEPTH || found.len() >= MAX_LAYERS {
+        return;
+    }
+    if let Some(reference) = entry.as_reference() {
+        found.push((reference, depth));
+        return;
+    }
+    let Some(entries) = entry.as_array().map(<[Object]>::to_vec) else {
+        return;
+    };
+    collect_order_array(entries, depth, found)
+}
+
+fn collect_order_array(entries: Vec<Object>, depth: usize, found: &mut Vec<(ObjRef, usize)>) {
+    let mut entries = entries.into_iter();
+    let Some(first) = entries.next() else {
+        return;
+    };
+    if let Some(reference) = first.as_reference() {
+        found.push((reference, depth));
+    } else if !matches!(first, Object::String(_) | Object::Name(_)) {
+        collect_order_entry(first, depth + 1, found);
+    }
+    for entry in entries {
+        collect_order_entry(entry, depth + 1, found);
+        if found.len() >= MAX_LAYERS {
+            break;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +259,21 @@ mod tests {
                 "<< /Type /OCG /Name (Background) >>",
                 "<< /Type /OCG /Name (Annotations) >>",
                 "<< /Type /OCG /Name (Watermark) >>",
+                config,
+            ],
+        )
+    }
+
+    /// Objects 4 through 7 are the four groups; 8 is the default config.
+    fn four_groups(config: &str) -> Vec<u8> {
+        document(
+            "<< /Type /Catalog /Pages 2 0 R /OCProperties \
+             << /OCGs [4 0 R 5 0 R 6 0 R 7 0 R] /D 8 0 R >> >>",
+            &[
+                "<< /Type /OCG /Name (Parent) >>",
+                "<< /Type /OCG /Name (Child) >>",
+                "<< /Type /OCG /Name (Sibling) >>",
+                "<< /Type /OCG /Name (Omitted) >>",
                 config,
             ],
         )
@@ -249,6 +330,70 @@ mod tests {
         assert!(!read(&doc).expect("the layers read")[2].visible);
     }
 
+    #[test]
+    fn default_order_lists_nested_groups_and_hides_omitted_groups() {
+        let doc = open(four_groups("<< /Order [6 0 R [4 0 R 5 0 R]] >>"));
+
+        let layers = read(&doc).expect("the layers read");
+
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| (layer.name.as_str(), layer.depth))
+                .collect::<Vec<_>>(),
+            [("Sibling", 0), ("Parent", 0), ("Child", 1)]
+        );
+    }
+
+    #[test]
+    fn default_order_entries_outside_the_ocg_list_are_ignored() {
+        let doc = open(four_groups("<< /Order [8 0 R 6 0 R [4 0 R 5 0 R]] >>"));
+
+        let layers = read(&doc).expect("the layers read");
+
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| layer.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Sibling", "Parent", "Child"]
+        );
+    }
+
+    #[test]
+    fn default_order_keeps_visibility_and_locked_state() {
+        let doc = open(four_groups(
+            "<< /BaseState /OFF /ON [5 0 R] /Locked [5 0 R] \
+             /Order [6 0 R [4 0 R 5 0 R]] >>",
+        ));
+
+        let layers = read(&doc).expect("the layers read");
+
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| (layer.name.as_str(), layer.visible, layer.locked))
+                .collect::<Vec<_>>(),
+            [
+                ("Sibling", false, false),
+                ("Parent", false, false),
+                ("Child", true, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn order_tree_depth_is_bounded() {
+        let mut order = "4 0 R".to_owned();
+        for _ in 0..=MAX_ORDER_DEPTH {
+            order = format!("[{order}]");
+        }
+        let config = format!("<< /Order [{order}] >>");
+        let doc = open(four_groups(&config));
+
+        assert!(read(&doc).expect("the layers read").is_empty());
+    }
+
     /// Without `/D` there is no default configuration to read, so every group
     /// takes the base state's own default rather than disappearing.
     #[test]
@@ -279,6 +424,7 @@ mod tests {
         let unnameable = |number| Layer {
             id: ObjRef::new(number, 0),
             name: "beyond the table".to_owned(),
+            depth: 0,
             visible: true,
             locked: false,
         };

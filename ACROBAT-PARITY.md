@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 256 planned / 20 partial / 80 out-of-scope. 47 implemented.**
+**403 rows: 256 planned / 18 partial / 80 out-of-scope. 49 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
@@ -221,7 +221,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
 | Comments pane (list, sort, filter, reply, status) | planned | M3 | Ships with `tools-comment`. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | planned | M3 | Counted once for the whole menu; ships with `tools-comment`. |
-| Layers pane (show/hide optional content groups) | partial | M2 | Rendered pane body bounds, OCG listing, and visibility toggles are implemented, but nested `/D /Order` remains a known ordering defect. Evidence: M2-LAYERS, M2-PANES, and B3.1. |
+| Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
 | Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, and rendered menu access are implemented; Properties waits for M3, while merge/flatten remain post-1.0. Evidence: M2-PANES and B3.1. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
 | Content pane (document object tree) | planned | M6 | With `tools-accessibility`. |
@@ -625,7 +625,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Add a 3D model (U3D / PRC) | out-of-scope | - | 3D is named out of scope in the plan's GUI parity bullet: no crate could own a 3D engine and a second geometry format family. |
 | View, rotate and cut away a 3D model | out-of-scope | - | Needs the same embedded 3D engine. |
 | 3D views, 3D comments, 3D measurement | out-of-scope | - | Needs the same embedded 3D engine. |
-| PDF layers (view and toggle) | partial | M2 | Optional-content parsing and render toggles work, but their M2 Layers pane body is hidden in the live UI; see that row. Evidence: M2-LAYERS and M2-PANES. |
+| PDF layers (view and toggle) | implemented | M2 | Optional-content parsing, nested `/D /Order` hierarchy, omitted-group handling, render toggles, and the M2 Layers pane body are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
 | PDF articles (article threads) | planned | post-1.0 | Articles are a named post-1.0 slot, reading and authoring both. |
 | Geospatial PDFs | out-of-scope | - | Named out of scope in the plan's GUI parity bullet, alongside rich media and 3D. |
 | PDF Portfolios (create, customize, sort, publish, search) | planned | post-1.0 | A named post-1.0 slot. |

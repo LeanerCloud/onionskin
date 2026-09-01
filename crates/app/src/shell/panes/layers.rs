@@ -30,6 +30,8 @@ use crate::a11y::State as A11yState;
 
 /// Said where the list would be when the document has no optional content.
 const NO_LAYERS: &str = "This document has no layers.";
+const MAX_INDENT: usize = 8;
+const INDENT: f32 = 12.0;
 
 /// Parity row 203's menu, counted once for the whole menu. Visibility and the
 /// default-state command are the pane's own and live; properties needs a
@@ -106,6 +108,10 @@ fn toggle(layer: &Layer) -> Activation {
         layer: layer.id,
         visible: !layer.visible,
     }))
+}
+
+fn indent(depth: usize) -> Pixels {
+    px(8.0 + INDENT * depth.min(MAX_INDENT) as f32)
 }
 
 fn run_command(command: LayersCommand) -> Activation {
@@ -280,6 +286,7 @@ pub(super) fn render(
             .items_center()
             .gap_2()
             .px_2()
+            .pl(indent(layer.depth))
             .text_sm()
             .text_color(if enabled {
                 theme.text
@@ -344,6 +351,7 @@ mod tests {
         Layer {
             id: ObjRef::new(1, 0),
             name: name.to_owned(),
+            depth: 0,
             visible,
             locked,
         }
@@ -361,6 +369,13 @@ mod tests {
             Some("The document locks this layer's visibility")
         );
         assert!(availability(&layer("Background", true, false)).is_enabled());
+    }
+
+    #[test]
+    fn layer_row_indentation_tracks_order_depth_and_caps() {
+        assert_eq!(indent(0), px(8.0));
+        assert_eq!(indent(2), px(32.0));
+        assert_eq!(indent(usize::MAX), px(104.0));
     }
 
     /// Parity row 203 counts the menu once and names properties, visibility

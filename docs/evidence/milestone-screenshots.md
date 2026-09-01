@@ -49,3 +49,11 @@ absolute paths when needed; this tracked manifest records filenames only.
   exact window-bounds `screencapture -R` failed with
   `could not create image from rect`. No full-screen fallback was taken. No
   B3.1 screenshot is recorded as evidence.
+- B3.2 layer order hierarchy, 2026-09-01T18:35Z: focused core layer-order
+  regression, full core layer filter, app layer filter, matrix-count contract,
+  format check, and shell build passed. The fresh app window was PID 19470,
+  CoreGraphics window ID 8851, with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` failed
+  with `could not create image from window`; exact window-bounds
+  `screencapture -R` failed with `could not create image from rect`. No
+  full-screen fallback was taken. No B3.2 screenshot is recorded as evidence.
