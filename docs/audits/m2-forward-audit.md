@@ -79,7 +79,7 @@ regression test and real user path pass.
 | CR-004 | Medium | `corpus/fetch.sh`; `corpus/verify-sha256.py`; checksum guarantees | Resolved in B1.4 | B1 | Resolved; historical row retained | Corrupted or incomplete stamped R2 corpus fails before cached or fresh R2 sets are accepted, R2 destinations are safely staged and published, and checksum verification rejects root swaps. |
 | CR-005 | Low | `crates/app/tests/guarantees.rs:83` | Confirmed limitation | B6 | Already ledgered | Replace or supplement textual tripwires with verified hosted workflow policy; a configured `origin` alone is not proof. |
 | CR-006 | Low | no configured remote at baseline; local bench job only | Externally blocked | B6 | Already ledgered | Verify required hosted checks and branch protection through the remote API; a configured `origin` alone is not proof. |
-| CR-007 | Low | `crates/core/src/search.rs:598` | Confirmed open | B4 | Already ledgered | Deterministic cancel hook or stress proof closes the race without weakening semantics. |
+| CR-007 | Low | `crates/core/src/search.rs:598` | Resolved in B4.1 | B4 | Resolved; removed from known issues | Deterministic queue-drain regression at `d5a0836` proves cancel abandons a queued search behind a worker walk without weakening cancel semantics. |
 
 ### App shell and merged feature packages
 
@@ -151,6 +151,10 @@ renders a Tool details empty state. The remaining HARD-CHR rows are non-B3
 matrix blockers or deferred rows already represented in `ACROBAT-PARITY.md`.
 B3.8 maps tool rail icon IDs to compact visual marks at render time while
 keeping screen readers on tool names.
+B4.1 replaces the timing-sensitive P9 search-cancel quiet-window test with a
+deterministic regression at the worker queue-drain seam. Focused core search
+tests, the search integration target, strict core clippy, and the format check
+passed after the change rebased onto `d5a0836`.
 
 ### Repository, documentation, CI, packaging, and retained state
 

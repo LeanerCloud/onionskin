@@ -140,12 +140,6 @@ source IDs, severity, ownership, and required proof.
   reordering, deferred per T7: extraction yields Arabic in visual order, so a
   query spanning a reordered run still misses. Surfaced by the content
   review's poppler comparison.
-- The P9 cancel test (a_cancel_drops_the_search_queued_behind_the_walk_it_stops)
-  has a roughly 1-in-1000 false-failure race: start() and cancel() are two
-  sends, and a worker drain landing between them legitimately emits one page
-  of the queued generation before hearing the cancel. Harden by tolerating
-  queued-generation updates that precede the cancel rather than forbidding
-  them outright.
 - One real VoiceOver session is the remaining M2 acceptance item: P12 built
   the tree, the focus ring and an automated probe, but the probe messages the
   view directly and never leaves the process, so the AX server path,
