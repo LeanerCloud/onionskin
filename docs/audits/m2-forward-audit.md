@@ -89,7 +89,7 @@ regression test and real user path pass.
 | APP-002 | Medium | `crates/app/src/shell/chrome/tabs.rs:2357,2360,2376` | Confirmed open | B4 | Existing export entry, corrected | Confirm every derived overwrite and derive numbering width from the exported page count. |
 | APP-003 | Medium | `crates/core/src/layers.rs:53,81` | Confirmed open | B3 | Already ledgered | Nested `/D /Order` fixture renders hierarchy and hides omitted groups. |
 | APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Confirmed open | B3 | Already ledgered | Old-size thumbnail response is rejected after Reduce/Enlarge. |
-| APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Confirmed open | B2 | Already ledgered | First error is preserved and oversized/synchronous snapshot encoding is bounded. |
+| APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Partially resolved in B2.2; snapshot bounds/encoding remain | B2 | Updated by B2.2 | First error is preserved and stale worker wait timing is reset after poll update errors; oversized/synchronous snapshot encoding is still bounded in B2.4. |
 | APP-006 | Low | `crates/app/src/shell/chrome/tabs.rs:2177,2189` | Confirmed open | B2 | Already ledgered | Second right-click repositions the canvas context menu. |
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Confirmed open | B3 | Already ledgered | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Confirmed open | B3 | Already ledgered | Exactly 64 unknown preferences survive regardless of key ordering. |
@@ -102,6 +102,12 @@ The app audit also proved the native action-dispatch ledger entry stale: current
 B2.1 reverified the deferred route at `483e512` with focused tests, the full
 shell target, and a real Command-F app run recorded as `M2-B2-T1-001`; the
 retained entry remains resolved.
+B2.2 preserves the first status error produced by one input cycle and clears the
+render-worker wait deadline when the poll loop exits through a model-update
+error. Verification passed focused regressions, the full shell-support target,
+strict clippy for `onionskin-app`, and a shell build. The local macOS screenshot
+API refused direct Onionskin window and region captures during B2.2, and full
+screen fallback captures were black, so no B2.2 image is recorded as evidence.
 
 ### Repository, documentation, CI, packaging, and retained state
 

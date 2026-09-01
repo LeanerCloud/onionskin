@@ -1121,6 +1121,21 @@ impl CanvasModel {
         false
     }
 
+    pub(in crate::shell) fn reset_worker_wait(&mut self) {
+        self.waiting = None;
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn seed_worker_wait_for_test(&mut self, page: PageIndex, now: Instant) {
+        self.geometry_requests.insert(page);
+        assert!(self.poll_again(now));
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn has_worker_wait_for_test(&self) -> bool {
+        self.waiting.is_some()
+    }
+
     pub fn resize(&mut self, origin: ViewPoint, size: ViewSize) -> Result<(), CanvasError> {
         self.canvas_origin = origin;
         if self.viewport.size() != size {
@@ -1387,6 +1402,11 @@ impl CanvasModel {
         };
         let crop = raster_crop(geometry, request.region, source)?;
         encode_snapshot(source, crop, self.viewport.rotation()).map(Some)
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn request_snapshot_for_test(&mut self, region: PageRect) {
+        self.document.request_snapshot(region);
     }
 
     /// Every hit on the pages currently on screen. Highlight-all is drawn from
@@ -3590,6 +3610,29 @@ mod tests {
             model.status().is_none(),
             "a walk in progress is not a silent render worker"
         );
+    }
+
+    #[test]
+    fn resetting_worker_wait_restarts_the_deadline_for_later_page_work() {
+        let mut model = model();
+        let start = Instant::now();
+        model.geometry_requests.insert(1);
+        assert!(model.poll_again(start));
+
+        model.reset_worker_wait();
+        model.geometry_requests.clear();
+        model.geometry_requests.insert(0);
+
+        let restarted = start + PENDING_WORK_TIMEOUT;
+        assert!(model.poll_again(restarted));
+        assert!(model.status().is_none());
+
+        assert!(!model.poll_again(restarted + PENDING_WORK_TIMEOUT));
+        assert!(matches!(
+            model.status(),
+            Some(CanvasStatus::Error { page: None, message })
+                if message.contains("[0]") && !message.contains("[1]")
+        ));
     }
 
     /// `paint_source` and `collect_tiles` used to take the raster's size from

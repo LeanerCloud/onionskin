@@ -288,6 +288,7 @@ impl Canvas {
     }
 
     fn handle_change(&mut self, result: Result<bool, CanvasError>, cx: &mut Context<Self>) {
+        let mut recorded_error = false;
         match result {
             Ok(false) => {}
             Ok(true) => match self.model.update() {
@@ -295,11 +296,17 @@ impl Canvas {
                     self.arm_poll(cx);
                     cx.notify();
                 }
-                Err(error) => self.record_error(error, cx),
+                Err(error) => {
+                    self.record_error(error, cx);
+                    recorded_error = true;
+                }
             },
-            Err(error) => self.record_error(error, cx),
+            Err(error) => {
+                self.record_error(error, cx);
+                recorded_error = true;
+            }
         }
-        self.copy_pending_snapshot(cx);
+        self.copy_pending_snapshot(cx, recorded_error);
     }
 
     /// The snapshot tool raises a request rather than holding a render
@@ -310,14 +317,18 @@ impl Canvas {
     /// pointer handlers, and every pointer path routes through
     /// `handle_change`. On the frames that raise nothing this costs one
     /// `Option::take`.
-    fn copy_pending_snapshot(&mut self, cx: &mut Context<Self>) {
+    fn copy_pending_snapshot(&mut self, cx: &mut Context<Self>, keep_existing_error: bool) {
         match self.model.take_snapshot_png() {
             Ok(None) => {}
             Ok(Some(png)) => cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
                 ImageFormat::Png,
                 png,
             ))),
-            Err(error) => self.record_error(error, cx),
+            Err(error) => {
+                if !keep_existing_error {
+                    self.record_error(error, cx);
+                }
+            }
         }
     }
 
@@ -380,8 +391,7 @@ impl Canvas {
                         pending
                     }
                     Err(error) => {
-                        canvas.polling = false;
-                        canvas.record_error(error, cx);
+                        canvas.handle_poll_error(error, cx);
                         false
                     }
                 })
@@ -391,6 +401,12 @@ impl Canvas {
             }
         })
         .detach();
+    }
+
+    fn handle_poll_error(&mut self, error: CanvasError, cx: &mut Context<Self>) {
+        self.polling = false;
+        self.model.reset_worker_wait();
+        self.record_error(error, cx);
     }
 
     /// What the document tells a screen reader.
@@ -906,6 +922,136 @@ fn status_text(status: &CanvasStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_snapshot_failure_does_not_replace_the_pointer_error_that_triggered_the_frame(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, _cx| {
+                canvas
+                    .model
+                    .request_snapshot_for_test(onionskin_core::PageRect {
+                        page: 0,
+                        x0: 20.0,
+                        y0: 20.0,
+                        x1: 120.0,
+                        y1: 60.0,
+                    });
+            });
+        });
+
+        let event = MouseMoveEvent {
+            position: point(px(300.0), px(300.0)),
+            pressed_button: Some(MouseButton::Left),
+            pressure: 2.0,
+            ..Default::default()
+        };
+        cx.update(|window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.on_mouse_move(&event, window, cx);
+                let expected = "pointer pressure must be between 0 and 1, got 2";
+                assert!(
+                    matches!(
+                        canvas.model.status(),
+                        Some(CanvasStatus::Error { page: None, message })
+                            if message == expected
+                    ),
+                    "the pending snapshot failure replaced the pointer error: {:?}",
+                    canvas.model.status()
+                );
+            });
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_standalone_snapshot_failure_still_reaches_status(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas
+                    .model
+                    .request_snapshot_for_test(onionskin_core::PageRect {
+                        page: 0,
+                        x0: 20.0,
+                        y0: 20.0,
+                        x1: 120.0,
+                        y1: 60.0,
+                    });
+                canvas.handle_change(Ok(false), cx);
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message.contains("not on screen yet")
+                ));
+            });
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_poll_update_error_clears_worker_wait_before_reporting_status(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let mut model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        model.seed_worker_wait_for_test(0, Instant::now());
+        assert!(model.has_worker_wait_for_test());
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.polling = true;
+                canvas.handle_poll_error(CanvasError::GenerationExhausted, cx);
+                assert!(!canvas.polling);
+                assert!(!canvas.model.has_worker_wait_for_test());
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message.contains("generation counter is exhausted")
+                ));
+            });
+        });
+    }
 
     #[test]
     fn two_real_seeds_prepare_as_two_document_tabs() {

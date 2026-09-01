@@ -20,3 +20,12 @@ absolute paths when needed; this tracked manifest records filenames only.
 | M2-B1-T4-001 | B1.4 R2 checksum and safe publication hardening | Shell opened verified retained `hayro-corpus` file `0899694.pdf` after the checksum-enforced R2 corpus helper landed at `be3789e`; the 16-page corpus PDF renders without black-line artifacts; inspected as window-only | `be3789e` | 2026-09-01T16:35:29Z | `m2-b1-task4-r2-checksums-corpus-20260901T163529Z.png` | `57802b144ba27656ddc5a06ec56ad607c3c73cf885eb4f21feae02e81a615398` |
 | M2-B2-T1-001 | B2.1 native action dispatch re-verification | Shell opened verified retained `hayro-corpus` file `0899694.pdf`; the real macOS Command-F shortcut reached the deferred `RunCommand` route and opened the Find bar in the app window; inspected as window-only | `483e512` | 2026-09-01T16:50:45Z | `m2-b2-task1-dispatch-reverify-20260901T165045Z.png` | `131ce2959fe2c5348501d2140be15e3236bcad7cb935e1baabd05eba16c26ee0` |
 | M2-B2-T1-ALT-001 | B2.1 native action dispatch re-verification alternate | B1-integrated shell opened `hello.pdf` and `two-page.pdf`; a live Command-F route opened the document Find bar in the window, matching the focused GPUI keystroke tests for Find, Close Tab, and Actual Size; inspected as window-only | `483e512` | 2026-09-01T16:49:00Z | `m2-b2-task1-dispatch-reverification-20260901T184900Z.png` | `3536dd758e003f47d8d023c815adcb40b9f7f211d0e704a607c8806abd3e8711` |
+
+## Capture blockers
+
+- B2.2 status/lifecycle hardening, 2026-09-01T19:15Z: focused regressions,
+  full shell-support tests, strict clippy, and shell build passed. The fresh
+  app window was PID 33128, CoreGraphics window ID 8802. `screencapture -l`
+  failed with `could not create image from window`; region capture failed with
+  `could not create image from rect`; full-screen fallback captures were black.
+  No B2.2 screenshot is recorded as evidence.
