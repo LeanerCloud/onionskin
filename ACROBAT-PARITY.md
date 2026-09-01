@@ -106,9 +106,9 @@ Find-and-Thumbnails state.
 | All tools pane (left tool rail) | implemented | M2 | The registry-driven rail, compact icon rendering, and tool activation are live. Evidence: M2-SHELL and B3.8. |
 | "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
 | Quick action toolbar (floating over the page) | partial | M2 | Toolbar, dragging, customization, and Select are live; Comment, Highlight, Draw, Fill text fields, and Add Sign remain disabled until their owning milestones. Evidence: M2-SHELL. |
-| Right-hand side panel | implemented | M2 | The contextual host, open/close behavior, and empty state are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |
-| Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, and fit controls are live, and invalid zoom state is surfaced instead of cast into a false percentage. Evidence: M2-SHELL and B3.7. |
-| Global search field (tools and document text) | implemented | M2 | Tool lookup and current-document text search are live; document search reports “No document is open” inline when needed. Evidence: M2-SEARCH and B3.7. |
+| Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |
+| Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, fit controls, invalid-zoom display, and numeric page-field semantics are live. Evidence: M2-SHELL and B3.7. |
+| Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
 | Convert (global bar entry point) | planned | M3 | The future button ships as one surface; its supported target list will remain deliberately smaller than Acrobat's. |
 | Get a link to the document | out-of-scope | - | Cloud-tethered link sharing. |
 | Undo / Redo icons on the global bar | planned | M3 | Same commands as the Edit menu; Acrobat surfaces both. |

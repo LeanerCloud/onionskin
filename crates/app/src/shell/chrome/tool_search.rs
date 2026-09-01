@@ -117,12 +117,11 @@ pub(super) fn document_search_result(query: &str) -> Option<SearchResult> {
 
 /// Why a result cannot be chosen, or `None` when it can.
 ///
-/// Everything the panel lists is live now: a tool through the registry, a
-/// command through the registry, a document search through the find bar. A
-/// command still needs a document to act on, which is a state the panel can
-/// be in rather than a milestone it is waiting for.
+/// Tools and commands come from the registry; document search routes through
+/// the find bar. Commands and document search need an active document, which is
+/// a state the panel can report rather than a milestone it is waiting for.
 pub(super) fn unavailable_selection(
-    result: SearchResult,
+    result: &SearchResult,
     has_document: bool,
 ) -> Option<SearchResult> {
     match result {
@@ -134,11 +133,11 @@ pub(super) fn unavailable_selection(
         }
         SearchResult::Tool { .. } | SearchResult::DocumentSearch { .. } => None,
         SearchResult::Command { title, .. } if !has_document => Some(SearchResult::Unavailable {
-            label: title.to_owned(),
+            label: (*title).to_owned(),
             reason: NO_DOCUMENT,
         }),
         SearchResult::Command { .. } => None,
-        unavailable @ SearchResult::Unavailable { .. } => Some(unavailable),
+        SearchResult::Unavailable { .. } => Some(result.clone()),
     }
 }
 
@@ -977,14 +976,14 @@ mod tests {
         assert!(matches!(explicit, SearchResult::DocumentSearch { .. }));
         // Live since P9: the frame opens the find bar on it rather than
         // reporting a milestone it is waiting for.
-        assert_eq!(unavailable_selection(explicit, true), None);
+        assert_eq!(unavailable_selection(&explicit, true), None);
     }
 
     #[test]
     fn every_route_the_panel_offers_is_live_with_a_document_open() {
         assert_eq!(
             unavailable_selection(
-                SearchResult::Tool {
+                &SearchResult::Tool {
                     index: 0,
                     id: "view.select",
                     name: "Select Tool",
@@ -995,7 +994,7 @@ mod tests {
         );
         assert_eq!(
             unavailable_selection(
-                SearchResult::Command {
+                &SearchResult::Command {
                     index: 0,
                     id: "pages.rotate",
                     title: "Rotate Clockwise",
@@ -1006,7 +1005,7 @@ mod tests {
         );
         assert_eq!(
             unavailable_selection(
-                SearchResult::DocumentSearch {
+                &SearchResult::DocumentSearch {
                     query: "needle".to_owned(),
                 },
                 true
@@ -1017,10 +1016,7 @@ mod tests {
             label: "Already unavailable".to_owned(),
             reason: "Pinned reason",
         };
-        assert_eq!(
-            unavailable_selection(unavailable.clone(), true),
-            Some(unavailable)
-        );
+        assert_eq!(unavailable_selection(&unavailable, true), Some(unavailable));
     }
 
     /// A command runs against a document, so with none open the panel says
@@ -1031,26 +1027,25 @@ mod tests {
         let command = search_registry(&registry, "rotate").remove(0);
 
         assert!(matches!(
-            unavailable_selection(command.clone(), false),
+            unavailable_selection(&command, false),
             Some(SearchResult::Unavailable { label, reason })
                 if label == "Rotate Clockwise" && reason == "No document is open"
         ));
-        assert_eq!(unavailable_selection(command, true), None);
-        assert_eq!(
-            unavailable_selection(search_registry(&registry, "select").remove(0), true),
-            None
-        );
+        assert_eq!(unavailable_selection(&command, true), None);
+        let select = search_registry(&registry, "select").remove(0);
+        assert_eq!(unavailable_selection(&select, true), None);
     }
 
     #[test]
-    fn a_document_search_hit_waits_for_a_document_inline() {
+    fn document_search_waits_for_a_document_rather_than_no_oping() {
         let result = document_search_result("needle").unwrap();
 
         assert!(matches!(
-            unavailable_selection(result, false),
+            unavailable_selection(&result, false),
             Some(SearchResult::Unavailable { label, reason })
-                if label == "Search document for \"needle\"" && reason == "No document is open"
+                if label == "Search document for \"needle\"" && reason == NO_DOCUMENT
         ));
+        assert_eq!(unavailable_selection(&result, true), None);
     }
 
     #[test]

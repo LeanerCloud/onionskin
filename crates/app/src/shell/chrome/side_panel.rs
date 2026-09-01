@@ -11,8 +11,8 @@ use crate::a11y::State as A11yState;
 
 pub(super) const CLOSED_WIDTH: f32 = 40.0;
 pub(super) const OPEN_WIDTH: f32 = 280.0;
-const EMPTY_PANEL_LABEL: &str = "Tool details";
-const EMPTY_PANEL_MESSAGE: &str = "Choose a tool to show its details";
+const PANEL_LABEL: &str = "Tool details";
+const EMPTY_PANEL_MESSAGE: &str = "Choose a tool for details";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SidePanelState {
@@ -56,27 +56,29 @@ fn toggle_glyph(state: SidePanelState) -> &'static str {
 
 fn toggle_name(state: SidePanelState) -> &'static str {
     if state.is_open() {
-        "Close Panel"
+        "Close Side Panel"
     } else {
-        "Open Panel"
+        "Open Side Panel"
     }
 }
 
 /// What the side panel tells a screen reader.
 pub(super) fn accessible(state: SidePanelState) -> Element {
-    let mut panel = Element::new("side-panel", Role::Complementary, EMPTY_PANEL_LABEL).child(
-        Element::new("side-panel-toggle", Role::Button, toggle_name(state))
-            .with_state(A11yState::toggled(state.is_open()))
-            .with_activation(Activation::ToggleSidePanel),
-    );
+    let toggle = Element::new("side-panel-toggle", Role::Button, toggle_name(state))
+        .with_state(A11yState::toggled(state.is_open()))
+        .with_activation(Activation::ToggleSidePanel);
+    let panel = Element::new("side-panel", Role::Complementary, PANEL_LABEL);
     if state.is_open() {
-        panel = panel.child(Element::new(
-            "side-panel-empty",
-            Role::Label,
-            EMPTY_PANEL_MESSAGE,
-        ));
+        panel
+            .child(Element::new(
+                "side-panel-empty",
+                Role::Label,
+                EMPTY_PANEL_MESSAGE,
+            ))
+            .child(toggle)
+    } else {
+        panel.child(toggle)
     }
-    panel
 }
 
 pub(super) fn render_side_panel(
@@ -114,7 +116,7 @@ pub(super) fn render_side_panel(
                 .items_center()
                 .justify_between()
                 .px_2()
-                .child(EMPTY_PANEL_LABEL)
+                .child(PANEL_LABEL)
                 .child(toggle),
         );
         panel = panel.child(
@@ -175,14 +177,14 @@ mod tests {
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
-            "Close Panel"
+            "Close Side Panel"
         );
         assert_eq!(
             accessible(SidePanelState::Closed)
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
-            "Open Panel"
+            "Open Side Panel"
         );
     }
 
@@ -200,13 +202,18 @@ mod tests {
     }
 
     #[test]
-    fn the_empty_panel_describes_its_toggle_and_empty_state() {
+    fn the_panel_describes_the_empty_state_and_its_control() {
         let described = accessible(SidePanelState::OpenEmpty);
 
         assert_eq!(described.role, Role::Complementary);
-        assert_eq!(described.label, "Tool details");
+        assert_eq!(described.label, PANEL_LABEL);
         assert_eq!(described.children.len(), 2);
-        assert_eq!(described.children[0].role, Role::Button);
-        assert_eq!(described.children[1].label, EMPTY_PANEL_MESSAGE);
+        assert_eq!(described.children[0].role, Role::Label);
+        assert_eq!(described.children[0].label, EMPTY_PANEL_MESSAGE);
+        assert_eq!(described.children[1].role, Role::Button);
+
+        let closed = accessible(SidePanelState::Closed);
+        assert_eq!(closed.children.len(), 1);
+        assert_eq!(closed.children[0].role, Role::Button);
     }
 }

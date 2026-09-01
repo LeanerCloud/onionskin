@@ -2008,7 +2008,7 @@ impl ShellFrame {
         }
         results
             .into_iter()
-            .map(|result| unavailable_selection(result.clone(), has_document).unwrap_or(result))
+            .map(|result| unavailable_selection(&result, has_document).unwrap_or(result))
             .collect()
     }
 
@@ -2018,9 +2018,7 @@ impl ShellFrame {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(unavailable) =
-            unavailable_selection(result.clone(), self.tabs.active().is_some())
-        {
+        if let Some(unavailable) = unavailable_selection(&result, self.tabs.active().is_some()) {
             self.search_feedback = Some(unavailable);
             cx.notify();
             return;
@@ -4103,7 +4101,7 @@ mod tests {
 
         assert_eq!(
             results,
-            vec![SearchResult::Unavailable {
+            [SearchResult::Unavailable {
                 label: "Search document for \"needle\"".to_owned(),
                 reason: "No document is open",
             }]
