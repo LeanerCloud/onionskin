@@ -196,12 +196,11 @@ source IDs, severity, ownership, and required proof.
   an empty session, and corpus sweeps no longer turn page-count errors into zero
   pages. The COS, content, and core regressions use a reachable page kid, so the
   malformed count is the only reason the document is refused.
-- **Remediation pending (CR-004 / REPO-009, owner B1):** B1.4 added
-  `hayro-corpus` SHA-256 enforcement, but package-exit review found the R2 path
-  still needs hardening before those findings close. Keep both entries open until
-  strict manifest ID validation, staged publication for checked and unchecked R2
-  sets, anchored checksum verification, and the corrected B1 package-exit gate
-  pass.
+- **Resolved in B1.4 (CR-004 / REPO-009):** every merge-gating
+  `hayro-corpus` PDF now has a tracked SHA-256. Cached and freshly downloaded R2
+  sets are verified before success, malformed manifest IDs fail before network
+  access, checked and unchecked R2 sets publish through private staging, and
+  checksum verification rejects symlinks, root swaps, and incomplete trees.
 - **Stale-tab asynchronous writes (APP-001, owner B4):** export and attachment-save
   completions retain a canvas while a path prompt is pending and do not prove the
   originating tab/document still exists before writing. Close/switch-before-prompt
