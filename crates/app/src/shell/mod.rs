@@ -1331,6 +1331,51 @@ mod tests {
 
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
+    fn snapshot_generation_exhaustion_fails_instead_of_wrapping(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.snapshot_generation = u64::MAX;
+                canvas.schedule_snapshot_encode(
+                    SnapshotPixels {
+                        width: 1,
+                        height: 1,
+                        rgba: vec![255, 0, 0, 255],
+                    },
+                    false,
+                    cx,
+                );
+                assert_eq!(canvas.snapshot_generation, u64::MAX);
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message == "the render generation counter is exhausted"
+                ));
+                assert!(cx.read_from_clipboard().is_none());
+            });
+        });
+
+        cx.run_until_parked();
+        cx.update(|_window, app| {
+            assert!(app.read_from_clipboard().is_none());
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
     fn snapshot_encode_errors_do_not_replace_the_primary_cycle_error(
         cx: &mut gpui::TestAppContext,
     ) {
