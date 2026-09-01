@@ -144,6 +144,9 @@ focused preferences tests prove exactly 64 unknown settings survive regardless
 of key ordering.
 B3.6 gives canvas and thumbnail context menu entries command-specific milestone
 reasons, including M5 for Edit Text, Redact Text, Create Link, and Crop Pages.
+B3.7 resolves the remaining small chrome correctness defects whose fixes do not
+change row status: document-search no-document availability, page-entry role
+truthfulness, non-finite zoom display, and the side-panel empty state.
 
 ### Repository, documentation, CI, packaging, and retained state
 
@@ -208,7 +211,7 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CAN-008 | Confirmed | B2 | Atlas gutter and paint defaults remain encoded by repeated literals; name the real invariant without broad style churn. |
 | HARD-CAN-009 | Confirmed | B2 | `TileImageKey` still encodes rotation as `u8`; use the enum directly. |
 | HARD-CAN-010 | Confirmed | B2 | Several public canvas methods have no external consumer; narrow visibility when the B2 refactor touches them. |
-| HARD-CHR-001 | Confirmed, narrowed | B3 | Document-search rows can still render enabled with no active document and then no-op; render the unavailable reason inline. |
+| HARD-CHR-001 | Resolved in B3.7 | B3 | Document-search rows now render “No document is open” inline with no active document. |
 | HARD-CHR-002 | Superseded | C1 | Find, Preferences, Select All, and Open Recent landed; Print/Properties remain correctly owned by M3. |
 | HARD-CHR-003 | Confirmed, design check | B3 | Quick-action milestone reasons remain a chrome table; first decide whether plugin metadata has a second real consumer. |
 | HARD-CHR-004 | Confirmed, narrowed | B3 | Some menu/context rows remain duplicated; page controls already reuse a helper. Refactor only the live repetition. |
@@ -219,10 +222,10 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CHR-009 | Confirmed, stale lines | B3 | Live render/click expects remain in tabs/tool-search/rail/quick-actions; degrade reachable failure paths. |
 | HARD-CHR-010 | Confirmed, narrowed | B3 | `chrome/mod.rs` still lacks ownership/module documentation; the old "zero comments" claim is stale and no comment quota is justified. |
 | HARD-CHR-011 | Partially accepted | B3 | Repeated layout dimensions need names only where they encode a shared invariant; naming every visual literal would be over-engineering. |
-| HARD-CHR-012 | Confirmed | B3 | Page entry still reuses `SearchInput` and its search key context; give the shared input an honest neutral contract. |
+| HARD-CHR-012 | Resolved in B3.7 | B3 | The shared text-input renderer now announces the page entry as a number input rather than a search field. |
 | HARD-CHR-013 | Confirmed | B3 | Page controls show zoom text but offer no percentage input even though `zoom_to` exists. |
-| HARD-CHR-014 | Confirmed | B3 | Non-finite zoom still casts silently to zero in `page_controls.rs:91`; validate before formatting. |
-| HARD-CHR-015 | Confirmed | B3 | The side-panel empty host still displays the literal `Panel`; render an honest empty/context state. |
+| HARD-CHR-014 | Resolved in B3.7 | B3 | Non-finite and non-positive zoom state renders as unavailable instead of being cast to zero. |
+| HARD-CHR-015 | Resolved in B3.7 | B3 | The side-panel empty host now names itself `Tool details` and renders the empty-state prompt. |
 | HARD-A11Y-001 | Partially resolved | B5 | P12 shipped the tree, roles, labels, page text, focus ring, actions, bounds, and probe. Real VoiceOver acceptance, AccessKit-to-GPUI focus transfer, arrow navigation, occluded-window actions, UI-thread text extraction, probe gating, and non-macOS adapters remain. |
 | HARD-PROC-001 | Historical | Process | The thin P2-P7 review trail cannot be repaired in source; the current package/review/evidence gates prevent recurrence. |
 | HARD-PROC-002 | Resolved | B3 | P10 registered real tools and current rail/quick-action tests exercise the live registry. |

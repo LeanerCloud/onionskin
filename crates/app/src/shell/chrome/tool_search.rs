@@ -126,6 +126,12 @@ pub(super) fn unavailable_selection(
     has_document: bool,
 ) -> Option<SearchResult> {
     match result {
+        SearchResult::DocumentSearch { query } if !has_document => {
+            Some(SearchResult::Unavailable {
+                label: format!("Search document for \"{query}\""),
+                reason: NO_DOCUMENT,
+            })
+        }
         SearchResult::Tool { .. } | SearchResult::DocumentSearch { .. } => None,
         SearchResult::Command { title, .. } if !has_document => Some(SearchResult::Unavailable {
             label: title.to_owned(),
@@ -487,7 +493,11 @@ fn field_node(
     placeholder: &str,
     field: TextField,
 ) -> super::accessible::Element {
-    super::accessible::Element::new(id, accesskit::Role::SearchInput, label)
+    let role = match field {
+        TextField::Page => accesskit::Role::NumberInput,
+        TextField::Search | TextField::Find => accesskit::Role::SearchInput,
+    };
+    super::accessible::Element::new(id, role, label)
         .with_description(if query.is_empty() {
             placeholder.to_owned()
         } else {
@@ -1033,6 +1043,17 @@ mod tests {
     }
 
     #[test]
+    fn a_document_search_hit_waits_for_a_document_inline() {
+        let result = document_search_result("needle").unwrap();
+
+        assert!(matches!(
+            unavailable_selection(result, false),
+            Some(SearchResult::Unavailable { label, reason })
+                if label == "Search document for \"needle\"" && reason == "No document is open"
+        ));
+    }
+
+    #[test]
     fn editing_and_deletion_stop_at_grapheme_boundaries() {
         let mut buffer = SearchBuffer {
             content: "a👨‍👩‍👧‍👦e\u{301}".to_owned(),
@@ -1144,6 +1165,7 @@ mod tests {
             input.accessible("Page Number", TextField::Page)
         });
         assert_eq!(empty.key, ElementId::from("page-entry-input"));
+        assert_eq!(empty.role, accesskit::Role::NumberInput);
         assert_eq!(empty.label, "Page Number");
         assert_eq!(empty.description.as_deref(), Some("Page"));
 

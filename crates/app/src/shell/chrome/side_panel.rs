@@ -11,6 +11,8 @@ use crate::a11y::State as A11yState;
 
 pub(super) const CLOSED_WIDTH: f32 = 40.0;
 pub(super) const OPEN_WIDTH: f32 = 280.0;
+const EMPTY_PANEL_LABEL: &str = "Tool details";
+const EMPTY_PANEL_MESSAGE: &str = "Choose a tool to show its details";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SidePanelState {
@@ -62,11 +64,19 @@ fn toggle_name(state: SidePanelState) -> &'static str {
 
 /// What the side panel tells a screen reader.
 pub(super) fn accessible(state: SidePanelState) -> Element {
-    Element::new("side-panel", Role::Complementary, "Panel").child(
+    let mut panel = Element::new("side-panel", Role::Complementary, EMPTY_PANEL_LABEL).child(
         Element::new("side-panel-toggle", Role::Button, toggle_name(state))
             .with_state(A11yState::toggled(state.is_open()))
             .with_activation(Activation::ToggleSidePanel),
-    )
+    );
+    if state.is_open() {
+        panel = panel.child(Element::new(
+            "side-panel-empty",
+            Role::Label,
+            EMPTY_PANEL_MESSAGE,
+        ));
+    }
+    panel
 }
 
 pub(super) fn render_side_panel(
@@ -104,8 +114,16 @@ pub(super) fn render_side_panel(
                 .items_center()
                 .justify_between()
                 .px_2()
-                .child("Panel")
+                .child(EMPTY_PANEL_LABEL)
                 .child(toggle),
+        );
+        panel = panel.child(
+            div()
+                .id("side-panel-empty")
+                .p_3()
+                .text_sm()
+                .text_color(theme.muted_text)
+                .child(EMPTY_PANEL_MESSAGE),
         );
     } else {
         panel = panel
@@ -182,12 +200,13 @@ mod tests {
     }
 
     #[test]
-    fn the_panel_describes_one_control_and_nothing_else() {
+    fn the_empty_panel_describes_its_toggle_and_empty_state() {
         let described = accessible(SidePanelState::OpenEmpty);
 
         assert_eq!(described.role, Role::Complementary);
-        assert_eq!(described.label, "Panel");
-        assert_eq!(described.children.len(), 1);
+        assert_eq!(described.label, "Tool details");
+        assert_eq!(described.children.len(), 2);
         assert_eq!(described.children[0].role, Role::Button);
+        assert_eq!(described.children[1].label, EMPTY_PANEL_MESSAGE);
     }
 }

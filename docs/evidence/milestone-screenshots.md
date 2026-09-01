@@ -86,3 +86,8 @@ absolute paths when needed; this tracked manifest records filenames only.
   with `could not create image from window`; exact window-bounds
   `screencapture -R` failed with `could not create image from rect`. No
   full-screen fallback was taken. No B3.6 screenshot is recorded as evidence.
+- B3.7 chrome follow-up, 2026-09-01T18:50Z:
+  `m2-b3-task7-chrome-followup-20260901T1850Z.png` captured only the Onionskin
+  window by CoreGraphics window ID 8942. Bounds were
+  `{X = 350, Y = 155, Width = 1100, Height = 893}`. SHA-256:
+  `8893280ecfbb7de8e1581bfe4e7b651773809228ddb0eed65ec836b8217bda39`.

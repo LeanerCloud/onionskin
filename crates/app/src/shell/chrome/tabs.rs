@@ -1997,6 +1997,7 @@ impl ShellFrame {
 
     fn search_results(&self, cx: &App) -> Vec<SearchResult> {
         let query = self.search_input.read(cx).query().to_owned();
+        let has_document = self.tabs.active().is_some();
         let mut results = self
             .tabs
             .active()
@@ -2006,6 +2007,9 @@ impl ShellFrame {
             results.push(document_search);
         }
         results
+            .into_iter()
+            .map(|result| unavailable_selection(result.clone(), has_document).unwrap_or(result))
+            .collect()
     }
 
     fn choose_search_result(
@@ -4083,6 +4087,31 @@ mod tests {
 
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
+    fn document_search_without_an_open_document_renders_its_unavailable_reason(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&[], cx);
+
+        let results = window
+            .update(cx, |frame, _window, cx| {
+                frame.search_input.update(cx, |input, cx| {
+                    input.set_query("needle", cx);
+                });
+                frame.search_results(cx)
+            })
+            .unwrap();
+
+        assert_eq!(
+            results,
+            vec![SearchResult::Unavailable {
+                label: "Search document for \"needle\"".to_owned(),
+                reason: "No document is open",
+            }]
+        );
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
     fn fullscreen_command_updates_the_real_window_and_mirrored_menu_state(cx: &mut TestAppContext) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
         let document = Document::open_path(&path).unwrap();
@@ -4279,7 +4308,7 @@ mod tests {
         let active = PageControlsState::from_view(*tabs.active().unwrap());
         assert_eq!(active.current_page, 2);
         assert_eq!(active.page_count, 2);
-        assert_eq!(active.zoom_percent, 200);
+        assert_eq!(active.zoom_percent, Some(200));
         assert!(active.can_previous_view);
     }
 

@@ -77,7 +77,7 @@ pub(super) fn parse_page_entry(
 pub(super) struct PageControlsState {
     pub(super) current_page: usize,
     pub(super) page_count: usize,
-    pub(super) zoom_percent: u32,
+    pub(super) zoom_percent: Option<u32>,
     pub(super) actual_size: bool,
     pub(super) can_previous_view: bool,
     pub(super) can_next_view: bool,
@@ -88,7 +88,7 @@ impl PageControlsState {
         Self {
             current_page: view.current_page + 1,
             page_count: view.page_count,
-            zoom_percent: (view.zoom * 100.0).round() as u32,
+            zoom_percent: zoom_percent(view.zoom),
             actual_size: view.is_actual_size(),
             can_previous_view: view.can_previous_view,
             can_next_view: view.can_next_view,
@@ -102,6 +102,14 @@ impl PageControlsState {
     fn can_next_page(self) -> bool {
         self.current_page < self.page_count
     }
+}
+
+fn zoom_percent(zoom: f32) -> Option<u32> {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return None;
+    }
+    let percent = (zoom * 100.0).round();
+    (percent <= u32::MAX as f32).then_some(percent as u32)
 }
 
 /// One button in the page-control row.
@@ -331,7 +339,10 @@ fn describe(item: Item, state: PageControlsState, page_entry: &str) -> Element {
         Item::ZoomLevel => Element::new(
             "zoom-level",
             Role::Label,
-            format!("Zoom {} percent", state.zoom_percent),
+            state
+                .zoom_percent
+                .map(|percent| format!("Zoom {percent} percent"))
+                .unwrap_or_else(|| "Zoom unavailable".to_owned()),
         ),
     }
 }
@@ -362,11 +373,12 @@ pub(super) fn render_page_controls(
                     .child(format!("/ {}", state.page_count)),
             ),
             Item::ZoomLevel => row.child(
-                div()
-                    .min_w(px(48.0))
-                    .text_center()
-                    .text_sm()
-                    .child(format!("{}%", state.zoom_percent)),
+                div().min_w(px(48.0)).text_center().text_sm().child(
+                    state
+                        .zoom_percent
+                        .map(|percent| format!("{percent}%"))
+                        .unwrap_or_else(|| "Zoom".to_owned()),
+                ),
             ),
         };
     }
@@ -531,12 +543,26 @@ mod tests {
     #[test]
     fn actual_size_is_exactly_fixed_one_hundred_percent() {
         let actual = PageControlsState::from_view(view(0, 1));
-        assert_eq!(actual.zoom_percent, 100);
+        assert_eq!(actual.zoom_percent, Some(100));
         assert!(actual.actual_size);
 
         let mut fitted = view(0, 1);
         fitted.zoom_policy = ZoomPolicy::Fit(FitMode::Page);
         assert!(!PageControlsState::from_view(fitted).actual_size);
+    }
+
+    #[test]
+    fn non_finite_zoom_is_not_cast_to_zero() {
+        for zoom in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            let mut view = view(0, 1);
+            view.zoom = zoom;
+            let state = PageControlsState::from_view(view);
+            let described = accessible(state, None, "");
+            let zoom = described.find(&"zoom-level".into()).unwrap();
+
+            assert_eq!(state.zoom_percent, None);
+            assert_eq!(zoom.label, "Zoom unavailable");
+        }
     }
 
     #[test]
