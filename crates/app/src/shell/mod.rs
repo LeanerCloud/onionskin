@@ -1125,6 +1125,98 @@ mod tests {
         });
     }
 
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    #[gpui::test]
+    fn snapshot_tool_drag_copies_a_background_encoded_png(cx: &mut gpui::TestAppContext) {
+        use onionskin_plugin_api::ToolCapability;
+
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            crate::build_registry(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, _cx| {
+                canvas
+                    .model
+                    .seed_visible_raster_for_test([255, 255, 255, 255])
+                    .expect("the visible page is rendered");
+            });
+        });
+
+        let (start, end) = cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                let index = crate::shell::context_menu::tool_with(
+                    canvas.model.registry(),
+                    ToolCapability::Snapshot,
+                )
+                .expect("the snapshot tool is registered");
+                assert!(canvas.activate_tool(index, cx).expect("the tool activates"));
+                let page = canvas.model.viewport().visible_pages().unwrap()[0].rect;
+                (
+                    point(
+                        px(page.origin.x + page.size.width * 0.25),
+                        px(page.origin.y + page.size.height * 0.25),
+                    ),
+                    point(
+                        px(page.origin.x + page.size.width * 0.55),
+                        px(page.origin.y + page.size.height * 0.45),
+                    ),
+                )
+            })
+        });
+
+        let down = MouseDownEvent {
+            button: MouseButton::Left,
+            position: start,
+            pressure: 1.0,
+            ..Default::default()
+        };
+        cx.update(|window, app| {
+            canvas.update(app, |canvas, cx| canvas.on_mouse_down(&down, window, cx));
+        });
+        let drag = MouseMoveEvent {
+            position: end,
+            pressed_button: Some(MouseButton::Left),
+            pressure: 1.0,
+            ..Default::default()
+        };
+        cx.update(|window, app| {
+            canvas.update(app, |canvas, cx| canvas.on_mouse_move(&drag, window, cx));
+        });
+        let up = MouseUpEvent {
+            button: MouseButton::Left,
+            position: end,
+            pressure: 1.0,
+            ..Default::default()
+        };
+        cx.update(|window, app| {
+            canvas.update(app, |canvas, cx| canvas.on_mouse_up(&up, window, cx));
+            assert!(app.read_from_clipboard().is_none());
+        });
+
+        cx.run_until_parked();
+        cx.update(|_window, app| {
+            let item = app
+                .read_from_clipboard()
+                .expect("snapshot drag wrote the clipboard");
+            assert!(matches!(
+                item.entries(),
+                [gpui::ClipboardEntry::Image(image)]
+                    if image.format == ImageFormat::Png && !image.bytes.is_empty()
+            ));
+        });
+    }
+
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
     fn snapshot_encode_errors_reach_the_status_line(cx: &mut gpui::TestAppContext) {

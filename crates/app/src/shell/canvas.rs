@@ -16,6 +16,8 @@ use onionskin_plugin_api::{
     CommandCtx, CommandError, ExportError, ExportRequest, ExportedFile, Overlay, PageRange,
     PluginRegistry, PointerInput, ToolCtx,
 };
+#[cfg(test)]
+use onionskin_render::PageRender;
 use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
@@ -1423,6 +1425,50 @@ impl CanvasModel {
     #[cfg(test)]
     pub(in crate::shell) fn request_snapshot_for_test(&mut self, region: PageRect) {
         self.document.request_snapshot(region);
+    }
+
+    #[cfg(test)]
+    pub(in crate::shell) fn seed_visible_raster_for_test(
+        &mut self,
+        rgba: [u8; 4],
+    ) -> Result<(), CanvasError> {
+        let visible = self.viewport.visible_pages()?;
+        self.update_signature(&visible)?;
+        self.tiles.begin_frame();
+        self.schedule_visible_renders(&visible)?;
+        let page = visible
+            .first()
+            .expect("a non-empty document has a visible page")
+            .page;
+        let request = *self
+            .requests
+            .get(&page)
+            .expect("the visible page is requested");
+        let geometry = self
+            .viewport
+            .page_geometry(page)
+            .expect("the visible page is measured");
+        let (width, height) = onionskin_render::raster_size(
+            geometry.render_size.0 as f32,
+            geometry.render_size.1 as f32,
+            request.zoom,
+        )
+        .expect("the visible page raster fits");
+        let raster = BaseRaster::new(
+            u32::from(width),
+            u32::from(height),
+            request.zoom,
+            rgba.repeat(usize::from(width) * usize::from(height)),
+        );
+        assert!(self.apply_render_response(RenderResponse::Raster {
+            request,
+            render: PageRender {
+                raster,
+                warnings: Vec::new(),
+            },
+        }));
+        self.paint_list()?;
+        Ok(())
     }
 
     /// Every hit on the pages currently on screen. Highlight-all is drawn from
