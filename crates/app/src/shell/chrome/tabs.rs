@@ -5,7 +5,7 @@ use std::sync::Arc;
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, App, AppContext as _, ClipboardItem, Context, Entity, Focusable as _,
+    div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, Focusable as _,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
     PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
     WindowHandle,
@@ -1876,6 +1876,19 @@ impl ShellFrame {
         cx.notify();
     }
 
+    fn dismiss_layer_right_click(
+        &mut self,
+        event: &MouseDownEvent,
+        document_bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.canvas_context_menu.is_some() && document_bounds.contains(&event.position) {
+            self.open_canvas_context_menu(event, cx);
+        } else {
+            self.dismiss_menus(cx);
+        }
+    }
+
     fn open_canvas_context_menu(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         if self.tabs.active().is_none() {
             return;
@@ -2698,9 +2711,17 @@ impl Render for ShellFrame {
                     .left_0()
                     .size_full()
                     .occlude()
-                    .on_click(cx.listener(|frame, _event, _window, cx| {
-                        frame.dismiss_menus(cx);
-                    })),
+                    .on_click(cx.listener(|frame, event: &gpui::ClickEvent, _window, cx| {
+                        if !event.is_right_click() {
+                            frame.dismiss_menus(cx);
+                        }
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |frame, event, _window, cx| {
+                            frame.dismiss_layer_right_click(event, document_bounds, cx);
+                        }),
+                    ),
             );
         }
         if self.main_menu_open {
@@ -3254,6 +3275,79 @@ mod tests {
                 .view_state()
                 .rotation;
             assert_eq!(rotation, ViewRotation::Clockwise90);
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_second_right_click_inside_the_document_repositions_the_canvas_menu(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let first = gpui::point(px(300.0), px(300.0));
+        let second = gpui::point(px(500.0), px(360.0));
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(first, MouseButton::Right, gpui::Modifiers::default());
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(second, MouseButton::Right, gpui::Modifiers::default());
+
+        window
+            .update(&mut cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame
+                        .canvas_context_menu
+                        .expect("the canvas menu remains open")
+                        .origin,
+                    second
+                );
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_second_right_click_outside_the_document_dismisses_the_canvas_menu(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let inside = gpui::point(px(300.0), px(300.0));
+        let outside = gpui::point(px(20.0), px(20.0));
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut cx, |frame, window, _cx| {
+                let visibility = frame.shell_view_state.visibility();
+                assert!(!document_view_bounds(
+                    window.viewport_size(),
+                    visibility.rail,
+                    frame.rail_state.expanded(),
+                    frame.navigation_width(visibility.navigation_pane),
+                    visibility.side_panel,
+                    frame.side_panel_state,
+                    visibility.page_controls,
+                )
+                .contains(&outside));
+            })
+            .unwrap();
+
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(inside, MouseButton::Right, gpui::Modifiers::default());
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(outside, MouseButton::Right, gpui::Modifiers::default());
+
+        window
+            .update(&mut cx, |frame, _window, _cx| {
+                assert!(frame.canvas_context_menu.is_none());
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, app| {
+            window.draw(app).clear();
         });
     }
 

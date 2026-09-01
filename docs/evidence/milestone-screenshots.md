@@ -29,3 +29,8 @@ absolute paths when needed; this tracked manifest records filenames only.
   failed with `could not create image from window`; region capture failed with
   `could not create image from rect`; full-screen fallback captures were black.
   No B2.2 screenshot is recorded as evidence.
+- B2.3 canvas context-menu repositioning, 2026-09-01T19:31Z: focused
+  second-right-click tests, full shell-support tests, strict clippy, and shell
+  build passed. The committed app launched as PID 67358, CoreGraphics window ID
+  8828. `screencapture -l` failed with `could not create image from window`. No
+  B2.3 screenshot is recorded as evidence.
