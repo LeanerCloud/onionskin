@@ -147,6 +147,8 @@ reasons, including M5 for Edit Text, Redact Text, Create Link, and Crop Pages.
 B3.7 resolves the remaining small chrome correctness defects whose fixes do not
 change row status: document-search no-document availability, page-entry role
 truthfulness, non-finite zoom display, and the side-panel empty state.
+B3.8 maps tool rail icon IDs to compact visual marks at render time while
+keeping screen readers on tool names.
 
 ### Repository, documentation, CI, packaging, and retained state
 
@@ -218,7 +220,7 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CHR-005 | Confirmed | B3 | Overflow scrolling exists, but no themed scrollbar surface satisfies parity. |
 | HARD-CHR-006 | Confirmed | B3 | Full Screen remains a bare window toggle; visibility/presentation semantics are absent. |
 | HARD-CHR-007 | Resolved | B3 | Startup now uses `MenuState::new`; the duplicate active-tab rule is gone. |
-| HARD-CHR-008 | Confirmed | B3 | The rail displays asset IDs such as `hand` as text instead of drawing icon assets. |
+| HARD-CHR-008 | Resolved in B3.8 | B3 | The rail maps icon IDs to compact visual marks instead of drawing raw asset IDs such as `hand`. |
 | HARD-CHR-009 | Confirmed, stale lines | B3 | Live render/click expects remain in tabs/tool-search/rail/quick-actions; degrade reachable failure paths. |
 | HARD-CHR-010 | Confirmed, narrowed | B3 | `chrome/mod.rs` still lacks ownership/module documentation; the old "zero comments" claim is stale and no comment quota is justified. |
 | HARD-CHR-011 | Partially accepted | B3 | Repeated layout dimensions need names only where they encode a shared invariant; naming every visual literal would be over-engineering. |

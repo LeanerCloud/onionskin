@@ -91,3 +91,8 @@ absolute paths when needed; this tracked manifest records filenames only.
   window by CoreGraphics window ID 8942. Bounds were
   `{X = 350, Y = 155, Width = 1100, Height = 893}`. SHA-256:
   `8893280ecfbb7de8e1581bfe4e7b651773809228ddb0eed65ec836b8217bda39`.
+- B3.8 rail icon rendering, 2026-09-01T19:08Z:
+  `m2-b3-task8-rail-icons-20260901T1908Z.png` captured only the Onionskin
+  window by CoreGraphics window ID 9009. Bounds were
+  `{X = 350, Y = 155, Width = 1100, Height = 893}`. SHA-256:
+  `f29036ddc3cadbf2608f535210ca1d2ca516b1d0585a66413e9e1f1415d0ae89`.

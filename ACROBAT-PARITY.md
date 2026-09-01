@@ -103,7 +103,7 @@ Find-and-Thumbnails state.
 | Hamburger / main menu button | implemented | M2 | Opens File/Edit/View/Window/Help in the unified UI. Evidence: M2-SHELL. |
 | Document tabs (multiple open documents) | implemented | M2 | Open, switch, and close paths are live. Evidence: M2-SHELL. |
 | Document tab context menu (Close, Close Others, Close All, Show Containing Folder, Copy Path) | implemented | M2 | All named entries are live. Counted once per the context-menu carve-out. Evidence: M2-SHELL. (judgment) |
-| All tools pane (left tool rail) | implemented | M2 | The registry-driven rail and tool activation are live. Evidence: M2-SHELL. |
+| All tools pane (left tool rail) | implemented | M2 | The registry-driven rail, compact icon rendering, and tool activation are live. Evidence: M2-SHELL and B3.8. |
 | "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
 | Quick action toolbar (floating over the page) | partial | M2 | Toolbar, dragging, customization, and Select are live; Comment, Highlight, Draw, Fill text fields, and Add Sign remain disabled until their owning milestones. Evidence: M2-SHELL. |
 | Right-hand side panel | implemented | M2 | The contextual host, open/close behavior, and empty state are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |

@@ -148,6 +148,17 @@ fn view_more_label(expanded: bool) -> &'static str {
     }
 }
 
+fn icon_glyph(icon: &str) -> &'static str {
+    match icon {
+        "hand" => "✋",
+        "select-text" => "T",
+        "select-region" => "□",
+        "zoom" => "⌕",
+        "snapshot" => "▣",
+        _ => "?",
+    }
+}
+
 /// What the tool rail tells a screen reader.
 ///
 /// One node per child the column renders, in the same order, so the
@@ -163,8 +174,6 @@ pub(super) fn accessible(entries: &[RailEntry], expanded: bool) -> Element {
         ));
     } else {
         for entry in entries {
-            // The rail draws the plugin's `icon()` string as text, so the
-            // icon is an id-like token a screen reader must never read.
             let mut element = Element::new(
                 ("tool-rail-entry", entry.registry_index),
                 Role::Button,
@@ -249,7 +258,7 @@ pub(super) fn render_rail(
                             .flex_none()
                             .text_xs()
                             .text_color(theme.secondary_text)
-                            .child(entry.icon),
+                            .child(icon_glyph(entry.icon)),
                     )
                     .when(expanded, |row| {
                         row.child(div().flex_1().text_sm().child(entry.name))
@@ -474,6 +483,16 @@ mod tests {
         state.toggle_expanded();
         assert!(state.expanded());
         assert!(state.entries(&registry, None).is_empty());
+    }
+
+    #[test]
+    fn rail_icon_tokens_are_drawn_as_compact_marks() {
+        assert_eq!(icon_glyph("hand"), "✋");
+        assert_eq!(icon_glyph("select-text"), "T");
+        assert_eq!(icon_glyph("select-region"), "□");
+        assert_eq!(icon_glyph("zoom"), "⌕");
+        assert_eq!(icon_glyph("snapshot"), "▣");
+        assert_eq!(icon_glyph("plugin-id-token"), "?");
     }
 
     #[test]

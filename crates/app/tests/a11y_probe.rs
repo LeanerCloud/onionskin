@@ -412,8 +412,8 @@ fn a_press_through_the_platform_reaches_the_shell() {
     );
 }
 
-/// The rail draws each tool's `icon()` string as visible text, which is an
-/// id-like token. A screen reader has to hear the tool's name instead.
+/// The rail draws each tool's icon as a compact mark. A screen reader has to
+/// hear the tool's name instead.
 #[test]
 fn a_rail_entry_is_announced_by_its_tool_name_and_not_by_its_icon_string() {
     let tree = probe("hello.pdf");
@@ -428,8 +428,8 @@ fn a_rail_entry_is_announced_by_its_tool_name_and_not_by_its_icon_string() {
         .collect();
 
     assert!(!rail.is_empty(), "the rail published no entries");
-    // `tools-basic`'s hand tool: its `icon()` is a glyph and its name is
-    // words, so this fails the moment the rail announces the icon.
+    // `tools-basic`'s hand tool: its icon and name differ, so this fails the
+    // moment the rail announces the icon.
     let titles: Vec<&str> = rail.iter().map(|node| tree.field(node, "title")).collect();
     assert!(
         titles.contains(&"Hand"),
