@@ -99,7 +99,9 @@ regression test and real user path pass.
 
 The app audit also proved the native action-dispatch ledger entry stale: current
 `RunCommand`, close-tab, and view-menu paths defer correctly and have shell tests.
-The entry is retained but marked resolved pending the package review.
+B2.1 reverified the deferred route at `483e512` with focused tests, the full
+shell target, and a real Command-F app run recorded as `M2-B2-T1-001`; the
+retained entry remains resolved.
 
 ### Repository, documentation, CI, packaging, and retained state
 

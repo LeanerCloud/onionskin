@@ -103,8 +103,11 @@ source IDs, severity, ownership, and required proof.
   a keystroke-dispatch test. Found by executing a real ctrl-f in a gpui test,
   not by reading the code.
   Current `RunCommand`, close-tab, and view-menu paths defer correctly, and shell
-  tests cover the real find/close/view keystrokes. No code change is justified
-  unless B2 re-verification disproves that evidence.
+  tests cover the real find/close/view keystrokes. B2.1 reverified this at
+  `483e512` with focused real-window Find, Close Tab, and Actual Size keystroke
+  tests plus the full shell target. A live Command-F smoke opened the document
+  Find bar in the shell; screenshot `M2-B2-T1-001` records the window-only
+  evidence. No code change is justified.
 - P8/P14 follow-ups: the outline destination map sweeps cos::Document::page(i)
   once to resolve bookmarks that name a page by reference, which is O(pages)
   walks on a large outlined document; attachment save writes on the UI thread
@@ -231,8 +234,8 @@ source IDs, severity, ownership, and required proof.
   the spike binaries remain behind explicit opt-in features.
 - **Resolved dispatch report retained:** the prior global-action-listener warning
   is stale at `7413186`. Current `RunCommand`, close-tab, and view-menu paths defer
-  correctly and shell tests cover real find/close/view keystrokes. No code change
-  is justified unless B2 re-verification disproves this evidence.
+  correctly and shell tests cover real find/close/view keystrokes. B2.1
+  reverified the same routes at `483e512`; no production code change was needed.
 - **Resolved retained source-report duplicate (B0):**
   `docs/audits/source-reports/2026-08-31-repo-docs-ci.md` is tracked on `main`
   with the preserved SHA-256
