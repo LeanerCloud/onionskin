@@ -223,6 +223,31 @@ fn release_artifacts_build_the_windowed_viewer() {
 }
 
 #[test]
+fn accessibility_probe_is_a_required_ci_gate() {
+    let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+        .expect("the CI workflow is readable");
+    let shell = job(&ci, "shell");
+    assert!(!shell.is_empty(), "CI has no shell job");
+    assert!(
+        shell.contains("run: cargo test -p onionskin-app --features a11y-probe --test a11y_probe"),
+        "the shell job does not run the macOS accessibility probe"
+    );
+    let probe_step = shell
+        .split("      - name: Accessibility probe")
+        .nth(1)
+        .and_then(|rest| rest.split("\n      - ").next())
+        .expect("the shell job has no named Accessibility probe step");
+    assert!(
+        probe_step.contains("if: runner.os == 'macOS'"),
+        "the accessibility probe is not scoped to macOS"
+    );
+    assert!(
+        !probe_step.contains("continue-on-error"),
+        "the accessibility probe is advisory instead of gating"
+    );
+}
+
+#[test]
 fn supply_chain_policy_is_checked_in_and_gated() {
     let workspace = workspace_root();
     let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))

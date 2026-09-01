@@ -140,9 +140,8 @@ jobs:
       # accessibility selectors of its own lives: it has to run on every fork
       # bump, so it is a test rather than a note. Unlike the windowed tests
       # above this opens real windows, so it needs the runner's window server.
-      # `continue-on-error` until one green run proves the runner provides
-      # one; drop it then, or drop the step.
+      # This is a required gate: a fork bump that breaks the adapter must fail
+      # before merge.
       - name: Accessibility probe
         if: runner.os == 'macOS'
-        continue-on-error: true
         run: cargo test -p onionskin-app --features a11y-probe --test a11y_probe

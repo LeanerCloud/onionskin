@@ -161,7 +161,7 @@ passed after the change rebased onto `d5a0836`.
 | Source ID | Severity | Evidence at `7413186` | Disposition | Owner | Known-issues state | Required proof |
 |---|---|---|---|---|---|---|
 | REPO-001 | Critical | `.github/workflows/release.yml:49-50`; `crates/app/Cargo.toml:64-100` | Confirmed release blocker | B6 | Added by this audit | Packaged artifact builds with `--features shell` and launches the real viewer. |
-| REPO-002 | Critical | `07ebc93`; `docs/spikes/m2-voiceover-acceptance.md` | Partially resolved; M2 acceptance blocker remains | B5 | Existing VoiceOver/P12 entry, narrowed | Keep the restored spike, fix focus/platform residuals, harden the soft probe gate, and pass one real VoiceOver session. |
+| REPO-002 | Critical | `07ebc93`; `docs/spikes/m2-voiceover-acceptance.md` | Partially resolved; M2 acceptance blocker remains | B5 | Existing VoiceOver/P12 entry, narrowed | Keep the restored spike, fix focus/platform residuals, keep the required macOS probe gate green, and pass one real VoiceOver session. |
 | REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Resolved in Audit Task 2 | B7 | Added and resolved by this audit | All 403 rows are reviewed and the summary totals mechanically match the rows; B7 retains REPO-010 and final acceptance. |
 | REPO-004 | High | `docs/plans/m2-viewer.md:3` at baseline | Resolved in this task | B7 | Added and resolved by this audit | M2 plan header now matches live merge history and open gates. |
 | REPO-005 | High | retained P10/agent branches and worktrees | Preserve, no cleanup | B0 | Added by this audit | Inventory remains reproducible; useful work reconciles additively only. |
@@ -234,7 +234,7 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CHR-013 | Deferred by matrix | M3 | Dedicated Zoom To remains the tracked matrix gap; page zoom input is outside B3.7. |
 | HARD-CHR-014 | Resolved in B3.7 | B3 | Invalid zoom renders as unavailable instead of 0%. |
 | HARD-CHR-015 | Resolved in B3.7 | B3 | The empty side-panel host renders Tool details with a fitted empty-state prompt. |
-| HARD-A11Y-001 | Partially resolved | B5 | P12 shipped the tree, roles, labels, page text, focus ring, actions, bounds, and probe. Real VoiceOver acceptance, AccessKit-to-GPUI focus transfer, arrow navigation, occluded-window actions, UI-thread text extraction, probe gating, and non-macOS adapters remain. |
+| HARD-A11Y-001 | Partially resolved | B5 | P12 shipped the tree, roles, labels, page text, focus ring, actions, bounds, and probe; B5 made the macOS probe a required CI gate. Real VoiceOver acceptance, AccessKit-to-GPUI focus transfer, arrow navigation, occluded-window actions, UI-thread text extraction, and non-macOS adapters remain. |
 | HARD-PROC-001 | Historical | Process | The thin P2-P7 review trail cannot be repaired in source; the current package/review/evidence gates prevent recurrence. |
 | HARD-PROC-002 | Resolved | B3 | P10 registered real tools and current rail/quick-action tests exercise the live registry. |
 | HARD-PROC-003 | Resolved in Audit Task 2 | B7 | All 403 rows are reconciled and mechanically recounted; B7 retains private reference comparison and final acceptance. |

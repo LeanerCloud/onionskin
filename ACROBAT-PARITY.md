@@ -84,7 +84,7 @@ Find-and-Thumbnails state.
 | M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
 | M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |
 | M2-PANES | `crates/app/src/shell/panes/` | Pane action, rendering, context-menu tests, and the B3.1 rendered-bounds regression for activated pane bodies. |
-| M2-A11Y | `crates/app/src/a11y/`, `crates/app/tests/a11y_probe.rs`, `docs/spikes/m2-voiceover-acceptance.md` | P12 tree, focus, action, bounds, shell, and 14-test platform probe evidence; the real VoiceOver session and listed residuals remain open. |
+| M2-A11Y | `crates/app/src/a11y/`, `crates/app/tests/a11y_probe.rs`, `docs/spikes/m2-voiceover-acceptance.md` | P12 tree, focus, action, bounds, shell, and 14-test platform probe evidence; the macOS probe is a required CI gate, while the real VoiceOver session and listed residuals remain open. |
 | M2-REPAIR | `crates/core/src/session.rs`, `crates/app/src/shell/chrome/tabs.rs` | Core repair tests and shell repaired-document notice test. |
 | M2-VIEWER | `crates/app/src/shell/canvas.rs`, `crates/render/src/base.rs` | Core/render integration tests and the window-only visual baseline. |
 | M2-LAZY | `crates/core/benches/open.rs`, `crates/cos/tests/lazy.rs` | Budgeted 1000-page open and lazy object-read tests. |
@@ -134,7 +134,7 @@ Find-and-Thumbnails state.
 | Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
 | UI localization | planned | post-1.0 | Plan lists localization plus bidi/vertical text as post-1.0. |
-| App-level accessibility tree (screen reader support for the UI) | partial | M2 | P12 ships the macOS tree, focus ring, roles, labels, bounds, actions, and direct-view probe. A real VoiceOver session, correct GPUI focus transfer for screen-reader focus actions, and non-macOS adapter acceptance remain open. Evidence: M2-A11Y. |
+| App-level accessibility tree (screen reader support for the UI) | partial | M2 | P12 ships the macOS tree, focus ring, roles, labels, bounds, actions, and direct-view probe, with the macOS probe now required in CI. A real VoiceOver session, correct GPUI focus transfer for screen-reader focus actions, and non-macOS adapter acceptance remain open. Evidence: M2-A11Y. |
 | Pinch-to-zoom and stylus pressure | partial | M2 | Pinch zoom and pressure propagation are live; no shipped pressure-aware ink tool exists yet. Evidence: M2-SHELL. |
 | Register `.pdf` as openable ("Open with") | partial | M2 | macOS, Linux, and Windows declarations exist and never claim the default, but packaged platform smoke tests remain open and the release build lacks the shell feature. Evidence: M2-PACKAGE. |
 | Set as the default PDF viewer | out-of-scope | - | Deliberate product decision in the plan: never the default handler. |

@@ -155,10 +155,10 @@ source IDs, severity, ownership, and required proof.
   refresh_windows merely marks the window dirty; the shell extracts every
   visible page's text on every frame whether or not a client is listening,
   so first-visit content-stream extraction runs on the UI thread during
-  scroll and P14's headless scroll bench cannot see it; two probe tests
-  (the platform half of the press, and the prepaint rectangles) are guarded
-  only by the continue-on-error probe job, which ci.yml plans to harden
-  after its first green run - hold that plan or those guards stay soft.
+  scroll and P14's headless scroll bench cannot see it. The prior soft CI
+  gate for the platform half of the press and the prepaint rectangles is
+  resolved by B5: the macOS accessibility probe now runs as a required CI
+  step after its 14-test local pass.
 - P12 focus dispatch: an AccessKit `Focus` request updates the internal ring but
   does not clear stale GPUI text-field focus or focus the requested real input.
   B5 must regress text-field focus -> screen-reader focus on Zoom In -> Enter and
