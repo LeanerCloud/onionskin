@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 256 planned / 24 partial / 80 out-of-scope. 43 implemented.**
+**403 rows: 256 planned / 20 partial / 80 out-of-scope. 47 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
@@ -83,7 +83,7 @@ Find-and-Thumbnails state.
 | M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs.rs` | Home list/thumbnail and recents tests. |
 | M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
 | M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |
-| M2-PANES | `crates/app/src/shell/panes/` | Pane action, rendering, and context-menu tests; the 2026-08-31 live pass found that an activated pane body collapses to zero layout width, tracked for B3. |
+| M2-PANES | `crates/app/src/shell/panes/` | Pane action, rendering, context-menu tests, and the B3.1 rendered-bounds regression for activated pane bodies. |
 | M2-A11Y | `crates/app/src/a11y/`, `crates/app/tests/a11y_probe.rs`, `docs/spikes/m2-voiceover-acceptance.md` | P12 tree, focus, action, bounds, shell, and 14-test platform probe evidence; the real VoiceOver session and listed residuals remain open. |
 | M2-REPAIR | `crates/core/src/session.rs`, `crates/app/src/shell/chrome/tabs.rs` | Core repair tests and shell repaired-document notice test. |
 | M2-VIEWER | `crates/app/src/shell/canvas.rs`, `crates/render/src/base.rs` | Core/render integration tests and the window-only visual baseline. |
@@ -193,7 +193,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Zoom > Pan & Zoom | planned | post-1.0 | Loupe and Pan & Zoom windows are a named post-1.0 slot. |
 | View > Zoom > Reflow | planned | post-1.0 | Viewer-side reflow shares the machinery the plan defers with reflowing text edit. |
 | View > Tools (open a toolset) | implemented | M2 | Opens and closes the registry-driven tool rail. Evidence: M2-SHELL. |
-| View > Show/Hide > Navigation Panes | partial | M2 | Show/hide and the button strip are live, but every activated pane body is hidden by the shared outer-column width defect. Evidence: M2-PANES. |
+| View > Show/Hide > Navigation Panes | implemented | M2 | Show/hide, the button strip, and activated pane bodies are live with rendered-bounds coverage. Evidence: M2-PANES and B3.1. |
 | View > Show/Hide > Toolbar Items / Page Controls | implemented | M2 | Quick actions and page controls can be shown or hidden. Evidence: M2-SHELL. |
 | View > Show/Hide > Rulers, Grid, Guides, Snap to Grid | planned | M6 | Grouped with `tools-measure`, as Acrobat groups grids/guides with measuring. |
 | View > Show/Hide > Line Weights | planned | M3 | Moved from M2 in plan review: the hayro patch it needed was cut, and the correct semantics are constant hairline width when off, not a width floor. Ships disabled with a reason at M2. |
@@ -210,19 +210,19 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Page thumbnails pane | partial | M2 | Activation, lazy rendering, scrolling, selection, and navigation are implemented, but the live pane body is hidden because its outer flex item does not take the open-state width. B3 owns the layout fix and rendered-bounds regression. Evidence: M2-PANES. |
-| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented but inaccessible while the shared pane body is hidden; page-mutating commands remain disabled until their M3/M5 owners. The shared disabled reason still mislabels Crop as M3. Evidence: M2-PANES. |
-| Bookmarks pane (view and navigate) | partial | M2 | Outline hierarchy and destination navigation are implemented, but the shared pane body is hidden in the live UI. Evidence: M2-PANES. |
+| Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
+| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented and accessible; page-mutating commands remain disabled until their M3/M5 owners. The shared disabled reason still mislabels Crop as M3. Evidence: M2-PANES and B3.1. |
+| Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
 | Bookmarks: create, rename, nest, set destination, delete | planned | M3 | Bookmark authoring is named in the plan's `commands-core` list. Acrobat's New Bookmarks From Structure needs the tagged tree and follows at M6. |
-| Attachments pane (list, open, save) | partial | M2 | Listing and Save are implemented but inaccessible while the shared pane body is hidden; Open also remains disabled. Evidence: M2-PANES. |
+| Attachments pane (list, open, save) | partial | M2 | Listing, Save, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES and B3.1. |
 | Attachments: add and delete file attachments | planned | M3 | Attachment authoring is named in the plan's `commands-core` list. Distinct from attach-as-comment. |
 | Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | planned | M3 | Counted once for the whole menu per the context-menu carve-out; it activates with bookmark authoring in `commands-core`. New Bookmarks From Structure follows at M6 with the tagged tree. |
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | planned | M3 | Counted once for the whole menu; activates with attachment authoring in `commands-core`. |
-| Signatures pane | partial | M2 | Signature listing and the M2 status surface are implemented, but the shared pane body is hidden in the live UI; cryptographic validation remains M6. Evidence: M2-PANES. |
+| Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
 | Comments pane (list, sort, filter, reply, status) | planned | M3 | Ships with `tools-comment`. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | planned | M3 | Counted once for the whole menu; ships with `tools-comment`. |
-| Layers pane (show/hide optional content groups) | partial | M2 | OCG listing and visibility toggles update rendering in tests, but the shared pane body is hidden in the live UI; nested `/D /Order` also remains a known ordering defect. Evidence: M2-LAYERS and M2-PANES. |
-| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, and Reset are implemented but inaccessible while the shared pane body is hidden; Properties waits for M3, while merge/flatten remain post-1.0. Evidence: M2-PANES. |
+| Layers pane (show/hide optional content groups) | partial | M2 | Rendered pane body bounds, OCG listing, and visibility toggles are implemented, but nested `/D /Order` remains a known ordering defect. Evidence: M2-LAYERS, M2-PANES, and B3.1. |
+| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, and rendered menu access are implemented; Properties waits for M3, while merge/flatten remain post-1.0. Evidence: M2-PANES and B3.1. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
 | Content pane (document object tree) | planned | M6 | With `tools-accessibility`. |
 | Tags pane (structure tree) | planned | M6 | `core` owns the tagged-PDF structure tree; this is its UI. |
@@ -247,7 +247,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, and second-right-click repositioning are live; future editing/print commands remain disabled. Edit Text, Redact Text, and Create Link still show stale M3 reasons instead of M5. Evidence: M2-SHELL and M2-BASIC. |
 | Copy with formatting / Export selected text | planned | M3 | (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
-| Search results pane | partial | M2 | Multi-hit results and click-to-navigate are implemented, but the shared pane body is hidden in the live UI. Evidence: M2-SEARCH and M2-PANES. |
+| Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
 | Embedded search index (Manage Embedded Index) | planned | post-1.0 | Embedded search indexes are a named post-1.0 slot. |
 | Catalog (full-text index across a folder of PDFs) | out-of-scope | - | A batch indexing product in itself, with its own `.pdx` format and update lifecycle. |
 | Initial View settings (open zoom, layout, pane) | planned | M3 | Document Properties > Initial View. |

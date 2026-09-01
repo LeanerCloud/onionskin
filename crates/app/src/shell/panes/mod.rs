@@ -394,6 +394,7 @@ pub(in crate::shell) fn accessible(
             feedback.clone(),
         ));
     }
+    rects.place(Surface::NavigationPanes, &mut column);
     column
 }
 
@@ -441,9 +442,10 @@ pub(in crate::shell) fn render_navigation_panes(
     // and how many thumbnail rows fit is the one thing that depends on it.
     state.body_height = f32::from(height);
 
+    let rects_for_strip = rects.clone();
     let mut strip = div()
         .on_children_prepainted(move |bounds, window, _cx| {
-            rects.record(Surface::PaneStrip, &bounds, window);
+            rects_for_strip.record(Surface::PaneStrip, &bounds, window);
         })
         .id("navigation-pane-strip")
         .w(px(STRIP_WIDTH))
@@ -522,10 +524,15 @@ pub(in crate::shell) fn render_navigation_panes(
         body
     });
 
+    let rects_for_column = rects.clone();
     div()
         .h_full()
+        .w(state.width())
         .flex_none()
         .flex()
+        .on_children_prepainted(move |bounds, window, _cx| {
+            rects_for_column.record(Surface::NavigationPanes, &bounds, window);
+        })
         .child(strip)
         .when_some(body, |column, body| column.child(body))
 }

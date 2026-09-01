@@ -41,3 +41,11 @@ absolute paths when needed; this tracked manifest records filenames only.
   `could not create image from window`; `screencapture -R` failed with
   `could not create image from rect`. The native synthetic drag smoke left the
   pasteboard empty. No B2.4 screenshot is recorded as evidence.
+- B3.1 navigation pane body bounds, 2026-09-01T18:24Z: focused rendered-bounds
+  GPUI regression, pane test filter, matrix-count contract, format check, and
+  shell build passed. The fresh app window was PID 12022, CoreGraphics window
+  ID 8844, with bounds `{X = 361, Y = 163, Width = 1078, Height = 877}`.
+  `screencapture -l` failed with `could not create image from window`;
+  exact window-bounds `screencapture -R` failed with
+  `could not create image from rect`. No full-screen fallback was taken. No
+  B3.1 screenshot is recorded as evidence.

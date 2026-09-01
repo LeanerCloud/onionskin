@@ -222,13 +222,6 @@ source IDs, severity, ownership, and required proof.
   Redact Text, and Create Link as M3 although all three are M5, and the thumbnails
   menu's shared M3 reason also covers the M5 Crop command. Derive or test these
   reasons against owning command metadata instead of duplicating milestone strings.
-- **Collapsed navigation pane bodies (owner B3):** live verification on 2026-08-31
-  showed that selecting a left navigation pane updates its shared state and
-  highlights the icon, but the 244px body remains hidden for every pane.
-  `ShellFrame` reserves document space from `NavigationPanesState::width()`, while
-  `render_navigation_panes` does not apply that width to its outer flex item. Add
-  the existing `state.width()` to the rendered column and a GPUI rendered-bounds
-  regression before restoring the affected parity rows to implemented.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.

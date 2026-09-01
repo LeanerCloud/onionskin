@@ -3345,6 +3345,37 @@ mod tests {
     }
 
     #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn every_open_navigation_pane_body_gets_rendered_bounds(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        for pane in panes::NavigationPane::ALL {
+            window
+                .update(&mut cx, |frame, _window, cx| {
+                    frame.run_pane_action(PaneAction::Select(pane), cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            draw_window(&mut cx);
+
+            window
+                .update(&mut cx, |frame, window, cx| {
+                    let tree = frame.accessible(window, cx);
+                    let body = tree
+                        .find(&"navigation-pane-body".into())
+                        .and_then(|body| body.bounds)
+                        .unwrap_or_else(|| panic!("{pane:?} body has no rendered bounds"));
+                    assert!(
+                        body.x1 > body.x0 && body.y1 > body.y0,
+                        "{pane:?} body has no rendered area: {body:?}"
+                    );
+                })
+                .unwrap();
+        }
+    }
+
+    #[cfg(feature = "shell-test-support")]
     fn draw_window(cx: &mut VisualTestContext) {
         cx.update(|window, app| {
             window.draw(app).clear();

@@ -95,7 +95,7 @@ regression test and real user path pass.
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Confirmed open | B3 | Already ledgered | Exactly 64 unknown preferences survive regardless of key ordering. |
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Confirmed open | B4 | Added by this audit | Attachment prompt error becomes visible and is distinct from cancel. |
 | APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
-| APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Confirmed open | B3 | Added during matrix reconciliation | Give the shared navigation flex item its existing open-state width and prove every pane body has rendered bounds before restoring affected parity rows. |
+| APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
 
 The app audit also proved the native action-dispatch ledger entry stale: current
 `RunCommand`, close-tab, and view-menu paths defer correctly and have shell tests.
@@ -126,6 +126,10 @@ and same-cycle primary-error preservation cases. Full shell-support tests, stric
 clippy, format check, and shell build passed. Local macOS screenshot capture and
 native synthetic drag smoke remain environment-blocked, so B2.4 records no new
 window screenshot.
+B3.1 applies `NavigationPanesState::width()` to the rendered pane column and
+records the column's rendered children. The focused GPUI regression opens every
+M2 pane and proves the strip plus body have rendered bounds, closing APP-011 and
+restoring the rows whose only remaining gap was the hidden pane body.
 
 ### Repository, documentation, CI, packaging, and retained state
 

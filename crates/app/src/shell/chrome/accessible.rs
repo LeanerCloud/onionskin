@@ -90,6 +90,7 @@ pub(in crate::shell) enum Activation {
 pub(in crate::shell) enum Surface {
     MainMenu,
     Rail,
+    NavigationPanes,
     PaneStrip,
     QuickActions,
     PageControls,
