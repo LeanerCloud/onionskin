@@ -108,15 +108,12 @@ source IDs, severity, ownership, and required proof.
 - P8/P14 follow-ups: the outline destination map sweeps cos::Document::page(i)
   once to resolve bookmarks that name a page by reference, which is O(pages)
   walks on a large outlined document; attachment save writes on the UI thread
-  like export does; the P14 scroll bench overwrites rather than accumulates a
-  page's composite count on evict-and-reinsert, so an eviction-churn variant
-  of the frame-pinning regression could under-count (the primary mode is
-  caught); guarantee 9's CI checks are textual tripwires, evadable by a
-  softened harness with a stray assert. Branch protection must REQUIRE the
+  like export does; guarantee 9's CI checks are textual tripwires, evadable by
+  a softened harness with a stray assert. Branch protection must REQUIRE the
   bench job through an enforceable hosted rule; `origin` now exists but the
   rule is not verified, so the budget gate binds the job and not the merge.
-  corpus/fetch.sh also verifies no checksum for the R2-hosted
-  objects the bench job now puts on the PR path.
+  corpus/fetch.sh also verifies no checksum for the R2-hosted objects the bench
+  job now puts on the PR path.
 - P8 residuals: Reduce/Enlarge does not advance the thumbnail epoch, so a
   page pending at the old size that falls outside the new band keeps a
   wrong-size (content-correct) picture until eviction - one-line fix is to

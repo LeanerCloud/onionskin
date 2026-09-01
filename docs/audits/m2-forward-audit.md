@@ -75,7 +75,7 @@ regression test and real user path pass.
 |---|---|---|---|---|---|---|
 | CR-001 | Medium | `crates/content/src/page.rs`; `crates/core/src/session.rs`; focused COS/content/core fixtures | Resolved in B1.1 | B1 | Resolved; historical row retained | Negative root `/Count` returns `invalid-page-count` through COS and content, core refuses the session, and affected crate suites pass. |
 | CR-002 | Low | `crates/cos/src/document.rs` | Resolved in B1.1 | B1 | Resolved; historical row retained | The object-deletion consumer comment now assigns page organization to M3. |
-| CR-003 | Low | `crates/core/benches/scroll.rs:230` | Confirmed open | B1 | Already ledgered | Evict/reinsert mutation increments, rather than overwrites, composite totals. |
+| CR-003 | Low | `crates/core/benches/scroll.rs`; `crates/core/tests/scroll_accounting.rs` | Resolved in B1.3 | B1 | Resolved; removed from known issues | Evict/reinsert mutation increments, rather than overwrites, composite totals; repeated observations add only their delta; decreasing counters fail loud. |
 | CR-004 | Medium | `corpus/fetch.sh:38,212` | Confirmed open | B1 | Already ledgered | Corrupted R2 object fails checksum validation. |
 | CR-005 | Low | `crates/app/tests/guarantees.rs:83` | Confirmed limitation | B6 | Already ledgered | Replace or supplement textual tripwires with verified hosted workflow policy; a configured `origin` alone is not proof. |
 | CR-006 | Low | no configured remote at baseline; local bench job only | Externally blocked | B6 | Already ledgered | Verify required hosted checks and branch protection through the remote API; a configured `origin` alone is not proof. |

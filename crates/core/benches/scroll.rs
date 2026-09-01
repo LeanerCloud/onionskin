@@ -42,6 +42,8 @@ use onionskin_core::{
 };
 use onionskin_render::{TileStore, TILE_SIZE};
 
+use harness::CompositeTally;
+
 /// A window a document would be read in. The budgets are stated against this
 /// size because the visible page count and the tile count both follow from it.
 const VIEWPORT: ViewSize = ViewSize {
@@ -106,10 +108,10 @@ struct Run {
     /// screen, which is what a canvas does and what keeps the wait below from
     /// blocking forever on a raster nobody will send twice.
     outstanding: BTreeSet<PageIndex>,
-    /// Tiles composited per page, read back off each cache while it is still
-    /// resident. The scroll never turns back, so a page is inserted once and
-    /// its counter is read for the last time on the last frame it is painted.
-    composited: BTreeMap<PageIndex, u64>,
+    /// Tiles composited per page across every cache incarnation.
+    composited: CompositeTally<PageIndex>,
+    /// Cache incarnation currently installed for each page.
+    cache_incarnations: BTreeMap<PageIndex, u64>,
     /// Tiles of the pages that were painted at all: the ceiling the composite
     /// count is judged against.
     tiles_painted: BTreeMap<PageIndex, u64>,
@@ -141,7 +143,8 @@ impl Run {
             step: stride * PAGES_TO_CROSS as f32 / FRAMES as f32,
             deadline: Instant::now() + RUN_DEADLINE,
             outstanding: BTreeSet::new(),
-            composited: BTreeMap::new(),
+            composited: CompositeTally::default(),
+            cache_incarnations: BTreeMap::new(),
             tiles_painted: BTreeMap::new(),
             fetches: 0,
             frames: Vec::with_capacity(FRAMES),
@@ -227,7 +230,12 @@ impl Run {
                     self.fetches += 1;
                 }
             }
-            self.composited.insert(page, cache.composites());
+            let incarnation = *self
+                .cache_incarnations
+                .get(&page)
+                .expect("a resident cache has an incarnation");
+            self.composited
+                .observe(page, incarnation, cache.composites());
             self.tiles_painted
                 .insert(page, u64::from(cols) * u64::from(rows));
         }
@@ -312,6 +320,10 @@ impl Run {
                     self.outstanding.remove(&request.page);
                     self.inserted_bytes += render.raster.rgba().len();
                     self.inserted_pages += 1;
+                    let incarnation = self.cache_incarnations.entry(request.page).or_default();
+                    *incarnation = incarnation
+                        .checked_add(1)
+                        .expect("cache incarnation overflowed");
                     self.store.insert(request.page, render.raster);
                 }
                 RenderResponse::Failed { request, error } => {
@@ -373,12 +385,12 @@ impl Run {
         // frame-pinning bug that `TileStore::begin_frame` documents having had
         // is exactly what pushes this number towards the fetch count, and this
         // is the integration-level tripwire for it coming back.
-        let composited: u64 = self.composited.values().sum();
+        let composited = self.composited.total();
         let ceiling: u64 = self.tiles_painted.values().sum();
         println!(
             "  {} tile fetches over {} pages, {:.2} per composite",
             self.fetches,
-            self.composited.len(),
+            self.composited.pages(),
             self.fetches as f64 / composited.max(1) as f64
         );
         harness::under_count(

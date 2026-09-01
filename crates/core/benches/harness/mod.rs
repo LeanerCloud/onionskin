@@ -8,6 +8,11 @@
 // Each bench uses a different part of this module.
 #![allow(dead_code)]
 
+mod composite_tally;
+
+#[allow(unused_imports)]
+pub use composite_tally::CompositeTally;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
