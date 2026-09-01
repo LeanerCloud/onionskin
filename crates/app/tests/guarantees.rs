@@ -3,6 +3,15 @@
 //! suite has its final shape from day one and each one lands by deleting
 //! an `#[ignore]`.
 
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{env, fs, process};
+
+const ALPHA_SHA256: &str = "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060";
+const TINY_PDF_SHA256: &str = "98704aee8801c3738f9b38577f4c7917b82da5d770a8f4c1c162293e49c0d172";
+
 /// Guarantee 1, round-trip: for every corpus file, open then save with no
 /// edit produces byte-identical output. A no-op save appends nothing.
 #[test]
@@ -149,11 +158,331 @@ fn open_and_scroll_stay_within_the_performance_budgets() {
         !bench_job.contains("continue-on-error"),
         "a job allowed to fail is not a gate"
     );
+    assert!(
+        bench_job.contains("actions/setup-python"),
+        "the bench job runs corpus fetch validation but does not install Python"
+    );
+    assert!(
+        bench_job.contains("hashFiles('corpus/fetch.sh', 'corpus/checksums/hayro-corpus.sha256')"),
+        "the bench corpus cache key does not include the checksum manifest"
+    );
     // A job-level condition sits at four spaces, a step's at eight. A gate that
     // only runs on some events is not a gate on the others.
     assert!(
         !bench_job.lines().any(|line| line.starts_with("    if:")),
         "the bench job is conditional, so there are pushes it does not gate"
+    );
+
+    for name in ["test", "shell"] {
+        assert!(
+            job(&ci, name).contains("actions/setup-python"),
+            "the {name} job runs app guarantees but does not install Python"
+        );
+    }
+}
+
+#[test]
+fn checksum_verifier_accepts_a_complete_matching_corpus_root() {
+    let temp = TempTree::new("checksum-valid");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("test root is created");
+    fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+
+    let output = run_checksum_verifier(&manifest, &root);
+    assert!(
+        output.status.success(),
+        "valid checksum manifest failed\n{}",
+        output_text(&output)
+    );
+}
+
+#[test]
+fn checksum_verifier_rejects_portable_manifest_and_tree_errors() {
+    assert_checksum_failure("checksum-duplicate", "duplicate", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(
+            manifest,
+            &[
+                &format!("{ALPHA_SHA256}  alpha.pdf"),
+                &format!("{ALPHA_SHA256}  alpha.pdf"),
+            ],
+        );
+    });
+    assert_checksum_failure("checksum-case-alias", "duplicate", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(
+            manifest,
+            &[
+                &format!("{ALPHA_SHA256}  alpha.pdf"),
+                &format!("{ALPHA_SHA256}  ALPHA.pdf"),
+            ],
+        );
+    });
+    assert_checksum_failure("checksum-malformed-hash", "malformed", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(manifest, &["not-a-sha256  alpha.pdf"]);
+    });
+    assert_checksum_failure("checksum-leading-space", "malformed", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(manifest, &[&format!(" {ALPHA_SHA256}  alpha.pdf")]);
+    });
+    assert_checksum_failure(
+        "checksum-extra-separator",
+        "whitespace",
+        |manifest, root| {
+            fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+            write_manifest(manifest, &[&format!("{ALPHA_SHA256}   alpha.pdf")]);
+        },
+    );
+    assert_checksum_failure("checksum-absolute-path", "absolute", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  /alpha.pdf")]);
+    });
+    assert_checksum_failure("checksum-traversal", "traversal", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  ../alpha.pdf")]);
+    });
+    assert_checksum_failure("checksum-dot-alias", "traversal", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  ./alpha.pdf")]);
+    });
+    assert_checksum_failure("checksum-windows-ads", "colon", |manifest, _root| {
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha:stream.pdf")]);
+    });
+    assert_checksum_failure(
+        "checksum-empty-manifest",
+        "no entries",
+        |manifest, _root| {
+            fs::write(manifest, b"").expect("empty checksum manifest is written");
+        },
+    );
+    assert_checksum_failure("checksum-missing-file", "missing", |manifest, _root| {
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  missing.pdf")]);
+    });
+    assert_checksum_failure(
+        "checksum-nonregular",
+        "not a regular file",
+        |manifest, root| {
+            fs::create_dir(root.join("alpha.pdf")).expect("non-regular PDF path is created");
+            write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+        },
+    );
+    assert_checksum_failure("checksum-unexpected-pdf", "unexpected", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+        fs::write(root.join("extra.pdf"), b"beta\n").expect("extra PDF is written");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+    });
+    assert_checksum_failure(
+        "checksum-unexpected-directory",
+        "unexpected directory",
+        |manifest, root| {
+            fs::write(root.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+            fs::create_dir(root.join("extra.pdf")).expect("unexpected directory is created");
+            write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+        },
+    );
+    assert_checksum_failure("checksum-changed-bytes", "mismatch", |manifest, root| {
+        fs::write(root.join("alpha.pdf"), b"beta\n").expect("test PDF is written");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_verifier_rejects_symlinked_pdf_entries() {
+    assert_checksum_failure("checksum-symlink", "symlink", |manifest, root| {
+        fs::write(root.join("target.pdf"), b"alpha\n").expect("test PDF is written");
+        std::os::unix::fs::symlink(root.join("target.pdf"), root.join("alpha.pdf"))
+            .expect("test symlink is created");
+        write_manifest(manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_verifier_rejects_a_manifest_symlink_without_leaking_target_contents() {
+    const SENTINEL: &str = "private-manifest-target-must-not-be-read";
+
+    let temp = TempTree::new("checksum-manifest-symlink");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("test root is created");
+    let target = temp.path().join("manifest-target");
+    fs::write(&target, SENTINEL).expect("manifest target is written");
+    let manifest = temp.path().join("manifest.sha256");
+    std::os::unix::fs::symlink(&target, &manifest).expect("manifest symlink is created");
+
+    let output = run_checksum_verifier(&manifest, &root);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "manifest symlink unexpectedly passed"
+    );
+    assert!(text.contains("symlink not allowed"), "{text}");
+    assert!(
+        !text.contains(SENTINEL),
+        "manifest symlink target leaked into diagnostics\n{text}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn checksum_verifier_rejects_a_windows_junction_root() {
+    let temp = TempTree::new("checksum-root-junction");
+    let target = temp.path().join("target");
+    fs::create_dir(&target).expect("junction target is created");
+    fs::write(target.join("alpha.pdf"), b"alpha\n").expect("test PDF is written");
+    let junction = temp.path().join("root-junction");
+    let created = Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(&junction)
+        .arg(&target)
+        .output()
+        .expect("Windows junction command is runnable");
+    assert!(
+        created.status.success(),
+        "Windows junction creation failed\n{}",
+        output_text(&created)
+    );
+
+    let manifest = temp.path().join("manifest.sha256");
+    write_manifest(&manifest, &[&format!("{ALPHA_SHA256}  alpha.pdf")]);
+    let output = run_checksum_verifier(&manifest, &junction);
+    let text = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "Windows junction root unexpectedly passed"
+    );
+    assert!(text.contains("reparse point not allowed"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_fetch_validates_a_stamped_cached_hayro_corpus_without_invoking_curl() {
+    let temp = TempTree::new("checksum-fetch-cache");
+    let corpus = temp.path().join("corpus");
+    let checksums = corpus.join("checksums");
+    let root = corpus.join("external/hayro-corpus");
+    fs::create_dir_all(&checksums).expect("checksum directory is created");
+    fs::create_dir_all(&root).expect("cached corpus directory is created");
+
+    fs::copy(
+        workspace_root().join("corpus/fetch.sh"),
+        corpus.join("fetch.sh"),
+    )
+    .expect("fetch.sh is copied into the test corpus tree");
+    let verifier = workspace_root().join("corpus/verify-sha256.py");
+    assert!(
+        verifier.is_file(),
+        "checksum verifier missing: {}",
+        verifier.display()
+    );
+    fs::copy(&verifier, corpus.join("verify-sha256.py"))
+        .expect("checksum verifier is copied into the test corpus tree");
+
+    fs::write(root.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n").expect("cached PDF is written");
+    fs::write(root.join(".fetch-stamp"), "source=test\nrevision=test\n")
+        .expect("cached stamp is written");
+    write_manifest(
+        &checksums.join("hayro-corpus.sha256"),
+        &[&format!("{TINY_PDF_SHA256}  tiny.pdf")],
+    );
+
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("fake bin directory is created");
+    let make_executable = |path: &Path| {
+        let mut permissions = fs::metadata(path)
+            .expect("fake executable metadata is readable")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        fs::set_permissions(path, permissions).expect("fake executable is made executable");
+    };
+    let fake_curl = bin.join("curl");
+    fs::write(
+        &fake_curl,
+        "#!/bin/sh\nprintf '%s\\n' 'fake curl must not be invoked' >&2\nexit 42\n",
+    )
+    .expect("fake curl is written");
+    make_executable(&fake_curl);
+
+    let old_path = env::var_os("PATH").unwrap_or_default();
+    let mut path = OsString::from(&bin);
+    path.push(":");
+    path.push(old_path);
+
+    let workspace_corpus = workspace_root().join("corpus");
+    assert_ne!(
+        corpus, workspace_corpus,
+        "the cached-fetch proof must use a copied corpus tree"
+    );
+    let output = Command::new("bash")
+        .arg(corpus.join("fetch.sh"))
+        .arg("hayro-corpus")
+        .env("PATH", &path)
+        .env("PYTHON", python_interpreter())
+        .output()
+        .expect("copied fetch.sh is runnable through bash");
+    let text = output_text(&output);
+    assert!(
+        output.status.success(),
+        "stamped valid cache should be verified and skipped without curl\n{}",
+        text
+    );
+    assert!(
+        text.contains("verified 1 files"),
+        "stamped cache did not report checksum verification\n{text}"
+    );
+    assert!(
+        !text.contains(&workspace_corpus.display().to_string()),
+        "copied fetch.sh output unexpectedly referenced the retained corpus\n{text}"
+    );
+
+    fs::write(root.join("tiny.pdf"), b"changed after stamp\n")
+        .expect("cached PDF is corrupted after the valid proof");
+    let corrupt = Command::new("bash")
+        .arg(corpus.join("fetch.sh"))
+        .arg("hayro-corpus")
+        .env("PATH", &path)
+        .env("PYTHON", python_interpreter())
+        .output()
+        .expect("copied fetch.sh is runnable for the corrupted-cache proof");
+    let corrupt_text = output_text(&corrupt);
+    assert!(
+        !corrupt.status.success(),
+        "stamped corrupted cache unexpectedly passed\n{corrupt_text}"
+    );
+    assert!(
+        corrupt_text.contains("sha256 mismatch"),
+        "stamped corrupted cache did not report its checksum mismatch\n{corrupt_text}"
+    );
+    assert!(
+        !corrupt_text.contains("fake curl must not be invoked"),
+        "corrupted cached validation reached the network path\n{corrupt_text}"
+    );
+
+    fs::write(root.join("tiny.pdf"), b"%PDF-1.4\n%tiny\n")
+        .expect("cached PDF is restored for the interpreter proof");
+    let fake_python = bin.join("python-noop");
+    fs::write(&fake_python, "#!/bin/sh\nexit 0\n").expect("fake Python is written");
+    make_executable(&fake_python);
+    let no_python = Command::new("bash")
+        .arg(corpus.join("fetch.sh"))
+        .arg("hayro-corpus")
+        .env("PATH", &path)
+        .env("PYTHON", &fake_python)
+        .output()
+        .expect("copied fetch.sh is runnable for the fake-interpreter proof");
+    let no_python_text = output_text(&no_python);
+    assert!(
+        !no_python.status.success(),
+        "no-op executable bypassed Python validation\n{no_python_text}"
+    );
+    assert!(
+        no_python_text.contains("not a runnable Python 3.10+ interpreter"),
+        "fake interpreter failure was not explicit\n{no_python_text}"
     );
 }
 
@@ -268,6 +597,129 @@ fn workspace_root() -> &'static std::path::Path {
         .parent()
         .and_then(std::path::Path::parent)
         .expect("crates/app sits two levels under the workspace root")
+}
+
+struct TempTree {
+    path: PathBuf,
+}
+
+impl TempTree {
+    fn new(name: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "onionskin-guarantee-{name}-{}-{nanos}-{}",
+            process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to create test temp directory {}: {error}",
+                path.display()
+            )
+        });
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempTree {
+    fn drop(&mut self) {
+        let Some(name) = self.path.file_name().and_then(|name| name.to_str()) else {
+            return;
+        };
+        if name.starts_with("onionskin-guarantee-") {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn assert_checksum_failure(
+    name: &str,
+    expected_diagnostic: &str,
+    build: impl FnOnce(&Path, &Path),
+) {
+    let temp = TempTree::new(name);
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("test root is created");
+    let manifest = temp.path().join("manifest.sha256");
+    build(&manifest, &root);
+
+    let output = run_checksum_verifier(&manifest, &root);
+    assert!(
+        !output.status.success(),
+        "invalid checksum case {name} unexpectedly succeeded"
+    );
+    let text = output_text(&output);
+    assert!(
+        text.contains(expected_diagnostic),
+        "invalid checksum case {name} did not mention {expected_diagnostic:?}\n{text}"
+    );
+}
+
+fn write_manifest(path: &Path, lines: &[&str]) {
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("checksum manifest is written");
+}
+
+fn run_checksum_verifier(manifest: &Path, root: &Path) -> Output {
+    let verifier = workspace_root().join("corpus/verify-sha256.py");
+    assert!(
+        verifier.is_file(),
+        "checksum verifier missing: {}",
+        verifier.display()
+    );
+    Command::new(python_interpreter())
+        .arg(&verifier)
+        .arg(manifest)
+        .arg(root)
+        .output()
+        .expect("checksum verifier process is spawned")
+}
+
+fn python_interpreter() -> OsString {
+    if let Some(candidate) = env::var_os("PYTHON") {
+        if interpreter_runs(&candidate) {
+            return candidate;
+        }
+        panic!(
+            "PYTHON is not a runnable Python 3.10+ interpreter: {}",
+            candidate.to_string_lossy()
+        );
+    }
+
+    for candidate in ["python3", "python"] {
+        let candidate = OsString::from(candidate);
+        if interpreter_runs(&candidate) {
+            return candidate;
+        }
+    }
+
+    panic!("required Python 3.10+ interpreter not found (tried PYTHON, python3, python)");
+}
+
+fn interpreter_runs(candidate: &OsString) -> bool {
+    Command::new(candidate)
+        .args([
+            "-c",
+            "import sys; sys.stdout.write('onionskin-python') if sys.version_info >= (3, 10) else sys.exit(1)",
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success() && output.stdout == b"onionskin-python")
+}
+
+fn output_text(output: &Output) -> String {
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 /// One top-level job of a workflow: its header line and everything indented

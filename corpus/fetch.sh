@@ -9,6 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly EXTERNAL_DIR="$SCRIPT_DIR/external"
+readonly CHECKSUM_DIR="$SCRIPT_DIR/checksums"
+readonly SHA256_VERIFIER="$SCRIPT_DIR/verify-sha256.py"
 readonly STAMP_NAME=".fetch-stamp"
 
 # Per-run temporary directory, created by main and removed on exit.
@@ -64,6 +66,32 @@ die() {
 
 need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+is_python() {
+	[[ "$("$1" -c 'import sys; sys.stdout.write("onionskin-python") if sys.version_info >= (3, 10) else sys.exit(1)' 2>/dev/null)" == "onionskin-python" ]]
+}
+
+python_exe() {
+	local candidate
+	if [[ -n "${PYTHON:-}" ]]; then
+		candidate="$PYTHON"
+		if is_python "$candidate"; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+		die "PYTHON is not a runnable Python 3.10+ interpreter: $candidate"
+	fi
+
+	for candidate in python3 python; do
+		if command -v "$candidate" >/dev/null 2>&1 &&
+			is_python "$candidate"; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+	done
+
+	die "required Python 3.10+ interpreter not found (tried PYTHON, python3, python)"
 }
 
 # Path of the stamp that marks a fetched unit as complete.
@@ -151,7 +179,9 @@ fetch_tarball() {
 # change and should stop the fetch rather than silently produce a short set.
 manifest_ids() {
 	local manifest="$1"
-	python3 - "$manifest" <<'PY'
+	local python
+	python="$(python_exe)"
+	"$python" - "$manifest" <<'PY'
 import json
 import sys
 
@@ -169,6 +199,38 @@ for entry in entries:
 PY
 }
 
+checksum_manifest_for_remote_set() {
+	local kind="$1"
+	case "$kind" in
+	corpus)
+		printf '%s' "$CHECKSUM_DIR/hayro-corpus.sha256"
+		;;
+	pdfjs | pdfbox | pdfium)
+		return 1
+		;;
+	*)
+		die "unknown hayro remote set: $kind"
+		;;
+	esac
+}
+
+verify_remote_set() {
+	local dest="$1" manifest="$2"
+	local python
+
+	require_checksum_inputs "$manifest"
+	python="$(python_exe)"
+	"$python" "$SHA256_VERIFIER" "$manifest" "$dest" ||
+		die "checksum verification failed for $dest using $manifest"
+}
+
+require_checksum_inputs() {
+	local manifest="$1"
+
+	[[ -f "$manifest" ]] || die "checksum manifest missing: $manifest"
+	[[ -f "$SHA256_VERIFIER" ]] || die "checksum verifier missing: $SHA256_VERIFIER"
+}
+
 # Fetch one of hayro's R2-hosted sets, one pdf per id in the pinned manifest.
 # Individual files are skipped when already on disk, so an interrupted run
 # resumes instead of starting over.
@@ -176,10 +238,23 @@ fetch_hayro_remote_set() {
 	local kind="$1"
 	local dest="$EXTERNAL_DIR/hayro-$kind"
 	local manifest="$EXTERNAL_DIR/hayro/manifest_$kind.json"
+	local checksum_manifest=""
+	if checksum_manifest="$(checksum_manifest_for_remote_set "$kind")"; then
+		readonly checksum_manifest
+	fi
 
 	if is_present "$dest"; then
+		if [[ -n "$checksum_manifest" ]]; then
+			verify_remote_set "$dest" "$checksum_manifest"
+		else
+			log "present without checksum enforcement: $dest"
+		fi
 		log "present, skipping: $dest"
 		return 0
+	fi
+
+	if [[ -n "$checksum_manifest" ]]; then
+		require_checksum_inputs "$checksum_manifest"
 	fi
 
 	ensure_set hayro
@@ -216,6 +291,11 @@ fetch_hayro_remote_set() {
 		downloaded=$((downloaded + 1))
 	done
 
+	if [[ -n "$checksum_manifest" ]]; then
+		verify_remote_set "$dest" "$checksum_manifest"
+	else
+		log "fetched without checksum enforcement: $dest"
+	fi
 	write_stamp "$dest" "$HAYRO_ASSETS_BASE/$kind/ (ids from hayro manifest_$kind.json)" \
 		"$HAYRO_REV"
 	log "fetched $dest ($downloaded downloaded, $cached already present)"
@@ -323,7 +403,6 @@ EOF
 main() {
 	need_cmd curl
 	need_cmd tar
-	need_cmd python3
 
 	case "${1-}" in
 	-h | --help)

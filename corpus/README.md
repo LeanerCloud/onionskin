@@ -28,8 +28,9 @@ vendored: they are reproducible from `fetch.sh`, `make-malformed.sh` and
 ./fetch.sh --list       # every set and whether it is present
 ```
 
-`fetch.sh` skips any set already on disk, so re-running costs well under a
-second and needs no network.
+`fetch.sh` skips stamped sets already on disk, so re-running costs well under a
+second and needs no network. Sets with tracked checksums are revalidated before
+that skip is accepted.
 
 ## Sets
 
@@ -172,7 +173,7 @@ run stays inside a few hundred megabytes. Fetch by name:
 
 | Set | Files | Size | Source |
 |---|---|---|---|
-| `hayro-corpus` | 41 | 159 MB | Subset of the [PDF Association large-scale PDF corpus](https://pdfa.org/new-large-scale-pdf-corpus-now-publicly-available/), the only real-world scanned material in reach |
+| `hayro-corpus` | 41 | 159 MB, tracked by `checksums/hayro-corpus.sha256` | Subset of the [PDF Association large-scale PDF corpus](https://pdfa.org/new-large-scale-pdf-corpus-now-publicly-available/), the only real-world scanned material in reach |
 | `hayro-pdfjs` | 679 | not measured | Ported from the pdf.js regression suite |
 | `hayro-pdfbox` | 454 | not measured | From the Apache PDFBox issue tracker |
 | `hayro-pdfium` | 127 | not measured | From the PDFium/Chromium issue tracker |
@@ -181,7 +182,10 @@ The cut: `hayro-corpus` is only 41 files but averages 3.9 MB each, one of them
 67 MB, which alone would nearly double the default fetch. The other three add
 about 1260 files whose total size is not known ahead of time because the bucket
 publishes no index. All four are worth pulling on a machine that runs the full
-suite; none is needed to work on the parser.
+suite; none is needed to work on the parser. `hayro-corpus` has tracked
+SHA-256 values because the merge-gating first-paint benchmark depends on one of
+its PDFs. The other R2-hosted optional sets remain unverified: their id lists are
+pinned by hayro's manifest files, but their object bytes are not checked.
 
 ## How the guarantee tests consume the corpus
 
@@ -241,14 +245,19 @@ server versions, so the pin is the commit, not an archive checksum. The commit
 fixes the file list and every file's contents exactly.
 
 The R2-hosted sets have no upstream version at all. What is pinned there is the
-id list, which comes from the manifests at the pinned hayro commit. The objects
-themselves are keyed by immutable id but carry no published checksum. If you
-need byte-level reproducibility for those, mirror the set yourself after the
-first fetch.
+id list, which comes from the manifests at the pinned hayro commit. For
+`hayro-corpus`, this repository also tracks SHA-256 values for every fetched PDF
+and verifies them before writing or accepting a stamp. The other R2 objects are
+keyed by immutable id but carry no published checksum. If you need byte-level
+reproducibility for those optional sets, mirror them yourself after the first
+fetch.
 
 Each fetched directory carries a `.fetch-stamp` recording its source and pinned
 revision. `fetch.sh` uses that file to decide whether a set is complete. To pick
-up a bumped revision, delete the set directory and re-run.
+up a bumped revision, delete the set directory and re-run. A stamped
+`hayro-corpus` directory is still checked against `checksums/hayro-corpus.sha256`
+before `fetch.sh` skips it, so a stale or corrupted cache fails instead of being
+trusted because the stamp is present.
 
 The two kinds of set recover from an interrupted fetch differently, because a
 tarball extraction has no meaningful partial state and a per-file download does:
@@ -261,11 +270,14 @@ tarball extraction has no meaningful partial state and a per-file download does:
   deliberately adopt an unstamped directory and resume into it. Each pdf is
   downloaded to `<id>.pdf.partial` and renamed on success, and a file already on
   disk is never re-fetched or overwritten, so a killed run costs at most the one
-  file in flight. The stamp is written only when every id in the manifest is
-  present.
+  file in flight. For `hayro-corpus`, every file is then checked against the
+  tracked SHA-256 manifest before the stamp is written. The stamp is written
+  only when every id in the manifest is present and, where checksums exist,
+  verified.
 
 ## Requirements
 
-`fetch.sh` needs `curl`, `tar` and `python3`. `make-malformed.sh` needs `perl`.
-`make-seeds.py` and `make-bench.py` need python3 with no third-party packages.
-Both shell scripts run on bash 3.2, which is what macOS ships.
+`fetch.sh` needs `curl`, `tar` and Python 3.10 or newer, resolved from `PYTHON`,
+then `python3`, then `python`. `make-malformed.sh` needs `perl`. `make-seeds.py`
+and `make-bench.py` need python3 with no third-party packages. Both shell
+scripts run on bash 3.2, which is what macOS ships.
