@@ -5,11 +5,11 @@ produce today: one binary, `onionskin`, unsigned, without icons.
 `.github/workflows/release.yml` runs all of this on a `vX.Y.Z` tag, or on a
 manual dispatch, for Linux (x86_64 and aarch64), macOS and Windows.
 
-Every script packages the release build, expects it to exist already, and
-fails loudly if it does not:
+Every script packages the shell-enabled release build, expects it to exist
+already, and fails loudly if it does not:
 
 ```
-cargo build --release -p onionskin-app
+cargo build --release -p onionskin-app --features shell
 ./packaging/linux/package.sh   # dist/onionskin-<version>-linux-<arch>.tar.gz
 ./packaging/macos/bundle.sh    # dist/Onionskin.app, dist/Onionskin-<version>-macos-<arch>.zip
 makensis -DVERSION=<version> packaging/windows/installer.nsi
@@ -31,7 +31,7 @@ failed job rather than a release stamped with the manifest version.
 | Windows builds are unsigned. | An Authenticode certificate and a `signtool` step. |
 | `CFBundleIdentifier` is the placeholder `org.onionskin.Onionskin`. | A settled domain. It must be final before the first signed release: Launch Services and the signing identity both key off it. |
 | No MCP server binary in any artifact. | `crates/mcp` becoming a binary in M4. Schist ships its MCP server beside the app, loose rather than inside the bundle, because a client spawns it by path. |
-| No Linux system-dependency step in the release workflow. | The GPUI shell in M1, which brings fontconfig, wayland, xcb and vulkan dev packages, and the linker settings that need clang and mold. |
+| No hosted Linux/Windows first-release smoke validation yet. | B6 final acceptance on those hosts. The release workflow now builds the shell artifact and installs Linux GPUI build dependencies, but this macOS session cannot prove the Linux tarball or Windows installer launches the real viewer. |
 
 ## Rules that carry over from PLAN.md
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the Linux release build into dist/: a loose binary and a tarball.
 #
-# Build first: cargo build --release -p onionskin-app
+# Build first: cargo build --release -p onionskin-app --features shell
 # An AppImage lands once the icon set exists, see packaging/README.md.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 bin="$root/target/release/onionskin"
 
 if [ ! -x "$bin" ]; then
-    echo "no binary at $bin; run: cargo build --release -p onionskin-app" >&2
+    echo "no binary at $bin; run: cargo build --release -p onionskin-app --features shell" >&2
     exit 1
 fi
 

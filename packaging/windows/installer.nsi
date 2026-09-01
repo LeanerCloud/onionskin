@@ -1,6 +1,7 @@
 ; NSIS installer for Onionskin. Build with:
 ;   makensis -DVERSION=0.1.0 packaging/windows/installer.nsi
-; Expects target\release\onionskin.exe to exist.
+; Expects target\release\onionskin.exe from:
+;   cargo build --release -p onionskin-app --features shell
 !ifndef VERSION
   !error "VERSION is required: makensis -DVERSION=x.y.z installer.nsi"
 !endif

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build Onionskin.app from the release build and zip it into dist/.
 #
-# Build first: cargo build --release -p onionskin-app
+# Build first: cargo build --release -p onionskin-app --features shell
 # Unsigned and un-notarized; see packaging/README.md for what signing needs.
 # Only the zip is safe to hand to CI artifact upload, which preserves neither
 # a bundle's permissions nor its symlinks.
@@ -11,7 +11,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 bin="$root/target/release/onionskin"
 
 if [ ! -x "$bin" ]; then
-    echo "no binary at $bin; run: cargo build --release -p onionskin-app" >&2
+    echo "no binary at $bin; run: cargo build --release -p onionskin-app --features shell" >&2
     exit 1
 fi
 

@@ -183,6 +183,192 @@ fn open_and_scroll_stay_within_the_performance_budgets() {
 }
 
 #[test]
+fn release_artifacts_build_the_windowed_viewer() {
+    let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+        .expect("the CI workflow is readable");
+    let release = std::fs::read_to_string(workspace_root().join(".github/workflows/release.yml"))
+        .expect("the release workflow is readable");
+    let ci_shell = job(&ci, "shell");
+    let build = job(&release, "build");
+    assert!(
+        !build.is_empty(),
+        "the release workflow has no build job, so it publishes nothing testable"
+    );
+    assert!(
+        build.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
+        "release builds fetch git dependencies differently from CI"
+    );
+    assert!(
+        build.contains("actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c"),
+        "release builds do not install the reviewed Python setup action even though the packaging version gate uses shell helpers"
+    );
+    for step in [
+        "      - name: Update Linux package index\n        if: runner.os == 'Linux'\n        run: sudo apt-get update",
+        "      - name: Install GPUI Linux dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get install -y libfontconfig1-dev libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev",
+        "      - name: Install macOS Metal toolchain\n        if: runner.os == 'macOS'\n        run: xcodebuild -downloadComponent MetalToolchain",
+    ] {
+        assert!(
+            ci_shell.contains(step),
+            "the CI shell job no longer contains the expected prerequisite step:\n{step}"
+        );
+        assert!(
+            build.contains(step),
+            "the release build job does not mirror the CI shell prerequisite step:\n{step}"
+        );
+    }
+    assert!(
+        build.contains("cargo build --release -p onionskin-app --features shell"),
+        "release artifacts are not built with the windowed shell feature"
+    );
+}
+
+#[test]
+fn supply_chain_policy_is_checked_in_and_gated() {
+    let workspace = workspace_root();
+    let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
+        .expect("the CI workflow is readable");
+    let dependabot = std::fs::read_to_string(workspace.join(".github/dependabot.yml"))
+        .expect("Dependabot policy is readable");
+    let deny = std::fs::read_to_string(workspace.join("deny.toml"))
+        .expect("cargo-deny policy is readable");
+
+    assert!(
+        dependabot.contains("version: 2"),
+        "Dependabot policy does not declare the current schema version"
+    );
+    for ecosystem in ["cargo", "github-actions"] {
+        assert!(
+            dependabot.contains(&format!("package-ecosystem: \"{ecosystem}\"")),
+            "Dependabot does not monitor the {ecosystem} ecosystem"
+        );
+    }
+    assert!(
+        dependabot.contains("directory: \"/\""),
+        "Dependabot does not monitor the workspace root"
+    );
+    assert!(
+        dependabot.contains("interval: \"weekly\""),
+        "Dependabot has no predictable update cadence"
+    );
+
+    for section in ["[advisories]", "[licenses]", "[bans]", "[sources]"] {
+        assert!(
+            deny.contains(section),
+            "cargo-deny policy is missing {section}"
+        );
+    }
+    let graph = toml_section(&deny, "graph");
+    assert!(
+        graph.contains("all-features = true"),
+        "cargo-deny does not scan the full feature graph"
+    );
+    for target in [
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ] {
+        assert!(
+            graph.contains(target),
+            "cargo-deny does not scan the release target {target}"
+        );
+    }
+    assert!(
+        !graph.contains("feature-depth"),
+        "feature-depth belongs to cargo-deny's output config, not its graph config"
+    );
+    assert!(
+        deny.contains("yanked = \"deny\""),
+        "yanked crates are not denied"
+    );
+    assert!(
+        deny.contains("wildcards = \"deny\""),
+        "wildcard dependency requirements are not denied"
+    );
+    assert!(
+        deny.contains("required-git-spec = \"rev\""),
+        "allowed git sources can be branch-based or unpinned"
+    );
+    for source in [
+        "https://github.com/IAmJSD/gpui",
+        "https://github.com/cristim/hayro",
+        "https://github.com/linebender/vello",
+    ] {
+        assert!(
+            deny.contains(source),
+            "cargo-deny does not allow the reviewed git source {source}"
+        );
+    }
+
+    let supply_chain = job(&ci, "supply-chain");
+    assert!(!supply_chain.is_empty(), "CI has no supply-chain job");
+    assert!(
+        supply_chain.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
+        "the supply-chain job fetches git dependencies differently from the rest of CI"
+    );
+    assert!(
+        supply_chain.contains("fetch-depth: 0"),
+        "the secret scanner cannot inspect git history from a shallow checkout"
+    );
+    assert!(
+        supply_chain.contains("actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"),
+        "CI does not use the reviewed checkout v6 pin"
+    );
+    assert!(
+        supply_chain.contains("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c"),
+        "CI does not use the reviewed rust-toolchain stable pin"
+    );
+    assert!(
+        supply_chain.contains("Swatinem/rust-cache@e172ef532f714507ca8b9ce7978a442736438fc1"),
+        "CI does not use the reviewed rust-cache pin"
+    );
+    assert!(
+        supply_chain
+            .contains("EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25"),
+        "CI does not run cargo-deny"
+    );
+    assert!(
+        supply_chain.contains("https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz"),
+        "CI does not install the reviewed Gitleaks release"
+    );
+    assert!(
+        supply_chain.contains(
+            "echo \"a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  gitleaks.tar.gz\" | sha256sum -c -"
+        ),
+        "CI does not verify the reviewed Gitleaks release checksum against the downloaded tarball"
+    );
+    assert!(
+        supply_chain.contains("./gitleaks detect --redact --source ."),
+        "CI does not run Gitleaks"
+    );
+    assert!(
+        !supply_chain.contains("GITLEAKS_LICENSE"),
+        "the secret scan must not depend on an organization-only action license secret"
+    );
+    for line in supply_chain
+        .lines()
+        .filter(|line| line.trim_start().starts_with("- uses: "))
+    {
+        let Some((_, reference)) = line.split_once('@') else {
+            panic!("action is not pinned to a reviewed ref: {line}");
+        };
+        let sha = reference.split_whitespace().next().unwrap_or_default();
+        assert!(
+            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "supply-chain action is not pinned to a full commit SHA: {line}"
+        );
+    }
+    assert!(
+        !supply_chain.contains("continue-on-error"),
+        "supply-chain policy is advisory instead of gating"
+    );
+    assert!(
+        !supply_chain.lines().any(|line| line.starts_with("    if:")),
+        "the supply-chain job is conditional, so some events skip it"
+    );
+}
+
+#[test]
 fn checksum_verifier_accepts_a_complete_matching_corpus_root() {
     let temp = TempTree::new("checksum-valid");
     let root = temp.path().join("root");
@@ -2757,6 +2943,17 @@ fn job(workflow: &str, name: &str) -> String {
         .lines()
         .skip_while(|line| *line != header)
         .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn toml_section(document: &str, name: &str) -> String {
+    let header = format!("[{name}]");
+    document
+        .lines()
+        .skip_while(|line| line.trim() != header)
+        .skip(1)
+        .take_while(|line| !line.trim_start().starts_with('['))
         .collect::<Vec<_>>()
         .join("\n")
 }
