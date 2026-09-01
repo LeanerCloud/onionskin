@@ -82,9 +82,11 @@ source IDs, severity, ownership, and required proof.
   recording an update-error exit. B2.3 resolved canvas context-menu
   repositioning: a second right-click inside document bounds reuses the existing
   open path, while a right-click outside document bounds still dismisses the
-  menu. Still open: PNG snapshot encode is synchronous on the UI thread with no
-  size cap; the NaN-quad guard in raster_crop and the corner-by-corner overlay
-  mapping both lack tests that would fail a bounding-rect implementation;
+  menu. B2.4 resolved the remaining snapshot lifecycle gap by bounding snapshot
+  pixel allocation, moving PNG encoding to GPUI's background executor, reporting
+  encode errors, and ignoring stale snapshot completions. Still open: the
+  NaN-quad guard in raster_crop and the corner-by-corner overlay mapping both
+  lack tests that would fail a bounding-rect implementation;
   zoom_limits derives the raster ceiling from the current page only, so a larger
   visible neighbour can still hit
   UnrenderableSize at an allowed zoom (handled gracefully via failed_renders and

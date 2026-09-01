@@ -19,7 +19,10 @@ use onionskin_plugin_api::PluginRegistry;
 
 use accesskit::Role;
 
-use self::canvas::{CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList, ViewAction};
+use self::canvas::{
+    encode_snapshot_png, CanvasError, CanvasModel, CanvasStatus, OverlayPaint, PaintList,
+    SnapshotPixels, ViewAction,
+};
 use self::chrome::accessible::{Activation, Element as A11yElement, Rects};
 use self::chrome::{
     command_defaults, command_for_id, install_native_menus, install_search_keybindings, MenuState,
@@ -237,6 +240,7 @@ pub(in crate::shell) fn repair_notice(path: &Path, provenance: &Provenance) -> O
 pub struct Canvas {
     model: CanvasModel,
     polling: bool,
+    snapshot_generation: u64,
     theme: ThemeTokens,
 }
 
@@ -245,6 +249,7 @@ impl Canvas {
         Self {
             model,
             polling: false,
+            snapshot_generation: 0,
             theme,
         }
     }
@@ -318,9 +323,67 @@ impl Canvas {
     /// `handle_change`. On the frames that raise nothing this costs one
     /// `Option::take`.
     fn copy_pending_snapshot(&mut self, cx: &mut Context<Self>, keep_existing_error: bool) {
-        match self.model.take_snapshot_png() {
+        match self.model.take_snapshot_pixels() {
             Ok(None) => {}
-            Ok(Some(png)) => cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
+            Ok(Some(snapshot)) => self.schedule_snapshot_encode(snapshot, keep_existing_error, cx),
+            Err(error) => {
+                self.invalidate_pending_snapshot_encodes(keep_existing_error, cx);
+                if !keep_existing_error {
+                    self.record_error(error, cx);
+                }
+            }
+        }
+    }
+
+    fn invalidate_pending_snapshot_encodes(
+        &mut self,
+        keep_existing_error: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(generation) = self.snapshot_generation.checked_add(1) else {
+            if !keep_existing_error {
+                self.record_error(CanvasError::GenerationExhausted, cx);
+            }
+            return;
+        };
+        self.snapshot_generation = generation;
+    }
+
+    fn schedule_snapshot_encode(
+        &mut self,
+        snapshot: SnapshotPixels,
+        keep_existing_error: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(generation) = self.snapshot_generation.checked_add(1) else {
+            if !keep_existing_error {
+                self.record_error(CanvasError::GenerationExhausted, cx);
+            }
+            return;
+        };
+        self.snapshot_generation = generation;
+        let task = cx.background_spawn(async move { encode_snapshot_png(snapshot) });
+        cx.spawn(async move |entity, cx| {
+            let result = task.await;
+            _ = entity.update(cx, |canvas, cx| {
+                canvas.finish_snapshot_encode(generation, result, keep_existing_error, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn finish_snapshot_encode(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<u8>, CanvasError>,
+        keep_existing_error: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.snapshot_generation {
+            return;
+        }
+        match result {
+            Ok(png) => cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
                 ImageFormat::Png,
                 png,
             ))),
@@ -1012,6 +1075,201 @@ mod tests {
                     canvas.model.status(),
                     Some(CanvasStatus::Error { page: None, message })
                         if message.contains("not on screen yet")
+                ));
+            });
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn snapshot_encoding_yields_until_the_background_task_finishes(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.schedule_snapshot_encode(
+                    SnapshotPixels {
+                        width: 1,
+                        height: 1,
+                        rgba: vec![255, 0, 0, 255],
+                    },
+                    false,
+                    cx,
+                );
+                assert!(cx.read_from_clipboard().is_none());
+            });
+        });
+
+        cx.run_until_parked();
+        cx.update(|_window, app| {
+            let item = app
+                .read_from_clipboard()
+                .expect("background encode wrote the clipboard");
+            assert!(matches!(
+                item.entries(),
+                [gpui::ClipboardEntry::Image(image)]
+                    if image.format == ImageFormat::Png && !image.bytes.is_empty()
+            ));
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn snapshot_encode_errors_reach_the_status_line(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.snapshot_generation = 1;
+                canvas.finish_snapshot_encode(
+                    1,
+                    Err(CanvasError::SnapshotEncode("encoder stopped".to_string())),
+                    false,
+                    cx,
+                );
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message == "cannot encode the snapshot: encoder stopped"
+                ));
+            });
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn older_snapshot_completions_cannot_overwrite_newer_requests(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.snapshot_generation = 2;
+                canvas.finish_snapshot_encode(2, Ok(vec![2]), false, cx);
+                canvas.finish_snapshot_encode(1, Ok(vec![1]), false, cx);
+            });
+            let item = app
+                .read_from_clipboard()
+                .expect("the current completion wrote the clipboard");
+            assert!(matches!(
+                item.entries(),
+                [gpui::ClipboardEntry::Image(image)]
+                    if image.format == ImageFormat::Png && image.bytes == [2]
+            ));
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn failed_snapshot_requests_invalidate_older_encode_completions(cx: &mut gpui::TestAppContext) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.snapshot_generation = 1;
+                canvas
+                    .model
+                    .request_snapshot_for_test(onionskin_core::PageRect {
+                        page: 0,
+                        x0: 20.0,
+                        y0: 20.0,
+                        x1: 120.0,
+                        y1: 60.0,
+                    });
+                canvas.copy_pending_snapshot(cx, false);
+                assert_eq!(canvas.snapshot_generation, 2);
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message.contains("not on screen yet")
+                ));
+
+                canvas.finish_snapshot_encode(1, Ok(vec![1]), false, cx);
+                assert!(cx.read_from_clipboard().is_none());
+            });
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn snapshot_encode_errors_do_not_replace_the_primary_cycle_error(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("the canvas starts");
+        let theme = ShellViewState::new(gpui::WindowAppearance::Dark, Preferences::default().theme)
+            .tokens();
+        let (canvas, cx) = cx.add_window_view(move |_window, _cx| Canvas::new(model, theme));
+
+        cx.update(|_window, app| {
+            canvas.update(app, |canvas, cx| {
+                canvas.record_error("primary pointer failure", cx);
+                canvas.snapshot_generation = 1;
+                canvas.finish_snapshot_encode(
+                    1,
+                    Err(CanvasError::SnapshotEncode("encoder stopped".to_string())),
+                    true,
+                    cx,
+                );
+                assert!(matches!(
+                    canvas.model.status(),
+                    Some(CanvasStatus::Error { page: None, message })
+                        if message == "primary pointer failure"
                 ));
             });
         });

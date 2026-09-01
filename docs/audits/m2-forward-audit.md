@@ -89,7 +89,7 @@ regression test and real user path pass.
 | APP-002 | Medium | `crates/app/src/shell/chrome/tabs.rs:2357,2360,2376` | Confirmed open | B4 | Existing export entry, corrected | Confirm every derived overwrite and derive numbering width from the exported page count. |
 | APP-003 | Medium | `crates/core/src/layers.rs:53,81` | Confirmed open | B3 | Already ledgered | Nested `/D /Order` fixture renders hierarchy and hides omitted groups. |
 | APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Confirmed open | B3 | Already ledgered | Old-size thumbnail response is rejected after Reduce/Enlarge. |
-| APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Partially resolved in B2.2; snapshot bounds/encoding remain | B2 | Updated by B2.2 | First error is preserved and stale worker wait timing is reset after poll update errors; oversized/synchronous snapshot encoding is still bounded in B2.4. |
+| APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Resolved in B2.4 | B2 | Updated by B2.4 | First error is preserved, stale worker wait timing is reset after poll update errors, oversized snapshots are refused before allocation, and PNG encoding runs on the background executor with stale completion protection. |
 | APP-006 | Low | `crates/app/src/shell/chrome/tabs.rs:2177,2189` | Resolved in B2.3 | B2 | Updated by B2.3 | Second right-click inside document bounds repositions the open canvas context menu; right-click outside document bounds dismisses it. |
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Confirmed open | B3 | Already ledgered | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Confirmed open | B3 | Already ledgered | Exactly 64 unknown preferences survive regardless of key ordering. |
@@ -116,6 +116,12 @@ passed focused context-menu tests, the full shell-support target, strict clippy
 for `onionskin-app`, and a shell build. The local macOS screenshot API still
 refused direct Onionskin window capture, so no B2.3 image is recorded as
 evidence.
+B2.4 splits snapshot pixel preparation from PNG encoding. Snapshot preparation
+now refuses a crop exceeding one 3840x2160 RGBA screenful before allocating its
+owned pixels, and the shell schedules PNG encoding on GPUI's background executor
+with one generation guard so stale completions cannot overwrite newer snapshot
+requests. Focused snapshot regressions passed, including oversize, encoder
+error, UI-yield, and stale-completion cases.
 
 ### Repository, documentation, CI, packaging, and retained state
 

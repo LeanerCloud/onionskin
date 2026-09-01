@@ -54,6 +54,8 @@ pub struct TextOutline {
 
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+const RGBA_BYTES_PER_PIXEL: usize = 4;
+pub(super) const SNAPSHOT_RGBA_BYTE_LIMIT: usize = 3840 * 2160 * RGBA_BYTES_PER_PIXEL;
 /// How long the canvas keeps polling a request nothing has answered.
 ///
 /// The worker answers a page in milliseconds, and every answer restarts the
@@ -145,6 +147,11 @@ pub enum CanvasError {
     SnapshotEmpty {
         page: PageIndex,
     },
+    SnapshotTooLarge {
+        width: u32,
+        height: u32,
+        limit: usize,
+    },
     SnapshotEncode(String),
     WorkerSilent {
         pages: Vec<PageIndex>,
@@ -162,7 +169,7 @@ impl fmt::Display for CanvasError {
             Self::Input(error) => write!(f, "{error}"),
             Self::Render(error) => write!(f, "{error}"),
             Self::InvalidImageBuffer { expected, actual } => {
-                write!(f, "tile image needs {expected} RGBA bytes, got {actual}")
+                write!(f, "RGBA image needs {expected} bytes, got {actual}")
             }
             Self::InvalidImageCrop {
                 width,
@@ -183,6 +190,14 @@ impl fmt::Display for CanvasError {
             Self::SnapshotEmpty { page } => {
                 write!(f, "the snapshot region on page {page} covers no pixels")
             }
+            Self::SnapshotTooLarge {
+                width,
+                height,
+                limit,
+            } => write!(
+                f,
+                "snapshot {width}x{height} exceeds the {limit}-byte RGBA clipboard limit"
+            ),
             Self::SnapshotEncode(error) => write!(f, "cannot encode the snapshot: {error}"),
             Self::ToolOutOfRange { index, count } => {
                 write!(f, "tool {index} is outside a {count}-tool registry")
@@ -219,6 +234,7 @@ impl std::error::Error for CanvasError {
             | Self::UnknownCommand(_)
             | Self::SnapshotUnrendered { .. }
             | Self::SnapshotEmpty { .. }
+            | Self::SnapshotTooLarge { .. }
             | Self::SnapshotEncode(_)
             | Self::WorkerSilent { .. } => None,
         }
@@ -1380,8 +1396,8 @@ impl CanvasModel {
         Ok(paint)
     }
 
-    /// Fulfil a pending snapshot request, as PNG bytes ready for the
-    /// clipboard, or `Ok(None)` when no tool has raised one.
+    /// Fulfil a pending snapshot request as owned pixels ready to encode, or
+    /// `Ok(None)` when no tool has raised one.
     ///
     /// This crops the page raster the canvas is already painting, at the
     /// zoom it was rasterized at, and turns it by the rotation it is shown
@@ -1390,7 +1406,7 @@ impl CanvasModel {
     /// Overlays are painted separately and are not in that raster, so the
     /// snapshot is the page alone. Acrobat's includes annotations, which is
     /// a gap to close when there are annotations to include.
-    pub fn take_snapshot_png(&mut self) -> Result<Option<Vec<u8>>, CanvasError> {
+    pub(super) fn take_snapshot_pixels(&mut self) -> Result<Option<SnapshotPixels>, CanvasError> {
         let Some(request) = self.document.take_snapshot_request() else {
             return Ok(None);
         };
@@ -1401,7 +1417,7 @@ impl CanvasModel {
             return Err(CanvasError::SnapshotUnrendered { page });
         };
         let crop = raster_crop(geometry, request.region, source)?;
-        encode_snapshot(source, crop, self.viewport.rotation()).map(Some)
+        prepare_snapshot_pixels(source, crop, self.viewport.rotation()).map(Some)
     }
 
     #[cfg(test)]
@@ -2014,6 +2030,13 @@ pub(super) fn raster_image(
     ))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SnapshotPixels {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) rgba: Vec<u8>,
+}
+
 fn tile_bgra(
     rgba: &[u8],
     source_width: u32,
@@ -2155,15 +2178,33 @@ fn device_span(values: [f64; 4], limit: u32) -> (u32, u32) {
     (clamp(min.floor()), clamp(max.ceil()))
 }
 
-/// The cropped region, turned by the view rotation and encoded as PNG: the
-/// one image format gpui's clipboard entry and every paste target agree on.
-fn encode_snapshot(
+fn snapshot_buffer_len(width: u32, height: u32) -> Result<usize, CanvasError> {
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(RGBA_BYTES_PER_PIXEL))
+        .ok_or(CanvasError::SnapshotTooLarge {
+            width,
+            height,
+            limit: SNAPSHOT_RGBA_BYTE_LIMIT,
+        })?;
+    if bytes > SNAPSHOT_RGBA_BYTE_LIMIT {
+        return Err(CanvasError::SnapshotTooLarge {
+            width,
+            height,
+            limit: SNAPSHOT_RGBA_BYTE_LIMIT,
+        });
+    }
+    Ok(bytes)
+}
+
+/// The cropped region, turned by the view rotation, as straight RGBA pixels.
+fn prepare_snapshot_pixels(
     source: &BaseRaster,
     crop: RasterCrop,
     rotation: ViewRotation,
-) -> Result<Vec<u8>, CanvasError> {
+) -> Result<SnapshotPixels, CanvasError> {
     let (width, height) = rotated_size(crop.width, crop.height, rotation);
-    let mut pixels = vec![0; width as usize * height as usize * 4];
+    let mut pixels = vec![0; snapshot_buffer_len(width, height)?];
     let rgba = source.rgba();
     let stride = source.width() as usize;
     for y in 0..crop.height {
@@ -2175,14 +2216,37 @@ fn encode_snapshot(
             pixels[write..write + 4].copy_from_slice(&pixel);
         }
     }
+    Ok(SnapshotPixels {
+        width,
+        height,
+        rgba: pixels,
+    })
+}
 
-    let image = image::RgbaImage::from_raw(width, height, pixels)
-        .expect("the snapshot buffer is width * height * 4 bytes");
+/// The one image format GPUI's clipboard entry and every paste target agree on.
+pub(super) fn encode_snapshot_png(snapshot: SnapshotPixels) -> Result<Vec<u8>, CanvasError> {
     let mut png = std::io::Cursor::new(Vec::new());
-    image
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|error| CanvasError::SnapshotEncode(error.to_string()))?;
+    write_snapshot_png(snapshot, &mut png)?;
     Ok(png.into_inner())
+}
+
+fn write_snapshot_png(
+    snapshot: SnapshotPixels,
+    writer: &mut (impl std::io::Write + std::io::Seek),
+) -> Result<(), CanvasError> {
+    let expected = snapshot_buffer_len(snapshot.width, snapshot.height)?;
+    if snapshot.rgba.len() != expected {
+        return Err(CanvasError::InvalidImageBuffer {
+            expected,
+            actual: snapshot.rgba.len(),
+        });
+    }
+    let image = image::RgbaImage::from_raw(snapshot.width, snapshot.height, snapshot.rgba)
+        .expect("the snapshot buffer is width * height * 4 bytes");
+    image
+        .write_to(writer, image::ImageFormat::Png)
+        .map_err(|error| CanvasError::SnapshotEncode(error.to_string()))?;
+    Ok(())
 }
 
 fn rotate_pixel(x: u32, y: u32, width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
@@ -2869,13 +2933,19 @@ mod tests {
             .to_rgba8()
     }
 
+    fn take_snapshot_png(model: &mut CanvasModel) -> Result<Option<Vec<u8>>, CanvasError> {
+        model
+            .take_snapshot_pixels()?
+            .map(encode_snapshot_png)
+            .transpose()
+    }
+
     #[test]
     fn a_snapshot_request_crops_the_raster_the_canvas_is_painting() {
         let mut model = painted_model([128, 0, 0, 128]);
         model.document.request_snapshot(snapshot_region());
 
-        let png = model
-            .take_snapshot_png()
+        let png = take_snapshot_png(&mut model)
             .expect("the snapshot is produced")
             .expect("a request was pending");
 
@@ -2895,12 +2965,12 @@ mod tests {
     fn a_snapshot_turns_with_the_view() {
         let mut model = painted_model([255, 255, 255, 255]);
         model.document.request_snapshot(snapshot_region());
-        let upright = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+        let upright = decode(&take_snapshot_png(&mut model).unwrap().unwrap()).dimensions();
 
         model.set_rotation(ViewRotation::Clockwise90).unwrap();
         model.update().expect("the rotated frame runs");
         model.document.request_snapshot(snapshot_region());
-        let turned = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+        let turned = decode(&take_snapshot_png(&mut model).unwrap().unwrap()).dimensions();
 
         assert_eq!(turned, (upright.1, upright.0));
         assert!(upright.0 > upright.1);
@@ -2915,7 +2985,7 @@ mod tests {
         });
 
         assert!(matches!(
-            model.take_snapshot_png(),
+            model.take_snapshot_pixels(),
             Err(CanvasError::SnapshotUnrendered { page: 1 })
         ));
     }
@@ -2928,7 +2998,7 @@ mod tests {
         let mut model = painted_model([255, 255, 255, 255]);
         let inside = decode(&{
             model.document.request_snapshot(snapshot_region());
-            model.take_snapshot_png().unwrap().unwrap()
+            take_snapshot_png(&mut model).unwrap().unwrap()
         })
         .dimensions();
 
@@ -2938,7 +3008,7 @@ mod tests {
             x1: 50.0,
             ..snapshot_region()
         });
-        let clipped = decode(&model.take_snapshot_png().unwrap().unwrap()).dimensions();
+        let clipped = decode(&take_snapshot_png(&mut model).unwrap().unwrap()).dimensions();
 
         assert_eq!(clipped.1, inside.1, "the vertical span is untouched");
         assert!(clipped.0 < inside.0, "the overhanging half is dropped");
@@ -2959,7 +3029,7 @@ mod tests {
         });
 
         assert!(matches!(
-            model.take_snapshot_png(),
+            model.take_snapshot_pixels(),
             Err(CanvasError::SnapshotEmpty { page: 0 })
         ));
     }
@@ -2968,7 +3038,55 @@ mod tests {
     fn a_frame_with_no_pending_request_produces_no_snapshot() {
         let mut model = painted_model([255, 255, 255, 255]);
 
-        assert!(model.take_snapshot_png().unwrap().is_none());
+        assert!(model.take_snapshot_pixels().unwrap().is_none());
+    }
+
+    #[test]
+    fn an_oversized_snapshot_is_refused_before_pixel_allocation() {
+        assert!(matches!(
+            snapshot_buffer_len(3841, 2160),
+            Err(CanvasError::SnapshotTooLarge {
+                width: 3841,
+                height: 2160,
+                limit: SNAPSHOT_RGBA_BYTE_LIMIT,
+            })
+        ));
+    }
+
+    #[test]
+    fn snapshot_encoder_write_errors_are_reported() {
+        struct FailingWriter;
+
+        impl std::io::Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("sink closed"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl std::io::Seek for FailingWriter {
+            fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+                Ok(0)
+            }
+        }
+
+        let mut writer = FailingWriter;
+        let result = write_snapshot_png(
+            SnapshotPixels {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            },
+            &mut writer,
+        );
+
+        assert!(matches!(
+            result,
+            Err(CanvasError::SnapshotEncode(message)) if message.contains("sink closed")
+        ));
     }
 
     // Names a tools-basic type, so it only exists when that plugin is compiled
@@ -2996,7 +3114,7 @@ mod tests {
             .unwrap();
 
         assert!(model.document.selection().region().is_some());
-        assert!(model.take_snapshot_png().unwrap().is_some());
+        assert!(model.take_snapshot_pixels().unwrap().is_some());
     }
 
     #[test]
