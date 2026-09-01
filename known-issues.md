@@ -68,14 +68,12 @@ source IDs, severity, ownership, and required proof.
   the codec contract; the UI blocking is not. M3's export dialog should move
   it to a background task with a page range. Also from the P13 review:
   export_entries reports "codecs plugin not installed" when no document is
-  open (latent, a zero-tab window is currently unreachable); a failed save
-  dialog is swallowed like a cancel; numbered export files pad to {:03} so
-  above 999 pages they stop sorting in page order; derived numbered files
-  overwrite without the prompt the base name gets.
-  **2026-08-31 disposition:** export prompt failures are no longer swallowed;
-  `start_export` handles `Ok(Err(error))`. Attachment save still swallows prompt
-  failure and is tracked separately as APP-009. The remaining export UI-thread,
-  memory, numbering, and derived-overwrite findings stay open.
+  open (latent, a zero-tab window is currently unreachable); the historical
+  prompt, numbering, and derived-overwrite findings are resolved below.
+  **2026-09-01 disposition:** export and attachment prompt failures are visible,
+  cancellation remains silent, numbered export width follows the page count,
+  and derived destinations are reserved without overwrite before writing. The
+  export UI-thread and whole-document memory findings remain open as APP-010.
 - P10/foundation review follow-ups (app shell): B2.2 resolved the first-error
   and stale worker-wait portions by preserving a primary pointer/update error
   over a same-cycle snapshot failure and resetting the poll wait deadline before
@@ -188,12 +186,11 @@ source IDs, severity, ownership, and required proof.
   sets are verified before success, malformed manifest IDs fail before network
   access, checked and unchecked R2 sets publish through private staging, and
   checksum verification rejects symlinks, root swaps, and incomplete trees.
-- **Stale-tab asynchronous writes (APP-001, owner B4):** export and attachment-save
-  completions retain a canvas while a path prompt is pending and do not prove the
-  originating tab/document still exists before writing. Close/switch-before-prompt
-  regression tests must prove no stale write occurs.
-- **Attachment prompt errors (APP-009, owner B4):** attachment save treats a prompt
-  failure like cancel, unlike export. Surface the typed prompt error and test it.
+- **Resolved in B4.2 (APP-001):** export and attachment-save prompts retain the
+  originating canvas identity. Four GPUI regressions prove switching or closing
+  the tab before either prompt completes writes nothing.
+- **Resolved in B4.3 (APP-009):** attachment save reports typed prompt failures
+  through pane feedback while cancellation remains silent.
 - **M2 parity acceptance (REPO-003/010; REPO-004 resolved):** this audit corrected
   the M2 plan header. Audit Task 2 reconciles all 403 Acrobat rows and adds an
   executable totals contract. B7 still owns private reference comparison and final

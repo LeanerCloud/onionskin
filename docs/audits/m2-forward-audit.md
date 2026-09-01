@@ -85,15 +85,15 @@ regression test and real user path pass.
 
 | Source ID | Severity | Evidence at `7413186` | Disposition | Owner | Known-issues state | Required proof |
 |---|---|---|---|---|---|---|
-| APP-001 | Medium | `crates/app/src/shell/chrome/tabs.rs:873,891,907`; `crates/app/src/shell/panes/attachments.rs:65,78,84` | Confirmed open | B4 | Added by this audit | Resolve prompt after close/switch and prove no stale-tab export/attachment write occurs. |
-| APP-002 | Medium | `crates/app/src/shell/chrome/tabs.rs:2357,2360,2376` | Confirmed open | B4 | Existing export entry, corrected | Confirm every derived overwrite and derive numbering width from the exported page count. |
+| APP-001 | Medium | `crates/app/src/shell/chrome/tabs.rs:873,891,907`; `crates/app/src/shell/panes/attachments.rs:65,78,84` | Resolved in B4.2 | B4 | Resolved; historical row retained | Export and attachment prompts retain the originating canvas identity. Four GPUI regressions prove switch/close before successful prompt completion writes nothing; the native-error branches use the same exercised identity predicate because GPUI's test prompt cannot inject an error result. |
+| APP-002 | Medium | `crates/app/src/shell/chrome/tabs.rs:2357,2360,2376` | Resolved in B4.4 | B4 | Resolved; historical row retained | Derived export paths use page-count width and are reserved without overwrite before any bytes are written. |
 | APP-003 | Medium | `crates/core/src/layers.rs:53,81` | Resolved in B3.2 | B3 | Removed from known issues | Nested `/D /Order` fixture renders hierarchy and hides omitted groups. |
 | APP-004 | Low | `crates/app/src/shell/panes/thumbnails.rs:296,333`; `crates/app/src/shell/canvas.rs:556,595` | Resolved before B3.3; reverified in B3.3 | B3 | Removed from known issues | Existing regression proves old-size thumbnail responses are rejected after Reduce/Enlarge. |
 | APP-005 | Medium | `crates/app/src/shell/mod.rs:287-317`; `crates/app/src/shell/canvas.rs:1270-1313` | Resolved in B2.4 | B2 | Updated by B2.4 | First error is preserved, stale worker wait timing is reset after poll update errors, oversized snapshots are refused before allocation, and PNG encoding runs on the background executor with stale completion protection. |
 | APP-006 | Low | `crates/app/src/shell/chrome/tabs.rs:2177,2189` | Resolved in B2.3 | B2 | Updated by B2.3 | Second right-click inside document bounds repositions the open canvas context menu; right-click outside document bounds dismisses it. |
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Resolved in B3.4 | B3 | Removed from known issues | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Resolved in B3.5 | B3 | Removed from known issues | Exactly 64 unknown preferences survive regardless of key ordering. |
-| APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Confirmed open | B4 | Added by this audit | Attachment prompt error becomes visible and is distinct from cancel. |
+| APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Resolved in B4.3 | B4 | Resolved; historical row retained | Attachment prompt failure uses the pane feedback path while cancellation remains silent. |
 | APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
 | APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
 
@@ -155,6 +155,16 @@ B4.1 replaces the timing-sensitive P9 search-cancel quiet-window test with a
 deterministic regression at the worker queue-drain seam. Focused core search
 tests, the search integration target, strict core clippy, and the format check
 passed after the change rebased onto `d5a0836`.
+B4.2 carries the originating canvas identity through export and attachment path
+prompts and refuses successful write completions after the tab is switched or
+closed. Four GPUI regressions cover both actions and both write paths. Native
+prompt-error reporting uses the same identity predicate; GPUI's test prompt has
+no error-injection seam, so that branch is retained as explicit code-path proof
+rather than claimed as an end-to-end regression. B4.3 reports attachment prompt
+failures through the existing pane feedback path while preserving silent
+cancellation. B4.4 derives numbered export width from the page count and reserves
+all derived destinations without overwrite before writing. The remaining export
+UI-thread and whole-document buffering work is APP-010 under C1.
 
 ### Repository, documentation, CI, packaging, and retained state
 

@@ -63,6 +63,20 @@ pub(in crate::shell) fn outline_pdf() -> Vec<u8> {
     ])
 }
 
+/// One page plus one embedded text file, for the Attachments pane.
+pub(in crate::shell) fn attachment_pdf() -> Vec<u8> {
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 4 0 R >> >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>",
+        b"<< /Names [(notes.txt) 5 0 R] >>",
+        b"<< /Type /Filespec /F (notes.txt) /UF (notes.txt) \
+          /Desc (Reviewer notes) /EF << /F 6 0 R >> >>",
+        b"<< /Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 11 >> \
+          /Length 11 >>\nstream\nhello world\nendstream",
+    ])
+}
+
 /// `count` empty pages, for the thumbnails pane's laziness: a document long
 /// enough that asking for every row would be obvious.
 pub(in crate::shell) fn many_pages_pdf(count: usize) -> Vec<u8> {

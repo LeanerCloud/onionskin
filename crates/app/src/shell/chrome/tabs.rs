@@ -7,10 +7,10 @@ use std::sync::Arc;
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, Focusable as _,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
-    PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
-    WindowHandle,
+    div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EntityId,
+    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement as _, PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _,
+    Styled as _, Window, WindowHandle,
 };
 use onionskin_core::{Document, ViewSize};
 use onionskin_plugin_api::{ExportedFile, PageIndex, ToolCapability};
@@ -1364,6 +1364,7 @@ impl ShellFrame {
             return;
         };
         let canvas = tab.canvas.clone();
+        let origin = canvas.entity_id();
         let extension = canvas
             .read(cx)
             .model
@@ -1388,17 +1389,23 @@ impl ShellFrame {
                 Ok(Err(error)) => {
                     frame
                         .update(cx, |frame, cx| {
-                            frame
-                                .notices
-                                .push(format!("no destination could be chosen: {error}"));
-                            cx.notify();
+                            if frame.is_active_canvas(origin) {
+                                frame
+                                    .notices
+                                    .push(format!("no destination could be chosen: {error}"));
+                                cx.notify();
+                            }
                         })
                         .ok();
                     return;
                 }
             };
             frame
-                .update(cx, |_frame, cx| run_export(&canvas, target, &path, cx))
+                .update(cx, |frame, cx| {
+                    if frame.is_active_canvas(origin) {
+                        run_export(&canvas, target, &path, cx);
+                    }
+                })
                 .ok();
         })
         .detach();
@@ -2208,6 +2215,12 @@ impl ShellFrame {
     #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn active_canvas(&self) -> Option<&Entity<Canvas>> {
         self.tabs.active().map(|tab| &tab.canvas)
+    }
+
+    pub(in crate::shell) fn is_active_canvas(&self, origin: EntityId) -> bool {
+        self.tabs
+            .active()
+            .is_some_and(|tab| tab.canvas.entity_id() == origin)
     }
 
     /// The panes' one way back into the frame. Everything a click in a
@@ -3123,6 +3136,8 @@ mod tests {
     use crate::shell::canvas::CanvasModel;
     #[cfg(feature = "shell-test-support")]
     use crate::shell::canvas::CanvasStatus;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::panes::NavigationPane;
 
     struct OriginRecordingTool {
         inputs: Arc<Mutex<Vec<PointerInput>>>,
@@ -3548,6 +3563,39 @@ mod tests {
                 (path, model)
             })
             .collect();
+        bound_window_with_models(tabs, paths, cx)
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn bound_window_from_bytes(
+        documents: Vec<(&str, Vec<u8>)>,
+        cx: &mut TestAppContext,
+    ) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
+        let tabs = documents
+            .into_iter()
+            .map(|(name, bytes)| {
+                let document = Document::open_bytes(bytes).expect("the fixture opens");
+                let model = CanvasModel::new(
+                    document,
+                    crate::build_registry(),
+                    ViewSize {
+                        width: 800.0,
+                        height: 600.0,
+                    },
+                )
+                .expect("the model builds");
+                (PathBuf::from(name), model)
+            })
+            .collect();
+        bound_window_with_models(tabs, crate::config::ConfigPaths::default(), cx)
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn bound_window_with_models(
+        tabs: Vec<(PathBuf, CanvasModel)>,
+        paths: crate::config::ConfigPaths,
+        cx: &mut TestAppContext,
+    ) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
         let settings = ShellSettings::load(paths, &crate::build_registry());
         let bindings = settings.bindings.clone();
         let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
@@ -4939,6 +4987,136 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("onionskin-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("the test can make its own directory");
         dir
+    }
+
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn stale_export_prompt_after_switching_tabs_writes_nothing(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let dir = export_dir("stale-export-switch");
+        let chosen = dir.join("hello.png");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_new_path());
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.activate(1, cx);
+            })
+            .unwrap();
+        cx.simulate_new_path_selection(|_| Some(chosen.clone()));
+        cx.run_until_parked();
+
+        assert!(!chosen.exists(), "a stale export wrote after tab switch");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn stale_export_prompt_after_closing_the_tab_writes_nothing(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let dir = export_dir("stale-export-close");
+        let chosen = dir.join("hello.png");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_new_path());
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.run_tab_command(TabCommand::Close, 0, cx).unwrap();
+            })
+            .unwrap();
+        cx.simulate_new_path_selection(|_| Some(chosen.clone()));
+        cx.run_until_parked();
+
+        assert!(!chosen.exists(), "a stale export wrote after tab close");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn stale_attachment_prompt_after_switching_tabs_writes_nothing(cx: &mut TestAppContext) {
+        let (window, _) = bound_window_from_bytes(
+            vec![
+                (
+                    "with-attachment.pdf",
+                    crate::shell::fixtures::attachment_pdf(),
+                ),
+                ("other.pdf", crate::shell::fixtures::outline_pdf()),
+            ],
+            cx,
+        );
+        let dir = export_dir("stale-attachment-switch");
+        let chosen = dir.join("notes.txt");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+                frame.run_pane_action(PaneAction::Attachment(panes::AttachmentAction::Save(0)), cx);
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_new_path());
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.activate(1, cx);
+            })
+            .unwrap();
+        cx.simulate_new_path_selection(|_| Some(chosen.clone()));
+        cx.run_until_parked();
+
+        assert!(
+            !chosen.exists(),
+            "a stale attachment save wrote after tab switch"
+        );
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn stale_attachment_prompt_after_closing_the_tab_writes_nothing(cx: &mut TestAppContext) {
+        let (window, _) = bound_window_from_bytes(
+            vec![
+                (
+                    "with-attachment.pdf",
+                    crate::shell::fixtures::attachment_pdf(),
+                ),
+                ("other.pdf", crate::shell::fixtures::outline_pdf()),
+            ],
+            cx,
+        );
+        let dir = export_dir("stale-attachment-close");
+        let chosen = dir.join("notes.txt");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+                frame.run_pane_action(PaneAction::Attachment(panes::AttachmentAction::Save(0)), cx);
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_new_path());
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.run_tab_command(TabCommand::Close, 0, cx).unwrap();
+            })
+            .unwrap();
+        cx.simulate_new_path_selection(|_| Some(chosen.clone()));
+        cx.run_until_parked();
+
+        assert!(
+            !chosen.exists(),
+            "a stale attachment save wrote after tab close"
+        );
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
     }
 
     /// The whole menu path bar the file dialog, which cannot be driven

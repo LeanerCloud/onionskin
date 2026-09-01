@@ -154,7 +154,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Save | planned | M3 | Appends an incremental update section; a no-op save writes nothing. |
 | File > Save As | planned | M3 | Copy plus the same incremental discipline. |
 | File > Save as Other | planned | M3 | The future menu will expose only supported sub-targets; PDF/X and Reader-Extended variants remain out of scope. |
-| File > Export To | partial | M2 | The live menu exposes Text, PNG, and SVG; Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT. |
+| File > Export To | partial | M2 | The live menu exposes Text, PNG, and SVG; stale successful prompt writes are refused and derived destinations cannot overwrite existing files. Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT and B4.2-B4.4. |
 | File > Revert | planned | M3 | Cheap here: truncate to the previous generation. |
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | planned | M3 | `commands-core`. Acrobat's current unified UI documents five tabs: Description, Security, Fonts, Initial View, Custom. The classic Advanced tab is no longer listed; confirm against the screenshot corpus before building it. |
@@ -214,7 +214,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented and accessible; page-mutating commands remain disabled with command-specific M3/M5 owner reasons. Evidence: M2-PANES, B3.1, and B3.6. |
 | Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
 | Bookmarks: create, rename, nest, set destination, delete | planned | M3 | Bookmark authoring is named in the plan's `commands-core` list. Acrobat's New Bookmarks From Structure needs the tagged tree and follows at M6. |
-| Attachments pane (list, open, save) | partial | M2 | Listing, Save, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES and B3.1. |
+| Attachments pane (list, open, save) | partial | M2 | Listing, Save, prompt-error feedback, stale successful-write protection, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES, B3.1, B4.2, and B4.3. |
 | Attachments: add and delete file attachments | planned | M3 | Attachment authoring is named in the plan's `commands-core` list. Distinct from attach-as-comment. |
 | Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | planned | M3 | Counted once for the whole menu per the context-menu carve-out; it activates with bookmark authoring in `commands-core`. New Bookmarks From Structure follows at M6 with the tagged tree. |
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | planned | M3 | Counted once for the whole menu; activates with attachment authoring in `commands-core`. |
@@ -341,8 +341,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Export to Rich Text Format (.rtf) | planned | post-1.0 | A deliberately lossy post-1.0 target; no usable subset has shipped. |
 | Export to HTML | planned | post-1.0 | Layout-to-flow conversion will remain deliberately lossy; no usable subset has shipped. |
 | Export to plain text / accessible text | partial | M2 | Plain document-order text export is live; tagged accessible reading order remains M6. Evidence: M2-EXPORT. |
-| Export pages to PNG | implemented | M2 | Multi-page numbered export is live. Evidence: M2-EXPORT. |
-| Export pages to SVG | implemented | M2 | Per-page vector export is live. Evidence: M2-EXPORT. |
+| Export pages to PNG | implemented | M2 | Multi-page numbered export is live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT and B4.4. |
+| Export pages to SVG | implemented | M2 | Per-page vector export is live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT and B4.4. |
 | Export pages to JPEG / JPEG2000 / TIFF | planned | M3 | Not named in the plan; same codec crate, one milestone later. |
 | Export all images in a document | planned | M3 | (judgment) |
 | Export to XML / XML spreadsheet | planned | post-1.0 | Low demand relative to cost, and no plan consumer. (judgment) |

@@ -150,6 +150,7 @@ pub(super) fn run(
     let Some(canvas) = canvas.cloned() else {
         return;
     };
+    let origin = canvas.entity_id();
     let Some(suggested) = state.attachment_file_name(index) else {
         // The row was drawn from the snapshot, so an index the snapshot does
         // not have means the pane and the click disagree; say so rather than
@@ -168,7 +169,9 @@ pub(super) fn run(
                 Err(error) => {
                     frame
                         .update(cx, |frame, cx| {
-                            frame.report_pane_failure(Some(error), cx);
+                            if frame.is_active_canvas(origin) {
+                                frame.report_pane_failure(Some(error), cx);
+                            }
                         })
                         .ok();
                     return;
@@ -178,6 +181,9 @@ pub(super) fn run(
         };
         frame
             .update(cx, |frame, cx| {
+                if !frame.is_active_canvas(origin) {
+                    return;
+                }
                 let bytes = canvas.update(cx, |canvas, _cx| canvas.model.attachment_bytes(index));
                 let outcome = bytes
                     .map_err(|error| error.to_string())
