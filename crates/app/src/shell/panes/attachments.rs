@@ -161,10 +161,20 @@ pub(super) fn run(
     let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
 
     cx.spawn(async move |frame, cx| {
-        let Ok(Ok(Some(path))) = chosen.await else {
-            // A cancelled dialog is not a failure, and a dialog that could
-            // not open is reported by the platform layer that opened it.
-            return;
+        let path = match chosen.await {
+            Ok(result) => match attachment_destination(result.map_err(|error| error.to_string())) {
+                Ok(Some(path)) => path,
+                Ok(None) => return,
+                Err(error) => {
+                    frame
+                        .update(cx, |frame, cx| {
+                            frame.report_pane_failure(Some(error), cx);
+                        })
+                        .ok();
+                    return;
+                }
+            },
+            Err(_) => return,
         };
         frame
             .update(cx, |frame, cx| {
@@ -177,6 +187,12 @@ pub(super) fn run(
             .ok();
     })
     .detach();
+}
+
+fn attachment_destination(
+    result: Result<Option<PathBuf>, String>,
+) -> Result<Option<PathBuf>, String> {
+    result.map_err(|error| format!("no destination could be chosen: {error}"))
 }
 
 pub(super) fn render(
@@ -352,6 +368,22 @@ mod tests {
 
         assert_eq!(std::fs::read(&path).expect("the file is there"), b"payload");
         std::fs::remove_file(&path).expect("the fixture cleans up after itself");
+    }
+
+    #[test]
+    fn cancelling_a_destination_prompt_remains_silent() {
+        assert_eq!(attachment_destination(Ok(None)), Ok(None));
+    }
+
+    #[test]
+    fn a_destination_prompt_failure_becomes_pane_feedback() {
+        let failure = attachment_destination(Err("dialog unavailable".to_owned()))
+            .expect_err("a failed prompt is not cancellation");
+
+        assert_eq!(
+            failure,
+            "no destination could be chosen: dialog unavailable"
+        );
     }
 
     /// A stated size is shown; an absent one is left out. Showing "0 bytes"
