@@ -84,8 +84,10 @@ source IDs, severity, ownership, and required proof.
   open path, while a right-click outside document bounds still dismisses the
   menu. B2.4 resolved the remaining snapshot lifecycle gap by bounding snapshot
   pixel allocation, moving PNG encoding to GPUI's background executor, reporting
-  encode errors, and ignoring stale snapshot completions. Still open: the
-  NaN-quad guard in raster_crop and the corner-by-corner overlay mapping both
+  encode errors, preserving same-cycle primary errors, and ignoring stale
+  snapshot completions, including completions older than a failed request at
+  generation wrap. Still open: the NaN-quad guard in raster_crop and the
+  corner-by-corner overlay mapping both
   lack tests that would fail a bounding-rect implementation;
   zoom_limits derives the raster ceiling from the current page only, so a larger
   visible neighbour can still hit

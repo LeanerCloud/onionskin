@@ -327,7 +327,7 @@ impl Canvas {
             Ok(None) => {}
             Ok(Some(snapshot)) => self.schedule_snapshot_encode(snapshot, keep_existing_error, cx),
             Err(error) => {
-                self.invalidate_pending_snapshot_encodes(keep_existing_error, cx);
+                self.invalidate_pending_snapshot_encodes();
                 if !keep_existing_error {
                     self.record_error(error, cx);
                 }
@@ -335,18 +335,8 @@ impl Canvas {
         }
     }
 
-    fn invalidate_pending_snapshot_encodes(
-        &mut self,
-        keep_existing_error: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(generation) = self.snapshot_generation.checked_add(1) else {
-            if !keep_existing_error {
-                self.record_error(CanvasError::GenerationExhausted, cx);
-            }
-            return;
-        };
-        self.snapshot_generation = generation;
+    fn invalidate_pending_snapshot_encodes(&mut self) {
+        self.snapshot_generation = self.snapshot_generation.wrapping_add(1);
     }
 
     fn schedule_snapshot_encode(
@@ -355,12 +345,7 @@ impl Canvas {
         keep_existing_error: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(generation) = self.snapshot_generation.checked_add(1) else {
-            if !keep_existing_error {
-                self.record_error(CanvasError::GenerationExhausted, cx);
-            }
-            return;
-        };
+        let generation = self.snapshot_generation.wrapping_add(1);
         self.snapshot_generation = generation;
         let task = cx.background_spawn(async move { encode_snapshot_png(snapshot) });
         cx.spawn(async move |entity, cx| {
@@ -1331,7 +1316,7 @@ mod tests {
 
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
-    fn snapshot_generation_exhaustion_fails_instead_of_wrapping(cx: &mut gpui::TestAppContext) {
+    fn failed_snapshot_requests_still_invalidate_at_generation_wrap(cx: &mut gpui::TestAppContext) {
         let document = Document::open_bytes(fixtures::text_pages_pdf()).expect("the fixture opens");
         let model = CanvasModel::new(
             document,
@@ -1349,28 +1334,21 @@ mod tests {
         cx.update(|_window, app| {
             canvas.update(app, |canvas, cx| {
                 canvas.snapshot_generation = u64::MAX;
-                canvas.schedule_snapshot_encode(
-                    SnapshotPixels {
-                        width: 1,
-                        height: 1,
-                        rgba: vec![255, 0, 0, 255],
-                    },
-                    false,
-                    cx,
-                );
-                assert_eq!(canvas.snapshot_generation, u64::MAX);
-                assert!(matches!(
-                    canvas.model.status(),
-                    Some(CanvasStatus::Error { page: None, message })
-                        if message == "the render generation counter is exhausted"
-                ));
+                canvas
+                    .model
+                    .request_snapshot_for_test(onionskin_core::PageRect {
+                        page: 0,
+                        x0: 20.0,
+                        y0: 20.0,
+                        x1: 120.0,
+                        y1: 60.0,
+                    });
+                canvas.copy_pending_snapshot(cx, false);
+                assert_eq!(canvas.snapshot_generation, 0);
+
+                canvas.finish_snapshot_encode(u64::MAX, Ok(vec![1]), false, cx);
                 assert!(cx.read_from_clipboard().is_none());
             });
-        });
-
-        cx.run_until_parked();
-        cx.update(|_window, app| {
-            assert!(app.read_from_clipboard().is_none());
         });
     }
 

@@ -243,7 +243,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Page rendering | implemented | M2 | hayro base raster, tiny-skia overlays, and damage-tracked tile composition are live. Evidence: M2-VIEWER. |
 | Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
 | Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
-| Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live. Evidence: M2-BASIC. |
+| Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live, with stale async completion guards. Evidence: M2-BASIC. |
 | Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, and second-right-click repositioning are live; future editing/print commands remain disabled. Edit Text, Redact Text, and Create Link still show stale M3 reasons instead of M5. Evidence: M2-SHELL and M2-BASIC. |
 | Copy with formatting / Export selected text | planned | M3 | (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |

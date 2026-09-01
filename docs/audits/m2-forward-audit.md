@@ -121,7 +121,11 @@ now refuses a crop exceeding one 3840x2160 RGBA screenful before allocating its
 owned pixels, and the shell schedules PNG encoding on GPUI's background executor
 with one generation guard so stale completions cannot overwrite newer snapshot
 requests. Focused snapshot regressions passed, including oversize, encoder
-error, UI-yield, and stale-completion cases.
+error, UI-yield, stale-completion, failed-request invalidation, generation-wrap,
+and same-cycle primary-error preservation cases. Full shell-support tests, strict
+clippy, format check, and shell build passed. Local macOS screenshot capture and
+native synthetic drag smoke remain environment-blocked, so B2.4 records no new
+window screenshot.
 
 ### Repository, documentation, CI, packaging, and retained state
 

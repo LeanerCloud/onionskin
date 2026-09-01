@@ -34,8 +34,10 @@ absolute paths when needed; this tracked manifest records filenames only.
   build passed. The committed app launched as PID 67358, CoreGraphics window ID
   8828. `screencapture -l` failed with `could not create image from window`. No
   B2.3 screenshot is recorded as evidence.
-- B2.4 bounded background snapshot encoding, 2026-09-01T19:35Z: focused
-  snapshot regressions, full shell-support tests, strict clippy, and shell build
-  passed. The fresh app window was PID 75349, CoreGraphics window ID 8831.
-  `screencapture -l` failed with `could not create image from window`. No B2.4
-  screenshot is recorded as evidence.
+- B2.4 bounded background snapshot encoding, 2026-09-01T20:00Z: focused
+  snapshot regressions, full shell-support tests, strict clippy, format check,
+  and shell build passed. The fresh app window was PID 91767, CoreGraphics
+  window ID 8838. `screencapture -l` failed with
+  `could not create image from window`; `screencapture -R` failed with
+  `could not create image from rect`. The native synthetic drag smoke left the
+  pasteboard empty. No B2.4 screenshot is recorded as evidence.
