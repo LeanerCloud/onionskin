@@ -1,4 +1,7 @@
+use std::collections::HashSet;
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -2908,17 +2911,61 @@ fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &m
 }
 
 fn write_export(chosen: &Path, files: &[ExportedFile]) -> Result<(), ExportFailure> {
-    for file in files {
-        let path = export_path(chosen, file.page, files.len());
-        std::fs::write(&path, &file.bytes)
-            .map_err(|source| ExportFailure::Write { path, source })?;
+    let paths = files
+        .iter()
+        .map(|file| export_path(chosen, file.page, files.len()))
+        .collect::<Vec<_>>();
+    if files.len() <= 1 {
+        for (path, file) in paths.iter().zip(files) {
+            std::fs::write(path, &file.bytes).map_err(|source| ExportFailure::Write {
+                path: path.clone(),
+                source,
+            })?;
+        }
+        return Ok(());
+    }
+
+    let mut seen = HashSet::new();
+    for path in &paths {
+        if !seen.insert(path.clone()) {
+            return Err(ExportFailure::Duplicate { path: path.clone() });
+        }
+        if export_destination_exists(path).map_err(|source| ExportFailure::Write {
+            path: path.clone(),
+            source,
+        })? {
+            return Err(ExportFailure::Exists { path: path.clone() });
+        }
+    }
+    for (path, file) in paths.iter().zip(files) {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|source| ExportFailure::Write {
+                path: path.clone(),
+                source,
+            })?
+            .write_all(&file.bytes)
+            .map_err(|source| ExportFailure::Write {
+                path: path.clone(),
+                source,
+            })?;
     }
     Ok(())
 }
 
+fn export_destination_exists(path: &Path) -> Result<bool, std::io::Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// Where one exported file goes. A single file takes the name the user chose;
 /// a per-page export numbers beside it, one-based like the page controls, so
-/// `report.png` becomes `report-001.png`, `report-002.png`.
+/// `report.png` becomes `report-01.png`, `report-02.png`.
 fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf {
     let (Some(page), true) = (page, count > 1) else {
         return chosen.to_path_buf();
@@ -2926,7 +2973,9 @@ fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf 
     let stem = chosen
         .file_stem()
         .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
-    let mut name = format!("{stem}-{:03}", page + 1);
+    let number = page + 1;
+    let width = count.to_string().len().max(2);
+    let mut name = format!("{stem}-{number:0width$}");
     if let Some(extension) = chosen.extension() {
         name.push('.');
         name.push_str(&extension.to_string_lossy());
@@ -2942,6 +2991,12 @@ fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf 
 #[derive(Debug)]
 enum ExportFailure {
     Codec(CanvasError),
+    Exists {
+        path: PathBuf,
+    },
+    Duplicate {
+        path: PathBuf,
+    },
     Write {
         path: PathBuf,
         source: std::io::Error,
@@ -2952,6 +3007,16 @@ impl fmt::Display for ExportFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Codec(error) => write!(f, "export failed: {error}"),
+            Self::Exists { path } => write!(
+                f,
+                "{} already exists; choose another export name",
+                path.display()
+            ),
+            Self::Duplicate { path } => write!(
+                f,
+                "{} would be written more than once; choose another export name",
+                path.display()
+            ),
             Self::Write { path, source } => {
                 write!(f, "{} could not be written: {source}", path.display())
             }
@@ -4427,7 +4492,7 @@ mod tests {
     }
 
     /// Text is one file and takes the name the user typed. So does a
-    /// single-page PNG: numbering `report.png` to `report-001.png` when there
+    /// single-page PNG: numbering `report.png` to `report-01.png` when there
     /// is nothing to disambiguate it from would be surprising.
     #[test]
     fn a_one_file_export_keeps_the_name_the_user_chose() {
@@ -4446,11 +4511,15 @@ mod tests {
 
         assert_eq!(
             export_path(chosen, Some(0), 12),
-            PathBuf::from("/exports/report-001.png")
+            PathBuf::from("/exports/report-01.png")
         );
         assert_eq!(
             export_path(chosen, Some(9), 12),
-            PathBuf::from("/exports/report-010.png")
+            PathBuf::from("/exports/report-10.png")
+        );
+        assert_eq!(
+            export_path(chosen, Some(0), 1_234),
+            PathBuf::from("/exports/report-0001.png")
         );
         assert_eq!(
             export_path(chosen, Some(1_233), 1_234),
@@ -4462,7 +4531,7 @@ mod tests {
     fn a_chosen_name_with_no_extension_still_numbers_its_pages() {
         assert_eq!(
             export_path(Path::new("/exports/report"), Some(1), 2),
-            PathBuf::from("/exports/report-002")
+            PathBuf::from("/exports/report-02")
         );
     }
 
@@ -4472,7 +4541,7 @@ mod tests {
     fn a_dotted_name_numbers_on_its_last_extension_only() {
         assert_eq!(
             export_path(Path::new("/exports/q1.2026.png"), Some(0), 2),
-            PathBuf::from("/exports/q1.2026-001.png")
+            PathBuf::from("/exports/q1.2026-01.png")
         );
     }
 
@@ -4495,11 +4564,113 @@ mod tests {
         write_export(&chosen, &files).expect("the export writes");
 
         assert!(!chosen.exists(), "the undecorated name should not be used");
-        assert_eq!(std::fs::read(dir.join("report-001.png")).unwrap(), b"first");
+        assert_eq!(std::fs::read(dir.join("report-01.png")).unwrap(), b"first");
+        assert_eq!(std::fs::read(dir.join("report-02.png")).unwrap(), b"second");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[test]
+    fn a_multi_page_export_refuses_existing_derived_files_before_writing() {
+        let dir =
+            std::env::temp_dir().join(format!("onionskin-export-existing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let chosen = dir.join("report.png");
+        let existing = dir.join("report-02.png");
+        std::fs::write(&existing, b"keep").expect("the conflicting export path is created");
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+        ];
+
+        let failure =
+            write_export(&chosen, &files).expect_err("an existing derived file is refused");
+
         assert_eq!(
-            std::fs::read(dir.join("report-002.png")).unwrap(),
-            b"second"
+            failure.to_string(),
+            format!(
+                "{} already exists; choose another export name",
+                existing.display()
+            )
         );
+        assert!(!dir.join("report-01.png").exists(), "nothing was written");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_multi_page_export_refuses_dangling_symlink_destinations_before_writing() {
+        let dir =
+            std::env::temp_dir().join(format!("onionskin-export-symlink-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let chosen = dir.join("report.png");
+        let existing = dir.join("report-02.png");
+        std::os::unix::fs::symlink(dir.join("missing-target"), &existing)
+            .expect("the conflicting symlink is created");
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(1),
+                bytes: b"second".to_vec(),
+            },
+        ];
+
+        let failure =
+            write_export(&chosen, &files).expect_err("an existing derived symlink is refused");
+
+        assert_eq!(
+            failure.to_string(),
+            format!(
+                "{} already exists; choose another export name",
+                existing.display()
+            )
+        );
+        assert!(!dir.join("report-01.png").exists(), "nothing was written");
+        assert!(std::fs::symlink_metadata(&existing)
+            .expect("the symlink still exists")
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+    }
+
+    #[test]
+    fn a_multi_page_export_refuses_duplicate_derived_files_before_writing() {
+        let dir =
+            std::env::temp_dir().join(format!("onionskin-export-duplicate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
+        let chosen = dir.join("report.png");
+        let duplicate = dir.join("report-01.png");
+        let files = vec![
+            ExportedFile {
+                page: Some(0),
+                bytes: b"first".to_vec(),
+            },
+            ExportedFile {
+                page: Some(0),
+                bytes: b"second".to_vec(),
+            },
+        ];
+
+        let failure =
+            write_export(&chosen, &files).expect_err("a duplicate derived file is refused");
+
+        assert_eq!(
+            failure.to_string(),
+            format!(
+                "{} would be written more than once; choose another export name",
+                duplicate.display()
+            )
+        );
+        assert!(!duplicate.exists(), "nothing was written");
         std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
     }
 
@@ -4524,7 +4695,7 @@ mod tests {
         assert!(
             failure
                 .to_string()
-                .starts_with("/onionskin-does-not-exist/report-001.png could not be written: "),
+                .starts_with("/onionskin-does-not-exist/report-01.png could not be written: "),
             "{failure}"
         );
     }
