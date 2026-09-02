@@ -34,8 +34,7 @@ use super::super::Canvas;
 use super::super::{record_opened, repair_notice, ShellSettings};
 use super::accessible::{
     ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusNextInGroup,
-    FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField,
-    SHELL_KEY_CONTEXT,
+    FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
 };
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
@@ -532,9 +531,9 @@ impl ShellFrame {
             let canvas = tab.canvas.clone();
             let title = tab.title().to_owned();
             let with_text = self.a11y.wants_page_text();
-            root = root.child(
-                canvas.update(cx, |canvas, _cx| canvas.accessible(&title, scale, with_text)),
-            );
+            root = root.child(canvas.update(cx, |canvas, _cx| {
+                canvas.accessible(&title, scale, with_text)
+            }));
             if visibility.quick_actions {
                 let mut described = quick_actions::accessible(
                     &self.quick_action_entries(cx),
@@ -7150,7 +7149,9 @@ mod tests {
         let last = row.last().expect("the row has stops").clone();
         window
             .update(cx, |frame, _window, _cx| {
-                assert!(frame.a11y.focus_key(&gpui::ElementId::Name(last.clone().into())));
+                assert!(frame
+                    .a11y
+                    .focus_key(&gpui::ElementId::Name(last.clone().into())));
             })
             .unwrap();
         cx.simulate_keystrokes(window.into(), "right");
@@ -7373,8 +7374,11 @@ mod tests {
         let file = dir.join(crate::config::KEYMAP_FILE);
         std::fs::write(&file, "{\"view.previous-page\": \"up\"}")
             .expect("the test can write its own keymap");
-        let (window, bindings) =
-            bound_window_in(&["two-page.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let (window, bindings) = bound_window_in(
+            &["two-page.pdf"],
+            crate::config::ConfigPaths::in_dir(&dir),
+            cx,
+        );
         let _ = std::fs::remove_file(&file);
         assert_eq!(
             keystroke_for(&bindings, "view.previous-page"),
@@ -7409,19 +7413,31 @@ mod tests {
     #[gpui::test]
     fn every_published_stop_can_be_reached_from_the_keyboard(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        sweep(window, cx);
+
+        // Again with the find bar open, which is the surface that dead-ends:
+        // its first stop is its own text field.
         window
             .update(cx, |frame, window, cx| {
                 frame.open_find_bar(Some("page".to_owned()), window, cx);
             })
             .unwrap();
         cx.run_until_parked();
+        sweep(window, cx);
+    }
 
+    /// Walk Tab once per group and Down once per stop in the widest group,
+    /// which covers every group and every stop in it, and assert that the
+    /// walk reached everything the tree publishes.
+    #[cfg(feature = "shell-test-support")]
+    fn sweep(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) {
         let stops = stops_under(window, cx, "window");
         let sizes = window
             .update(cx, |frame, _window, _cx| frame.a11y.group_sizes())
             .unwrap();
         assert!(
-            stops.len() > 20 && sizes.len() > 4,
+            stops.len() > 15 && sizes.len() > 3,
             "the window published {} stops in {} groups, which would prove little",
             stops.len(),
             sizes.len()
@@ -7429,23 +7445,21 @@ mod tests {
         let widest = sizes.iter().copied().max().unwrap_or(0);
 
         let mut reached = std::collections::BTreeSet::new();
-        let mut note = |window, cx: &mut TestAppContext, reached: &mut std::collections::BTreeSet<String>| {
-            if let Some(key) = focused_key(window, cx) {
-                reached.insert(key);
-            }
-        };
         for _ in 0..sizes.len() {
             cx.simulate_keystrokes(window.into(), "tab");
             cx.run_until_parked();
-            note(window, cx, &mut reached);
+            reached.extend(focused_key(window, cx));
             for _ in 0..widest {
                 cx.simulate_keystrokes(window.into(), "down");
                 cx.run_until_parked();
-                note(window, cx, &mut reached);
+                reached.extend(focused_key(window, cx));
             }
         }
 
-        let missing: Vec<&String> = stops.iter().filter(|stop| !reached.contains(*stop)).collect();
+        let missing: Vec<&String> = stops
+            .iter()
+            .filter(|stop| !reached.contains(*stop))
+            .collect();
         assert!(
             missing.is_empty(),
             "{} of {} published stops cannot be reached from the keyboard: {missing:?}",
@@ -7597,10 +7611,7 @@ mod tests {
 
     /// Every run of words the tree carries under the first page.
     #[cfg(feature = "shell-test-support")]
-    fn page_text(
-        window: gpui::WindowHandle<ShellFrame>,
-        cx: &mut TestAppContext,
-    ) -> Vec<String> {
+    fn page_text(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> Vec<String> {
         window
             .update(cx, |frame, window, cx| {
                 frame

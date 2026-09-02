@@ -497,7 +497,11 @@ mod tests {
 
         shared.requests.borrow_mut().clear();
         shared.record(request(NodeId(3), accesskit::Action::Click));
-        assert_eq!(woken.get(), 2, "a press after the drain did not wake the shell");
+        assert_eq!(
+            woken.get(),
+            2,
+            "a press after the drain did not wake the shell"
+        );
     }
 
     /// The shell has no other notice that a screen reader has arrived, and it

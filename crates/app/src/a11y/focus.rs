@@ -134,9 +134,10 @@ impl Ring {
     /// Which group focus is in, and where in it.
     fn cursor(&self) -> Option<(usize, usize)> {
         let key = self.focused.as_ref()?;
-        self.groups.iter().enumerate().find_map(|(group, stops)| {
-            Some((group, stops.iter().position(|entry| entry == key)?))
-        })
+        self.groups
+            .iter()
+            .enumerate()
+            .find_map(|(group, stops)| Some((group, stops.iter().position(|entry| entry == key)?)))
     }
 
     #[cfg(test)]
@@ -320,10 +321,7 @@ mod tests {
 
         assert_eq!(
             groups(&ring),
-            vec![
-                vec!["menu".to_owned()],
-                vec!["cancel-export".to_owned()],
-            ]
+            vec![vec!["menu".to_owned()], vec!["cancel-export".to_owned()],]
         );
     }
 
