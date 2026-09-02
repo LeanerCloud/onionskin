@@ -7016,21 +7016,6 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(feature = "shell-test-support")]
-    fn zoom(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> f32 {
-        window
-            .update(cx, |frame, _window, cx| {
-                frame
-                    .active_canvas()
-                    .unwrap()
-                    .read(cx)
-                    .model
-                    .view_state()
-                    .zoom
-            })
-            .unwrap()
-    }
-
     /// The arrows move inside the surface focus is in, and Tab leaves it.
     ///
     /// Driven with real keystrokes, and asserting on the whole surface rather
@@ -7131,11 +7116,20 @@ mod tests {
     /// the ring but left GPUI's focus in the text field the user had been
     /// typing in, so the next Enter went to the field and the control the
     /// reader was sitting on never ran.
+    ///
+    /// Previous Page rather than Zoom In, which is what the ledger names:
+    /// whether a zoom step is allowed depends on the raster ceiling of a page
+    /// the render worker measures on a thread of its own, so a run that got
+    /// there first and a run that did not disagree about whether Zoom In did
+    /// anything. Turning a page is the same route with an answer that does
+    /// not depend on the worker.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
     fn a_screen_reader_cursor_takes_the_keys_off_a_text_field(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["two-page.pdf"], cx);
         cx.run_until_parked();
+        let before = current_page(window, cx);
+        assert!(before > 0, "the fixture opens past the first page");
         window
             .update(cx, |frame, window, cx| {
                 frame.open_find_bar(None, window, cx);
@@ -7150,22 +7144,35 @@ mod tests {
                 );
             })
             .unwrap();
-        let before = zoom(window, cx);
 
         window
             .update(cx, |frame, _window, _cx| {
                 frame
                     .a11y
-                    .deliver(&"zoom-in".into(), accesskit::Action::Focus);
+                    .deliver(&"previous-page".into(), accesskit::Action::Focus);
             })
             .unwrap();
         cx.run_until_parked();
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some("previous-page"),
+            "the reader's cursor did not reach the control"
+        );
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(
+                    !frame.text_field_focused(window, cx),
+                    "the field still holds the keys after the reader moved off it"
+                );
+            })
+            .unwrap();
         cx.simulate_keystrokes(window.into(), "enter");
         cx.run_until_parked();
 
-        assert!(
-            zoom(window, cx) > before,
-            "Enter after the reader moved onto Zoom In did not zoom in: the field kept the keys"
+        assert_eq!(
+            current_page(window, cx),
+            before - 1,
+            "Enter after the reader moved onto Previous Page did not turn the page:              the field kept the keys"
         );
     }
 
