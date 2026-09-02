@@ -373,70 +373,117 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         "Dependabot has no predictable update cadence"
     );
 
-    for section in ["[advisories]", "[licenses]", "[bans]", "[sources]"] {
+    for section in ["advisories", "licenses", "bans", "sources", "graph"] {
         assert!(
-            deny.contains(section),
-            "cargo-deny policy is missing {section}"
+            deny.contains(&format!("[{section}]")),
+            "cargo-deny policy is missing [{section}]"
         );
     }
-    let graph = toml_section(&deny, "graph");
-    assert!(
-        graph.contains("all-features = true"),
-        "cargo-deny does not scan the full feature graph"
-    );
-    for target in [
-        "aarch64-apple-darwin",
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
+
+    // Every setting cargo-deny would have to be told to stop enforcing. Read
+    // as values rather than as text: `cargo deny check` reports all four
+    // sections green against a policy that ignores every advisory, permits
+    // every license and trusts every source, so "the file mentions the right
+    // words somewhere" is not evidence of anything.
+    for (section, key, required) in [
+        ("graph", "all-features", "true"),
+        ("advisories", "yanked", "\"deny\""),
+        ("licenses", "exceptions", "[]"),
+        ("licenses", "confidence-threshold", "0.8"),
+        ("bans", "wildcards", "\"deny\""),
+        // The wildcard ban only means anything once the workspace's own path
+        // dependencies stop reading as wildcards, which is what `publish =
+        // false` buys. Without it the check fails on our own crates, and the
+        // way out of that is to stop denying wildcards at all.
+        ("bans", "allow-wildcard-paths", "true"),
+        ("bans", "multiple-versions", "\"warn\""),
+        ("bans", "allow", "[]"),
+        ("bans", "skip", "[]"),
+        ("bans", "skip-tree", "[]"),
+        ("sources", "unknown-registry", "\"deny\""),
+        ("sources", "unknown-git", "\"deny\""),
+        ("sources", "required-git-spec", "\"rev\""),
     ] {
-        assert!(
-            graph.contains(target),
-            "cargo-deny does not scan the release target {target}"
+        let setting = policy_setting(&deny, section, key);
+        assert_eq!(
+            setting.as_deref(),
+            Some(required),
+            "cargo-deny policy weakened: [{section}] {key} must be {required}"
         );
     }
-    assert!(
-        !graph.contains("feature-depth"),
-        "feature-depth belongs to cargo-deny's output config, not its graph config"
+    // cargo-deny's default reports every unmaintained advisory. Narrowing that
+    // to "none" or "workspace" mutes whole classes at once, which is what an
+    // exception list exists to avoid.
+    assert_eq!(
+        policy_setting(&deny, "advisories", "unmaintained"),
+        None,
+        "the policy narrows which unmaintained advisories are reported; tolerate them one ID at a time instead"
     );
-    assert!(
-        deny.contains("yanked = \"deny\""),
-        "yanked crates are not denied"
+    assert_eq!(
+        policy_setting(&deny, "licenses", "unused-allowed-license"),
+        None,
+        "the policy silences the warning that keeps the license allow-list from outgrowing the tree"
     );
-    assert!(
-        deny.contains("wildcards = \"deny\""),
-        "wildcard dependency requirements are not denied"
+    assert_eq!(
+        policy_setting(&deny, "graph", "targets").as_deref(),
+        Some(
+            "[{ triple = \"aarch64-apple-darwin\" }, { triple = \"x86_64-pc-windows-msvc\" }, \
+             { triple = \"x86_64-unknown-linux-gnu\" }, { triple = \"aarch64-unknown-linux-gnu\" }]"
+        ),
+        "cargo-deny no longer scans exactly the triples release.yml publishes"
     );
-    assert!(
-        deny.contains("required-git-spec = \"rev\""),
-        "allowed git sources can be branch-based or unpinned"
+
+    // Allow-lists are pinned whole. Asserting only that the reviewed entries
+    // are present would let a fourth git source or a copyleft license be added
+    // beside them without failing anything.
+    assert_eq!(
+        policy_setting(&deny, "sources", "allow-registry").as_deref(),
+        Some("[\"https://github.com/rust-lang/crates.io-index\"]"),
+        "cargo-deny trusts a registry other than crates.io"
     );
-    // The wildcard ban only means anything once the workspace's own path
-    // dependencies stop reading as wildcards, which is what `publish = false`
-    // buys. Without it the check fails on our own crates, and the way out of
-    // that is to stop denying wildcards at all.
-    assert!(
-        deny.contains("allow-wildcard-paths = true"),
-        "the wildcard ban fires on the workspace's own path dependencies, so it cannot stay denied"
+    assert_eq!(
+        policy_setting(&deny, "sources", "allow-git").as_deref(),
+        Some(
+            "[\"https://github.com/IAmJSD/gpui\", \"https://github.com/cristim/hayro\", \
+             \"https://github.com/linebender/vello\"]"
+        ),
+        "the reviewed set of git sources changed"
     );
+    assert_eq!(
+        policy_setting(&deny, "licenses", "allow").as_deref(),
+        Some(
+            "[\"Apache-2.0\", \"Apache-2.0 WITH LLVM-exception\", \"BSD-2-Clause\", \
+             \"BSD-3-Clause\", \"CC0-1.0\", \"ISC\", \"MIT\", \"MPL-2.0\", \"Unicode-3.0\", \
+             \"Zlib\"]"
+        ),
+        "the reviewed set of permitted licenses changed"
+    );
+
     let manifest = std::fs::read_to_string(workspace.join("Cargo.toml"))
         .expect("the workspace manifest is readable");
-    assert!(
-        toml_section(&manifest, "workspace.package").contains("publish = false"),
+    assert_eq!(
+        policy_setting(&manifest, "workspace.package", "publish").as_deref(),
+        Some("false"),
         "the workspace is not marked unpublished, so allow-wildcard-paths does not apply to it"
     );
+
     // Exceptions are the part of a policy that rots. Every one has to name a
-    // single advisory and say why it is tolerated: a bare crate name would
-    // mute every future advisory against that crate, which is a blanket allow
-    // wearing an exception's clothes.
-    for entry in toml_section(&deny, "advisories")
-        .lines()
+    // single advisory and say why it is tolerated: a bare string would mute an
+    // advisory with no stated reason, and a crate name would mute every future
+    // advisory against that crate, which is a blanket allow wearing an
+    // exception's clothes.
+    let ignored = policy_setting(&deny, "advisories", "ignore")
+        .expect("the policy declares an advisory exception list");
+    for entry in ignored
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split("}, ")
         .map(str::trim)
-        .filter(|line| line.starts_with("{ id"))
+        .filter(|entry| !entry.is_empty())
     {
         assert!(
-            entry.contains("id = \"RUSTSEC-"),
-            "an advisory exception is not pinned to one advisory ID: {entry}"
+            entry.starts_with("{ id = \"RUSTSEC-"),
+            "an advisory exception is not a table pinned to one advisory ID: {entry}"
         );
         let reason = entry
             .split_once("reason = \"")
@@ -446,16 +493,6 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         assert!(
             reason.len() > 20,
             "an advisory exception carries no reviewed reason: {entry}"
-        );
-    }
-    for source in [
-        "https://github.com/IAmJSD/gpui",
-        "https://github.com/cristim/hayro",
-        "https://github.com/linebender/vello",
-    ] {
-        assert!(
-            deny.contains(source),
-            "cargo-deny does not allow the reviewed git source {source}"
         );
     }
 
@@ -517,6 +554,12 @@ fn supply_chain_policy_is_checked_in_and_gated() {
             "supply-chain action is not pinned to a full commit SHA: {line}"
         );
     }
+    assert!(
+        supply_chain.contains(
+            "run: cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated"
+        ),
+        "the supply-chain job runs cargo-deny without checking that deny.toml still denies anything, so it stays green against a blanket policy"
+    );
     assert!(
         !supply_chain.contains("continue-on-error"),
         "supply-chain policy is advisory instead of gating"
@@ -3153,6 +3196,11 @@ fn assert_ci_reaches_the_cos_suite() {
     );
 }
 
+/// One section of a TOML document with its comments removed. Stripping them is
+/// what makes an assertion about this text an assertion about the setting: a
+/// commented-out `yanked = "deny"` reads identically to the real thing, and a
+/// policy that keeps the reviewed settings in comments and permissive ones in
+/// force passes `cargo deny check` with all four sections green.
 fn toml_section(document: &str, name: &str) -> String {
     let header = format!("[{name}]");
     document
@@ -3160,6 +3208,58 @@ fn toml_section(document: &str, name: &str) -> String {
         .skip_while(|line| line.trim() != header)
         .skip(1)
         .take_while(|line| !line.trim_start().starts_with('['))
+        .map(without_comment)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A TOML line up to its first comment marker, leaving `#` inside a string
+/// alone.
+fn without_comment(line: &str) -> &str {
+    let mut quoted = false;
+    for (index, byte) in line.bytes().enumerate() {
+        match byte {
+            b'"' => quoted = !quoted,
+            b'#' if !quoted => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+/// The value of `key` in `section`, as cargo-deny would read it: comments
+/// gone, and a value spread over several lines joined onto one so an array can
+/// be compared whole. `None` when the key is absent, which is a distinct
+/// answer from an empty value.
+fn policy_setting(document: &str, section: &str, key: &str) -> Option<String> {
+    let body = toml_section(document, section);
+    let mut lines = body.lines().map(str::trim);
+    let first = lines.find_map(|line| line.strip_prefix(key)?.trim_start().strip_prefix('='))?;
+
+    let mut value = first.trim().to_owned();
+    while unbalanced(&value) {
+        let next = lines.next()?.trim();
+        if next.is_empty() {
+            continue;
+        }
+        if next.starts_with(']') {
+            // TOML allows a trailing comma before the bracket; a joined value
+            // that keeps it would not compare equal to the array it means.
+            while value.ends_with(',') {
+                value.pop();
+            }
+        } else if !value.ends_with('[') {
+            value.push(' ');
+        }
+        value.push_str(next);
+    }
+    Some(value)
+}
+
+/// Whether a value has an array or table still open, so the next line belongs
+/// to it.
+fn unbalanced(value: &str) -> bool {
+    let opens = value.chars().filter(|c| *c == '[' || *c == '{').count();
+    let closes = value.chars().filter(|c| *c == ']' || *c == '}').count();
+    opens > closes
 }

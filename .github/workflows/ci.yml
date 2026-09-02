@@ -57,6 +57,15 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
+      # `cargo deny check` reports all four sections green against a policy
+      # that ignores every advisory, permits every license and trusts every
+      # source: it enforces whatever deny.toml says, and says nothing about
+      # whether deny.toml still says anything. This job would otherwise be
+      # green while the policy it runs was gutted, which is worse than not
+      # having it. Here rather than only in the test job so the gate and the
+      # policy it depends on cannot pass separately.
+      - name: Check the policy was not weakened
+        run: cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated
       - name: Install Gitleaks
         run: |
           curl -fsSLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz
