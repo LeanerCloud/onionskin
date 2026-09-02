@@ -1341,14 +1341,24 @@ impl CanvasModel {
         //
         // The frame closes here rather than in `paint_list`, so an update
         // that is not followed by a paint, which is every pointer move and
-        // every poll tick, leaves nothing open behind it. Its pages stay
-        // exempt for one more frame, which is what carries them into the
-        // paint.
+        // every poll tick, leaves nothing open behind it, on the error path
+        // as well. Its pages stay exempt for one more frame, which is what
+        // carries them into the paint.
         self.tiles.begin_frame();
-        self.drain_render_responses()?;
-        self.schedule_visible_renders(&visible)?;
-        self.drain_render_responses()?;
+        let framed = self.drain_and_schedule(&visible);
         self.tiles.end_frame();
+        framed
+    }
+
+    /// The part of an update that has to run inside a store frame: applying
+    /// the rasters that have arrived and asking for the ones that have not.
+    ///
+    /// Split out so its errors cannot escape past the `end_frame` that
+    /// matches this frame's `begin_frame`.
+    fn drain_and_schedule(&mut self, visible: &[PagePlacement]) -> Result<(), CanvasError> {
+        self.drain_render_responses()?;
+        self.schedule_visible_renders(visible)?;
+        self.drain_render_responses()?;
         Ok(())
     }
 
