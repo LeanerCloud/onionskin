@@ -91,7 +91,7 @@ Find-and-Thumbnails state.
 | M2-LAZY | `crates/core/benches/open.rs`, `crates/cos/tests/lazy.rs` | Budgeted 1000-page open and lazy object-read tests. |
 | M2-BASIC | `plugins/tools-basic/src/` | Real gesture tests for Hand, selection, Snapshot, and Marquee Zoom. |
 | M2-SEARCH | `crates/app/src/shell/find_bar.rs`, `crates/app/src/shell/panes/results.rs`, `crates/app/src/shell/chrome/tool_search.rs` | Find routing, tool lookup, highlight, result navigation, and pane tests. |
-| M2-EXPORT | `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs.rs` | Codec contract/export tests and shell export-routing tests. |
+| M2-EXPORT | `crates/core/src/session.rs`, `crates/plugin-api/src/codec.rs`, `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs.rs` | C1.1 snapshot `f0cbbcb` and background export `3ac647b`: source bytes are shared into a worker-owned document; Single output streams page chunks into one temporary file and publishes it atomically at completion, while PerPage publishes completed page files incrementally with one destination writer at a time. Visible and accessible progress follows completed pages, and cancellation cleans partial output before the one-job guard is released. Post-rebase proof includes 100 focused tab tests, 501 shell tests plus integrations, codec suites, headless suites, feature isolation, and scoped strict clippy. The C1.2 page-range/settings dialog remains open. |
 | M2-LAYERS | `crates/core/src/session.rs`, `crates/app/src/shell/panes/layers.rs` | Real-file render-change test and pane toggle-refresh tests. |
 
 ---

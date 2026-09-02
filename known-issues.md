@@ -62,18 +62,24 @@ source IDs, severity, ownership, and required proof.
   the page tree itself.
 
 - Historical P13 audit wording retained, with current disposition below. Export
-  runs on the UI thread and buffers every page in memory: a
-  whole-document PNG export of a large file freezes the shell for the full
-  render and holds all pages' bytes at once. The memory cost is documented on
-  the codec contract; the UI blocking is not. M3's export dialog should move
-  it to a background task with a page range. Also from the P13 review:
+  previously ran on the UI thread and buffered every page in memory: a
+  whole-document PNG export of a large file froze the shell for the full render
+  and held all pages' bytes at once. Also from the P13 review:
   export_entries reports "codecs plugin not installed" when no document is
   open (latent, a zero-tab window is currently unreachable); the historical
   prompt, numbering, and derived-overwrite findings are resolved below.
   **2026-09-01 disposition:** export and attachment prompt failures are visible,
   cancellation remains silent, numbered export width follows the page count,
   and derived destinations are reserved without overwrite before writing. The
-  export UI-thread and whole-document memory findings remain open as APP-010.
+  export UI-thread and whole-document memory findings remained APP-010.
+  **2026-09-02 C1.1 disposition:** `f0cbbcb` adds a shared-byte export snapshot;
+  `3ac647b` moves codec and output work to a background worker. Single streams
+  page chunks into one temporary file and publishes it atomically at completion;
+  PerPage publishes completed page files incrementally. Single keeps one
+  temporary-file writer; PerPage keeps at most one destination writer open.
+  Visible and accessible progress,
+  cancellation, and cleanup-before-guard-release are proved. APP-010 is now
+  limited to the C1.2 user-facing page-range/settings dialog.
 - P10/foundation review follow-ups (app shell): B2.2 resolved the first-error
   and stale worker-wait portions by preserving a primary pointer/update error
   over a same-cycle snapshot failure and resetting the poll wait deadline before

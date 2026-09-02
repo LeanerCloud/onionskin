@@ -27,6 +27,20 @@ absolute paths when needed; this tracked manifest records filenames only.
 
 ## Capture blockers
 
+- C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build
+  `f0cbbcb` Onionskin-window-only capture remains pending. It was deferred while
+  B7 owned the overlapping evidence files, and the GUI session is now locked
+  with the displays asleep/inactive. No Task 1 launch evidence is claimed.
+  Retry after the session is awake and unlocked; do not use a full-screen
+  fallback.
+- C1.1 Task 2 background streaming export, 2026-09-02T03:23:35Z: exact build
+  `3ac647b` was launched as PID 12887 on generated ignored
+  `corpus/bench/pages-1000.pdf`. CoreGraphics reported the Onionskin-only window
+  as ID 12655 with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. The required exact-window
+  screenshot is pending because the GUI session is locked and the displays are
+  asleep/inactive despite capture permission. Retry the exact window after the
+  session is awake and unlocked. No full-screen fallback was taken.
 - B7 Page Thumbnails lifecycle fix, 2026-09-02T01:42Z: exact committed build
   `4132a99` opened `two-page.pdf` after the focused GPUI lifecycle regression,
   strict clippy, format check, and shell build passed. CoreGraphics reported the

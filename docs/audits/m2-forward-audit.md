@@ -47,9 +47,22 @@ regression test and real user path pass.
 | P10 tools | `00a7d29` | Merged; snapshot/context-menu defects remain. |
 | P11 commands/preferences/recents | `c3c6576` | Merged; keymap and preference-cap defects remain. |
 | P12 accessibility | `07ebc93` | Merged; real VoiceOver acceptance, focus dispatch, platform coverage, and listed residuals remain. |
-| P13 codecs/export | `74b60ec` | Merged; export lifecycle and UI-thread debt remain. |
+| P13 codecs/export | `74b60ec`, C1.1 `f0cbbcb` and `3ac647b` | Merged; C1.1 moved encoding and output I/O to a background worker. Single publishes one completed temporary file atomically; PerPage publishes completed page files incrementally. Progress, cancellation, and one-writer bounds are proved. The C1.2 page-range/settings dialog remains. |
 | P14 budgets | `64829a0` | Merged; eviction-churn accounting and corpus integrity defects remain. |
 | M2 overall | no completion commit | Not complete. |
+
+### C1.1 post-rebase verification
+
+The exact rebased commits are the shared-byte worker snapshot at `f0cbbcb` and
+the background streaming export at `3ac647b`. Verification against that state
+passed 100 focused tab tests; all 501 shell app tests; plugin-api 11/11;
+codecs-common unit 3/3, export 11/11, and roundtrip 1/1; and the complete
+no-default app targets (56 library, 4 file-association, 30 guarantee with 7
+expected ignored, 4 kernel-emptiness, 1 privacy, and 9 registry with 3 expected
+ignored). The 179-line no-default normal dependency graph contains no
+`tempfile`. Formatting, diff checks, and scoped strict clippy also passed. The
+clippy command allows only the pre-existing unrelated
+`clippy::single-char-add-str` baseline in `crates/app/src/a11y/probe.rs`.
 
 ## Retained and concurrent state
 
@@ -96,7 +109,7 @@ regression test and real user path pass.
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Resolved in B3.4 | B3 | Removed from known issues | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Resolved in B3.5 | B3 | Removed from known issues | Exactly 64 unknown preferences survive regardless of key ordering. |
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Resolved in B4.3 | B4 | Resolved; historical row retained | Attachment prompt failure uses the pane feedback path while cancellation remains silent. |
-| APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
+| APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs`; `crates/core/src/session.rs` | Narrowed by C1.1 at `f0cbbcb` and `3ac647b` | C1.2 | Existing export entry, split from APP-002 | Background streaming, responsive progress, cancellation, bounded output publication, and cleanup-before-guard-release are proved. Add the user-facing page-range/settings dialog. |
 | APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
 | APP-012 | High | `crates/app/src/shell/panes/thumbnails.rs`; pre-fix B7-REF-003 Onionskin capture | Resolved in B7 at `4132a99` | B7 | Resolved before ledger; no live entry | Opening Page Thumbnails after initial canvas work settles rearms polling for deferred thumbnail requests. The regression drives only the normal GPUI timer/observer path and receives every picture without direct collection. |
 
@@ -166,8 +179,9 @@ no error-injection seam, so that branch is retained as explicit code-path proof
 rather than claimed as an end-to-end regression. B4.3 reports attachment prompt
 failures through the existing pane feedback path while preserving silent
 cancellation. B4.4 derives numbered export width from the page count and reserves
-all derived destinations without overwrite before writing. The remaining export
-UI-thread and whole-document buffering work is APP-010 under C1.
+all derived destinations without overwrite before writing. C1.1 later resolved
+the export UI-thread and whole-document buffering work; APP-010 now retains only
+the C1.2 page-range/settings dialog.
 B7 traced the Page Thumbnails black placeholders to deferred `Show` handling:
 thumbnail work was queued after the canvas poll loop had gone idle, so completed
 worker responses were never collected. `4132a99` rearms the existing idempotent
@@ -213,8 +227,9 @@ Every `known-issues.md` item is retained and assigned as follows:
 - COS repair/save/page-tree debt belongs to M3 organize/save unless B1 fixes a
   current viewer correctness path.
 - P8/P11/P14 and shell correctness items belong to B1-B4.
-- Export background streaming, page range, progress, and cancellation belong to
-  C1's M3 export-dialog work; M2 correctness/lifecycle defects belong to B4.
+- Export background streaming, progress, and cancellation landed in C1.1 at
+  `f0cbbcb` and `3ac647b`; only the C1.2 page-range/settings dialog remains.
+  M2 correctness/lifecycle defects belong to B4.
 - Arabic visual/logical ordering belongs to the later localization/text package;
   M2 matrix rows remain partial where it affects behavior.
 - P12/VoiceOver belongs to B5. Linux/Windows first-release validation belongs to
