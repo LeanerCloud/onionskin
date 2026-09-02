@@ -151,7 +151,9 @@ impl PageLayoutMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Ordered by quarter turns clockwise, so the variants can key a map
+/// directly instead of being numbered again by the caller.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ViewRotation {
     #[default]
     None,

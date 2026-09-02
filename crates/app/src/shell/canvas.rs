@@ -1871,7 +1871,7 @@ struct TileImageKey {
     zoom_bits: u32,
     col: u32,
     row: u32,
-    rotation: u8,
+    rotation: ViewRotation,
 }
 
 impl TileImageKey {
@@ -1881,7 +1881,7 @@ impl TileImageKey {
             zoom_bits: zoom.to_bits(),
             col,
             row,
-            rotation: rotation_code(rotation),
+            rotation,
         }
     }
 }
@@ -2319,15 +2319,6 @@ fn atlas_image_rect(clip: ViewRect, content_width: u32, content_height: u32) -> 
             width: clip.size.width + 2.0 * gutter_width,
             height: clip.size.height + 2.0 * gutter_height,
         },
-    }
-}
-
-fn rotation_code(rotation: ViewRotation) -> u8 {
-    match rotation {
-        ViewRotation::None => 0,
-        ViewRotation::Clockwise90 => 1,
-        ViewRotation::HalfTurn => 2,
-        ViewRotation::Clockwise270 => 3,
     }
 }
 
@@ -4216,6 +4207,49 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert_eq!(first.as_bytes(0).unwrap(), [0, 0, 255, 255].repeat(9));
         assert_eq!(second.as_bytes(0).unwrap(), [255, 0, 0, 255].repeat(9));
+    }
+
+    /// The pixels are turned on the way into the image, so the view rotation
+    /// is part of what identifies one. Keying without it would hand a rotated
+    /// frame the image built for the upright one, because the tile behind it
+    /// is the same `Arc` and nothing else about the key has changed.
+    #[test]
+    fn the_same_tile_under_two_rotations_gets_two_images() {
+        let mut store = TileStore::new();
+        let mut images = TileImageCache::default();
+        let tile = store
+            .insert(
+                0,
+                BaseRaster::new(2, 1, 1.0, vec![255, 0, 0, 255, 0, 0, 255, 255]),
+            )
+            .tile(0, 0);
+
+        let upright = images
+            .image_for(
+                TileImageKey::new(0, 1.0, 0, 0, ViewRotation::None),
+                &tile,
+                2,
+                1,
+                ViewRotation::None,
+            )
+            .unwrap();
+        let turned = images
+            .image_for(
+                TileImageKey::new(0, 1.0, 0, 0, ViewRotation::Clockwise90),
+                &tile,
+                2,
+                1,
+                ViewRotation::Clockwise90,
+            )
+            .unwrap();
+
+        assert_eq!(images.entries.len(), 2, "one image per rotation");
+        assert_ne!(upright.id, turned.id);
+        assert_ne!(
+            upright.as_bytes(0).unwrap(),
+            turned.as_bytes(0).unwrap(),
+            "the turned image is the upright one over again"
+        );
     }
 
     #[test]
