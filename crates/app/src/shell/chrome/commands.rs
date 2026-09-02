@@ -56,6 +56,7 @@ impl MenuCommand {
             MenuCommand::ZoomOut,
             MenuCommand::ZoomIn,
             MenuCommand::ZoomTo,
+            MenuCommand::DynamicZoom,
             MenuCommand::FitPage,
             MenuCommand::FitWidth,
             MenuCommand::FitHeight,
@@ -116,6 +117,7 @@ impl MenuCommand {
             Self::ZoomOut => "view.zoom-out",
             Self::ZoomIn => "view.zoom-in",
             Self::ZoomTo => "view.zoom-to",
+            Self::DynamicZoom => "view.dynamic-zoom",
             Self::FitPage => "view.fit-page",
             Self::FitWidth => "view.fit-width",
             Self::FitHeight => "view.fit-height",
@@ -177,7 +179,10 @@ impl MenuCommand {
             // one unbound; keymap.json can bind it.
             // Acrobat's Zoom To is Ctrl+M, and cmd-m is Minimize on macOS.
             // Same call as Read Mode below: keymap.json can bind it.
-            Self::ZoomTo
+            // Acrobat gives Dynamic Zoom no default key either; the tool
+            // rail and this entry are how it is reached.
+            Self::DynamicZoom
+            | Self::ZoomTo
             | Self::ReadMode
             | Self::OpenRecent
             | Self::CloseOtherTabs

@@ -154,6 +154,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "select-text" => "T",
         "select-region" => "□",
         "zoom" => "⌕",
+        "dynamic-zoom" => "⇕",
         "snapshot" => "▣",
         _ => "?",
     }
@@ -491,6 +492,7 @@ mod tests {
         assert_eq!(icon_glyph("select-text"), "T");
         assert_eq!(icon_glyph("select-region"), "□");
         assert_eq!(icon_glyph("zoom"), "⌕");
+        assert_eq!(icon_glyph("dynamic-zoom"), "⇕");
         assert_eq!(icon_glyph("snapshot"), "▣");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }

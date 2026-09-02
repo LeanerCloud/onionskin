@@ -38,7 +38,7 @@ use super::accessible::{
 };
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
-    RegistryFacts, NO_SNAPSHOT_TOOL,
+    RegistryFacts, NO_DYNAMIC_ZOOM_TOOL, NO_SNAPSHOT_TOOL,
 };
 use super::page_controls::{
     self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
@@ -1048,6 +1048,18 @@ impl ShellFrame {
                 self.show_dialog(ShellDialog::ZoomTo, cx);
                 Ok(())
             }
+            // A drag, not a command: the entry selects the tool, which is
+            // what Acrobat's View > Zoom > Dynamic Zoom does too.
+            MenuCommand::DynamicZoom => {
+                self.dismiss_menus(cx);
+                self.activate_tool_with(
+                    ToolCapability::DynamicZoom,
+                    "Dynamic Zoom",
+                    NO_DYNAMIC_ZOOM_TOOL,
+                    cx,
+                );
+                Ok(())
+            }
             MenuCommand::Tools => {
                 self.dismiss_menus(cx);
                 self.toggle_rail_expanded(cx);
@@ -1321,24 +1333,42 @@ impl ShellFrame {
         cx.notify();
     }
 
-    /// Activate whichever installed tool carries [`ToolCapability::Snapshot`].
+    /// Activate whichever installed tool carries `capability`.
     ///
     /// The menu entry asked the same question before it went live, so a
     /// miss here means the registry changed underneath it. Reported rather
     /// than returned quietly: the user clicked something that did nothing.
-    fn take_a_snapshot(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.tabs.active().and_then(|tab| {
-            tool_with(
-                tab.canvas.read(cx).model.registry(),
-                ToolCapability::Snapshot,
-            )
-        }) else {
-            self.notices.push(NO_SNAPSHOT_TOOL.to_owned());
+    ///
+    /// The rail entry goes along so a tool sharing a rail slot with another
+    /// leaves that slot showing the one now active, exactly as a click on
+    /// the slot would.
+    fn activate_tool_with(
+        &mut self,
+        capability: ToolCapability,
+        label: &str,
+        missing: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .tabs
+            .active()
+            .and_then(|tab| tool_with(tab.canvas.read(cx).model.registry(), capability))
+        else {
+            self.notices.push(missing.to_owned());
             cx.notify();
             return;
         };
         let entry = self.active_rail_entry(index, cx);
-        self.activate_canvas_tool(index, "Take a Snapshot", entry, cx);
+        self.activate_canvas_tool(index, label, entry, cx);
+    }
+
+    fn take_a_snapshot(&mut self, cx: &mut Context<Self>) {
+        self.activate_tool_with(
+            ToolCapability::Snapshot,
+            "Take a Snapshot",
+            NO_SNAPSHOT_TOOL,
+            cx,
+        );
     }
 
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
@@ -4518,6 +4548,59 @@ mod tests {
                     matches!(fit, Some(onionskin_core::FitMode::Visible(_))),
                     "the fit visible keystroke did not reach the canvas: {fit:?}"
                 );
+            })
+            .unwrap();
+    }
+
+    /// Dynamic Zoom is a drag, so its menu entry selects a tool rather than
+    /// changing the view. Pressed on a real window through the binding a
+    /// user would give it, and asserted on the tool the canvas ends up with.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    #[gpui::test]
+    fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("dynamic-zoom-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            "{\"view.dynamic-zoom\": \"cmd-shift-z\"}",
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let dynamic_zoom = window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                let index = tool_with(canvas.model.registry(), ToolCapability::DynamicZoom)
+                    .expect("tools-basic registers a dynamic zoom tool");
+                assert_ne!(canvas.model.active_tool(), Some(index));
+                index
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(
+            window.into(),
+            &keystroke_for(&bindings, "view.dynamic-zoom"),
+        );
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                assert_eq!(
+                    canvas.model.active_tool(),
+                    Some(dynamic_zoom),
+                    "the dynamic zoom keystroke did not select the tool"
+                );
+                assert!(frame.notices.is_empty(), "{:?}", frame.notices);
             })
             .unwrap();
     }

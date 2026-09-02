@@ -9,7 +9,9 @@ use onionskin_core::{
     ViewSize, Viewport, ZoomPolicy,
 };
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCtx, ToolPlugin};
-use onionskin_tools_basic::{HandTool, SelectRegionTool, SelectTextTool, SnapshotTool, ZoomTool};
+use onionskin_tools_basic::{
+    DynamicZoomTool, HandTool, SelectRegionTool, SelectTextTool, SnapshotTool, ZoomTool,
+};
 
 const VIEWPORT: ViewSize = ViewSize {
     width: 800.0,
@@ -68,6 +70,16 @@ impl Fixture {
             x: at.x + f64::from(1.0 / self.viewport.zoom()),
             ..at
         }
+    }
+
+    /// The page point currently under a screen position. Dynamic zoom is a
+    /// screen gesture, so its tests are written in screen coordinates and
+    /// converted here, against the viewport as it stands.
+    fn page_point_at(&self, view: ViewPoint) -> PagePoint {
+        self.viewport
+            .page_point_at(view)
+            .expect("the point is mappable")
+            .expect("the point is on a page")
     }
 
     fn selected_text(&self) -> Option<String> {
@@ -461,4 +473,98 @@ fn every_tool_survives_a_page_with_no_text() {
     }
 
     assert!(fixture.doc.selection().text().is_none());
+}
+
+/// Move the pointer to a screen position mid-gesture. Screen coordinates,
+/// because that is what the gesture is measured in.
+fn move_to(fixture: &mut Fixture, tool: &mut dyn ToolPlugin, view: ViewPoint) {
+    let to = fixture.page_point_at(view);
+    tool.on_pointer_move(&mut fixture.ctx(), input(to, Modifiers::default()));
+}
+
+/// A screen point `dy` pixels below `from`. Negative is up the screen.
+fn below(from: ViewPoint, dy: f32) -> ViewPoint {
+    ViewPoint {
+        x: from.x,
+        y: from.y + dy,
+    }
+}
+
+/// Acrobat's dynamic zoom: drag up to zoom in, down to zoom out, and the
+/// page point under the press stays under the press for the whole gesture.
+///
+/// 240 screen pixels is one doubling, so 120 up is a factor of root two and
+/// coming back to where the press started undoes it.
+#[test]
+fn dragging_up_zooms_in_and_dragging_down_zooms_out_about_the_press_point() {
+    let mut fixture = Fixture::open("hello.pdf");
+    let mut tool = DynamicZoomTool::new();
+    let anchor_view = ViewPoint { x: 400.0, y: 300.0 };
+    let anchor_page = fixture.page_point_at(anchor_view);
+    let before = fixture.viewport.zoom();
+
+    press(&mut fixture, &mut tool, anchor_page, Modifiers::default());
+    move_to(&mut fixture, &mut tool, below(anchor_view, -120.0));
+
+    let zoomed_in = fixture.viewport.zoom();
+    assert!(
+        (zoomed_in / before - 2.0_f32.sqrt()).abs() < 1e-3,
+        "120 pixels up should be a factor of root two: {before} to {zoomed_in}"
+    );
+    assert_eq!(fixture.viewport.zoom_policy(), ZoomPolicy::Fixed);
+
+    move_to(&mut fixture, &mut tool, anchor_view);
+    let back = fixture.viewport.zoom();
+    assert!(
+        (back / before - 1.0).abs() < 1e-3,
+        "dragging back down should undo the zoom: {before} to {back}"
+    );
+
+    let held = fixture.page_point_at(anchor_view);
+    assert_eq!(held.page, anchor_page.page);
+    assert!(
+        (held.x - anchor_page.x).abs() < 0.5 && (held.y - anchor_page.y).abs() < 0.5,
+        "the anchor drifted over two zooms: {anchor_page:?} to {held:?}"
+    );
+
+    tool.on_pointer_up(&mut fixture.ctx(), input(anchor_page, Modifiers::default()));
+}
+
+/// The gesture ends where the canvas says it ends. A move outside one is a
+/// no-op rather than a zoom against a stale anchor.
+#[test]
+fn dynamic_zoom_only_zooms_between_a_press_and_the_end_of_its_gesture() {
+    let mut fixture = Fixture::open("hello.pdf");
+    let mut tool = DynamicZoomTool::new();
+    let anchor_view = ViewPoint { x: 400.0, y: 300.0 };
+    let anchor_page = fixture.page_point_at(anchor_view);
+    let before = fixture.viewport.zoom();
+
+    move_to(&mut fixture, &mut tool, below(anchor_view, -120.0));
+    assert_eq!(fixture.viewport.zoom(), before, "a move with no press zoomed");
+
+    let endings: [fn(&mut DynamicZoomTool, &mut Fixture); 3] = [
+        |tool, fixture| tool.on_cancel(&mut fixture.ctx()),
+        |tool, fixture| tool.on_deactivate(&mut fixture.ctx()),
+        |tool, fixture| {
+            let at = fixture.page_point_at(ViewPoint {
+                x: 400.0,
+                y: 300.0,
+            });
+            tool.on_pointer_up(&mut fixture.ctx(), input(at, Modifiers::default()));
+        },
+    ];
+    for end in endings {
+        press(&mut fixture, &mut tool, anchor_page, Modifiers::default());
+        end(&mut tool, &mut fixture);
+        let ended = fixture.viewport.zoom();
+
+        move_to(&mut fixture, &mut tool, below(anchor_view, -120.0));
+
+        assert_eq!(
+            fixture.viewport.zoom(),
+            ended,
+            "a move after the gesture ended zoomed"
+        );
+    }
 }

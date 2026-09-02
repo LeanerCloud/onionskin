@@ -115,6 +115,7 @@ pub(in crate::shell) enum MenuCommand {
     ZoomOut,
     ZoomIn,
     ZoomTo,
+    DynamicZoom,
     FitPage,
     FitWidth,
     FitHeight,
@@ -143,6 +144,10 @@ pub(in crate::shell) enum MenuCommand {
 /// capability, and what the frame says if one disappears between the menu
 /// being built and the entry being chosen.
 pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
+
+/// The same, for Dynamic Zoom, which is likewise an entry that selects a
+/// tool the registry may not have.
+pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
 const REGISTRY_BACKED: [MenuCommand; 2] = [MenuCommand::SelectAll, MenuCommand::DeselectAll];
@@ -179,6 +184,7 @@ pub(in crate::shell) struct RegistryFacts {
     codecs: ExportCodecs,
     commands: RegisteredCommands,
     snapshot_tool: bool,
+    dynamic_zoom_tool: bool,
     any_tool: bool,
 }
 
@@ -190,6 +196,7 @@ impl RegistryFacts {
                 registry.commands().iter().any(|command| command.id == id)
             }),
             snapshot_tool: tool_with(registry, ToolCapability::Snapshot).is_some(),
+            dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
         }
     }
@@ -387,6 +394,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 state.shell_view,
                 state.quick_actions_visible,
                 state.registry.any_tool,
+                state.registry.dynamic_zoom_tool,
             ),
         },
         MenuSection {
@@ -454,6 +462,7 @@ fn view_menu_entries(
     shell_view: ShellViewState,
     quick_actions_visible: [bool; QuickAction::ALL.len()],
     any_tool: bool,
+    dynamic_zoom_tool: bool,
 ) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -551,6 +560,16 @@ fn view_menu_entries(
         entry(MenuCommand::ZoomOut, "Zoom Out", availability, false),
         entry(MenuCommand::ZoomIn, "Zoom In", availability, false),
         entry(MenuCommand::ZoomTo, "Zoom To…", availability, false),
+        entry(
+            MenuCommand::DynamicZoom,
+            "Dynamic Zoom",
+            match (dynamic_zoom_tool, view.is_some()) {
+                (false, _) => Disabled("No installed tool zooms dynamically"),
+                (true, false) => Disabled("No document is open"),
+                (true, true) => Enabled,
+            },
+            false,
+        ),
         entry(
             MenuCommand::FitPage,
             "Fit Page",
@@ -704,6 +723,7 @@ impl MenuCommand {
             // Opens the magnification chooser rather than changing the view
             // itself; the dialog's rows carry the view actions.
             Self::ZoomTo
+            | Self::DynamicZoom
             | Self::Open
             | Self::OpenRecent
             | Self::Quit
@@ -770,6 +790,7 @@ impl MenuCommand {
             | Self::ZoomOut
             | Self::ZoomIn
             | Self::ZoomTo
+            | Self::DynamicZoom
             | Self::FitPage
             | Self::FitWidth
             | Self::FitHeight
@@ -911,6 +932,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ZoomOut
         | MenuCommand::ZoomIn
         | MenuCommand::ZoomTo
+        | MenuCommand::DynamicZoom
         | MenuCommand::FitPage
         | MenuCommand::FitWidth
         | MenuCommand::FitHeight
@@ -964,6 +986,7 @@ mod tests {
             codecs: ExportCodecs::installed(|_| true),
             commands: RegisteredCommands([true; REGISTRY_BACKED.len()]),
             snapshot_tool: true,
+            dynamic_zoom_tool: true,
             any_tool: true,
         }
     }
@@ -992,6 +1015,7 @@ mod tests {
             view,
             ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
+            true,
             true,
         )
     }
