@@ -15,6 +15,29 @@ cargo build --release -p onionskin-app --features shell
 makensis -DVERSION=<version> packaging/windows/installer.nsi
 ```
 
+`--features shell` is what makes the binary the windowed viewer. Without it the
+same `cargo build` succeeds and produces a headless binary that links no window
+or GPU framework, which is an artifact nobody can open a PDF in.
+`release_artifacts_build_the_windowed_viewer` in
+`crates/app/tests/guarantees.rs` holds the workflow to it.
+
+## What the build needs
+
+The release workflow installs each of these, and the CI `shell` job installs
+the same set. Building locally needs them too.
+
+- `CARGO_NET_GIT_FETCH_WITH_CLI=true`. The shell pulls gpui, hayro and vello
+  from pinned git revisions, and a gitconfig that rewrites `https` to `ssh`
+  leaves libgit2 unable to authenticate them. Every workflow job exports it.
+- macOS: `xcodebuild -downloadComponent MetalToolchain`. Without it gpui's
+  Metal shaders do not compile under Xcode 26.
+- Linux: `libfontconfig1-dev libvulkan-dev libwayland-dev libx11-xcb-dev
+  libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+  libxkbcommon-dev libxkbcommon-x11-dev`.
+- Windows: nothing beyond the toolchain for the build. `makensis` comes from
+  NSIS, which is not on the runner image and the workflow installs through
+  Chocolatey.
+
 `version.sh` resolves the version once for all of them: `$VERSION` when CI
 set it from the tag, the workspace manifest otherwise. On a tag build CI also
 sets `VERSION_REQUIRED=1`, which turns a tag that is not semver-shaped into a
@@ -31,7 +54,7 @@ failed job rather than a release stamped with the manifest version.
 | Windows builds are unsigned. | An Authenticode certificate and a `signtool` step. |
 | `CFBundleIdentifier` is the placeholder `org.onionskin.Onionskin`. | A settled domain. It must be final before the first signed release: Launch Services and the signing identity both key off it. |
 | No MCP server binary in any artifact. | `crates/mcp` becoming a binary in M4. Schist ships its MCP server beside the app, loose rather than inside the bundle, because a client spawns it by path. |
-| No hosted Linux/Windows first-release smoke validation yet. | B6 final acceptance on those hosts. The release workflow now builds the shell artifact and installs Linux GPUI build dependencies, but this macOS session cannot prove the Linux tarball or Windows installer launches the real viewer. |
+| No hosted Linux/Windows first-release smoke validation yet. | B6 final acceptance on those hosts. The macOS half is proved locally: `bundle.sh` over a `--features shell` release build produces an `Onionskin.app` whose binary links AppKit, CoreGraphics, QuartzCore and Metal, where the same script over a build without the feature packages a binary linking only `libSystem`. Nothing here can prove the Linux tarball or the Windows installer launches the real viewer, and no hosted release run has happened. |
 
 ## Rules that carry over from PLAN.md
 
