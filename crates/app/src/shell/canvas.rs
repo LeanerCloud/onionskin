@@ -1380,9 +1380,10 @@ impl CanvasModel {
     /// Opens a store frame of its own. `update` pins the cache each visible
     /// page has at the exact zoom; the paint may instead fall back to a cache
     /// at another zoom, and that one has to be exempt from eviction too while
-    /// the rest of the frame is cut.
+    /// the rest of the frame is cut. Everything that can fail before a page
+    /// is asked for happens first, so a frame that opens here also closes
+    /// here.
     pub fn paint_list(&mut self) -> Result<PaintList, CanvasError> {
-        self.tiles.begin_frame();
         let visible = self.viewport.visible_pages()?;
         let mut paint = PaintList {
             pages: visible
@@ -1401,6 +1402,7 @@ impl CanvasModel {
         let viewport_size = self.viewport.size();
         let mut displayed_images = BTreeSet::new();
 
+        self.tiles.begin_frame();
         for placement in visible.into_iter().filter(|page| page.measured) {
             // One lookup, so the raster the tiles are cut from and the zoom
             // they are reported at cannot come from two places and disagree.
