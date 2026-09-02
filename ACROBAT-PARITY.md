@@ -80,7 +80,7 @@ Find-and-Thumbnails state.
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
 | M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |
-| M2-PARITY-REF | `docs/evidence/parity-reference.md`, `parity/README.md`, `crates/app/tests/parity_privacy.rs` | Private Reader 25.001.20438 and Onionskin captures are hashed and compared for the Actual Size shell and document-Find baselines as `B7-REF-001/002`; the executable privacy contract proves private roots are ignored and untracked. Eight required reference states remain open. |
+| M2-PARITY-REF | `docs/evidence/parity-reference.md`, `parity/README.md`, `crates/app/tests/parity_privacy.rs` | Private Reader 25.001.20438 and Onionskin captures are hashed and compared for the Actual Size shell and document-Find baselines as `B7-REF-001/002`. B7-REF-003 pins the clean Reader Page Thumbnails reference and the exact `4132a99` code/test fix while its corrected Onionskin capture remains blocked. The executable privacy contract proves private roots are ignored and untracked. Eight required reference states remain incomplete. |
 | M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs.rs` | Home list/thumbnail and recents tests. |
 | M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
 | M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |
@@ -211,7 +211,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
+| Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. `4132a99` also rearms the canvas poll loop when the pane queues work after initial rendering has settled; its GPUI-loop-only regression prevents black placeholders. Evidence: M2-PANES, B3.1, and the partially populated B7-REF-003 ledger row pending corrected visual capture. |
 | Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented and accessible; page-mutating commands remain disabled with command-specific M3/M5 owner reasons. Evidence: M2-PANES, B3.1, and B3.6. |
 | Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
 | Bookmarks: create, rename, nest, set destination, delete | planned | M3 | Bookmark authoring is named in the plan's `commands-core` list. Acrobat's New Bookmarks From Structure needs the tagged tree and follows at M6. |

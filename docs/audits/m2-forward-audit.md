@@ -42,7 +42,7 @@ regression test and real user path pass.
 | M1 | `docs/spikes/*`, retained `a11y_spike.rs` | Technical spikes landed; real VoiceOver acceptance remains open. |
 | P1-P7 foundation | `1eed2de` | Merged; hardening findings below remain. |
 | P4 render | `aa4d9b8` | Merged. |
-| P8 navigation | `452f575` | Merged; layer order and thumbnail epoch defects remain. |
+| P8 navigation | `452f575` | Merged; B3 resolved layer order and stale-size thumbnail classification, and B7 resolved deferred idle-poll thumbnail delivery at `4132a99`. |
 | P9 search | `72d0a21` | Merged; rare cancel race and Arabic visual/logical order remain. |
 | P10 tools | `00a7d29` | Merged; snapshot/context-menu defects remain. |
 | P11 commands/preferences/recents | `c3c6576` | Merged; keymap and preference-cap defects remain. |
@@ -98,6 +98,7 @@ regression test and real user path pass.
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Resolved in B4.3 | B4 | Resolved; historical row retained | Attachment prompt failure uses the pane feedback path while cancellation remains silent. |
 | APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs:2344`; `crates/app/src/shell/canvas.rs:415` | Confirmed open | C1 | Existing export entry, split from APP-002 | Move streaming/page-range/progress work off the UI thread and prove the UI stays responsive. |
 | APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
+| APP-012 | High | `crates/app/src/shell/panes/thumbnails.rs`; pre-fix B7-REF-003 Onionskin capture | Resolved in B7 at `4132a99` | B7 | Resolved before ledger; no live entry | Opening Page Thumbnails after initial canvas work settles rearms polling for deferred thumbnail requests. The regression drives only the normal GPUI timer/observer path and receives every picture without direct collection. |
 
 The app audit also proved the native action-dispatch ledger entry stale: current
 `RunCommand`, close-tab, and view-menu paths defer correctly and have shell tests.
@@ -167,6 +168,12 @@ failures through the existing pane feedback path while preserving silent
 cancellation. B4.4 derives numbered export width from the page count and reserves
 all derived destinations without overwrite before writing. The remaining export
 UI-thread and whole-document buffering work is APP-010 under C1.
+B7 traced the Page Thumbnails black placeholders to deferred `Show` handling:
+thumbnail work was queued after the canvas poll loop had gone idle, so completed
+worker responses were never collected. `4132a99` rearms the existing idempotent
+poll loop after queueing the visible band. The regression first settles initial
+canvas work, opens the pane through its normal action, and waits through GPUI's
+timer path until all thumbnails arrive without calling the collector directly.
 
 ### Repository, documentation, CI, packaging, and retained state
 
@@ -181,7 +188,7 @@ UI-thread and whole-document buffering work is APP-010 under C1.
 | REPO-007 | Medium | root `README.md`, `.project-docs/INDEX.md`, `.editorconfig` | Resolved in Audit Task 3 | B6 | Added and resolved by this audit | Minimal build, status, documentation, and editor entry points exist without a Makefile or task runner; B6 retains its separate release and packaging-doc work. |
 | REPO-008 | High | `.github/workflows/ci.yml`; no checked-in policy | Confirmed open | B6 | Added by this audit | Checked-in advisory/license/secret/dependency policy passes with reviewed exceptions. |
 | REPO-009 | High | `corpus/checksums/hayro-corpus.sha256`; fresh 41-file acceptance download | Resolved in B1.4 | B1 | Resolved; historical row retained | Every merge-gating `hayro-corpus` PDF has an enforced SHA-256 verified for cached and freshly downloaded sets after strict R2 manifest ID validation and safe publication pass. |
-| REPO-010 | High | `PLAN.md:100-102,497`; `B7-REF-001/002` now ledgered | Partially resolved; acceptance blocker remains | B7 | Existing parity screenshot entry narrowed | Capture, compare, hash, and ledger B7-REF-003 through B7-REF-010; keep every private image ignored and untracked. |
+| REPO-010 | High | `PLAN.md:100-102,497`; `B7-REF-001/002` ledgered; B7-REF-003 Reader side pinned | Partially resolved; acceptance blocker remains | B7 | Existing parity screenshot entry narrowed | Capture the corrected B7-REF-003 Onionskin state, then compare, hash, and ledger B7-REF-003 through B7-REF-010; keep every private image ignored and untracked. |
 | REPO-011 | Medium | `crates/app/tests/guarantees.rs:6-65` | Confirmed open | B6 | Added by this audit | Landed guarantees execute or point to real enforcing tests; future ones stay explicit. |
 | REPO-012 | Medium | `packaging/README.md:34` | Confirmed status defect | B6 | Added by this audit | Packaging docs exactly match current feature flags and prerequisites. |
 

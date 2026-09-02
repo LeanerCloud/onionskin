@@ -168,9 +168,14 @@ source IDs, severity, ownership, and required proof.
   mouse-up.
 - **Partially resolved in B7 (REPO-010):** the Reader 25.001.20438 unified-shell
   and document-Find baselines and matching Onionskin states are captured,
-  compared, hashed, and ledgered under the ignored parity directories. Eight
-  required states remain; private image bytes stay local-only per Legal posture
-  rule 4.
+  compared, hashed, and ledgered under the ignored parity directories. The clean
+  Reader Page Thumbnails reference is pinned. Its black-placeholder defect was
+  fixed at `4132a99` by rearming canvas polling after deferred thumbnail requests,
+  with a GPUI-loop-only regression. The corrected exact-window Onionskin capture
+  remains blocked while the macOS GUI session is locked and both displays are
+  asleep/inactive. Capture permission is allowed, but WindowServer rejects the
+  rectangle against the inactive displays, so eight required states remain
+  incomplete. Private image bytes stay local-only per Legal posture rule 4.
 
 ## 2026-08-31 forward-audit additions
 
@@ -196,8 +201,9 @@ source IDs, severity, ownership, and required proof.
   through pane feedback while cancellation remains silent.
 - **M2 parity acceptance (REPO-003/010; REPO-004 resolved):** this audit corrected
   the M2 plan header. Audit Task 2 reconciles all 403 Acrobat rows and adds an
-  executable totals contract. B7 has the privacy scaffold and first private
-  comparisons; it still owns the remaining eight states and final acceptance.
+  executable totals contract. B7 has the privacy scaffold, the first two private
+  comparisons, and the pinned Reader side plus code/test fix for B7-REF-003; it
+  still owns the eight incomplete states and final acceptance.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.

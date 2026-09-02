@@ -27,6 +27,18 @@ absolute paths when needed; this tracked manifest records filenames only.
 
 ## Capture blockers
 
+- B7 Page Thumbnails lifecycle fix, 2026-09-02T01:42Z: exact committed build
+  `4132a99` opened `two-page.pdf` after the focused GPUI lifecycle regression,
+  strict clippy, format check, and shell build passed. CoreGraphics reported the
+  Onionskin-only window as ID 12612 with bounds
+  `{X = 361, Y = 163, Width = 1078, Height = 877}`. `screencapture -l` and
+  exact-region capture failed, ScreenCaptureKit returned stream error -3811,
+  and the legacy CoreGraphics window-image path produced an all-black image.
+  Follow-up diagnostics found capture permission allowed, but the GUI session
+  locked and both displays asleep/inactive; WindowServer reported that the
+  capture rectangle intersected no display. No full-screen fallback was taken
+  and no B7 Task 1 screenshot is recorded. Retry the exact window after the
+  session is awake and unlocked.
 - B2.2 status/lifecycle hardening, 2026-09-01T19:15Z: focused regressions,
   full shell-support tests, strict clippy, and shell build passed. The fresh
   app window was PID 33128, CoreGraphics window ID 8802. `screencapture -l`
