@@ -234,7 +234,9 @@ impl TileStore {
 
     /// The most recently used entry for `page` at any zoom.
     fn newest_for_page(&self, page: usize) -> Option<usize> {
-        self.entries.iter().rposition(|entry| entry.key.page == page)
+        self.entries
+            .iter()
+            .rposition(|entry| entry.key.page == page)
     }
 
     /// Cache `base` as the render of `page` at its own zoom, replacing any

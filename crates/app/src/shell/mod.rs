@@ -680,10 +680,8 @@ impl Render for Canvas {
                             },
                         );
                         for page in paint.pages {
-                            window.paint_quad(fill(
-                                window_bounds(origin, page.rect),
-                                gpui::white(),
-                            ));
+                            window
+                                .paint_quad(fill(window_bounds(origin, page.rect), gpui::white()));
                         }
                         for tile in &paint.tiles {
                             let page = tile.page;

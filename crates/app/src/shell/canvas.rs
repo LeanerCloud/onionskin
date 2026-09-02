@@ -2414,7 +2414,9 @@ mod tests {
         model.resize(ViewPoint::default(), VIEWPORT).unwrap();
 
         let grab = point(px(100.0), px(100.0));
-        assert!(model.pointer_down(grab, 1.0, GpuiModifiers::default()).unwrap());
+        assert!(model
+            .pointer_down(grab, 1.0, GpuiModifiers::default())
+            .unwrap());
         let before = model.viewport.offset();
 
         // The chrome above the canvas grows by 50px. The pointer has not
@@ -4014,11 +4016,18 @@ mod tests {
         // composites is what carries the store over.
         model.tiles = TileStore::with_budget(raster().rgba().len());
         model.tiles.insert(0, raster());
-        assert_eq!(model.tiles.over_budget(), 0, "the setup starts under budget");
+        assert_eq!(
+            model.tiles.over_budget(),
+            0,
+            "the setup starts under budget"
+        );
 
         let paint = model.paint_list().expect("the frame paints");
 
-        assert!(!paint.tiles.is_empty(), "page zero painted from the scaled raster");
+        assert!(
+            !paint.tiles.is_empty(),
+            "page zero painted from the scaled raster"
+        );
         model.tiles.insert(9, raster());
         assert!(
             model.tiles.base(0).is_some(),
