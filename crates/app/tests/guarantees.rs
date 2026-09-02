@@ -1,7 +1,8 @@
-//! PLAN.md's guarantee tests, the spec as executable checks. Guarantee 5
-//! runs today (see `kernel_emptiness.rs`); the rest are named here so the
-//! suite has its final shape from day one and each one lands by deleting
-//! an `#[ignore]`.
+//! PLAN.md's guarantee tests, the spec as executable checks. A guarantee whose
+//! capability has landed either runs here or names the test that enforces it
+//! (guarantee 5 in `kernel_emptiness.rs`, 9 in `crates/core/benches/`, 1, 2 and
+//! 6 in `crates/cos/tests/`). One whose capability has not landed stays
+//! `#[ignore]`d, and its reason names the milestone PLAN.md gives it.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -15,19 +16,80 @@ const TINY_PDF_SHA256: &str = "98704aee8801c3738f9b38577f4c7917b82da5d770a8f4c1c
 
 /// Guarantee 1, round-trip: for every corpus file, open then save with no
 /// edit produces byte-identical output. A no-op save appends nothing.
+///
+/// Proved in `crates/cos/tests/roundtrip.rs`, where the parser and the writer
+/// are. `onionskin-app` neither depends on `cos` nor has a save path of its
+/// own: PLAN.md puts the app-level save at M3, so running the round-trip from
+/// here would mean a dependency and a second corpus walk added for a test that
+/// already exists. What this guarantee owns until M3 is that the enforcing
+/// test is still there, still switched on, still states both halves of the
+/// sentence, and is still reached by CI. Any of those quietly going away would
+/// otherwise leave guarantee 1 green and unmeasured.
 #[test]
-#[ignore = "lands with cos parse/save in M1"]
 fn a_save_with_no_edit_is_byte_identical_to_the_original() {
-    unimplemented!("needs cos open/save and the corpus fetch")
+    let source = enforcing_suite("roundtrip.rs", 1, &["seeds_round_trip_exactly"]);
+    for (marker, missing) in [
+        (
+            "document.incremental_section()",
+            "a no-op save is no longer asked what it appended",
+        ),
+        (
+            "non-empty-noop-save",
+            "a no-op save that appended bytes no longer fails",
+        ),
+        (
+            "save_to_vec",
+            "nothing is saved, so byte-identity is no longer compared",
+        ),
+    ] {
+        assert!(
+            source.contains(marker),
+            "roundtrip.rs no longer proves guarantee 1: {missing}"
+        );
+    }
+    assert_ci_reaches_the_cos_suite();
 }
 
 /// Guarantee 2, onionskin: open, edit, save produces the original bytes
 /// followed by exactly one incremental section, and truncating that
 /// section yields the byte-exact original back.
+///
+/// Proved in `crates/cos/tests/incremental.rs` over the tracked seeds, for the
+/// same reason guarantee 1 is proved in `roundtrip.rs`. This checks that the
+/// enforcing test still asserts each clause: the original prefix survives, the
+/// append is exactly one section, and the document's own `original_len` is the
+/// cut that undoes the edit.
 #[test]
-#[ignore = "lands with the incremental writer in M1"]
 fn an_edit_appends_one_incremental_section_that_truncates_away() {
-    unimplemented!("needs cos incremental save and core's edit graph")
+    let source = enforcing_suite(
+        "incremental.rs",
+        2,
+        &["editing_a_seed_appends_exactly_one_section"],
+    );
+    for (marker, missing) in [
+        (
+            "the original bytes must survive an edit untouched",
+            "the original prefix is no longer compared",
+        ),
+        (
+            "an edit must append exactly one incremental section",
+            "the section count is no longer pinned to one",
+        ),
+        (
+            "document.original_len()",
+            "the truncation point is no longer the one the document reports",
+        ),
+        (
+            "truncating the section must undo the edit",
+            "the roll-back half of the sentence is no longer checked",
+        ),
+    ] {
+        assert!(
+            source.contains(marker),
+            "incremental.rs no longer proves guarantee 2: {missing}"
+        );
+    }
+    assert_ci_reaches_the_cos_suite();
 }
 
 /// Guarantee 3, redaction: after redacting text T, the verifier extracts
@@ -50,10 +112,45 @@ fn annotating_a_signed_document_keeps_its_signature_valid() {
 /// Guarantee 6, repair: every file in the malformed corpus set opens;
 /// saving appends an incremental section carrying the repaired
 /// structures; the corrupt original bytes stay byte-intact beneath.
+///
+/// Proved in `crates/cos/tests/repair.rs`. That test needs `corpus/malformed`,
+/// which is gitignored, and a corpus-less run of it returns early and passes -
+/// so this guarantee also owns the CI step that generates the set. Without it
+/// the enforcing test is present, green, and measuring nothing.
 #[test]
-#[ignore = "lands with the cos scan-and-rebuild path in M1"]
 fn every_malformed_file_opens_and_repairs_into_a_new_section() {
-    unimplemented!("needs the cos repair path and the malformed corpus")
+    let source = enforcing_suite(
+        "repair.rs",
+        6,
+        &["every_malformed_file_repairs_and_saves_over_intact_original_bytes"],
+    );
+    for (marker, missing) in [
+        (
+            "guarantee test 6 requires the whole malformed set",
+            "a subset of the malformed files may now pass for the whole set",
+        ),
+        (
+            "the corrupt original bytes were not preserved",
+            "the original bytes beneath the section are no longer compared",
+        ),
+        (
+            "the appended section holds no cross-reference table",
+            "the appended section is no longer required to carry the repair",
+        ),
+    ] {
+        assert!(
+            source.contains(marker),
+            "repair.rs no longer proves guarantee 6: {missing}"
+        );
+    }
+    assert_ci_reaches_the_cos_suite();
+
+    let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+        .expect("the CI workflow is readable");
+    assert!(
+        job(&ci, "test").contains("./corpus/make-malformed.sh"),
+        "CI never generates corpus/malformed, so repair.rs skips it and guarantee 6 passes unmeasured"
+    );
 }
 
 /// Guarantee 7, forms compute: every file in the JS-forms corpus set
@@ -3007,6 +3104,53 @@ fn job(workflow: &str, name: &str) -> String {
         .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The source of the `crates/cos` test file that enforces guarantee `number`,
+/// having proved the file still claims that guarantee and still runs each
+/// named test as a plain `#[test]`. An `#[ignore]` or a rename between the
+/// attribute and the signature breaks the match, which is the point: a pointer
+/// guarantee is worth exactly as much as the pointer staying true.
+fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> String {
+    let path = workspace_root().join("crates/cos/tests").join(file);
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "{} is unreadable ({error}), so guarantee {number} is unchecked",
+            path.display()
+        )
+    });
+    assert!(
+        source.starts_with(&format!("//! Guarantee test {number}:")),
+        "{} no longer claims guarantee {number}",
+        path.display()
+    );
+    for name in tests {
+        assert!(
+            source.contains(&format!("\n#[test]\nfn {name}(")),
+            "{} no longer runs {name} as a plain #[test], so guarantee {number} is unchecked",
+            path.display()
+        );
+    }
+    source
+}
+
+/// Guarantees 1, 2 and 6 are enforced in `crates/cos`, which only helps if CI
+/// runs that crate's tests. It reaches them through the workspace suite, so
+/// both the command and the membership have to hold.
+fn assert_ci_reaches_the_cos_suite() {
+    let workspace = workspace_root();
+    let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
+        .expect("the CI workflow is readable");
+    assert!(
+        job(&ci, "test").contains("- run: cargo test --workspace"),
+        "CI no longer runs the workspace test suite, so the cos guarantees run nowhere"
+    );
+    let manifest = std::fs::read_to_string(workspace.join("Cargo.toml"))
+        .expect("the workspace manifest is readable");
+    assert!(
+        manifest.contains("\"crates/cos\","),
+        "crates/cos is not a workspace member, so `cargo test --workspace` does not reach it"
+    );
 }
 
 fn toml_section(document: &str, name: &str) -> String {

@@ -23,6 +23,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Guarantee test 6's malformed set. It is gitignored, and the repair test
+      # returns early when it is absent, so without this step that test is
+      # green and measuring nothing. Deterministic byte transforms of the
+      # tracked seeds: no network, 15 files, no cache worth keeping. One runner
+      # rather than the matrix, like the bench job - the repair path is byte
+      # manipulation with no platform dimension, and the generator needs bash
+      # and perl, which only the Linux runner is worth depending on for it.
+      - name: Generate the malformed corpus set
+        if: runner.os == 'Linux'
+        run: ./corpus/make-malformed.sh
       - run: cargo test --workspace
       # Guarantee test 5: with every plugin compiled out, the app still
       # builds and boots to a workspace that can do nothing.
