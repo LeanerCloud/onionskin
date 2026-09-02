@@ -1079,6 +1079,7 @@ impl ShellFrame {
             | MenuCommand::FitPage
             | MenuCommand::FitWidth
             | MenuCommand::FitHeight
+            | MenuCommand::FitVisible
             | MenuCommand::SinglePage
             | MenuCommand::SinglePageContinuous
             | MenuCommand::TwoPage
@@ -4460,6 +4461,45 @@ mod tests {
                 assert!(
                     frame.active_view_state(cx).unwrap().is_actual_size(),
                     "the zoom keystroke did not reach the canvas"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Fit Visible is the one zoom command that needs something from the
+    /// rendered page, so its route runs further than the others': keystroke,
+    /// action listener, deferred window update, canvas, raster. Pressed
+    /// rather than called, for the same reason every other route here is.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_fit_visible_keystroke_fits_the_pages_marks(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .update(cx, |canvas, _cx| {
+                        canvas
+                            .model
+                            .seed_visible_raster_for_test([0, 0, 0, 255])
+                            .expect("the visible page takes a raster");
+                    });
+                assert!(frame.active_view_state(cx).unwrap().fit_mode().is_some());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.fit-visible"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let fit = frame.active_view_state(cx).unwrap().fit_mode();
+                assert!(
+                    matches!(fit, Some(onionskin_core::FitMode::Visible(_))),
+                    "the fit visible keystroke did not reach the canvas: {fit:?}"
                 );
             })
             .unwrap();

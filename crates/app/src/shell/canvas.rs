@@ -8,8 +8,8 @@ use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
-    PagePoint, PageQuad, PageRect, Provenance, RenderRequest, RenderResponse, SearchOptions,
-    SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
+    PagePoint, PageQuad, PageRect, PageRenderRect, Provenance, RenderRequest, RenderResponse,
+    SearchOptions, SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
     ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
@@ -18,7 +18,7 @@ use onionskin_plugin_api::{
 };
 #[cfg(test)]
 use onionskin_render::PageRender;
-use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
+use onionskin_render::{BaseRaster, RasterBounds, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
 use super::input::{
@@ -108,6 +108,10 @@ pub(super) enum ViewAction {
     ZoomOut,
     ZoomIn,
     Fit(FitMode),
+    /// Fit the page's marks rather than its media box. The rectangle is not
+    /// carried here because only the canvas can read it off the rendered
+    /// page; the menu asks for the mode and the canvas supplies the bounds.
+    FitVisible,
     SetLayout(PageLayoutMode),
     SetShowCover(bool),
 }
@@ -155,6 +159,15 @@ pub enum CanvasError {
         limit: usize,
     },
     SnapshotEncode(String),
+    /// Fit Visible reads the page's marks off its rendered pixels, and this
+    /// page has none yet.
+    FitVisibleUnrendered {
+        page: PageIndex,
+    },
+    /// The page draws nothing, so there is no visible content to fit.
+    FitVisibleBlank {
+        page: PageIndex,
+    },
     WorkerSilent {
         pages: Vec<PageIndex>,
         waited: Duration,
@@ -201,6 +214,13 @@ impl fmt::Display for CanvasError {
                 "snapshot {width}x{height} exceeds the {limit}-byte RGBA clipboard limit"
             ),
             Self::SnapshotEncode(error) => write!(f, "cannot encode the snapshot: {error}"),
+            Self::FitVisibleUnrendered { page } => write!(
+                f,
+                "page {page} has not been rendered yet, so its visible content is not known"
+            ),
+            Self::FitVisibleBlank { page } => {
+                write!(f, "page {page} draws nothing, so it has no content to fit")
+            }
             Self::ToolOutOfRange { index, count } => {
                 write!(f, "tool {index} is outside a {count}-tool registry")
             }
@@ -238,6 +258,8 @@ impl std::error::Error for CanvasError {
             | Self::SnapshotEmpty { .. }
             | Self::SnapshotTooLarge { .. }
             | Self::SnapshotEncode(_)
+            | Self::FitVisibleUnrendered { .. }
+            | Self::FitVisibleBlank { .. }
             | Self::WorkerSilent { .. } => None,
         }
     }
@@ -816,6 +838,40 @@ impl CanvasModel {
 
     pub fn fit(&mut self, mode: FitMode) -> Result<bool, CanvasError> {
         self.apply_view_change(|viewport| viewport.fit(mode))
+    }
+
+    pub fn fit_visible(&mut self) -> Result<bool, CanvasError> {
+        let bounds = self.visible_content_bounds()?;
+        self.fit(FitMode::Visible(bounds))
+    }
+
+    /// The rectangle around everything the current page draws, in the page's
+    /// unrotated render space, which is what [`FitMode::Visible`] is
+    /// expressed in.
+    ///
+    /// Read off the raster the canvas already holds for the page, so it
+    /// covers whatever the renderer put on the paper: images and vector art
+    /// as well as text. There is no cheaper source that is not also a
+    /// narrower one.
+    fn visible_content_bounds(&self) -> Result<PageRenderRect, CanvasError> {
+        let page = self.viewport.current_page();
+        let (Some(source), Some(geometry)) =
+            (self.sources.get(&page), self.viewport.page_geometry(page))
+        else {
+            return Err(CanvasError::FitVisibleUnrendered { page });
+        };
+        let marks = source
+            .content_bounds()
+            .ok_or(CanvasError::FitVisibleBlank { page })?;
+        content_rect(
+            page,
+            marks,
+            (source.width(), source.height()),
+            ViewSize {
+                width: geometry.render_size.0 as f32,
+                height: geometry.render_size.1 as f32,
+            },
+        )
     }
 
     pub fn actual_size(&mut self) -> Result<bool, CanvasError> {
@@ -2195,6 +2251,33 @@ fn unpremultiplied_rgba(rgba: &[u8]) -> [u8; 4] {
 /// The transform is exact but the drag is not, so a corner may sit a
 /// fraction outside the page; the region is rounded outwards first so a
 /// thin selection still covers the pixels it touches.
+/// A rectangle of raster pixels as a rectangle of the page's unrotated
+/// render space.
+///
+/// Scaled by the raster's own pixel count rather than by its zoom: the
+/// renderer floors the pixel count, so dividing by the zoom can place the far
+/// edge a fraction outside the page, and `PageRenderRect::new` refuses that
+/// rather than fitting a rectangle the page does not contain.
+fn content_rect(
+    page: PageIndex,
+    marks: RasterBounds,
+    raster: (u32, u32),
+    page_size: ViewSize,
+) -> Result<PageRenderRect, CanvasError> {
+    let scale_x = page_size.width / raster.0 as f32;
+    let scale_y = page_size.height / raster.1 as f32;
+    let origin = ViewPoint {
+        x: marks.x as f32 * scale_x,
+        y: marks.y as f32 * scale_y,
+    };
+    let size = ViewSize {
+        width: (marks.width as f32 * scale_x).min(page_size.width - origin.x),
+        height: (marks.height as f32 * scale_y).min(page_size.height - origin.y),
+    };
+    PageRenderRect::new(page, origin, size, page_size)
+        .map_err(|error| ViewportError::from(error).into())
+}
+
 fn raster_crop(
     geometry: &PageGeometry,
     region: PageRect,
@@ -4999,5 +5082,180 @@ mod tests {
             .expect_err("a page the document does not have has no text");
 
         assert!(!refused.is_empty());
+    }
+
+    /// A model showing the one page a fresh canvas has measured, which is
+    /// the only page a raster can be built for without a render worker.
+    fn model_on_a_measured_page() -> CanvasModel {
+        let mut model = model();
+        model.first_page().expect("the first page is reachable");
+        assert!(model.viewport.page_geometry(0).is_some());
+        assert_eq!(model.viewport.current_page(), 0);
+        model
+    }
+
+    /// A raster of `page` at zoom 1, all paper except for `marks`.
+    fn paper_with_marks(model: &CanvasModel, page: PageIndex, marks: RasterBounds) -> BaseRaster {
+        let geometry = model
+            .viewport
+            .page_geometry(page)
+            .expect("the page is measured");
+        let (width, height) = onionskin_render::raster_size(
+            geometry.render_size.0 as f32,
+            geometry.render_size.1 as f32,
+            1.0,
+        )
+        .expect("the page raster fits");
+        let (width, height) = (u32::from(width), u32::from(height));
+        let mut rgba = vec![255u8; width as usize * height as usize * 4];
+        for y in marks.y..marks.y + marks.height {
+            for x in marks.x..marks.x + marks.width {
+                let start = (y as usize * width as usize + x as usize) * 4;
+                rgba[start..start + 4].copy_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+        BaseRaster::new(width, height, 1.0, rgba)
+    }
+
+    fn page_render_size(model: &CanvasModel, page: PageIndex) -> ViewSize {
+        let geometry = model
+            .viewport
+            .page_geometry(page)
+            .expect("the page is measured");
+        ViewSize {
+            width: geometry.render_size.0 as f32,
+            height: geometry.render_size.1 as f32,
+        }
+    }
+
+    /// The arithmetic Fit Visible rests on, including the far edge: the
+    /// renderer floors a page's pixel count, so a box that reaches the last
+    /// pixel has to land on the page edge and not past it.
+    #[test]
+    fn content_rect_maps_raster_pixels_onto_the_page() {
+        // A page 1.25 points to the raster pixel, so the scale is exact and
+        // the expected numbers are the arithmetic rather than its rounding.
+        let page_size = ViewSize {
+            width: 250.0,
+            height: 125.0,
+        };
+
+        let quarter = content_rect(
+            3,
+            RasterBounds {
+                x: 40,
+                y: 20,
+                width: 80,
+                height: 40,
+            },
+            (200, 100),
+            page_size,
+        )
+        .expect("a rectangle inside the page maps");
+        assert_eq!(quarter.page(), 3);
+        assert_eq!(quarter.origin(), ViewPoint { x: 50.0, y: 25.0 });
+        assert_eq!(
+            quarter.size(),
+            ViewSize {
+                width: 100.0,
+                height: 50.0
+            }
+        );
+
+        // The renderer floors a page's pixel count, so a page whose size is
+        // not a whole number of pixels scales back to a hair over its own
+        // width. The far edge has to land on the page, not past it, or
+        // `PageRenderRect::new` refuses the rectangle outright.
+        let fractional = ViewSize {
+            width: 250.7,
+            height: 125.3,
+        };
+        let whole = content_rect(
+            0,
+            RasterBounds {
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 100,
+            },
+            (200, 100),
+            fractional,
+        )
+        .expect("a rectangle covering the raster maps");
+        assert_eq!(whole.origin(), ViewPoint { x: 0.0, y: 0.0 });
+        assert_eq!(whole.size(), fractional, "the far edge is the page edge");
+    }
+
+    /// The whole point of the row: Fit Visible fits the marks, so a page that
+    /// draws in one corner ends up zoomed further in than Fit Page, and the
+    /// policy it holds names the rectangle the raster reported.
+    #[test]
+    fn fit_visible_fits_the_marks_rather_than_the_media_box() {
+        let mut model = model_on_a_measured_page();
+        let page = model.viewport.current_page();
+        let marks = RasterBounds {
+            x: 10,
+            y: 20,
+            width: 60,
+            height: 40,
+        };
+        let raster = paper_with_marks(&model, page, marks);
+        let expected = content_rect(
+            page,
+            marks,
+            (raster.width(), raster.height()),
+            page_render_size(&model, page),
+        )
+        .expect("the marks map onto the page");
+        model.sources.insert(page, raster);
+
+        model.fit(FitMode::Page).expect("the page fits");
+        let page_zoom = model.viewport.zoom();
+        assert!(model.fit_visible().expect("the marks fit"));
+
+        assert_eq!(
+            model.viewport.zoom_policy(),
+            onionskin_core::ZoomPolicy::Fit(FitMode::Visible(expected))
+        );
+        assert!(
+            model.viewport.zoom() > page_zoom,
+            "fitting a corner of the page should zoom past fitting all of it: {} is not more than {page_zoom}",
+            model.viewport.zoom()
+        );
+    }
+
+    /// Both refusals are named rather than silently doing nothing: a page
+    /// still rendering and a page that draws nothing are different answers,
+    /// and neither may be reported as a fit that happened.
+    #[test]
+    fn fit_visible_says_why_it_has_no_content_to_fit() {
+        let mut model = model_on_a_measured_page();
+        let page = model.viewport.current_page();
+
+        let unrendered = model.fit_visible().expect_err("no raster has arrived");
+        assert!(
+            matches!(unrendered, CanvasError::FitVisibleUnrendered { page: p } if p == page),
+            "{unrendered:?}"
+        );
+        assert!(unrendered.to_string().contains("has not been rendered"));
+
+        let blank = paper_with_marks(
+            &model,
+            page,
+            RasterBounds {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        );
+        model.sources.insert(page, blank);
+
+        let empty = model.fit_visible().expect_err("the page draws nothing");
+        assert!(
+            matches!(empty, CanvasError::FitVisibleBlank { page: p } if p == page),
+            "{empty:?}"
+        );
+        assert!(empty.to_string().contains("draws nothing"));
     }
 }

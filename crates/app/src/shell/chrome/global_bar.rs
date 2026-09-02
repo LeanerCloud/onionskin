@@ -117,6 +117,7 @@ pub(in crate::shell) enum MenuCommand {
     FitPage,
     FitWidth,
     FitHeight,
+    FitVisible,
     SinglePage,
     SinglePageContinuous,
     TwoPage,
@@ -567,6 +568,12 @@ fn view_menu_entries(
             fit_mode == Some(FitMode::Height),
         ),
         entry(
+            MenuCommand::FitVisible,
+            "Fit Visible",
+            availability,
+            matches!(fit_mode, Some(FitMode::Visible(_))),
+        ),
+        entry(
             MenuCommand::SinglePage,
             layout_label(PageLayoutMode::SinglePage),
             availability,
@@ -684,6 +691,7 @@ impl MenuCommand {
             Self::FitPage => ViewAction::Fit(FitMode::Page),
             Self::FitWidth => ViewAction::Fit(FitMode::Width),
             Self::FitHeight => ViewAction::Fit(FitMode::Height),
+            Self::FitVisible => ViewAction::FitVisible,
             Self::SinglePage => ViewAction::SetLayout(PageLayoutMode::SinglePage),
             Self::SinglePageContinuous => {
                 ViewAction::SetLayout(PageLayoutMode::SinglePageContinuous)
@@ -759,6 +767,7 @@ impl MenuCommand {
             | Self::FitPage
             | Self::FitWidth
             | Self::FitHeight
+            | Self::FitVisible
             | Self::SinglePage
             | Self::SinglePageContinuous
             | Self::TwoPage
@@ -898,6 +907,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::FitPage
         | MenuCommand::FitWidth
         | MenuCommand::FitHeight
+        | MenuCommand::FitVisible
         | MenuCommand::SinglePage
         | MenuCommand::SinglePageContinuous
         | MenuCommand::TwoPage

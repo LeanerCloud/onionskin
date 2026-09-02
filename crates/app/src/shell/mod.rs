@@ -409,6 +409,7 @@ impl Canvas {
             ViewAction::ZoomOut => self.model.zoom_out(),
             ViewAction::ZoomIn => self.model.zoom_in(),
             ViewAction::Fit(mode) => self.model.fit(mode),
+            ViewAction::FitVisible => self.model.fit_visible(),
             ViewAction::SetLayout(mode) => self.model.set_layout_mode(mode),
             ViewAction::SetShowCover(show_cover) => self.model.set_show_cover(show_cover),
         };

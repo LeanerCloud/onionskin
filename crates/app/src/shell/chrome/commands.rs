@@ -58,6 +58,7 @@ impl MenuCommand {
             MenuCommand::FitPage,
             MenuCommand::FitWidth,
             MenuCommand::FitHeight,
+            MenuCommand::FitVisible,
             MenuCommand::SinglePage,
             MenuCommand::SinglePageContinuous,
             MenuCommand::TwoPage,
@@ -116,6 +117,7 @@ impl MenuCommand {
             Self::FitPage => "view.fit-page",
             Self::FitWidth => "view.fit-width",
             Self::FitHeight => "view.fit-height",
+            Self::FitVisible => "view.fit-visible",
             Self::SinglePage => "view.single-page",
             Self::SinglePageContinuous => "view.single-page-continuous",
             Self::TwoPage => "view.two-page",
@@ -165,6 +167,7 @@ impl MenuCommand {
             Self::ZoomIn => "cmd-=",
             Self::FitPage => "cmd-0",
             Self::FitWidth => "cmd-2",
+            Self::FitVisible => "cmd-3",
             Self::ToggleNavigationPane => "f4",
             Self::FullScreen => "cmd-l",
             // Read Mode's Acrobat default is Ctrl+H, and cmd-h is Hide on
