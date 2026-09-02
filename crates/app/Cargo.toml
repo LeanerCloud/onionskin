@@ -60,6 +60,11 @@ onionskin-tools-protect = { workspace = true, optional = true }
 [dev-dependencies]
 # `crates/app/tests/a11y_probe.rs` parses what the probe build prints.
 serde_json.workspace = true
+# `crates/app/tests/guarantees.rs` reads the CI and release workflows to prove
+# the gates they declare are still gates. Two hand-written readers of that YAML
+# were each bypassed by a construct they did not model - a folded scalar, a
+# trailing comment - so it parses the real grammar instead.
+yaml-rust2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = { version = "0.26", optional = true }
