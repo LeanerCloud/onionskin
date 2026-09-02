@@ -2283,6 +2283,12 @@ fn rotated_size(width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
     }
 }
 
+/// Where one tile of a page's raster lands on screen.
+///
+/// The turn is `ViewRotation`'s own: a tile inside its raster turns exactly
+/// as a rectangle inside a page does, and the app had written those four arms
+/// out a second time. What is left here is the part core cannot know, scaling
+/// the turned raster onto the rectangle the layout gave the page.
 fn tile_rect(
     page: ViewRect,
     tile: TileRegion,
@@ -2290,36 +2296,33 @@ fn tile_rect(
     rotation: ViewRotation,
 ) -> ViewRect {
     let (raster_width, raster_height) = raster;
-    let TileRegion {
-        col,
-        row,
-        width,
-        height,
-    } = tile;
-    let x = col * TILE_SIZE;
-    let y = row * TILE_SIZE;
-    let (x, y, width, height) = match rotation {
-        ViewRotation::None => (x, y, width, height),
-        ViewRotation::Clockwise90 => (raster_height - y - height, x, height, width),
-        ViewRotation::HalfTurn => (
-            raster_width - x - width,
-            raster_height - y - height,
-            width,
-            height,
-        ),
-        ViewRotation::Clockwise270 => (y, raster_width - x - width, height, width),
-    };
+    let turned = rotation.rotate_rect_within(
+        ViewRect {
+            origin: ViewPoint {
+                x: (tile.col * TILE_SIZE) as f32,
+                y: (tile.row * TILE_SIZE) as f32,
+            },
+            size: ViewSize {
+                width: tile.width as f32,
+                height: tile.height as f32,
+            },
+        },
+        ViewSize {
+            width: raster_width as f32,
+            height: raster_height as f32,
+        },
+    );
     let (output_width, output_height) = rotated_size(raster_width, raster_height, rotation);
     let scale_x = page.size.width / output_width as f32;
     let scale_y = page.size.height / output_height as f32;
     ViewRect {
         origin: ViewPoint {
-            x: page.origin.x + x as f32 * scale_x,
-            y: page.origin.y + y as f32 * scale_y,
+            x: page.origin.x + turned.origin.x * scale_x,
+            y: page.origin.y + turned.origin.y * scale_y,
         },
         size: ViewSize {
-            width: width as f32 * scale_x,
-            height: height as f32 * scale_y,
+            width: turned.size.width * scale_x,
+            height: turned.size.height * scale_y,
         },
     }
 }

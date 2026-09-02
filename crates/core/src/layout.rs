@@ -210,8 +210,24 @@ impl ViewRotation {
     }
 
     pub(crate) fn rotate_rect(self, rect: PageRenderRect, page: ViewSize) -> ViewRect {
-        let origin = rect.origin();
-        let size = rect.size();
+        self.rotate_rect_within(
+            ViewRect {
+                origin: rect.origin(),
+                size: rect.size(),
+            },
+            page,
+        )
+    }
+
+    /// `rect` turned inside a `within`-sized box that turns with it, so a
+    /// quarter turn swaps both the rectangle's axes and the box's.
+    ///
+    /// Public because the same turn applies to a tile inside its page
+    /// raster, which the viewer's paint path needs and which is otherwise
+    /// four arms of identical algebra written a second time.
+    pub fn rotate_rect_within(self, rect: ViewRect, within: ViewSize) -> ViewRect {
+        let ViewRect { origin, size } = rect;
+        let page = within;
         match self {
             Self::None => ViewRect { origin, size },
             Self::Clockwise90 => ViewRect {
