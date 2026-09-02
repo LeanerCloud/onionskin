@@ -237,6 +237,20 @@ pub(in crate::shell) fn repair_notice(path: &Path, provenance: &Provenance) -> O
     ))
 }
 
+/// One frame's worth of canvas: what to paint, and where the canvas sits.
+///
+/// The origin is the model's own, recorded by `resize_for_bounds` at the top
+/// of this same frame. The paint closure used to take it from the element
+/// bounds instead, which left the canvas with two answers to where it is:
+/// hit testing and the accessibility rectangles read the model's, the pixels
+/// read gpui's. They agree only because gpui hands the same bounds to the
+/// prepaint and the paint, which is an assumption the canvas cannot state,
+/// and this is the mapping the rest of the canvas is already built on.
+struct CanvasFrame {
+    origin: Point<Pixels>,
+    paint: PaintList,
+}
+
 pub struct Canvas {
     model: CanvasModel,
     polling: bool,
@@ -262,12 +276,13 @@ impl Canvas {
         cx.notify();
     }
 
-    fn prepare_paint(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) -> PaintList {
+    fn prepare_paint(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) -> CanvasFrame {
         let result = self
             .resize_for_bounds(bounds)
             .and_then(|()| self.model.update())
             .and_then(|()| self.model.paint_list());
-        match result {
+        let origin = self.model.canvas_origin();
+        let paint = match result {
             Ok(paint) => {
                 self.arm_poll(cx);
                 paint
@@ -276,6 +291,10 @@ impl Canvas {
                 self.record_error(error, cx);
                 PaintList::default()
             }
+        };
+        CanvasFrame {
+            origin: point(px(origin.x), px(origin.y)),
+            paint,
         }
     }
 
@@ -646,7 +665,8 @@ impl Render for Canvas {
                     move |bounds, _window, cx| {
                         prepare_entity.update(cx, |canvas, cx| canvas.prepare_paint(bounds, cx))
                     },
-                    move |bounds, paint: PaintList, window, cx| {
+                    move |_bounds, frame: CanvasFrame, window, cx| {
+                        let CanvasFrame { origin, paint } = frame;
                         let exit_entity = exit_entity.clone();
                         window.on_mouse_event(
                             move |_event: &MouseExitEvent, phase, _window, cx| {
@@ -661,7 +681,7 @@ impl Render for Canvas {
                         );
                         for page in paint.pages {
                             window.paint_quad(fill(
-                                window_bounds(bounds.origin, page.rect),
+                                window_bounds(origin, page.rect),
                                 gpui::white(),
                             ));
                         }
@@ -669,11 +689,11 @@ impl Render for Canvas {
                             let page = tile.page;
                             let painted = window.with_content_mask(
                                 Some(gpui::ContentMask {
-                                    bounds: window_bounds(bounds.origin, tile.clip_rect),
+                                    bounds: window_bounds(origin, tile.clip_rect),
                                 }),
                                 |window| {
                                     window.paint_image(
-                                        window_bounds(bounds.origin, tile.rect),
+                                        window_bounds(origin, tile.rect),
                                         gpui::Corners::default(),
                                         tile.image.clone(),
                                         0,
@@ -695,10 +715,10 @@ impl Render for Canvas {
                                 });
                             }
                         }
-                        paint_overlays(&paint.overlays, bounds.origin, theme, window);
+                        paint_overlays(&paint.overlays, origin, theme, window);
                         for highlight in paint.highlights {
                             window.paint_quad(fill(
-                                window_bounds(bounds.origin, highlight.rect),
+                                window_bounds(origin, highlight.rect),
                                 Hsla::from(if highlight.current {
                                     theme.search_highlight_current
                                 } else {
