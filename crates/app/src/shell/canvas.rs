@@ -18,7 +18,7 @@ use onionskin_plugin_api::{
 };
 #[cfg(test)]
 use onionskin_render::PageRender;
-use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
+use onionskin_render::{BaseRaster, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
 use super::input::{
@@ -350,8 +350,11 @@ pub struct CanvasModel {
     registry: PluginRegistry,
     active_tool: Option<usize>,
     input: InputState,
+    /// Every raster the canvas holds, and the only place it holds one. A
+    /// second collection beside this one carried the same base rasters under
+    /// its own eviction policy, so a page scrolled out of view lost the
+    /// raster it would have been scaled from while the store still had it.
     tiles: TileStore,
-    sources: BTreeMap<PageIndex, BaseRaster>,
     geometry_requests: BTreeSet<PageIndex>,
     failed_geometry: BTreeSet<PageIndex>,
     requests: BTreeMap<PageIndex, RenderRequest>,
@@ -430,7 +433,6 @@ impl CanvasModel {
             active_tool,
             input: InputState::default(),
             tiles: TileStore::new(),
-            sources: BTreeMap::new(),
             geometry_requests: BTreeSet::new(),
             failed_geometry: BTreeSet::new(),
             requests: BTreeMap::new(),
@@ -633,11 +635,9 @@ impl CanvasModel {
     ///
     /// The store is keyed by page and zoom, not by the options the raster was
     /// produced with, so nothing in it would be rebuilt on its own. Clearing
-    /// it is not enough either: `sources` holds the same rasters for
-    /// placeholders and would put the old layer state straight back on
-    /// screen, and the signature has not changed, so without resetting it the
-    /// generation would not advance and the visible pages would never be
-    /// asked for again.
+    /// it is not enough either: the signature has not changed, so without
+    /// resetting it the generation would not advance and the visible pages
+    /// would never be asked for again.
     pub fn set_layer_visible(&mut self, layer: ObjRef, visible: bool) -> Result<bool, CanvasError> {
         if !self.document.set_layer_visible(layer, visible)? {
             return Ok(false);
@@ -659,7 +659,6 @@ impl CanvasModel {
         self.pending_thumbnails.clear();
         self.ready_thumbnails.clear();
         self.tiles.clear();
-        self.sources.clear();
         self.requests.clear();
         self.failed_renders.clear();
         self.placeholders.clear();
@@ -1312,7 +1311,6 @@ impl CanvasModel {
 
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
-        self.retain_visible_state(&visible);
         // Everything the store hands out from here until `paint_list` ends is
         // this frame's, and exempt from eviction: the exact-zoom cache, and
         // the other-zoom cache a rescaled placeholder paints from. Draining
@@ -1364,16 +1362,13 @@ impl CanvasModel {
         let mut displayed_images = BTreeSet::new();
 
         for placement in visible.into_iter().filter(|page| page.measured) {
-            let Some(source_zoom) = self.paint_source(placement.page, exact_zoom)? else {
+            // One lookup, so the raster the tiles are cut from and the zoom
+            // they are reported at cannot come from two places and disagree.
+            let Some(cache) = self.tiles.paint_source(placement.page, exact_zoom) else {
                 continue;
             };
-            let source = RasterPaintSource {
-                page: placement.page,
-                zoom: source_zoom,
-                rect: placement.rect,
-                rotation,
-            };
-            let raw_tiles = collect_tiles(&mut self.tiles, source, viewport_size);
+            let source_zoom = cache.base().zoom();
+            let raw_tiles = collect_tiles(cache, placement.rect, rotation, viewport_size);
             for raw in raw_tiles {
                 let key = TileImageKey::new(
                     placement.page,
@@ -1423,7 +1418,7 @@ impl CanvasModel {
         };
         let page = request.region.page;
         let (Some(source), Some(geometry)) =
-            (self.sources.get(&page), self.viewport.page_geometry(page))
+            (self.tiles.base(page), self.viewport.page_geometry(page))
         else {
             return Err(CanvasError::SnapshotUnrendered { page });
         };
@@ -1596,18 +1591,25 @@ impl CanvasModel {
         self.update_signature(&visible)
     }
 
-    fn retain_visible_state(&mut self, visible: &[PagePlacement]) {
-        let pages: BTreeSet<_> = visible.iter().map(|page| page.page).collect();
-        self.sources.retain(|page, _| pages.contains(page));
-    }
-
+    /// Ask for a render of every visible page that has no raster at the
+    /// current zoom yet.
+    ///
+    /// An unmeasured page is skipped by having no geometry rather than by
+    /// reading `PagePlacement::measured`: the layout answers both from the
+    /// same map, so asking for the geometry directly says what the render
+    /// needs and cannot disagree with the flag. It used to be a filter on the
+    /// flag and an `expect` on the geometry, which is one invariant asserted
+    /// twice.
     fn schedule_visible_renders(
         &mut self,
         visible: &[PagePlacement],
     ) -> Result<usize, CanvasError> {
         let zoom = self.viewport.zoom();
         let mut queued = 0;
-        for placement in visible.iter().filter(|page| page.measured) {
+        for placement in visible {
+            let Some(geometry) = self.viewport.page_geometry(placement.page).cloned() else {
+                continue;
+            };
             let request = RenderRequest {
                 page: placement.page,
                 zoom,
@@ -1619,12 +1621,9 @@ impl CanvasModel {
             {
                 continue;
             }
-            let geometry = self
-                .viewport
-                .page_geometry(placement.page)
-                .expect("a measured placement retains geometry")
-                .clone();
-            let source = self.sources.get(&placement.page);
+            // The raster the worker scales into the placeholder it answers
+            // with immediately, at whatever zoom the store still holds.
+            let source = self.tiles.base(placement.page);
             self.document
                 .request_render_with_geometry(request, &geometry, source)?;
             self.requests.insert(placement.page, request);
@@ -1641,21 +1640,17 @@ impl CanvasModel {
         self.responses += 1;
 
         match response {
-            RenderResponse::Placeholder(placeholder) => {
-                if let Some(source) = placeholder.source() {
-                    self.sources
-                        .entry(request.page)
-                        .or_insert_with(|| source.clone());
-                }
+            // The worker echoes back the raster the request carried, which is
+            // the one the store already holds, so there is nothing to keep:
+            // the placeholder is drawn by scaling that raster.
+            RenderResponse::Placeholder(_) => {
                 self.placeholders.insert(request.page);
             }
             RenderResponse::Raster { render, .. } => {
                 self.requests.remove(&request.page);
                 self.failed_renders.remove(&request.page);
                 self.placeholders.remove(&request.page);
-                let raster = render.raster;
-                self.sources.insert(request.page, raster.clone());
-                self.tiles.insert(request.page, raster);
+                self.tiles.insert(request.page, render.raster);
                 if render.warnings.is_empty() {
                     if matches!(
                         self.status.as_ref(),
@@ -1684,34 +1679,6 @@ impl CanvasModel {
             }
         }
         true
-    }
-
-    /// The zoom whose cached raster this page paints from, or `None` when it
-    /// has none yet.
-    ///
-    /// Only the zoom, because that plus the page is the store's key and the
-    /// store owns the raster's dimensions. Reporting a size here as well gave
-    /// the paint two sources for one fact, and the one it reported came from
-    /// `sources` while the tiles it cut came from the store.
-    fn paint_source(
-        &mut self,
-        page: PageIndex,
-        exact_zoom: f32,
-    ) -> Result<Option<f32>, CanvasError> {
-        if let Some(cache) = self.tiles.get(page, exact_zoom) {
-            let source = cache.base().clone();
-            self.sources.insert(page, source);
-            return Ok(Some(exact_zoom));
-        }
-
-        let Some(source) = self.sources.get(&page).cloned() else {
-            return Ok(None);
-        };
-        let source_zoom = source.zoom();
-        if self.tiles.get(page, source_zoom).is_none() {
-            self.tiles.insert(page, source);
-        }
-        Ok(Some(source_zoom))
     }
 
     /// What the active tool wants drawn this frame, in canvas coordinates.
@@ -1998,14 +1965,6 @@ struct RasterCrop {
     height: u32,
 }
 
-#[derive(Clone, Copy)]
-struct RasterPaintSource {
-    page: PageIndex,
-    zoom: f32,
-    rect: ViewRect,
-    rotation: ViewRotation,
-}
-
 /// The visible tiles of one page's cached raster.
 ///
 /// The raster's dimensions come from the cache being cut, never from the
@@ -2014,13 +1973,11 @@ struct RasterPaintSource {
 /// underflow. A caller that passed its own size could disagree with the store
 /// and did not have to be right.
 fn collect_tiles(
-    store: &mut TileStore,
-    source: RasterPaintSource,
+    cache: &TileCache,
+    page_rect: ViewRect,
+    rotation: ViewRotation,
     viewport_size: ViewSize,
 ) -> Vec<RawTile> {
-    let cache = store
-        .get(source.page, source.zoom)
-        .expect("the selected paint source has a tile cache");
     let (raster_width, raster_height) = (cache.base().width(), cache.base().height());
     let mut tiles = Vec::with_capacity((cache.cols() * cache.rows()) as usize);
     for row in 0..cache.rows() {
@@ -2031,12 +1988,7 @@ fn collect_tiles(
                 width: TILE_SIZE.min(raster_width - col * TILE_SIZE),
                 height: TILE_SIZE.min(raster_height - row * TILE_SIZE),
             };
-            let rect = tile_rect(
-                source.rect,
-                region,
-                (raster_width, raster_height),
-                source.rotation,
-            );
+            let rect = tile_rect(page_rect, region, (raster_width, raster_height), rotation);
             if !rect_intersects_viewport(rect, viewport_size) {
                 continue;
             }
@@ -2582,8 +2534,8 @@ mod tests {
 
     /// The canvas half of the P4 review's layer note. The store is keyed by
     /// page and zoom, not by the render options, so nothing in it would be
-    /// rebuilt on its own; and `sources` holds the same rasters for
-    /// placeholders, so leaving them would put the old layer state back on
+    /// rebuilt on its own; and it is also what the next placeholder is scaled
+    /// from, so a raster left in it would put the old layer state back on
     /// screen the moment the page was scrolled.
     #[test]
     fn toggling_a_layer_drops_every_cached_pixel_and_asks_for_the_pages_again() {
@@ -2597,7 +2549,7 @@ mod tests {
             },
         }));
         assert_eq!(model.tiles.len(), 1, "there is a cached raster to lose");
-        assert!(!model.sources.is_empty());
+        assert!(model.tiles.base(0).is_some());
         let generation = model.generation;
         let layer = model.layers().expect("the layers read")[0].clone();
 
@@ -2607,8 +2559,8 @@ mod tests {
 
         assert_eq!(model.tiles.len(), 0, "the cached composites are stale");
         assert!(
-            model.sources.is_empty(),
-            "a placeholder built from the old raster would show the old layers again"
+            model.tiles.base(0).is_none(),
+            "a placeholder scaled from the old raster would show the old layers again"
         );
         assert!(model.requests.is_empty());
         assert!(
@@ -2960,7 +2912,7 @@ mod tests {
     }
 
     /// A model with page zero rendered and painted once, which is what puts
-    /// a raster in `sources` for the snapshot path to crop.
+    /// a raster in the store for the snapshot path to crop.
     fn painted_model(rgba: [u8; 4]) -> CanvasModel {
         let mut model = model();
         let request = prepare_request(&mut model);
@@ -3004,9 +2956,9 @@ mod tests {
             .expect("the snapshot is produced")
             .expect("a request was pending");
 
-        let source = model.sources.get(&0).expect("page zero is rendered");
+        let source = model.tiles.base(0).expect("page zero is rendered").clone();
         let geometry = model.viewport.page_geometry(0).unwrap().clone();
-        let expected = raster_crop(&geometry, snapshot_region(), source).unwrap();
+        let expected = raster_crop(&geometry, snapshot_region(), &source).unwrap();
         let decoded = decode(&png);
         assert_eq!(decoded.dimensions(), (expected.width, expected.height));
         // The rasters are premultiplied and PNG is not, so a half-opaque
@@ -3808,14 +3760,12 @@ mod tests {
         ));
     }
 
-    /// `paint_source` and `collect_tiles` used to take the raster's size from
-    /// different places for the same `(page, zoom)`: the first from `sources`,
-    /// the second from the tile store. The store's `cols` and `rows` come from
-    /// its own base raster, so a disagreement made `raster_width - col *
-    /// TILE_SIZE` underflow and took the window down.
-    ///
-    /// No reachable sequence produces the disagreement in the current code, so
-    /// it is constructed here directly.
+    /// The paint used to read the raster's size from a collection beside the
+    /// store while cutting its tiles from the store's own cache. The store's
+    /// `cols` and `rows` come from its base raster, so a disagreement made
+    /// `raster_width - col * TILE_SIZE` underflow and took the window down.
+    /// One lookup makes the disagreement unconstructible; what is left to pin
+    /// is that the tile count follows the raster the store holds.
     #[test]
     fn the_tiles_of_a_page_are_cut_to_the_raster_the_store_holds() {
         let mut model = model();
@@ -3833,15 +3783,58 @@ mod tests {
                 vec![255; (TILE_SIZE * 2 * 4) as usize],
             ),
         );
-        // A stale raster of a different size under the same key.
-        model
-            .sources
-            .insert(0, BaseRaster::new(8, 1, source_zoom, vec![255; 32]));
 
         let paint = model.paint_list().expect("the page paints");
 
-        let tiles = paint.tiles.iter().filter(|tile| tile.page == 0).count();
-        assert_eq!(tiles, 2, "the store holds a raster two tiles wide");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert_eq!(tiles.len(), 2, "the store holds a raster two tiles wide");
+        assert!(tiles.iter().all(|tile| tile.source_zoom == source_zoom));
+    }
+
+    /// Decision 11 asks a page that comes back into view to be shown scaled
+    /// from whatever raster is still resident, rather than blank until the
+    /// re-render lands. A collection beside the store used to drop the page's
+    /// raster the moment it left the visible set, so the return trip found
+    /// nothing to scale even though the store still held the raster.
+    #[test]
+    fn a_page_returning_to_view_at_a_new_zoom_paints_the_resident_raster() {
+        let mut model = model();
+        let anchor = ViewPoint { x: 400.0, y: 300.0 };
+        // One page on screen at a time, so leaving page zero really leaves it.
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        model.viewport.zoom_to(1.0, anchor).unwrap();
+        model.first_page().unwrap();
+        assert_eq!(
+            model.viewport.visible_pages().unwrap().len(),
+            1,
+            "single-page layout shows one page"
+        );
+        let request = prepare_request(&mut model);
+        let rendered = raster(&model, request.page, request.zoom, [40, 40, 40, 255]);
+        assert!(model.apply_render_response(raster_response(request, rendered)));
+
+        // Page zero leaves the visible set, and the zoom moves while it is
+        // away, so it comes back needing a raster it was never rendered at.
+        model.go_to_page(1).unwrap();
+        let away = model.viewport.visible_pages().unwrap();
+        assert!(away.iter().all(|placement| placement.page != 0));
+        model.update().expect("the frame away from page zero runs");
+        model.viewport.zoom_to(3.0, anchor).unwrap();
+        model.go_to_page(0).unwrap();
+        model.update().expect("the returning frame runs");
+
+        let paint = model.paint_list().expect("the returning frame paints");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert!(
+            !tiles.is_empty(),
+            "page zero came back to a resident raster and still painted nothing"
+        );
+        assert!(
+            tiles.iter().all(|tile| tile.source_zoom == 1.0),
+            "the resident raster is the 1x one, scaled to the 3x view"
+        );
     }
 
     #[test]
@@ -3870,7 +3863,7 @@ mod tests {
 
         let old_raster = raster(&model, stale.page, stale.zoom, [255, 0, 0, 255]);
         assert!(!model.apply_render_response(raster_response(stale, old_raster)));
-        assert!(model.sources.is_empty());
+        assert!(model.tiles.is_empty());
     }
 
     #[test]
@@ -3883,7 +3876,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(model.drain_render_responses().unwrap(), 0);
-        assert!(model.sources.is_empty());
+        assert!(model.tiles.is_empty());
         assert!(!model.requests.contains_key(&stale.page));
         assert_ne!(model.generation, stale.generation);
     }
@@ -4008,7 +4001,7 @@ mod tests {
         model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 0);
         assert!(!model.paint_list().unwrap().tiles.is_empty());
-        assert_eq!(model.sources.get(&0).map(BaseRaster::zoom), Some(1.0));
+        assert_eq!(model.tiles.base(0).map(BaseRaster::zoom), Some(1.0));
 
         model.viewport.zoom_to(3.0, anchor).unwrap();
         let visible = model.viewport.visible_pages().unwrap();
@@ -4090,11 +4083,6 @@ mod tests {
         let visible = model.viewport.visible_pages().unwrap();
         assert_eq!(visible.len(), 2);
         model.tiles = TileStore::with_budget(1);
-        for page in 0..2 {
-            model
-                .sources
-                .insert(page, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
-        }
         model.tiles.begin_frame();
         for page in 0..2 {
             model
@@ -4114,10 +4102,6 @@ mod tests {
         let exact_zoom = model.viewport.zoom();
         let source_zoom = 1.0_f32;
         assert_ne!(exact_zoom.to_bits(), source_zoom.to_bits());
-        model.sources.insert(
-            0,
-            BaseRaster::new(1, 1, source_zoom, vec![200, 200, 200, 255]),
-        );
         model.tiles = TileStore::with_budget(1);
         model.tiles.begin_frame();
         model.tiles.insert(
