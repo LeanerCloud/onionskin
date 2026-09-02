@@ -65,6 +65,11 @@ serde_json.workspace = true
 # were each bypassed by a construct they did not model - a folded scalar, a
 # trailing comment - so it parses the real grammar instead.
 yaml-rust2 = "0.10"
+# ...and reads the cos suites the same way, for the same reason: three
+# hand-written comment strippers in a row were each defeated by a comment shape
+# they did not model. A comment is not a token, so a parser cannot be fooled by
+# one.
+syn = { version = "2", features = ["full", "visit", "parsing"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = { version = "0.26", optional = true }

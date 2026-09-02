@@ -10,6 +10,9 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{env, fs, process};
 
+use syn::punctuated::Punctuated;
+use syn::visit::Visit;
+use syn::{Expr, Token};
 use yaml_rust2::{Yaml, YamlLoader};
 
 const ALPHA_SHA256: &str = "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060";
@@ -32,7 +35,7 @@ fn a_save_with_no_edit_is_byte_identical_to_the_original() {
     // Every test in roundtrip.rs, so the sentence's "for every corpus file" is
     // not carried by the seeds alone: the external-corpus walks have pass
     // floors of their own and could otherwise be deleted with this green.
-    let source = enforcing_suite(
+    let suite = enforcing_suite(
         "roundtrip.rs",
         1,
         &[
@@ -45,29 +48,21 @@ fn a_save_with_no_edit_is_byte_identical_to_the_original() {
             "hayro_regression_corpus_round_trips",
         ],
     );
-    mentions(
-        &source,
-        "roundtrip.rs",
-        "document.incremental_section()",
+    suite.invokes(
+        "document.incremental_section",
         "a no-op save is no longer asked what it appended",
     );
-    states(
-        &source,
-        "roundtrip.rs",
+    suite.asserts(
         "non-empty-noop-save",
         "a no-op save that appended bytes no longer fails",
     );
-    mentions(
-        &source,
-        "roundtrip.rs",
-        "save_to_vec",
+    suite.invokes(
+        ".save_to_vec",
         "nothing is saved, so byte-identity is no longer compared",
     );
     // The floors are what stops an external corpus walk reporting a pass for
     // a set it silently stopped covering.
-    states(
-        &source,
-        "roundtrip.rs",
+    suite.asserts(
         "below the {floor_percent}% floor",
         "the external corpus walks no longer hold a floor on their pass counts",
     );
@@ -85,7 +80,7 @@ fn a_save_with_no_edit_is_byte_identical_to_the_original() {
 /// cut that undoes the edit.
 #[test]
 fn an_edit_appends_one_incremental_section_that_truncates_away() {
-    let source = enforcing_suite(
+    let suite = enforcing_suite(
         "incremental.rs",
         2,
         &[
@@ -107,12 +102,10 @@ fn an_edit_appends_one_incremental_section_that_truncates_away() {
             "the roll-back half of the sentence is no longer checked",
         ),
     ] {
-        states(&source, "incremental.rs", marker, missing);
+        suite.asserts(marker, missing);
     }
-    mentions(
-        &source,
-        "incremental.rs",
-        "document.original_len()",
+    suite.invokes(
+        "document.original_len",
         "the truncation point is no longer the one the document reports",
     );
     assert_ci_reaches_the_cos_suite();
@@ -147,7 +140,7 @@ fn annotating_a_signed_document_keeps_its_signature_valid() {
 fn every_malformed_file_opens_and_repairs_into_a_new_section() {
     // "Opens" and "repairs" are two clauses and two tests. Naming only the
     // repair walk would let the refusal case be deleted with this green.
-    let source = enforcing_suite(
+    let suite = enforcing_suite(
         "repair.rs",
         6,
         &[
@@ -170,7 +163,7 @@ fn every_malformed_file_opens_and_repairs_into_a_new_section() {
             "the appended section is no longer required to carry the repair",
         ),
     ] {
-        states(&source, "repair.rs", marker, missing);
+        suite.asserts(marker, missing);
     }
     assert_ci_reaches_the_cos_suite();
 
@@ -3385,13 +3378,14 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-/// The parsed workflow. Two hand-written readers of this YAML were bypassed by
-/// constructs they did not model: the first by a trailing comment, the second
-/// by a folded scalar, which YAML joins with spaces where a literal one joins
-/// with newlines, so `run: >` splits a gate across lines and splices `|| true`
-/// onto it while a line-wise reader still sees an exact match. A parser that
-/// implements the grammar has no such gap, and duplicate keys resolve
-/// last-wins here as YAML says rather than first-wins as a scan would.
+/// The parsed workflow, proved to declare no `defaults`. Two hand-written
+/// readers of this YAML were bypassed by constructs they did not model, so it
+/// is parsed rather than scanned; `defaults` is checked here because it is the
+/// one key that reaches every gate in the file at once. A workflow-level
+/// `defaults.run.shell` stops every `run:` step being the command it reads as,
+/// and a job-level `defaults.run.working-directory` points them all at another
+/// tree. Neither file needs the key, so the reviewed answer is that it is
+/// absent everywhere.
 fn workflow(file: &str) -> Yaml {
     let path = workspace_root().join(".github/workflows").join(file);
     let text = std::fs::read_to_string(&path)
@@ -3404,7 +3398,22 @@ fn workflow(file: &str) -> Yaml {
         "{} holds more than one YAML document",
         path.display()
     );
-    documents.remove(0)
+    let document = documents.remove(0);
+    assert!(
+        document["defaults"].is_badvalue(),
+        "{file} declares workflow-level defaults, which rewrite how every run: step in it is executed"
+    );
+    let jobs = document["jobs"]
+        .as_hash()
+        .unwrap_or_else(|| panic!("{file} declares no jobs"));
+    for (name, job) in jobs {
+        assert!(
+            job["defaults"].is_badvalue(),
+            "{file}'s {} job declares defaults, which rewrite how its run: steps are executed",
+            scalar(name).unwrap_or_default()
+        );
+    }
+    document
 }
 
 /// A scalar rendered as the text the workflow means. YAML types `1` as an
@@ -3424,7 +3433,7 @@ fn field(node: &Yaml, key: &str) -> Option<String> {
     scalar(&node[key])
 }
 
-/// The keys of a nested mapping, sorted, so a `with:` block can be pinned
+/// The keys of a mapping, sorted, so a step or a `with:` block can be pinned
 /// whole rather than one key at a time.
 fn keys_of(node: &Yaml) -> Vec<String> {
     let mut keys = node
@@ -3433,6 +3442,20 @@ fn keys_of(node: &Yaml) -> Vec<String> {
         .unwrap_or_default();
     keys.sort();
     keys
+}
+
+/// A step's keys, proved to be drawn only from the reviewed set. Listing the
+/// keys that must *not* appear is how `shell:` went unnoticed: `shell: cat`
+/// leaves the command byte-exact and stops it being a command at all, and
+/// `shell: python` reinterprets it just as thoroughly. An allowlist has no
+/// such gap, which is the same move that made the policy key-set pins work.
+fn assert_reviewed_keys(step: &Yaml, allowed: &[&str], what: &str) {
+    for key in keys_of(step) {
+        assert!(
+            allowed.contains(&key.as_str()),
+            "{what} declares `{key}:`, which is not one of the reviewed keys {allowed:?}"
+        );
+    }
 }
 
 fn job_of<'a>(workflow: &'a Yaml, name: &str) -> &'a Yaml {
@@ -3455,9 +3478,10 @@ fn action_of(step: &Yaml) -> Option<String> {
     Some(field(step, "uses")?.split_whitespace().next()?.to_owned())
 }
 
-/// The one step whose whole script is `command`. Not "a step one of whose
-/// lines is `command`": a script of `set +e`, the gate, `exit 0` runs the gate
-/// and still succeeds, and every line of it reads correctly on its own.
+/// The one step whose whole script is `command`, and which declares nothing
+/// beyond a name and that script. Not "a step one of whose lines is
+/// `command`": a script of `set +e`, the gate, `exit 0` runs the gate and still
+/// succeeds with every line reading correctly.
 fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
     let matching = steps
         .iter()
@@ -3470,34 +3494,166 @@ fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
         matching.len()
     );
     let step = matching[0];
-    for (key, why) in [
-        (
-            "if",
-            "is conditional, so it can be skipped without being removed",
-        ),
-        ("continue-on-error", "cannot fail the job"),
-        ("working-directory", "runs against another tree"),
-    ] {
-        assert_eq!(field(step, key), None, "the step running `{command}` {why}");
-    }
+    assert_reviewed_keys(
+        step,
+        &["name", "run"],
+        &format!("the step running `{command}`"),
+    );
     step
 }
 
-/// Whether a command builds the app binary. Word-wise, because `cargo b` is
-/// `cargo build`, and `--bin onionskin` produces the same
-/// `target/release/onionskin` that the packaging scripts ship.
+/// Whether a command builds the app binary. Any invocation of cargo that
+/// mentions `build` or `b`, because `cargo +stable build` and `cargo --offline
+/// build` are ordinary CI writing and `--bin onionskin` reaches the same
+/// `target/release/onionskin` the packaging scripts ship.
 fn builds_the_app(command: &str) -> bool {
-    command
-        .split_whitespace()
+    let mut words = command.split_whitespace();
+    words.next() == Some("cargo") && words.any(|word| matches!(word, "build" | "b"))
+}
+
+/// Every string literal reachable from an expression.
+#[derive(Default)]
+struct Strings(Vec<String>);
+
+impl<'ast> Visit<'ast> for Strings {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.0.push(literal.value());
+    }
+}
+
+fn strings_in<'ast>(args: impl IntoIterator<Item = &'ast Expr>) -> Vec<String> {
+    let mut found = Strings::default();
+    for arg in args {
+        found.visit_expr(arg);
+    }
+    found.0
+}
+
+/// What a `crates/cos` test file says, read from its syntax tree. Three
+/// hand-written comment strippers in a row were each defeated by a comment
+/// shape they did not model - a trailing `//`, an unbalanced quote before one,
+/// a `/* */` wrapper that left the assertion's message behind. A comment is
+/// not a token, so a parser cannot be answered by one.
+#[derive(Default)]
+struct Suite {
+    file: String,
+    /// Every string literal inside an assertion or a failure report.
+    messages: Vec<String>,
+    /// Every method call, as `.method` and as `receiver.method`.
+    invocations: Vec<String>,
+    /// Every `#[test]` fn that is not `#[ignore]`d.
+    live_tests: Vec<String>,
+}
+
+impl Suite {
+    fn asserts(&self, marker: &str, missing: &str) {
+        assert!(
+            self.messages.iter().any(|message| message.contains(marker)),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+
+    fn invokes(&self, call: &str, missing: &str) {
+        assert!(
+            self.invocations.iter().any(|found| found == call),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+}
+
+impl<'ast> Visit<'ast> for Suite {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        let marked = |name: &str| item.attrs.iter().any(|attr| attr.path().is_ident(name));
+        if marked("test") && !marked("ignore") {
+            self.live_tests.push(item.sig.ident.to_string());
+        }
+        syn::visit::visit_item_fn(self, item);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // syn leaves a macro's tokens unparsed, so its arguments are walked
+        // here or not at all.
+        if let Ok(args) = mac.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated) {
+            let name = mac
+                .path
+                .segments
+                .last()
+                .map(|segment| segment.ident.to_string())
+                .unwrap_or_default();
+            if matches!(
+                name.as_str(),
+                "assert" | "assert_eq" | "assert_ne" | "panic"
+            ) {
+                self.messages.extend(strings_in(&args));
+            }
+            for arg in &args {
+                self.visit_expr(arg);
+            }
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        self.invocations.push(format!(".{method}"));
+        if let Expr::Path(path) = &*call.receiver {
+            if let Some(receiver) = path.path.get_ident() {
+                self.invocations.push(format!("{receiver}.{method}"));
+            }
+        }
+        // The corpus walks fail a file through their tally rather than through
+        // an assert; the pass-count floor is then asserted against that tally,
+        // so it is the same thing said in the harness's own terms.
+        if matches!(method.as_str(), "fail" | "record") {
+            self.messages.extend(strings_in(&call.args));
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Expr::Path(path) = &*call.func {
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| last.ident == "Err")
+            {
+                self.messages.extend(strings_in(&call.args));
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// The inner doc comment of a parsed file, which is an attribute rather than a
+/// comment and so survives parsing.
+fn module_doc(file: &syn::File) -> String {
+    file.attrs
+        .iter()
+        .filter_map(|attr| {
+            let syn::Meta::NameValue(pair) = &attr.meta else {
+                return None;
+            };
+            if !attr.path().is_ident("doc") {
+                return None;
+            }
+            let Expr::Lit(literal) = &pair.value else {
+                return None;
+            };
+            let syn::Lit::Str(text) = &literal.lit else {
+                return None;
+            };
+            Some(text.value())
+        })
         .collect::<Vec<_>>()
-        .windows(2)
-        .any(|pair| pair[0] == "cargo" && matches!(pair[1], "build" | "b"))
+        .join("\n")
 }
 
 /// The `crates/cos` test file that enforces guarantee `number`, having proved
-/// the file still claims that guarantee and still runs each named test as a
-/// plain `#[test]`.
-fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> String {
+/// the file still claims that guarantee and still runs each named test.
+fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> Suite {
     let path = workspace_root().join("crates/cos/tests").join(file);
     let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
@@ -3505,84 +3661,31 @@ fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> String {
             path.display()
         )
     });
+    let parsed = syn::parse_file(&source).unwrap_or_else(|error| {
+        panic!(
+            "{} does not parse ({error}), so guarantee {number} cannot be read",
+            path.display()
+        )
+    });
     assert!(
-        source.starts_with(&format!("//! Guarantee test {number}:")),
+        module_doc(&parsed)
+            .trim_start()
+            .starts_with(&format!("Guarantee test {number}:")),
         "{} no longer claims guarantee {number}",
         path.display()
     );
-    let code = code_lines(&source).join("\n");
+    let mut suite = Suite {
+        file: file.to_owned(),
+        ..Suite::default()
+    };
+    suite.visit_file(&parsed);
     for name in tests {
         assert!(
-            code.contains(&format!("\n#[test]\nfn {name}(")),
-            "{file} no longer runs {name} as a plain #[test], so guarantee {number} is unchecked"
+            suite.live_tests.iter().any(|live| live == name),
+            "{file} no longer runs {name} as a live #[test], so guarantee {number} is unchecked"
         );
     }
-    source
-}
-
-/// A Rust source with its whole-line comments dropped.
-fn code_lines(source: &str) -> Vec<&str> {
-    source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .collect()
-}
-
-/// Whether `marker` appears on `line` as code rather than inside a trailing
-/// comment.
-fn stated_on(line: &str, marker: &str) -> bool {
-    line.find(marker)
-        .is_some_and(|found| line.find("//").is_none_or(|comment| found < comment))
-}
-
-/// Proves `marker` is stated by an assertion or a failure report rather than
-/// merely present. Two ways an assertion can be deleted and go on reading as
-/// if it were there: leave its message as a whole-line comment, which
-/// `code_lines` drops, or as a trailing one on a live line, which is why the
-/// marker must come before any `//` on its own line and the statement holding
-/// it must open with the assertion itself.
-fn states(source: &str, file: &str, marker: &str, missing: &str) {
-    let code = code_lines(source);
-    let at = code
-        .iter()
-        .position(|line| stated_on(line, marker))
-        .unwrap_or_else(|| panic!("{file} no longer proves its guarantee: {missing}"));
-    let from = code[..at]
-        .iter()
-        .rposition(|line| {
-            let end = line.trim_end();
-            end.ends_with(';') || end.ends_with('{') || end.ends_with('}')
-        })
-        .map_or(0, |line| line + 1);
-    let statement = code[from..=at].join("\n");
-    // The corpus walks fail a file through their tally rather than through an
-    // assert; the pass-count floor is then asserted against that tally, so it
-    // is the same thing said in the harness's own terms.
-    assert!(
-        [
-            "assert!",
-            "assert_eq!",
-            "assert_ne!",
-            "panic!",
-            "return Err(",
-            "Err(",
-            "tally.fail(",
-        ]
-        .iter()
-        .any(|opener| statement.trim_start().starts_with(opener)),
-        "{file} no longer proves its guarantee: {missing} (the text is still there, outside any assertion)"
-    );
-}
-
-/// Proves `marker` appears in code rather than in a comment, for a marker that
-/// is an expression rather than a message and so has no assertion to sit in.
-fn mentions(source: &str, file: &str, marker: &str, missing: &str) {
-    assert!(
-        code_lines(source)
-            .iter()
-            .any(|line| stated_on(line, marker)),
-        "{file} no longer proves its guarantee: {missing}"
-    );
+    suite
 }
 
 /// Guarantees 1, 2 and 6 are enforced in `crates/cos`, which only helps if CI
@@ -3619,7 +3722,7 @@ fn toml_section(document: &str, name: &str) -> Vec<String> {
 /// Every table header the document declares, sorted. `toml_section` stops at
 /// the next `[`, so a sub-table such as `[[licenses.clarify]]` would otherwise
 /// stay invisible to the key-set pins while cargo-deny obeys it, which is
-/// enough to launder a crate's license past the allow-list with everything
+/// enough to relabel a crate's license past the allow-list with everything
 /// green.
 fn policy_sections(document: &str) -> Vec<String> {
     let mut headers = document
