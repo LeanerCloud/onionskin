@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
+use gpui::{Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
@@ -1085,6 +1085,22 @@ impl CanvasModel {
         self.canvas_origin
     }
 
+    /// A window point in the canvas's own coordinates.
+    ///
+    /// The one place the canvas origin is subtracted. Hit testing, panning
+    /// and the zoom anchors used to do it in three places across two modules,
+    /// and one of the three left it out: a pan tracked raw window points,
+    /// which agree with these only while the origin holds still. When it
+    /// moves mid-drag, the canvas-local delta is the one that keeps the
+    /// content the pointer grabbed under the pointer, because the content
+    /// moved with the origin and the pointer did not.
+    fn canvas_point(&self, window: Point<Pixels>) -> ViewPoint {
+        ViewPoint {
+            x: f32::from(window.x) - self.canvas_origin.x,
+            y: f32::from(window.y) - self.canvas_origin.y,
+        }
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -1176,12 +1192,15 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// `at` is the zoom anchor in window coordinates, as the platform
+    /// reports it; `delta` is a displacement, which no origin applies to.
     pub fn scroll(
         &mut self,
         delta: ViewPoint,
         zooming: bool,
-        at: ViewPoint,
+        at: Point<Pixels>,
     ) -> Result<(), CanvasError> {
+        let at = self.canvas_point(at);
         self.viewport.scroll(delta, zooming, at)?;
         Ok(())
     }
@@ -1190,10 +1209,11 @@ impl CanvasModel {
     /// anything else. The filter lives here, at the OS event boundary, rather
     /// than in the viewport, which treats a non-positive factor as the error
     /// it is.
-    pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, CanvasError> {
+    pub fn pinch(&mut self, factor: f32, at: Point<Pixels>) -> Result<bool, CanvasError> {
         if !(factor.is_finite() && factor > 0.0) {
             return Ok(false);
         }
+        let at = self.canvas_point(at);
         self.viewport.pinch(factor, at)?;
         Ok(true)
     }
@@ -1205,12 +1225,13 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
     ) -> Result<bool, CanvasError> {
         validate_pressure(pressure)?;
+        let at = self.canvas_point(position);
         if self.active_tool.is_none() {
-            self.input.begin_pan(window_point(position));
+            self.input.begin_pan(at);
             return Ok(true);
         }
 
-        let Some(input) = self.map_pointer(position, pressure, modifiers)? else {
+        let Some(input) = self.map_pointer(at, pressure, modifiers)? else {
             return Ok(false);
         };
         self.input.begin_tool();
@@ -1225,9 +1246,8 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
         left_button_pressed: bool,
     ) -> Result<bool, CanvasError> {
-        let update = self
-            .input
-            .move_to(window_point(position), left_button_pressed);
+        let at = self.canvas_point(position);
+        let update = self.input.move_to(at, left_button_pressed);
         if let Err(error) = validate_pressure(pressure) {
             let cancelled_tool = matches!(update, Some(DragUpdate::CancelTool))
                 || matches!(self.input.cancel(), Some(DragUpdate::CancelTool));
@@ -1242,7 +1262,7 @@ impl CanvasModel {
                 Ok(true)
             }
             Some(DragUpdate::ToolMove) => {
-                let input = match self.map_pointer(position, pressure, modifiers) {
+                let input = match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => input,
                     Ok(None) => {
                         self.input.cancel();
@@ -1272,6 +1292,7 @@ impl CanvasModel {
         pressure: f32,
         modifiers: GpuiModifiers,
     ) -> Result<bool, CanvasError> {
+        let at = self.canvas_point(position);
         let drag = self.input.end();
         if let Err(error) = validate_pressure(pressure) {
             if drag == Some(DragKind::Tool) {
@@ -1282,7 +1303,7 @@ impl CanvasModel {
         match drag {
             Some(DragKind::Pan) => Ok(true),
             Some(DragKind::Tool) => {
-                match self.map_pointer(position, pressure, modifiers) {
+                match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => self.dispatch_tool(ToolPointerPhase::Up, input),
                     Ok(None) => self.cancel_active_tool(),
                     Err(error) => {
@@ -1754,17 +1775,11 @@ impl CanvasModel {
 
     fn map_pointer(
         &self,
-        position: Point<Pixels>,
+        at: ViewPoint,
         pressure: f32,
         modifiers: GpuiModifiers,
     ) -> Result<Option<PointerInput>, CanvasError> {
-        Ok(pointer_input(
-            &self.viewport,
-            position,
-            point(px(self.canvas_origin.x), px(self.canvas_origin.y)),
-            pressure,
-            modifiers,
-        )?)
+        Ok(pointer_input(&self.viewport, at, pressure, modifiers)?)
     }
 
     fn dispatch_tool(&mut self, phase: ToolPointerPhase, input: PointerInput) {
@@ -1843,13 +1858,6 @@ fn axis_delta(origin: f32, extent: f32, viewport: f32) -> f32 {
         return 0.0;
     }
     (viewport - extent) / 2.0 - origin
-}
-
-fn window_point(point: Point<Pixels>) -> ViewPoint {
-    ViewPoint {
-        x: f32::from(point.x),
-        y: f32::from(point.y),
-    }
 }
 
 /// The axis-aligned extent of four mapped corners. A marquee is dragged
@@ -2342,6 +2350,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
+    use gpui::{point, px};
     use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode};
     use onionskin_plugin_api::{ToolCtx, ToolPlugin};
     use onionskin_render::{InterpreterWarning, PageRender, RenderError};
@@ -2355,6 +2364,54 @@ mod tests {
 
     fn model() -> CanvasModel {
         model_with_registry(PluginRegistry::new())
+    }
+
+    /// The canvas origin moves whenever the chrome around it changes size,
+    /// and a pan can be in progress across that move. The grabbed content
+    /// moves with the origin while the pointer does not, so the viewport has
+    /// to follow by the same amount to keep the two together. Tracking raw
+    /// window points instead reports no movement at all, and the page stays
+    /// where the origin left it.
+    #[test]
+    fn a_pan_follows_the_canvas_origin_when_it_moves_mid_drag() {
+        let mut model = model();
+        assert!(
+            model.active_tool.is_none(),
+            "a pointer press pans only when no tool has it"
+        );
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        // Zoomed in and away from the ends, so the pan has room in both
+        // directions and cannot be clamped into looking like a no-op.
+        model
+            .viewport
+            .zoom_to(4.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        model.go_to_page(1).unwrap();
+        model.resize(ViewPoint::default(), VIEWPORT).unwrap();
+
+        let grab = point(px(100.0), px(100.0));
+        assert!(model.pointer_down(grab, 1.0, GpuiModifiers::default()).unwrap());
+        let before = model.viewport.offset();
+
+        // The chrome above the canvas grows by 50px. The pointer has not
+        // moved; the document under it has.
+        model
+            .resize(ViewPoint { x: 0.0, y: 50.0 }, VIEWPORT)
+            .unwrap();
+        assert!(model
+            .pointer_move(grab, 1.0, GpuiModifiers::default(), true)
+            .unwrap());
+
+        assert_eq!(
+            model.viewport.offset(),
+            ViewPoint {
+                x: before.x,
+                y: before.y + 50.0
+            },
+            "the view did not follow the origin, so the grabbed content slid \
+             out from under the pointer"
+        );
     }
 
     fn model_with_registry(registry: PluginRegistry) -> CanvasModel {
@@ -3170,8 +3227,10 @@ mod tests {
         let expected: [PointerInput; 3] = std::array::from_fn(|index| {
             pointer_input(
                 model.viewport(),
-                positions[index],
-                point(px(origin.x), px(origin.y)),
+                ViewPoint {
+                    x: f32::from(positions[index].x) - origin.x,
+                    y: f32::from(positions[index].y) - origin.y,
+                },
                 pressures[index],
                 modifiers[index],
             )

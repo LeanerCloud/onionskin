@@ -539,14 +539,6 @@ impl Canvas {
         document
     }
 
-    fn local_point(&self, point: Point<Pixels>) -> ViewPoint {
-        let origin = self.model.canvas_origin();
-        ViewPoint {
-            x: f32::from(point.x) - origin.x,
-            y: f32::from(point.y) - origin.y,
-        }
-    }
-
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -604,7 +596,7 @@ impl Canvas {
                 y: f32::from(delta.y),
             },
             event.modifiers.control || event.modifiers.platform,
-            self.local_point(event.position),
+            event.position,
         );
         self.handle_change(result.map(|()| true), cx);
     }
@@ -613,9 +605,7 @@ impl Canvas {
         if event.phase != TouchPhase::Moved {
             return;
         }
-        let result = self
-            .model
-            .pinch(event.delta, self.local_point(event.position));
+        let result = self.model.pinch(event.delta, event.position);
         self.handle_change(result, cx);
     }
 }
