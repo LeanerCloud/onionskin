@@ -313,7 +313,7 @@ impl ShellAccessibility {
     /// Attach a client the way a screen reader attaches one, for a test with
     /// no screen reader to do it.
     #[cfg(all(test, feature = "shell-test-support"))]
-    pub(in crate::shell) fn attach_client(&mut self) {
+    pub(in crate::shell) fn attach_client(&self) {
         self.adapter
             .as_ref()
             .expect("the adapter is attached on the first frame")
@@ -357,7 +357,7 @@ impl ShellAccessibility {
         adapter.publish(root, self.ring.focused());
     }
 
-    /// What a screen reader asked the shell to do since the last frame.
+    /// What a screen reader has asked the shell to do and not been given.
     pub(in crate::shell) fn take_requests(
         &mut self,
     ) -> Vec<(gpui::ElementId, crate::a11y::Request)> {

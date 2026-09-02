@@ -7264,6 +7264,42 @@ mod tests {
         );
     }
 
+    /// A keymap that binds a bare arrow still gets it.
+    ///
+    /// The focus ring binds the four arrows in the shell's own key context,
+    /// which GPUI prefers over the context-less bindings the keymap installs,
+    /// so a user who binds Up to Previous Page could lose it to the ring.
+    /// Driven through a real keymap file and a real keystroke, because which
+    /// of two bindings wins is a question only dispatch can answer.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keymap_binding_on_a_bare_arrow_still_runs(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("arrow-keymap");
+        let file = dir.join(crate::config::KEYMAP_FILE);
+        std::fs::write(&file, "{\"view.previous-page\": \"up\"}")
+            .expect("the test can write its own keymap");
+        let (window, bindings) =
+            bound_window_in(&["two-page.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(
+            keystroke_for(&bindings, "view.previous-page"),
+            "up",
+            "the keymap file did not reach the window"
+        );
+        cx.run_until_parked();
+        let before = current_page(window, cx);
+        assert!(before > 0, "the fixture opens past the first page");
+
+        cx.simulate_keystrokes(window.into(), "up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            current_page(window, cx),
+            before - 1,
+            "the ring took the arrow the keymap bound"
+        );
+    }
+
     /// The UI-thread extraction the ledger records: the shell parsed every
     /// visible page's content stream on every frame, whether or not anything
     /// was listening, so a scroll paid for text nobody could hear.

@@ -202,7 +202,7 @@ impl Adapter {
         self.shared.activate();
     }
 
-    /// Everything a screen reader asked for since the last frame, resolved
+    /// Everything a screen reader has asked for and not been given, resolved
     /// back to the elements it named.
     ///
     /// A request naming a node the shell no longer publishes is dropped: the
