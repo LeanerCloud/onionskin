@@ -1756,3 +1756,226 @@ is carried as one branch or as a hedge. Whether Starred paths leak absolute
 home directories, which is the residual `recents.rs` already carries.
 **Mutation that must break its tests:** opening a second `core::Document` for
 New Window must fail the shared-undo test.
+
+---
+
+## 5. Dependency graph, order and contention
+
+Three roots, all startable on day one: **P0** (splitting `ShellFrame`, app only),
+**P1** (cos, kernel only) and **P1b** (crypto, if section 9 decision A takes it).
+They touch disjoint crates, so day one has three branches and no conflict.
+
+```
+P0  split ShellFrame                    P1  cos edit surface         P1b crypto (conditional)
+ │   (app only, no behaviour change)      └── P2  core::edit  (graph, undo/redo)
+ │                                             ├── P3  core::save  (section, preview, generations)
+ │                                             │    ├── P12 combine + split      (also P5, P11)
+ │                                             │    ├── P13 properties/bookmarks (also P0, P5, P10)
+ │                                             │    ├── P14 image import/export, compress (also P12)
+ │                                             │    └── P15 print: imposition + file backend (also P6)
+ │                                             │         └── P16 print: macOS backend
+ │                                             ├── P4  core::structure
+ │                                             │    ├── P5  core::pages  (the transformation)
+ │                                             │    │    └── P11 tools-organize      (also P7)
+ │                                             │    └── P6  core::annots
+ │                                             │         ├── P8  tools-comment: text markup   (also P7)
+ │                                             │         ├── P9  tools-comment: shapes and ink (after P8)
+ │                                             │         └── P10 tools-comment: stamps, summary (also P12, P14)
+ │                                             └── P7  plugin-api edit contract   (also P0)
+ │
+ ├── P17 print dialog        (also P15, P16)
+ ├── P18 save/undo/dirty/recovery   (also P3)
+ ├── P19 skins panel         (also P1, P3)
+ ├── P20 comments pane       (also P8, P9, P10)
+ ├── P21 organize grid       (also P11)
+ └── P22 remaining shell rows
+```
+
+**Critical path.** `P1 → P2 → P4 → P5 → P11 → P21`. Six packages, and the two
+longest of them (P5 and P11) are the two with the highest correctness risk, which
+is the schedule's real hazard rather than its length. The print chain
+(`P1 → P2 → P3 → P15 → P16 → P17`) is the same depth and mostly independent, so
+it is the natural second track.
+
+**Parallelism.**
+
+- P0 runs alone in `crates/app` from day one and must finish before any of P17
+  through P22 starts. Nothing else touches `crates/app`, so it blocks nobody.
+- P1b touches only `crates/crypto` and a narrow seam in `crates/cos`, so it runs
+  the whole milestone alongside everything else.
+- Once P2 lands, P3, P4 and P7 are three independent branches in `crates/core`
+  and `crates/plugin-api`.
+- P5 and P6 are independent of each other; both need P4.
+- P8, P9 and P10 are strictly ordered among themselves, on purpose: P8 gives P6's
+  appearance generator one consumer's worth of feedback before twelve more
+  arrive, and P9 gives the shape P10's stamps reuse.
+- P12, P13 and P14 are three independent branches in `plugins/commands-core` and
+  `plugins/codecs-common`, and they share only `Cargo.lock`.
+- P15 is windowless and in a crate nobody else touches, so it runs from the
+  moment P3 and P6 land.
+
+**Contention, and the order it forces.** M2's audit named
+`crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and M3 has
+six packages in `crates/app`. After P0 splits it, each app package owns a
+distinct new module, and the remaining shared files are the two match statements
+(`chrome/menu.rs`'s command dispatch and `chrome/context.rs`'s availability
+table), plus `panes/mod.rs`'s `NavigationPane` list, `commands.rs`'s
+`MenuCommand` table, and `Cargo.lock`. All of those are append-only in these
+packages, so a rebase resolves them without judgement. To keep it that way, the
+app packages land in a fixed order:
+
+1. **P18 first.** It introduces the dirty state, the saved mark's UI reading and
+   four global commands that every other app package reads or extends. A save
+   and undo model rebased under five branches is worse than five branches
+   rebasing under it.
+2. **P19 second.** It is the first consumer of the rail-plus-side-panel surface
+   that P20 also uses, so it sets that shape.
+3. **P20 third**, **P21 fourth**: both add a pane-shaped surface, and P20's is
+   the one that also flips the quick action gates.
+4. **P17 fifth.** It adds a dialog, which is the least entangled of the six, and
+   it depends on the longest chain (P15 and P16), so it is naturally last of the
+   substantial ones.
+5. **P22 last.** Nine small changes across many files is exactly the shape that
+   rebases cleanly under everything and painfully over anything.
+
+Whoever rebases re-runs `cargo test -p onionskin-app --no-default-features
+--features shell,shell-test-support` rather than trusting the merge, which is
+the same rule M2's plan set and for the same reason.
+
+**One split for ordering.** P4 needs `corpus/tagged/` to exist, and populating it
+is a `corpus/fetch.sh` change plus a CI step. Both ship **with P4**, not with a
+later package, because a suite that skips its corpus silently is exactly how
+guarantee 6 stayed green and unmeasured for a milestone (section 8, item 2).
+
+---
+
+## 6. Parity row ledger: all 99 M3 rows
+
+Every M3 row belongs to exactly one package or is deferred with a reason. Row
+text is abbreviated; the source of truth is `ACROBAT-PARITY.md`, and the M3 rows
+are recoverable with:
+
+```sh
+awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY.md
+```
+
+| # | Parity section | Row | Package |
+|---|---|---|---|
+| 1 | Application shell | Convert (global bar entry point) | P14 |
+| 2 | Application shell | Undo / Redo icons on the global bar | P18 |
+| 3 | Application shell | Save / Save As in the global bar | P18 |
+| 4 | Application shell | Print button | P17 |
+| 5 | Application shell | Home view: Starred | P22 |
+| 6 | Application shell | Manage Tools / customize the tool rail | P22 |
+| 7 | Application shell | Autosave and crash recovery | P18 |
+| 8 | Application shell | Window menu | P22 |
+| 9 | Menus | File > Create | P14 |
+| 10 | Menus | File > Save | P18 |
+| 11 | Menus | File > Save As | P18 |
+| 12 | Menus | File > Save as Other | P13 |
+| 13 | Menus | File > Revert | P18 |
+| 14 | Menus | File > Properties | P13 |
+| 15 | Menus | File > Print | P17 |
+| 16 | Menus | File > Attach to Email | P13 |
+| 17 | Menus | Edit > Undo / Redo | P18 |
+| 18 | Menus | Edit > Cut / Copy / Paste / Delete | P13 |
+| 19 | Menus | Edit > Copy File to Clipboard | P13 |
+| 20 | Menus | Advanced Search > include attachments | P22 |
+| 21 | Menus | Advanced Search > document-property criteria | P22 |
+| 22 | Menus | View > Automatically Scroll | P22 |
+| 23 | Menus | View > Show/Hide > Line Weights | P22 |
+| 24 | Menus | View > New Window | P22 |
+| 25 | Navigation panes | Bookmarks: create, rename, nest, destination, delete | P13 |
+| 26 | Navigation panes | Attachments: add and delete | P13 |
+| 27 | Navigation panes | Bookmarks pane context menu | P13 |
+| 28 | Navigation panes | Attachments pane context menu | P13 |
+| 29 | Navigation panes | Comments pane | P20 |
+| 30 | Navigation panes | Comments list context menu | P20 |
+| 31 | Viewer and reading | Copy with formatting / Export selected text | P22 |
+| 32 | Viewer and reading | Initial View settings | P13 |
+| 33 | Create a PDF | Create from a single image file | P14 |
+| 34 | Create a PDF | Create from multiple files | P12 |
+| 35 | Create a PDF | Create a blank page | P11 |
+| 36 | Create a PDF | Create from the clipboard | P14 |
+| 37 | Combine files | Combine files into a single PDF | P12 |
+| 38 | Combine files | Add files / add folders | P12 |
+| 39 | Combine files | Reorder, preview and remove entries | P12 |
+| 40 | Combine files | Expand a file and combine at page granularity | P12 |
+| 41 | Organize pages | Rotate pages | P11 |
+| 42 | Organize pages | Reorder / move pages | P11 |
+| 43 | Organize pages | Insert pages | P11 |
+| 44 | Organize pages | Delete pages | P11 |
+| 45 | Organize pages | Extract pages | P11 |
+| 46 | Organize pages | Split | P12 |
+| 47 | Organize pages | Replace pages | P11 |
+| 48 | Organize pages | Copy or move pages between open documents | P11 |
+| 49 | Organize pages | Renumber pages / page labels | P11 |
+| 50 | Organize pages | Thumbnail zoom and multi-select in the grid | P21 |
+| 51 | Compress a PDF | Compress a PDF | P14 |
+| 52 | Compress a PDF | Reduce File Size | P14 |
+| 53 | Export a PDF | Export pages to JPEG / JPEG 2000 / TIFF | P14 |
+| 54 | Export a PDF | Export all images in a document | P14 |
+| 55 | Add comments | Sticky note | P9 |
+| 56 | Add comments | Highlight text | P8 |
+| 57 | Add comments | Underline text | P8 |
+| 58 | Add comments | Strikethrough text | P8 |
+| 59 | Add comments | Insert text at cursor (caret markup) | P8 |
+| 60 | Add comments | Replace text | P8 |
+| 61 | Add comments | Add text comment (typewriter) | P9 |
+| 62 | Add comments | Text box | P9 |
+| 63 | Add comments | Callout | P9 |
+| 64 | Add comments | Draw freehand (ink) | P9 |
+| 65 | Add comments | Erase ink | P9 |
+| 66 | Add comments | Line | P9 |
+| 67 | Add comments | Arrow | P9 |
+| 68 | Add comments | Rectangle | P9 |
+| 69 | Add comments | Oval | P9 |
+| 70 | Add comments | Polygon | P9 |
+| 71 | Add comments | Connected lines (polyline) | P9 |
+| 72 | Add comments | Cloud | P9 |
+| 73 | Add comments | Attach a file as a comment | P10 |
+| 74 | Add comments | Comment properties | P10 |
+| 75 | Add comments | Comments list: sort, filter, reply, status, read/unread | P20 |
+| 76 | Add comments | Summarize comments | P10 |
+| 77 | Add comments | Print comments | P17 |
+| 78 | Add comments | Commenting preferences | P20 |
+| 79 | Add stamps | Place a stamp | P10 |
+| 80 | Add stamps | Standard business stamps | P10 |
+| 81 | Add stamps | Sign Here stamp category | P10 |
+| 82 | Add stamps | Dynamic stamps | P10 |
+| 83 | Add stamps | Create a custom stamp | P10 |
+| 84 | Add stamps | Manage stamps | P10 |
+| 85 | Add stamps | Paste clipboard image as stamp | P10 |
+| 86 | Printing | Print dialog | P17 |
+| 87 | Printing | Page range and subset | P15 |
+| 88 | Printing | Page sizing and handling | P15 |
+| 89 | Printing | Multiple pages per sheet (N-up) | P15 |
+| 90 | Printing | Booklet | **deferred to M4** (section 9, decision B) |
+| 91 | Printing | Poster / tile | **deferred to M4** (section 9, decision B) |
+| 92 | Printing | Print on both sides / duplex | P16 |
+| 93 | Printing | Orientation | P15 |
+| 94 | Printing | Comments & Forms | P15 |
+| 95 | Printing | Page Setup dialog | P17 |
+| 96 | Printing | Summarize comments in the print output | P17 |
+| 97 | Printing | Print as image | P15 |
+| 98 | Printing | Print to file / print to PDF | P15 |
+| 99 | Printing | Advanced Print Setup dialog | P17 |
+
+**Totals.** P8 5, P9 13, P10 10, P11 9, P12 6, P13 10, P14 8, P15 7, P16 1,
+P17 7, P18 7, P20 4, P21 1, P22 9, deferred 2. Sum 99. P0, P1, P1b, P2, P3, P4,
+P5, P6, P7 and P19 close zero rows and are named against them in section 4.
+
+**Rows outside M3's 99 that M3 changes**, which the scoreboard update has to
+carry and which nobody should discover at review time:
+
+- Three M2 rows flip from `partial` to `implemented`: the right-hand side panel
+  (P20 gives it tool content), the quick action toolbar (P20 opens the Comment,
+  Highlight and Draw gates), and the Page Thumbnails pane context menu (P21
+  enables its M3 entries; Crop Pages stays disabled on M5).
+- The Layers pane context menu's `Properties` entry goes live with P13.
+- If section 9 decision A is taken, `Open an encrypted document` moves from M6
+  to `partial` at M3.
+- If decision B is taken, rows 90 and 91 move from M3 to M4.
+- The `implemented` count moves from 49 to 49 plus whatever M3 lands; the
+  executable totals contract in `crates/app/tests/guarantees.rs` recounts it, so
+  a mismatch fails the build rather than living in the preamble.
