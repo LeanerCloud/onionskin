@@ -7414,7 +7414,8 @@ mod tests {
     fn every_published_stop_can_be_reached_from_the_keyboard(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["two-page.pdf"], cx);
         cx.run_until_parked();
-        sweep(window, cx);
+        sweep(window, cx, "tab", "down");
+        sweep(window, cx, "shift-tab", "up");
 
         // Again with the find bar open, which is the surface that dead-ends:
         // its first stop is its own text field.
@@ -7424,14 +7425,23 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
-        sweep(window, cx);
+        sweep(window, cx, "tab", "down");
+        sweep(window, cx, "shift-tab", "up");
     }
 
-    /// Walk Tab once per group and Down once per stop in the widest group,
-    /// which covers every group and every stop in it, and assert that the
-    /// walk reached everything the tree publishes.
+    /// Walk `across` once per group and `along` once per stop in the widest
+    /// group, which covers every group and every stop in it, and assert that
+    /// the walk reached everything the tree publishes.
+    ///
+    /// Run in both directions, because a ring can wrap forwards and strand
+    /// backwards.
     #[cfg(feature = "shell-test-support")]
-    fn sweep(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) {
+    fn sweep(
+        window: gpui::WindowHandle<ShellFrame>,
+        cx: &mut TestAppContext,
+        across: &str,
+        along: &str,
+    ) {
         let stops = stops_under(window, cx, "window");
         let sizes = window
             .update(cx, |frame, _window, _cx| frame.a11y.group_sizes())
@@ -7446,11 +7456,11 @@ mod tests {
 
         let mut reached = std::collections::BTreeSet::new();
         for _ in 0..sizes.len() {
-            cx.simulate_keystrokes(window.into(), "tab");
+            cx.simulate_keystrokes(window.into(), across);
             cx.run_until_parked();
             reached.extend(focused_key(window, cx));
             for _ in 0..widest {
-                cx.simulate_keystrokes(window.into(), "down");
+                cx.simulate_keystrokes(window.into(), along);
                 cx.run_until_parked();
                 reached.extend(focused_key(window, cx));
             }
@@ -7462,7 +7472,7 @@ mod tests {
             .collect();
         assert!(
             missing.is_empty(),
-            "{} of {} published stops cannot be reached from the keyboard: {missing:?}",
+            "{} of {} published stops cannot be reached with {across} and {along}: {missing:?}",
             missing.len(),
             stops.len()
         );
