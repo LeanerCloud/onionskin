@@ -3137,14 +3137,16 @@ fn output_text(output: &Output) -> String {
 }
 
 /// One top-level job of a workflow: its header line and everything indented
-/// under it. Scoped, so that what another job is allowed to do stays that
-/// job's business.
+/// under it, with comments removed. Scoped, so that what another job is
+/// allowed to do stays that job's business; stripped, so a step that was
+/// commented out cannot answer for the step that runs.
 fn job(workflow: &str, name: &str) -> String {
     let header = format!("  {name}:");
     workflow
         .lines()
         .skip_while(|line| *line != header)
         .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
+        .map(without_comment)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -3156,17 +3158,24 @@ fn job(workflow: &str, name: &str) -> String {
 /// guarantee is worth exactly as much as the pointer staying true.
 fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> String {
     let path = workspace_root().join("crates/cos/tests").join(file);
-    let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+    let file_source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "{} is unreadable ({error}), so guarantee {number} is unchecked",
             path.display()
         )
     });
     assert!(
-        source.starts_with(&format!("//! Guarantee test {number}:")),
+        file_source.starts_with(&format!("//! Guarantee test {number}:")),
         "{} no longer claims guarantee {number}",
         path.display()
     );
+    // Code only from here on: an assertion deleted and left behind as a
+    // comment must not go on answering for the assertion.
+    let source = file_source
+        .lines()
+        .map(without_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n");
     for name in tests {
         assert!(
             source.contains(&format!("\n#[test]\nfn {name}(")),
@@ -3213,14 +3222,31 @@ fn toml_section(document: &str, name: &str) -> String {
         .join("\n")
 }
 
-/// A TOML line up to its first comment marker, leaving `#` inside a string
-/// alone.
+/// A TOML or YAML line up to its first comment marker, leaving `#` inside a
+/// string alone.
 fn without_comment(line: &str) -> &str {
     let mut quoted = false;
     for (index, byte) in line.bytes().enumerate() {
         match byte {
             b'"' => quoted = !quoted,
             b'#' if !quoted => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+/// A Rust line up to its first `//`, leaving one inside a string literal (a
+/// URL, say) alone. Guarantees 1, 2 and 6 assert that another crate's test
+/// still states their contract; without this a maintainer could delete the
+/// assertion and leave its message behind as a comment.
+fn without_line_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut quoted = false;
+    for index in 0..bytes.len() {
+        match bytes[index] {
+            b'"' if index == 0 || bytes[index - 1] != b'\\' => quoted = !quoted,
+            b'/' if !quoted && bytes.get(index + 1) == Some(&b'/') => return &line[..index],
             _ => {}
         }
     }
