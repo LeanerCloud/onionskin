@@ -313,6 +313,22 @@ impl ShellAccessibility {
             .is_some_and(crate::a11y::Adapter::is_active)
     }
 
+    /// A node out of the tree the shell last published, and the element that
+    /// tree names as focused. Both read the update that left for the
+    /// platform, not the description the shell built from.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn published_node(
+        &self,
+        key: &gpui::ElementId,
+    ) -> Option<accesskit::Node> {
+        self.adapter.as_ref()?.published_node(key)
+    }
+
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn published_focus(&self) -> Option<gpui::ElementId> {
+        self.adapter.as_ref()?.published_focus()
+    }
+
     /// How many stops each group holds, for the sweep that walks every one
     /// of them with the keyboard. Only used to bound the walk: a wrong
     /// answer makes the sweep fail, never pass.

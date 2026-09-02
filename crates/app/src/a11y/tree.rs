@@ -249,6 +249,13 @@ impl Ids {
         self.keys.get(&id)
     }
 
+    /// The node an element was given, without minting one for a key that has
+    /// never been published. For reading the published tree back in a test.
+    #[cfg(test)]
+    pub(crate) fn assigned(&self, key: &ElementId) -> Option<NodeId> {
+        self.assigned.get(key).copied()
+    }
+
     /// Forget every key that is not in the tree just published.
     ///
     /// Without this the map grows for the life of the process: scrolling a

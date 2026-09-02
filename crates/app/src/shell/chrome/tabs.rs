@@ -6946,8 +6946,12 @@ mod tests {
     /// to wait for one would sit in the queue until the user brought the
     /// window forward. The adapter wakes the shell on the main queue instead.
     /// A test window that nothing has marked dirty is the closest this
-    /// harness gets to that window, and it is close enough to fail if the
-    /// wake goes away.
+    /// harness gets to that window.
+    ///
+    /// Both halves are asserted, because they fail separately: the drain,
+    /// which is what runs the control, and the publish, which is what the
+    /// reader then hears. A shell that drained and published nothing passed
+    /// every test in this file.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
     fn a_screen_reader_press_runs_the_control_it_named_without_waiting_for_a_frame(
@@ -6975,6 +6979,24 @@ mod tests {
             before - 1,
             "a screen reader's press on Previous Page did not turn the page"
         );
+
+        // And the tree says so. Running the press and publishing nothing
+        // leaves a reader on a background window announcing the state before
+        // it: the control it just pressed still reads as available, and the
+        // step 9 of the acceptance script hears nothing. Previous Page is
+        // dimmed on the first page, so its own node carries the answer.
+        window
+            .update(cx, |frame, _window, _cx| {
+                let node = frame
+                    .a11y
+                    .published_node(&"previous-page".into())
+                    .expect("the published tree carries no Previous Page node");
+                assert!(
+                    node.is_disabled(),
+                    "the press ran but the tree a reader reads was never republished"
+                );
+            })
+            .unwrap();
     }
 
     /// The other half of what a screen reader asks for: moving its cursor
@@ -7267,8 +7289,20 @@ mod tests {
         assert_eq!(
             focused_key(window, cx).as_deref(),
             Some(FIND_INPUT_ID),
-            "the tree still names the control the ring was left on"
+            "the ring still sits on the control it was left on"
         );
+        // The ring is not what a screen reader reads. Only the focus node of
+        // the published update leaves the process, and passing `None` there
+        // used to break no test.
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame.a11y.published_focus().map(|key| key.to_string()),
+                    Some(FIND_INPUT_ID.to_owned()),
+                    "the published tree does not name the field as focused"
+                );
+            })
+            .unwrap();
     }
 
     /// A keymap that binds a bare arrow still gets it.

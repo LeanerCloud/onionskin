@@ -202,6 +202,34 @@ impl Adapter {
         self.shared.activate();
     }
 
+    /// A node out of the tree the shell last published, as a client reading
+    /// the tree would find it.
+    ///
+    /// The published tree, not the description the shell built: a shell that
+    /// runs what a screen reader asked for and then publishes nothing leaves
+    /// the reader announcing the state before the press.
+    #[cfg(test)]
+    pub(crate) fn published_node(&self, key: &ElementId) -> Option<accesskit::Node> {
+        let id = self.ids.assigned(key)?;
+        self.shared
+            .published
+            .borrow()
+            .as_ref()?
+            .nodes
+            .iter()
+            .find(|(node, _)| *node == id)
+            .map(|(_, node)| node.clone())
+    }
+
+    /// The element the published tree names as focused, which is what moves a
+    /// screen reader's cursor. The ring's own answer is not the same thing:
+    /// only this one leaves the process.
+    #[cfg(test)]
+    pub(crate) fn published_focus(&self) -> Option<ElementId> {
+        let focus = self.shared.published.borrow().as_ref()?.focus;
+        self.ids.key_for(focus).cloned()
+    }
+
     /// Everything a screen reader has asked for and not been given, resolved
     /// back to the elements it named.
     ///
