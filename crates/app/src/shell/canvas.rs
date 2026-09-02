@@ -57,6 +57,15 @@ pub struct TextOutline {
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 const RGBA_BYTES_PER_PIXEL: usize = 4;
+/// How far a tile's pixels are duplicated past its own edge in the atlas.
+///
+/// GPUI samples linearly right up to an atlas allocation's edge, so the
+/// outermost sample of one tile reads its neighbour unless a copy of the edge
+/// pixel sits between them. One is enough for linear sampling and is what
+/// `fdaf657` shipped to close the tile seams; the paint then has to place the
+/// image one gutter outside the clip on every side, so the duplicates land
+/// outside the visible rectangle.
+const ATLAS_GUTTER_PX: u32 = 1;
 pub(super) const SNAPSHOT_RGBA_BYTE_LIMIT: usize = 3840 * 2160 * RGBA_BYTES_PER_PIXEL;
 /// How long the canvas keeps polling a request nothing has answered.
 ///
@@ -2096,16 +2105,16 @@ fn atlas_tile_bgra(
         crop_height,
         rotation,
     )?;
-    let output_width = width + 2;
-    let output_height = height + 2;
+    let output_width = width + 2 * ATLAS_GUTTER_PX;
+    let output_height = height + 2 * ATLAS_GUTTER_PX;
     let mut output = vec![0; output_width as usize * output_height as usize * 4];
 
-    // GPUI linearly samples to exact atlas-allocation edges. Keep visible
-    // samples inside duplicate pixels so adjacent atlas entries cannot bleed.
+    // Every gutter pixel repeats the tile edge nearest to it, so a sample that
+    // runs past the tile reads the tile's own colour instead of a neighbour's.
     for y in 0..output_height {
-        let source_y = y.saturating_sub(1).min(height - 1);
+        let source_y = y.saturating_sub(ATLAS_GUTTER_PX).min(height - 1);
         for x in 0..output_width {
-            let source_x = x.saturating_sub(1).min(width - 1);
+            let source_x = x.saturating_sub(ATLAS_GUTTER_PX).min(width - 1);
             let source = (source_y as usize * width as usize + source_x as usize) * 4;
             let destination = (y as usize * output_width as usize + x as usize) * 4;
             output[destination..destination + 4].copy_from_slice(&pixels[source..source + 4]);
@@ -2307,9 +2316,15 @@ fn tile_rect(
     }
 }
 
+/// Where to paint a guttered tile image so its content lands exactly on
+/// `clip`, which is the rectangle the content alone occupies.
+///
+/// `content_width` and `content_height` are the tile without its gutter, so
+/// the ratio is what one gutter pixel is worth on screen at this zoom.
 fn atlas_image_rect(clip: ViewRect, content_width: u32, content_height: u32) -> ViewRect {
-    let gutter_width = clip.size.width / content_width as f32;
-    let gutter_height = clip.size.height / content_height as f32;
+    let gutter = ATLAS_GUTTER_PX as f32;
+    let gutter_width = gutter * clip.size.width / content_width as f32;
+    let gutter_height = gutter * clip.size.height / content_height as f32;
     ViewRect {
         origin: ViewPoint {
             x: clip.origin.x - gutter_width,
