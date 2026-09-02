@@ -47,17 +47,19 @@ impl ShellDialog {
 /// A chosen magnification goes through the same clamp every other zoom does,
 /// so a page too large to rasterize at 3200% lands at the largest scale it
 /// can be drawn at rather than being refused.
-pub(in crate::shell) const MAGNIFICATIONS: [u32; 12] = [
-    25, 50, 75, 100, 125, 150, 200, 400, 800, 1600, 2400, 3200,
-];
+pub(in crate::shell) const MAGNIFICATIONS: [u32; 12] =
+    [25, 50, 75, 100, 125, 150, 200, 400, 800, 1600, 2400, 3200];
 
 /// One row per magnification, as the dialog prints them and as it describes
 /// them: the label and the view action are built together so a screen reader
 /// cannot be offered a magnification a click would not apply.
 fn magnification_rows() -> impl Iterator<Item = (String, ViewAction)> {
-    MAGNIFICATIONS
-        .into_iter()
-        .map(|percent| (format!("{percent}%"), ViewAction::ZoomTo(percent as f32 / 100.0)))
+    MAGNIFICATIONS.into_iter().map(|percent| {
+        (
+            format!("{percent}%"),
+            ViewAction::ZoomTo(percent as f32 / 100.0),
+        )
+    })
 }
 
 /// What the About panel says. Kept as data so a test can assert the version

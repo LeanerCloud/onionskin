@@ -6,9 +6,7 @@ use onionskin_core::{
     Document, FitMode, PageAlignment, PageGeometry, PagePoint, PageRect, PageRenderRect, ViewPoint,
     ViewSize, Viewport,
 };
-use onionskin_plugin_api::{
-    Modifiers, Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin,
-};
+use onionskin_plugin_api::{Modifiers, Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
 use crate::marquee::Marquee;
 

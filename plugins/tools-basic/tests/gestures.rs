@@ -541,16 +541,17 @@ fn dynamic_zoom_only_zooms_between_a_press_and_the_end_of_its_gesture() {
     let before = fixture.viewport.zoom();
 
     move_to(&mut fixture, &mut tool, below(anchor_view, -120.0));
-    assert_eq!(fixture.viewport.zoom(), before, "a move with no press zoomed");
+    assert_eq!(
+        fixture.viewport.zoom(),
+        before,
+        "a move with no press zoomed"
+    );
 
     let endings: [fn(&mut DynamicZoomTool, &mut Fixture); 3] = [
         |tool, fixture| tool.on_cancel(&mut fixture.ctx()),
         |tool, fixture| tool.on_deactivate(&mut fixture.ctx()),
         |tool, fixture| {
-            let at = fixture.page_point_at(ViewPoint {
-                x: 400.0,
-                y: 300.0,
-            });
+            let at = fixture.page_point_at(ViewPoint { x: 400.0, y: 300.0 });
             tool.on_pointer_up(&mut fixture.ctx(), input(at, Modifiers::default()));
         },
     ];

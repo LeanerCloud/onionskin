@@ -330,8 +330,9 @@ impl BaseRaster {
         for (y, row) in self.rgba.chunks_exact(width * 4).enumerate() {
             let mut row_left = None;
             let mut row_right = 0usize;
-            for (x, pixel) in row.chunks_exact(4).enumerate() {
-                if pixel != PAPER {
+            let (pixels, _) = row.as_chunks::<4>();
+            for (x, pixel) in pixels.iter().enumerate() {
+                if *pixel != PAPER {
                     row_left.get_or_insert(x);
                     row_right = x;
                 }
@@ -356,7 +357,7 @@ impl BaseRaster {
 
 /// The unmarked page: opaque white, the background
 /// [`RenderSession::render_page`] rasterizes onto.
-const PAPER: &[u8] = &[255, 255, 255, 255];
+const PAPER: [u8; 4] = [255, 255, 255, 255];
 
 /// A rectangle of a [`BaseRaster`], in its own pixels, top-left origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -516,8 +517,8 @@ mod tests {
     /// inside it, or Fit Visible is only Fit Page under another name.
     #[test]
     fn a_seed_pages_content_is_a_strict_subset_of_its_paper() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../corpus/seeds/hello.pdf");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
         let bytes = std::fs::read(&path).expect("the seed is readable");
         let document = Document::open(bytes).expect("the seed opens");
 

@@ -9,8 +9,8 @@ use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
     PagePoint, PageQuad, PageRect, PageRenderRect, Provenance, RenderRequest, RenderResponse,
-    SearchOptions, SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
-    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    SearchOptions, SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory,
+    ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
     CodecPlugin, CommandCtx, CommandError, ExportError, ExportOutputKind, ExportRequest, Overlay,
