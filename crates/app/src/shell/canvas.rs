@@ -359,7 +359,6 @@ pub struct CanvasModel {
     failed_geometry: BTreeSet<PageIndex>,
     requests: BTreeMap<PageIndex, RenderRequest>,
     failed_renders: BTreeSet<PageIndex>,
-    placeholders: BTreeSet<PageIndex>,
     generation: u64,
     signature: Option<RenderSignature>,
     canvas_origin: ViewPoint,
@@ -437,7 +436,6 @@ impl CanvasModel {
             failed_geometry: BTreeSet::new(),
             requests: BTreeMap::new(),
             failed_renders: BTreeSet::new(),
-            placeholders: BTreeSet::new(),
             generation: 0,
             signature: None,
             canvas_origin: ViewPoint::default(),
@@ -661,7 +659,6 @@ impl CanvasModel {
         self.tiles.clear();
         self.requests.clear();
         self.failed_renders.clear();
-        self.placeholders.clear();
         // The next update compares the visible set against `None`, advances
         // the generation, and re-requests every page. The advance is also
         // what makes the answers already in flight, which were rendered with
@@ -1582,7 +1579,6 @@ impl CanvasModel {
         // it never arrives, and a page that failed once stayed blank for the
         // life of the process.
         self.failed_geometry.clear();
-        self.placeholders.clear();
         Ok(true)
     }
 
@@ -1640,16 +1636,15 @@ impl CanvasModel {
         self.responses += 1;
 
         match response {
-            // The worker echoes back the raster the request carried, which is
-            // the one the store already holds, so there is nothing to keep:
-            // the placeholder is drawn by scaling that raster.
-            RenderResponse::Placeholder(_) => {
-                self.placeholders.insert(request.page);
-            }
+            // Nothing to record. The worker echoes back the raster the
+            // request carried, which is the one the store already holds and
+            // the one the placeholder is drawn by scaling, and the page stays
+            // in `requests`, which is what keeps the poll armed until a
+            // terminal answer arrives.
+            RenderResponse::Placeholder(_) => {}
             RenderResponse::Raster { render, .. } => {
                 self.requests.remove(&request.page);
                 self.failed_renders.remove(&request.page);
-                self.placeholders.remove(&request.page);
                 self.tiles.insert(request.page, render.raster);
                 if render.warnings.is_empty() {
                     if matches!(
@@ -1671,7 +1666,6 @@ impl CanvasModel {
             RenderResponse::Failed { error, .. } => {
                 self.requests.remove(&request.page);
                 self.failed_renders.insert(request.page);
-                self.placeholders.remove(&request.page);
                 self.status = Some(CanvasStatus::Error {
                     page: Some(request.page),
                     message: format!("page {} at {}x: {error}", request.page, request.zoom),
@@ -3893,7 +3887,6 @@ mod tests {
         assert!(matches!(placeholder, RenderResponse::Placeholder(_)));
         assert!(model.apply_render_response(placeholder));
         assert!(model.has_pending_render());
-        assert!(model.placeholders.contains(&request.page));
 
         assert!(model.apply_render_response(RenderResponse::Failed {
             request,
@@ -3903,7 +3896,6 @@ mod tests {
             },
         }));
         assert!(!model.has_pending_render());
-        assert!(!model.placeholders.contains(&request.page));
     }
 
     #[test]
