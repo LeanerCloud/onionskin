@@ -4,6 +4,7 @@
 //! 6 in `crates/cos/tests/`). One whose capability has not landed stays
 //! `#[ignore]`d, and its reason names the milestone PLAN.md gives it.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -180,12 +181,11 @@ fn every_malformed_file_opens_and_repairs_into_a_new_section() {
             .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
             .collect::<Vec<_>>();
         assert_eq!(found.len(), 1, "{absent}");
-        for (key, why) in [
-            ("continue-on-error", "cannot fail the job"),
-            ("working-directory", "runs against another tree"),
-        ] {
-            assert_eq!(field(found[0], key), None, "the `{command}` step {why}");
-        }
+        assert_reviewed_keys(
+            found[0],
+            &["name", "if", "run", "env"],
+            &format!("the `{command}` step"),
+        );
         // Both are pinned to Linux, and the guarantee says so: the repair path
         // is byte manipulation with no platform dimension, and the generator
         // wants bash and perl. Pinned to the value rather than merely allowed,
@@ -478,16 +478,7 @@ fn accessibility_probe_is_a_required_ci_gate() {
         Some("runner.os == 'macOS'"),
         "the accessibility probe is not scoped to macOS"
     );
-    for (key, why) in [
-        ("continue-on-error", "advisory instead of gating"),
-        ("working-directory", "reading another tree"),
-    ] {
-        assert_eq!(
-            field(probe[0], key),
-            None,
-            "the accessibility probe is {why}"
-        );
-    }
+    assert_reviewed_keys(probe[0], &["name", "if", "run"], "the accessibility probe");
 }
 
 #[test]
@@ -3378,25 +3369,26 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-/// The parsed workflow, proved to declare no `defaults`. Two hand-written
-/// readers of this YAML were bypassed by constructs they did not model, so it
-/// is parsed rather than scanned; `defaults` is checked here because it is the
-/// one key that reaches every gate in the file at once. A workflow-level
-/// `defaults.run.shell` stops every `run:` step being the command it reads as,
-/// and a job-level `defaults.run.working-directory` points them all at another
-/// tree. Neither file needs the key, so the reviewed answer is that it is
-/// absent everywhere.
+/// The parsed workflow, proved to declare no `defaults`.
 fn workflow(file: &str) -> Yaml {
     let path = workspace_root().join(".github/workflows").join(file);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
-    let mut documents = YamlLoader::load_from_str(&text)
-        .unwrap_or_else(|error| panic!("{} is not valid YAML ({error})", path.display()));
+    parse_workflow(&text, file)
+}
+
+/// `defaults` is checked here because it is the one key that reaches every
+/// gate in a file at once: a workflow-level `defaults.run.shell` stops every
+/// `run:` step being the command it reads as, and a job-level
+/// `defaults.run.working-directory` points them all at another tree. Neither
+/// file needs the key, so the reviewed answer is that it is absent everywhere.
+fn parse_workflow(text: &str, file: &str) -> Yaml {
+    let mut documents = YamlLoader::load_from_str(text)
+        .unwrap_or_else(|error| panic!("{file} is not valid YAML ({error})"));
     assert_eq!(
         documents.len(),
         1,
-        "{} holds more than one YAML document",
-        path.display()
+        "{file} holds more than one YAML document"
     );
     let document = documents.remove(0);
     assert!(
@@ -3447,8 +3439,8 @@ fn keys_of(node: &Yaml) -> Vec<String> {
 /// A step's keys, proved to be drawn only from the reviewed set. Listing the
 /// keys that must *not* appear is how `shell:` went unnoticed: `shell: cat`
 /// leaves the command byte-exact and stops it being a command at all, and
-/// `shell: python` reinterprets it just as thoroughly. An allowlist has no
-/// such gap, which is the same move that made the policy key-set pins work.
+/// `shell: python` reinterprets it just as thoroughly. Every step this suite
+/// calls a gate goes through here, conditional ones included.
 fn assert_reviewed_keys(step: &Yaml, allowed: &[&str], what: &str) {
     for key in keys_of(step) {
         assert!(
@@ -3472,16 +3464,15 @@ fn job_steps<'a>(workflow: &'a Yaml, name: &str) -> Vec<&'a Yaml> {
         .collect()
 }
 
-/// The action a step runs, without the `# vN` note a commit pin carries. YAML
-/// keeps that note out of the scalar, so this is only defensive.
+/// The action a step runs, without the `# vN` note a commit pin carries.
 fn action_of(step: &Yaml) -> Option<String> {
     Some(field(step, "uses")?.split_whitespace().next()?.to_owned())
 }
 
-/// The one step whose whole script is `command`, and which declares nothing
-/// beyond a name and that script. Not "a step one of whose lines is
-/// `command`": a script of `set +e`, the gate, `exit 0` runs the gate and still
-/// succeeds with every line reading correctly.
+/// The one step whose whole script is `command`, declaring nothing beyond a
+/// name and that script. Not "a step one of whose lines is `command`": a
+/// script of `set +e`, the gate, `exit 0` runs the gate and still succeeds
+/// with every line reading correctly.
 fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
     let matching = steps
         .iter()
@@ -3502,13 +3493,17 @@ fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
     step
 }
 
-/// Whether a command builds the app binary. Any invocation of cargo that
-/// mentions `build` or `b`, because `cargo +stable build` and `cargo --offline
-/// build` are ordinary CI writing and `--bin onionskin` reaches the same
-/// `target/release/onionskin` the packaging scripts ship.
+/// Whether a command builds the app binary. The word `cargo` anywhere, then
+/// `build` or `b`: anchoring on the first word caught `cargo +stable build`
+/// but let `RUSTFLAGS=... cargo build` and `cd . && cargo build` through, and
+/// either overwrites the `target/release/onionskin` the packaging scripts
+/// ship.
 fn builds_the_app(command: &str) -> bool {
-    let mut words = command.split_whitespace();
-    words.next() == Some("cargo") && words.any(|word| matches!(word, "build" | "b"))
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    words
+        .iter()
+        .position(|word| *word == "cargo")
+        .is_some_and(|at| words[at + 1..].iter().any(|w| matches!(*w, "build" | "b")))
 }
 
 /// Every string literal reachable from an expression.
@@ -3529,49 +3524,20 @@ fn strings_in<'ast>(args: impl IntoIterator<Item = &'ast Expr>) -> Vec<String> {
     found.0
 }
 
-/// What a `crates/cos` test file says, read from its syntax tree. Three
-/// hand-written comment strippers in a row were each defeated by a comment
-/// shape they did not model - a trailing `//`, an unbalanced quote before one,
-/// a `/* */` wrapper that left the assertion's message behind. A comment is
-/// not a token, so a parser cannot be answered by one.
+/// What one function's body says.
 #[derive(Default)]
-struct Suite {
-    file: String,
-    /// Every string literal inside an assertion or a failure report.
+struct Function {
+    /// The attribute names the function carries, sorted.
+    attributes: Vec<String>,
+    /// String literals inside an assertion or a failure report.
     messages: Vec<String>,
-    /// Every method call, as `.method` and as `receiver.method`.
+    /// Method calls, as `.method` and as `receiver.method`.
     invocations: Vec<String>,
-    /// Every `#[test]` fn that is not `#[ignore]`d.
-    live_tests: Vec<String>,
+    /// The names of the functions and methods this one calls.
+    calls: Vec<String>,
 }
 
-impl Suite {
-    fn asserts(&self, marker: &str, missing: &str) {
-        assert!(
-            self.messages.iter().any(|message| message.contains(marker)),
-            "{} no longer proves its guarantee: {missing}",
-            self.file
-        );
-    }
-
-    fn invokes(&self, call: &str, missing: &str) {
-        assert!(
-            self.invocations.iter().any(|found| found == call),
-            "{} no longer proves its guarantee: {missing}",
-            self.file
-        );
-    }
-}
-
-impl<'ast> Visit<'ast> for Suite {
-    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        let marked = |name: &str| item.attrs.iter().any(|attr| attr.path().is_ident(name));
-        if marked("test") && !marked("ignore") {
-            self.live_tests.push(item.sig.ident.to_string());
-        }
-        syn::visit::visit_item_fn(self, item);
-    }
-
+impl<'ast> Visit<'ast> for Function {
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         // syn leaves a macro's tokens unparsed, so its arguments are walked
         // here or not at all.
@@ -3609,21 +3575,61 @@ impl<'ast> Visit<'ast> for Suite {
         if matches!(method.as_str(), "fail" | "record") {
             self.messages.extend(strings_in(&call.args));
         }
+        self.calls.push(method);
         syn::visit::visit_expr_method_call(self, call);
     }
 
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         if let Expr::Path(path) = &*call.func {
-            if path
-                .path
-                .segments
-                .last()
-                .is_some_and(|last| last.ident == "Err")
-            {
-                self.messages.extend(strings_in(&call.args));
+            if let Some(last) = path.path.segments.last() {
+                if last.ident == "Err" {
+                    self.messages.extend(strings_in(&call.args));
+                }
+                self.calls.push(last.ident.to_string());
             }
         }
         syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// What a `crates/cos` test file says, read from its syntax tree. Four
+/// hand-written readers in a row were each defeated by something they did not
+/// model - a trailing `//`, an unbalanced quote, a `/* */` wrapper, then a
+/// `#[cfg]` - so a comment is not a token here and an attribute is not an
+/// ident lookup. Bodies are kept per function because a file-global bag of
+/// assertions lets one parked in a dead test answer for one deleted from a
+/// live one.
+#[derive(Default)]
+struct Suite {
+    file: String,
+    functions: BTreeMap<String, Function>,
+    /// The named enforcing tests, and everything reachable from them.
+    reachable: BTreeSet<String>,
+}
+
+impl Suite {
+    fn asserts(&self, marker: &str, missing: &str) {
+        assert!(
+            self.reached()
+                .any(|body| body.messages.iter().any(|line| line.contains(marker))),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+
+    fn invokes(&self, call: &str, missing: &str) {
+        assert!(
+            self.reached()
+                .any(|body| body.invocations.iter().any(|found| found == call)),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+
+    fn reached(&self) -> impl Iterator<Item = &Function> {
+        self.reachable
+            .iter()
+            .filter_map(|name| self.functions.get(name))
     }
 }
 
@@ -3651,8 +3657,7 @@ fn module_doc(file: &syn::File) -> String {
         .join("\n")
 }
 
-/// The `crates/cos` test file that enforces guarantee `number`, having proved
-/// the file still claims that guarantee and still runs each named test.
+/// The `crates/cos` test file that enforces guarantee `number`.
 fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> Suite {
     let path = workspace_root().join("crates/cos/tests").join(file);
     let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
@@ -3661,29 +3666,76 @@ fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> Suite {
             path.display()
         )
     });
-    let parsed = syn::parse_file(&source).unwrap_or_else(|error| {
-        panic!(
-            "{} does not parse ({error}), so guarantee {number} cannot be read",
-            path.display()
-        )
+    read_suite(&source, file, number, tests)
+}
+
+/// Reads one suite and proves each named test is a plain, live `#[test]`. The
+/// attribute set is pinned exactly, the same allowlist move as a step's keys:
+/// `#[cfg_attr(all(), ignore)]` and `#[cfg(any())]` both leave `#[test]`
+/// present while the test is respectively ignored and compiled away.
+fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
+    let parsed = syn::parse_file(source).unwrap_or_else(|error| {
+        panic!("{file} does not parse ({error}), so guarantee {number} cannot be read")
     });
     assert!(
         module_doc(&parsed)
             .trim_start()
             .starts_with(&format!("Guarantee test {number}:")),
-        "{} no longer claims guarantee {number}",
-        path.display()
+        "{file} no longer claims guarantee {number}"
     );
+
     let mut suite = Suite {
         file: file.to_owned(),
         ..Suite::default()
     };
-    suite.visit_file(&parsed);
+    for item in &parsed.items {
+        let syn::Item::Fn(item) = item else {
+            continue;
+        };
+        let mut body = Function {
+            attributes: {
+                let mut names = item
+                    .attrs
+                    .iter()
+                    .filter_map(|attr| Some(attr.path().segments.last()?.ident.to_string()))
+                    // A doc comment is an attribute too, and the one kind that
+                    // cannot switch a test off.
+                    .filter(|name| name != "doc")
+                    .collect::<Vec<_>>();
+                names.sort();
+                names
+            },
+            ..Function::default()
+        };
+        body.visit_block(&item.block);
+        suite.functions.insert(item.sig.ident.to_string(), body);
+    }
+
     for name in tests {
-        assert!(
-            suite.live_tests.iter().any(|live| live == name),
-            "{file} no longer runs {name} as a live #[test], so guarantee {number} is unchecked"
+        let body = suite.functions.get(*name).unwrap_or_else(|| {
+            panic!("{file} no longer defines {name}, so guarantee {number} is unchecked")
+        });
+        assert_eq!(
+            body.attributes,
+            vec!["test"],
+            "{file}'s {name} carries attributes beyond #[test], which can ignore it or compile it away while still reading as a test"
         );
+    }
+
+    // Everything the named tests reach. The assertions themselves live in the
+    // walk helpers those tests call, so a marker found anywhere else in the
+    // file - a parked test, a dead helper - does not count.
+    let mut frontier = tests
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    while let Some(name) = frontier.pop() {
+        if !suite.reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(body) = suite.functions.get(&name) {
+            frontier.extend(body.calls.iter().cloned());
+        }
     }
     suite
 }
@@ -3799,4 +3851,230 @@ fn opens(value: &str) -> usize {
 
 fn closes(value: &str) -> usize {
     value.chars().filter(|c| *c == ']' || *c == '}').count()
+}
+
+// Every decoy below reached the tree at some point during this package's
+// review, and each was found by a person rather than by a test. Four are the
+// same class returning - "the check reads what is written, not what runs" - so
+// the class is guarded here now. A note recording a past failure is not a
+// seed; this is.
+
+/// Runs a reader against a seeded decoy and proves it refuses.
+fn rejects(what: &str, check: impl FnOnce()) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+    std::panic::set_hook(previous);
+    assert!(
+        outcome.is_err(),
+        "the reader accepted a decoy it must refuse: {what}"
+    );
+}
+
+/// A stand-in for `crates/cos/tests/repair.rs`, shaped like the real one.
+const DECOY_SUITE: &str = r#"//! Guarantee test 6: every file in the malformed corpus opens, saving appends
+//! an incremental section holding the repaired structures, and the corrupt
+//! original bytes survive beneath it byte-intact.
+
+#[test]
+fn every_malformed_file_repairs_and_saves_over_intact_original_bytes() {
+    let tally = walk();
+    tally.report();
+    assert_eq!(
+        tally.passed.len(),
+        files.len(),
+        "guarantee test 6 requires the whole malformed set"
+    );
+}
+"#;
+
+const WHOLE_SET: &str = "guarantee test 6 requires the whole malformed set";
+
+/// The assertion as it appears in the decoy, so a seed can replace it whole.
+const DECOY_ASSERTION: &str = "    assert_eq!(\n        tally.passed.len(),\n        files.len(),\n        \"guarantee test 6 requires the whole malformed set\"\n    );";
+
+fn read_decoy(source: &str) {
+    let suite = read_suite(
+        source,
+        "decoy.rs",
+        6,
+        &["every_malformed_file_repairs_and_saves_over_intact_original_bytes"],
+    );
+    suite.asserts(WHOLE_SET, "the whole-set clause is gone");
+}
+
+#[test]
+fn an_assertion_that_only_looks_present_is_refused() {
+    // The baseline has to pass, or the refusals below prove nothing.
+    read_decoy(DECOY_SUITE);
+    assert!(
+        DECOY_SUITE.contains(DECOY_ASSERTION),
+        "the decoy no longer states the clause the seeds replace"
+    );
+
+    // Commented out three ways, each of which defeated a hand-written reader
+    // in this package: a whole-line `//`, a trailing `//` on live code, and a
+    // `/* { ... } */` wrapper whose opening line ends in `{` so a statement
+    // scan starts inside it and finds the assertion's own text.
+    for (what, replacement) in [
+        (
+            "the assertion left as whole-line comments",
+            DECOY_ASSERTION
+                .lines()
+                .map(|line| format!("    // {}", line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (
+            "the assertion left as a trailing comment",
+            format!("    let _ = &tally; // \"{WHOLE_SET}\""),
+        ),
+        (
+            "the assertion wrapped in a block comment",
+            format!("    /* {{\n{DECOY_ASSERTION}\n    }} */"),
+        ),
+    ] {
+        let seeded = DECOY_SUITE.replace(DECOY_ASSERTION, &replacement);
+        assert!(seeded != DECOY_SUITE, "the decoy for {what} did not apply");
+        rejects(what, || read_decoy(&seeded));
+    }
+
+    // The assertion deleted from the live walk and parked in an ignored test.
+    // A file-global bag of assertions answers this one; a per-function one
+    // reachable from the named tests does not.
+    let parked = format!(
+        "{}\n#[test]\n#[ignore = \"parked\"]\nfn parked_expectation() {{\n    assert_eq!(1, 1, \"{WHOLE_SET}\");\n}}\n",
+        DECOY_SUITE.replace(DECOY_ASSERTION, "    let _ = &tally;")
+    );
+    rejects("the assertion parked in an ignored test", || {
+        read_decoy(&parked)
+    });
+}
+
+#[test]
+fn an_enforcing_test_switched_off_by_an_attribute_is_refused() {
+    // `#[test]` is present in all three. Only an exact attribute set can tell
+    // a live test from one that is ignored or compiled away.
+    for (what, attribute) in [
+        ("the test ignored outright", "#[ignore]"),
+        (
+            "the test ignored through cfg_attr",
+            "#[cfg_attr(all(), ignore)]",
+        ),
+        ("the test compiled away by cfg", "#[cfg(any())]"),
+    ] {
+        let seeded = DECOY_SUITE.replace("#[test]\n", &format!("#[test]\n{attribute}\n"));
+        assert!(seeded != DECOY_SUITE, "the decoy for {what} did not apply");
+        rejects(what, || read_decoy(&seeded));
+    }
+}
+
+/// A stand-in workflow with one gate step, shaped like the real jobs.
+fn decoy_workflow(step: &str) -> String {
+    format!("name: CI\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n{step}")
+}
+
+fn read_gate(text: &str) {
+    let parsed = parse_workflow(text, "decoy.yml");
+    gate_step(&job_steps(&parsed, "check"), "cargo deny check");
+}
+
+#[test]
+fn a_step_that_would_not_run_the_command_is_refused() {
+    read_gate(&decoy_workflow("      - run: cargo deny check\n"));
+
+    for (what, step) in [
+        (
+            "a shell that never executes the command",
+            "      - run: cargo deny check\n        shell: cat\n",
+        ),
+        (
+            "a shell that reinterprets the command",
+            "      - run: cargo deny check\n        shell: python\n",
+        ),
+        (
+            "the command wrapped so its failure is swallowed",
+            "      - run: |\n          set +e\n          cargo deny check\n          exit 0\n",
+        ),
+        (
+            "a folded scalar splicing a suffix onto the command",
+            "      - run: >\n          cargo deny check\n\n          || true\n",
+        ),
+        (
+            "the step conditioned away",
+            "      - run: cargo deny check\n        if: false\n",
+        ),
+        (
+            "the step allowed to fail",
+            "      - run: cargo deny check\n        continue-on-error: true\n",
+        ),
+        (
+            "the step pointed at another tree",
+            "      - run: cargo deny check\n        working-directory: ./stale-copy\n",
+        ),
+    ] {
+        rejects(what, || read_gate(&decoy_workflow(step)));
+    }
+}
+
+#[test]
+fn a_conditional_gate_is_held_to_the_same_key_allowlist() {
+    // The accessibility probe and guarantee 6's two steps carry the one
+    // permitted `if:`, so they are not `gate_step`s and reach the allowlist
+    // through a separate call. `shell:` passed on REPO-002's required gate
+    // until that call existed.
+    let live = "      - name: Accessibility probe\n        if: runner.os == 'macOS'\n        run: cargo test --features a11y-probe\n";
+    let parsed = parse_workflow(&decoy_workflow(live), "decoy.yml");
+    let steps = job_steps(&parsed, "check");
+    assert_reviewed_keys(steps[0], &["name", "if", "run"], "the decoy probe");
+
+    let seeded = "      - name: Accessibility probe\n        if: runner.os == 'macOS'\n        shell: cat\n        run: cargo test --features a11y-probe\n";
+    let parsed = parse_workflow(&decoy_workflow(seeded), "decoy.yml");
+    let steps = job_steps(&parsed, "check");
+    rejects("a shell: on a conditional gate", || {
+        assert_reviewed_keys(steps[0], &["name", "if", "run"], "the decoy probe")
+    });
+}
+
+#[test]
+fn a_workflow_that_rewrites_how_every_step_runs_is_refused() {
+    // One key, three lines above `jobs:`, disarms every `run:` gate in the
+    // file at once while each command still reads correctly.
+    rejects("workflow-level defaults", || {
+        read_gate("name: CI\non: [push]\ndefaults:\n  run:\n    shell: cat\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo deny check\n")
+    });
+    rejects("job-level defaults", || {
+        read_gate("name: CI\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./stale-copy\n    steps:\n      - run: cargo deny check\n")
+    });
+}
+
+#[test]
+fn every_way_of_reaching_cargo_build_counts_as_building_the_app() {
+    // Each of these overwrites target/release/onionskin, which both packaging
+    // scripts ship. Three were live bypasses of earlier versions of this
+    // predicate: one anchored on adjacent words, one on the first word.
+    for command in [
+        "cargo build --release -p onionskin-app",
+        "cargo b --release -p onionskin-app",
+        "cargo +stable build --release -p onionskin-app",
+        "cargo --offline build --release -p onionskin-app",
+        "RUSTFLAGS=-Awarnings cargo build --release -p onionskin-app",
+        "cd . && cargo build --release -p onionskin-app",
+        "cargo build --release --bin onionskin",
+    ] {
+        assert!(
+            builds_the_app(command),
+            "a featureless rebuild would go unnoticed: {command}"
+        );
+    }
+    for command in [
+        "cargo test --workspace",
+        "cargo deny check",
+        "./packaging/linux/package.sh",
+    ] {
+        assert!(
+            !builds_the_app(command),
+            "a command that builds nothing is treated as a rebuild: {command}"
+        );
+    }
 }
