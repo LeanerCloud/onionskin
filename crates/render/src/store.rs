@@ -196,6 +196,47 @@ impl TileStore {
         Some(&mut self.entries.last_mut().expect("just touched").cache)
     }
 
+    /// The cache `page` should be painted from at `zoom`: the one rendered at
+    /// that exact zoom when the store holds it, otherwise the most recently
+    /// used cache it holds for the page at any zoom, which the caller scales.
+    /// Marked most recently used and exempt from this frame's eviction, like
+    /// [`Self::get`].
+    ///
+    /// The fallback is why a caller does not keep rasters of its own: a page
+    /// scrolled out of view and back at a different zoom still has a raster
+    /// here, and painting it scaled is what decision 11 asks for instead of a
+    /// blank page until the re-render lands. A second collection beside this
+    /// one had its own eviction policy, so it lost the page while the store
+    /// still held it.
+    ///
+    /// Shared, not mutable: painting reads tiles, and [`TileCache::tile`]
+    /// composites behind `&self`. Touching and pinning happen here, so the
+    /// paint does not need `&mut` for them.
+    pub fn paint_source(&mut self, page: usize, zoom: f32) -> Option<&TileCache> {
+        let at = self
+            .position(Key::new(page, zoom))
+            .or_else(|| self.newest_for_page(page))?;
+        let key = self.entries[at].key;
+        self.touch(at);
+        self.pin(key);
+        self.evict_to_budget();
+        Some(&self.entries.last().expect("just touched").cache)
+    }
+
+    /// The base raster of the most recently used cache held for `page`, at
+    /// whatever zoom that was, or `None` when the store holds none.
+    ///
+    /// A pure read: it neither touches recency nor pins, so asking what a
+    /// page has does not change what eviction may take.
+    pub fn base(&self, page: usize) -> Option<&BaseRaster> {
+        Some(self.entries[self.newest_for_page(page)?].cache.base())
+    }
+
+    /// The most recently used entry for `page` at any zoom.
+    fn newest_for_page(&self, page: usize) -> Option<usize> {
+        self.entries.iter().rposition(|entry| entry.key.page == page)
+    }
+
     /// Cache `base` as the render of `page` at its own zoom, replacing any
     /// cache already held for that pair, and evict back to the budget.
     ///
