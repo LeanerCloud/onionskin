@@ -1979,3 +1979,364 @@ carry and which nobody should discover at review time:
 - The `implemented` count moves from 49 to 49 plus whatever M3 lands; the
   executable totals contract in `crates/app/tests/guarantees.rs` recounts it, so
   a mismatch fails the build rather than living in the preamble.
+
+---
+
+## 7. YAGNI ledger and deferrals
+
+Every abstraction M3 introduces names the caller that exists in M3.
+
+| Introduced | Consumer that exists in M3 |
+|---|---|
+| `cos::Document::next_object_number` | `core::edit`'s reservation counter |
+| `cos::Document::sections` | P19's skins panel, P3's `revert_to` |
+| `cos::Document::write_new` | P12 combine and split, P14 create-from-image and compress, P10's comment summary |
+| cos's save-time reference validator | P5's page-tree rewrite, and every test that asserts it is clean |
+| `core::edit::{Overlay, History, DocumentEdit}` | every tool and command in P8 through P14 |
+| `core::preview_bytes(filter)` | the canvas (committed edits), P15's print filter, P20's hide-all-comments view |
+| `core::generations` and `revert_to` | P19's skins panel, P18's `File > Revert` |
+| `core::structure` | P5's page operations, P6's annotation authoring, and M5's guarantee 8 |
+| `core::pages::rewrite_page_tree` | all nine P11 operations, P12's combine and split |
+| `core::pages::import` | P11's insert and copy-between-documents, P12's combine |
+| `core::pages::assemble` | P12, P10's summary, P11's extract, P14's create-from-images |
+| `core::annots` and its appearance generator | P8's five tools, P9's thirteen, P10's stamps |
+| `core::embedded` (the embedded-file writer) | P10's attach-as-comment, P13's Attachments pane |
+| `ToolCtx.edits` / `CommandCtx.edits` | every M3 tool and command |
+| `Requirement::Command` in `plugin-api` | the six `Requirement::Milestone` arms `context_menu.rs` calls "guesses" |
+| `print::{Sheet, Placement, PrintBackend}` | the file backend, the macOS backend, and P17's preview |
+
+Deliberately **not** built in M3, and why:
+
+- **A `Render` trait, a GPU backend, or vello.** Unchanged from M2's reasoning:
+  one implementor, no consumer.
+- **Encrypted writing.** M6, per PLAN.md's risk list. Even if decision A takes
+  the read path, appending to an encrypted file stays M6, and P1b's coherence
+  depends on saying so at open time.
+- **The accessibility checker, reading-order repair and autotagging.** M5 and
+  M6. P4 builds the reader and the maintenance hook, which is what makes those
+  a checker rather than a repair job (T6).
+- **Text editing of any kind.** M5, and the famous tar pit. A `/FreeText`
+  annotation is authored text drawn over the page, not an edit to the page's
+  content stream, and P9 must not blur that.
+- **Form fields, signatures, redaction, measurement.** M5 and M6.
+- **XFDF and FDF comment interchange.** Post-1.0, riding with XFDF, as the
+  parity row already says.
+- **An open `DocumentEdit`, or a `Raw(Change)` escape hatch.** The closed enum
+  is load-bearing for three named things (T2); an escape hatch deletes all
+  three.
+- **Any MCP or CLI affordance.** M4. `core` gains no API "for MCP later", though
+  `DocumentEdit` happens to be the vocabulary M4 will want, which is a
+  consequence of getting M3 right and not a reason for it.
+- **`cos::Document: Send`.** Still not needed: P3's autosave crosses the thread
+  boundary with the overlay's changes, not with a document. The `Rc` to `Arc`
+  swap remains M4's if MCP sessions want it.
+
+Deferred within M3, with reasons and ledger actions:
+
+| Item | Decision | Ledger action |
+|---|---|---|
+| Booklet (row 90) and Poster / tile (row 91) | Deferred to M4, subject to section 9 decision B. | Move both rows to M4 in `ACROBAT-PARITY.md` with the reason; note it against PLAN.md decision 13, which names booklet in the M3 print list. |
+| Copy With Formatting to the clipboard (half of row 31) | Deferred. `gpui::ClipboardEntry` has only `String` and `Image`, so a rich-text flavour needs a fork addition (section 8, item 12). Export Selection As ships; the row is `partial`. | Add the cut to row 31's Notes; open a fork issue for a custom pasteboard flavour. |
+| `New Bookmarks From Structure` | Not M3. Needs the tagged tree, and its parity row already puts it at M6. P4 makes it cheap when it arrives. | None; the row is already correct. |
+| JPEG 2000 export, if no acceptable pure-Rust encoder exists | Row 53 ships `partial` naming JPEG and TIFF, with the reason. A C dependency is not an acceptable resolution (decision 4). | Split row 53's Notes if it happens; decided in P14, never carried as both outcomes. |
+| Line Weights, if the hayro fork commit does not land | The menu item stays disabled with a reason and the row moves to M4. M2's review already recorded the correct semantics (constant hairline width, not a width floor) so M3 does not repeat the wrong analysis. | Only if it happens; decided in P22. |
+| Inline images (`BI`/`ID`/`EI`) in Export all images (row 54) | Decided in P14 and stated either way. Including them is a content-stream walk, excluding them is a documented scope line. | Whichever P14 takes goes in row 54's Notes. |
+| `corpus/tagged/` beyond what P4's invariant needs | M5 owns the guarantee-8 fixture set. P4 populates enough to exercise the invariant and says how many files that is. | `corpus/README.md`'s guarantee-8 row is updated from "not built yet" to what P4 built. |
+
+---
+
+## 8. Candor: where PLAN.md's M3 text does not survive contact with the code
+
+Each item needs a plan edit or an explicit acceptance before implementation
+starts. Evidence is cited.
+
+1. **The M3 paragraph names seven deliverables; the scoreboard puts 99 rows in
+   M3.** This is M2's candor item 12 repeating: the paragraph names
+   `tools-comment`, `tools-organize`, Combine and split, incremental save,
+   undo/redo, the skins panel and `crates/print`. It never mentions stamps
+   (seven rows), document properties, bookmark and attachment authoring,
+   compress and flatten export, image creation and export, autosave and crash
+   recovery, the Window menu, Manage Tools, Line Weights, Automatic Scroll, the
+   Advanced Search extensions, Copy with formatting, Home Starred, or Initial
+   View. **Resolution: grow the paragraph**, as M2's resolution was, since the
+   packages cover all 99 and moving rows out would shrink the milestone for no
+   engineering reason. That is a PLAN.md edit for the orchestrator, not made
+   here.
+
+2. **"Guarantee tests 1-2 and 6 pass" describes work that is already done at the
+   wrong level, and one of the three was vacuous.** All three properties are
+   proved today in `crates/cos/tests/{roundtrip,incremental,repair}.rs`; the
+   app-level tests in `crates/app/tests/guarantees.rs` are `#[ignore]`d and
+   `unimplemented!()` on `main`. So the sentence reads as if a capability is
+   missing when what is missing is the wiring and the level. What M3 actually
+   owes: guarantee 2 must become true of an edit made by a **tool** through
+   `core`, not of a synthetic `cos::set_object` call, which is P3's test and not
+   cos's. And guarantee 6 was **vacuous**: `repair.rs` returns early when
+   `corpus/malformed` is absent, the set is gitignored and generated by
+   `corpus/make-malformed.sh`, and CI never ran that script, so the enforcing
+   test was present, green and measuring nothing. The B6 work in the M2 close-out
+   branches rewrites the app-level guarantees to assert against the enforcing
+   suites **and** to assert the CI step that makes their corpus mandatory. M3
+   must inherit that rule for every guarantee it touches, and P4's tagged corpus
+   step is where it first applies.
+
+3. **PLAN.md's stated undo model is wrong for two reachable cases.** "What does
+   not transfer" item 1 and parity row 17 both say undo is "dropping edit-graph
+   overlay nodes". Dropping a node is correct only when the edit created the
+   node. An edit that overwrites an object a previous edit already overlaid (a
+   highlight recoloured twice) must restore the previous overlay state, and an
+   edit that deletes an object present in the original has no node to drop.
+   T2 resolves it with before-and-after states; the plan text should say so, and
+   P2's property test covers exactly these two cases by name.
+
+4. **The core invariant conflates generations with undo.** Point 2 of the
+   invariant says generations "roll back by truncation", and the milestone list
+   says M3 delivers "undo/redo". Read together they imply truncation is undo,
+   which is wrong after any save that is not the last thing in the file, wrong
+   after a Save As, and destructive of generations the user kept. T1 separates
+   them into a session-scoped edit stack and a named, explicit generation
+   rollback. PLAN.md should carry that distinction.
+
+5. **The core invariant has no clause for documents Onionskin authors.** Combine,
+   split, extract, create-from-image and the comment summary all produce a new
+   file with nothing underneath to append to, and cos has no write-from-scratch
+   API (its charter names a `flatten` that does not exist). T8 proposes the
+   clause: a document Onionskin authors is written complete on its first save
+   and the invariant applies from there. That is a PLAN.md edit.
+
+6. **Decision 12 says `core` maintains the structure tree on every edit;
+   nothing in the workspace mentions it.** A repository-wide grep for
+   `StructTreeRoot`, `ParentTree`, `StructParents`, `MarkInfo` and `MCID`
+   returns one incidental comment in `crates/content/src/interpret.rs:33`.
+   PLAN.md assigns guarantee 8 to M5 and says nothing about M3's obligation,
+   which reads as permission to ignore it. T6 states the obligation and P4 sizes
+   it. The cost of not doing it now is not a delayed guarantee; it is M5
+   inheriting shipped M3 builds that broke the tree, plus a revisit of every M3
+   tool.
+
+7. **The known dangling-reference debt is assigned to `tools-organize`, which is
+   the wrong owner.** `known-issues.md` and `document.rs:868` both say "M3's
+   `tools-organize` has to fix up the page tree itself". A plugin is the last
+   place that knowledge should live: `commands-core`'s combine and split need
+   exactly the same fixups, and so will `redact` at M5. This plan puts the
+   transformation in `core::pages` (P5) and leaves `tools-organize` as the
+   surface that calls it, and adds the guard in cos (P1) so the mistake is loud
+   wherever it is made. The ledger entry's wording should move with it.
+
+8. **`crates/print` "lands with the macOS backend and the Acrobat print dialog"
+   understates it by three of five parts.** The five are a page-selection model,
+   an imposition engine, a sheet renderer, the backend trait with two
+   implementations, and the dialog. The crate today has six lines of doc comment
+   and no `[dependencies]` section. Only the dialog is app work, and only the
+   file backend can be verified in CI, which PLAN.md's own risk list already
+   says and its milestone sentence does not.
+
+9. **The Comments and Forms print row cannot be expressed through hayro's
+   settings, and `/OC` will not rescue it.** Row 94 wants a per-subtype filter;
+   `render_annotations` is a bool; and `known-issues.md` records that hayro's
+   annotation loop never reads an annotation's `/OC`. T7's resolution is a
+   render-time `/F` Hidden overlay on a preview buffer. The consequence that
+   must be stated in the plan: M3 authors no `/OC` on any annotation, and
+   layer-controlled annotation visibility stays blocked on the upstream fix.
+
+10. **`cos::Document` is `!Send`, and M3 is the milestone m2-viewer predicted
+    would feel it.** Candor item 7 of the M2 plan named "M3's edit graph or M4's
+    MCP sessions". The consumer turns out to be autosave (row 7), not the edit
+    graph, and P3 resolves it by moving the overlay rather than the document
+    across the thread boundary. Worth knowing before P18 discovers it.
+
+11. **The skins panel has no data source.** PLAN.md describes generations as
+    sheets and rollback as truncation, but cos exposes `original_len()` (one
+    boundary) and nothing that walks the `/Prev` chain. P1 adds `sections()`.
+    The panel is also, per `ACROBAT-PARITY.md`'s own counting convention,
+    explicitly not counted on the scoreboard, so a milestone scheduled by row
+    count will schedule the release's namesake feature at zero.
+
+12. **Copy With Formatting cannot fully ship, and M2's plan already found half
+    of this.** M2's P10 recorded that `gpui::ClipboardEntry` has only `String`
+    and `Image` variants and that `TextSelection` carries no font data, then
+    pointed row 31 at M3. `ClipboardEntry` is unchanged. So M3 can ship Export
+    Selection As (a file) and can add font data to `TextSelection`, but the
+    clipboard half needs a GPUI fork addition for custom pasteboard flavours.
+    The row ships `partial` with the clipboard half named, which is section 7's
+    deferral, and PLAN.md's implicit promise that M3 closes it is wrong.
+
+13. **`corpus/tagged/` is a README.** `corpus/README.md`'s guarantee-8 row says
+    "not built yet". Any milestone that claims tag integrity, including M3's
+    obligation under item 6, needs that set to exist. P4 builds it.
+
+14. **The encryption ledger action M2 promised was never written.**
+    m2-viewer section 6 assigned `known-issues.md` an entry distinguishing
+    permissions-only encryption from password protection, with class counts.
+    `known-issues.md` contains no encryption entry at all today. The
+    measurement is the input to section 9 decision A, so it is unconditional in
+    P1 regardless of how that decision goes.
+
+---
+
+## 9. Two decisions for the user, with recommendations
+
+Both are called out by PLAN.md or by M2's plan as due at M3 planning. Each is
+presented with a recommendation and the tradeoff; neither is decided here.
+
+### Decision A. Pull empty-user-password decryption into `cos` at M3?
+
+**The reassessment PLAN.md's M2 paragraph scheduled for now.** M2 ships
+encrypted documents closed with a typed, fail-loud message naming the milestone.
+
+**What it would cost.** One package, P1b, off the critical path and in a crate
+nothing else touches. `crates/crypto` is four lines of doc comment today, so
+this is the ISO 32000 standard security handler built from nothing: `/V` 1, 2, 4
+and 5, `/R` 2 through 6, algorithm 2 and 2.A key derivation, algorithms 4
+through 7 and 11 and 12 for validation, per-object keys for RC4 and AES-128-CBC,
+the direct file key for AES-256, `/EncryptMetadata`, and the crypt filter
+dictionary. Pure-Rust dependencies exist for all of it, so decision 4 is not at
+risk. The seam in `cos` is narrow: strings and streams decrypt at parse, and
+`refuse_encrypted` narrows from one predicate to a slightly longer one. The
+review burden is the interesting part, not the line count: four revisions of key
+derivation, each of which can be subtly wrong in a way that opens some files and
+mis-keys others, which is why P1b's verification insists on known-answer vectors
+per revision rather than on corpus files alone.
+
+**What it would buy.** The roughly 35 corpus files cos refuses become
+viewable, printable and exportable. More importantly it closes the
+**permissions-only** class: an `/Encrypt` dict with an empty user password,
+which Acrobat opens without ever prompting and which is what most encrypted
+PDFs in the wild are. To a user those files are not "encrypted", they are
+ordinary documents that Onionskin alone refuses, and that is a credibility hole
+in exactly the institutional offices a drop-in claim targets. It also gives M6's
+write path working key material to append with, instead of building key
+derivation under signature-compatibility pressure.
+
+**The tradeoff, stated honestly.** Writing stays M6. So a document that opens
+must refuse to save, which is a worse shape than refusing at open **unless the
+refusal is at open**. P1b therefore disables the edit tools on any encrypted
+document at open time, with a reason naming M6, so the user never begins work
+they cannot keep. For files whose permission bits forbid modification that is
+what Acrobat does anyway. For files whose permission bits **allow**
+modification, it is a real regression against Acrobat, and it is the residual
+this decision buys: those documents become readable and printable in M3, and
+stay uneditable until M6.
+
+The argument the other way is genuine: M3 is already the largest milestone by
+row count, cryptography is a domain where a subtle bug is a security defect
+rather than a rendering artefact, and PLAN.md's risk list is unambiguous that
+"M1 parses encryption; M6 writes it". Deferring costs nothing in M3 and leaves
+the hole open through M3, M4 and M5, three milestones during which the parity
+scoreboard is public.
+
+**Recommendation: take it, as read-only, scoped to the standard security handler
+with an empty user password, with editing disabled at open.** M3 is the first
+release where refusing a document costs the user work rather than a view, and
+the read half sits inside the plan's own boundary (`crates/crypto`'s charter
+calls decryption handlers "a kernel concern from the start"; only the write path
+is M6). It is off the critical path, so taking it costs schedule only if it is
+allowed to block something, which it is not.
+
+**Unconditional either way:** the class-split measurement. How many of the ~35
+refused files have an empty user password? m2-viewer assigned that to
+`known-issues.md` and it was never written. It is the input to this decision and
+to M6's sizing, and it is an afternoon.
+
+### Decision B. How much Acrobat print-dialog parity does M3 need?
+
+`crates/print`'s doc comment names page ranges, scaling, N-up, booklet and
+print-as-image. `ACROBAT-PARITY.md` puts sixteen printing rows in M3. Some of
+that is deep.
+
+**The defensible M3 subset**, which is what P15 through P17 as written deliver:
+the imposition engine, page range and subset (all, current, custom, odd and
+even), page sizing and handling (Fit, Actual size, Shrink oversized, Custom
+scale), N-up, orientation, duplex, Comments and Forms, Page Setup, Print as
+Image, Print to File, the print dialog itself with a live preview, and the
+Advanced Print Setup dialog carrying only its two in-scope items. Fourteen of
+the sixteen rows.
+
+**What slips: booklet (row 90) and poster / tile (row 91).**
+
+Booklet is not "N-up with a different order". It needs signature ordering,
+creep and shingling compensation for paper thickness, a binding-edge model,
+subset-booklet ranges, and duplex sheet pairing where a mistake is only
+observable on folded paper. It is a package's worth of geometry whose
+acceptance criterion is a physical artefact, which sits badly in a milestone
+whose print backend already cannot be tested in CI.
+
+Poster and tile needs tile overlap, tile marks, cut marks and page labels drawn
+onto the output. Drawing marks onto printed output is the surface PLAN.md puts
+permanently out of scope one paragraph earlier ("Output, Marks and Bleeds,
+PostScript options and print colour management stay with the out-of-scope
+print-production surface"), so it sits on a boundary the plan has already drawn
+and would be the only in-scope feature on that side of it.
+
+Neither is on the path to "M3 can print". Both are pure imposition math once
+someone writes them, so both land cheaply at M4 on top of P15's `Sheet` model,
+alongside the CUPS and Windows backends that M4 already carries.
+
+**The tradeoff.** PLAN.md decision 13 and the `crates/print` doc comment both
+name booklet in the M3 parity list, so this is a plan edit, not a silent cut.
+Booklet is also the print feature Acrobat users name most often when comparing
+products, and leaving it out of "the identity release" is a visible gap in a
+way poster and tile is not.
+
+**Recommendation: defer both to M4, and take the plan edit rather than the
+silent cut.** If the user would rather keep booklet visible in M3, the honest
+shape is a fourth print package, P15b, delivering booklet imposition only,
+verified structurally against sheet order and placement transforms through the
+file backend, with creep compensation explicitly excluded and named; poster and
+tile alone would then slip. What this plan will not do is carry both outcomes.
+
+---
+
+## 10. Definition of done for M3
+
+- All 99 `ACROBAT-PARITY.md` M3 rows are `implemented`, `partial` with a stated
+  cut in their Notes, or moved to a later milestone with a reason recorded in a
+  review. The scoreboard's executable totals contract recounts and passes.
+- The three M2 rows M3 unblocks are flipped (right-hand side panel, quick action
+  toolbar, Page Thumbnails context menu), and the Layers pane's `Properties`
+  entry is live.
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo test --workspace` green on macOS, Linux and Windows.
+- `cargo build -p onionskin-app --features shell`,
+  `cargo test -p onionskin-app --features shell`, and
+  `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support`
+  green on the runners the shell job covers, with the matching clippy
+  invocation. (`--features shell` is not a workspace-level flag; it must be
+  `-p`.)
+- `cargo test -p onionskin-app --no-default-features` green: guarantee 5 still
+  holds with an edit graph, a print crate and three new plugins in the workspace.
+- `cargo test -p onionskin-print` runs in the default workspace job, with no
+  window, no display and no printer.
+- No crate outside `crates/app` imports GPUI, asserted by the existing test.
+  `crates/print` imports AppKit directly and no GPUI, asserted the same way.
+- **Guarantees 1, 2 and 6 pass at the level the guarantee means**, not one layer
+  down: guarantee 2 is driven by an edit a tool made through `core`, and every
+  guarantee M3 un-ignores has a CI step that makes its corpus mandatory, so none
+  of them can repeat guarantee 6's vacuous pass.
+- P7's registry-exhaustive property tests pass over the real `build_registry()`:
+  every registered tool and command is undoable, serializes to a section a fresh
+  parse accepts, survives degenerate documents, and is deterministic.
+- P4's structure invariant is clean after every M3 edit on every tagged fixture,
+  and it **fails** on the deliberately broken fixture in the same suite.
+- P1's reference validator finds nothing on the output of every P5, P11, P12 and
+  P14 operation over every named fixture.
+- P16's manual print acceptance script has run on macOS and its result is
+  recorded in that package, including what it failed at. **M3 is not done until
+  it has.**
+- Every new control appears in the AccessKit tree with a real label and state,
+  and every dismissible surface removes its controls from the tree rather than
+  leaving invisible tab stops. The macOS accessibility probe stays a required CI
+  gate.
+- Every new keyboard route is proven with `cx.simulate_keystrokes` on a real
+  window.
+- `known-issues.md` has every M3-deadline entry removed or narrowed: the cos
+  dangling-reference entry (reassigned to `core::pages` and closed by P1's
+  validator and P5's transformation), the Line Weights entry, the
+  `Include Comments` entry, the `SearchResult::Unavailable::reason` widening;
+  plus the new entries M3 earns (the encryption class split, whatever decision A
+  settles into, the `/OC` annotation-visibility consequence, and any deferral
+  from section 7).
+- The dogfood claim carries its caveats. "M3 edits PDFs non-destructively" is
+  stated with what it cannot do attached: no text editing, no form filling, no
+  redaction, no signing, and, unless decision A is taken, no encrypted
+  documents. A claim that omits them is a defect, not a simplification.
