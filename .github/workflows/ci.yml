@@ -34,6 +34,15 @@ jobs:
         if: runner.os == 'Linux'
         run: ./corpus/make-malformed.sh
       - run: cargo test --workspace
+      # Generating the set is not proof it was measured: repair.rs returns
+      # early when the corpus is absent, so the run above would pass either
+      # way. ONIONSKIN_CORPUS_REQUIRED turns that skip into a failure, which is
+      # what makes disabling the step above visible instead of silent.
+      - name: Prove the repair guarantee measured the malformed set
+        if: runner.os == 'Linux'
+        env:
+          ONIONSKIN_CORPUS_REQUIRED: 1
+        run: cargo test -p onionskin-cos --test repair
       # Guarantee test 5: with every plugin compiled out, the app still
       # builds and boots to a workspace that can do nothing.
       - run: cargo test -p onionskin-app --no-default-features

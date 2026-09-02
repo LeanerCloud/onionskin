@@ -27,26 +27,48 @@ const TINY_PDF_SHA256: &str = "98704aee8801c3738f9b38577f4c7917b82da5d770a8f4c1c
 /// otherwise leave guarantee 1 green and unmeasured.
 #[test]
 fn a_save_with_no_edit_is_byte_identical_to_the_original() {
-    let source = enforcing_suite("roundtrip.rs", 1, &["seeds_round_trip_exactly"]);
-    for (marker, missing) in [
-        (
-            "document.incremental_section()",
-            "a no-op save is no longer asked what it appended",
-        ),
-        (
-            "non-empty-noop-save",
-            "a no-op save that appended bytes no longer fails",
-        ),
-        (
-            "save_to_vec",
-            "nothing is saved, so byte-identity is no longer compared",
-        ),
-    ] {
-        assert!(
-            source.contains(marker),
-            "roundtrip.rs no longer proves guarantee 1: {missing}"
-        );
-    }
+    // Every test in roundtrip.rs, so the sentence's "for every corpus file" is
+    // not carried by the seeds alone: the external-corpus walks have pass
+    // floors of their own and could otherwise be deleted with this green.
+    let source = enforcing_suite(
+        "roundtrip.rs",
+        1,
+        &[
+            "seeds_round_trip_exactly",
+            "pdf20examples_corpus_round_trips",
+            "pdf_association_corpus_round_trips",
+            "verapdf_corpus_round_trips",
+            "hayro_custom_corpus_round_trips",
+            "hayro_other_corpus_round_trips",
+            "hayro_regression_corpus_round_trips",
+        ],
+    );
+    mentions(
+        &source,
+        "roundtrip.rs",
+        "document.incremental_section()",
+        "a no-op save is no longer asked what it appended",
+    );
+    states(
+        &source,
+        "roundtrip.rs",
+        "non-empty-noop-save",
+        "a no-op save that appended bytes no longer fails",
+    );
+    mentions(
+        &source,
+        "roundtrip.rs",
+        "save_to_vec",
+        "nothing is saved, so byte-identity is no longer compared",
+    );
+    // The floors are what stops an external corpus walk reporting a pass for
+    // a set it silently stopped covering.
+    states(
+        &source,
+        "roundtrip.rs",
+        "below the {floor_percent}% floor",
+        "the external corpus walks no longer hold a floor on their pass counts",
+    );
     assert_ci_reaches_the_cos_suite();
 }
 
@@ -64,7 +86,10 @@ fn an_edit_appends_one_incremental_section_that_truncates_away() {
     let source = enforcing_suite(
         "incremental.rs",
         2,
-        &["editing_a_seed_appends_exactly_one_section"],
+        &[
+            "editing_a_seed_appends_exactly_one_section",
+            "a_second_edit_appends_a_second_section",
+        ],
     );
     for (marker, missing) in [
         (
@@ -76,19 +101,18 @@ fn an_edit_appends_one_incremental_section_that_truncates_away() {
             "the section count is no longer pinned to one",
         ),
         (
-            "document.original_len()",
-            "the truncation point is no longer the one the document reports",
-        ),
-        (
             "truncating the section must undo the edit",
             "the roll-back half of the sentence is no longer checked",
         ),
     ] {
-        assert!(
-            source.contains(marker),
-            "incremental.rs no longer proves guarantee 2: {missing}"
-        );
+        states(&source, "incremental.rs", marker, missing);
     }
+    mentions(
+        &source,
+        "incremental.rs",
+        "document.original_len()",
+        "the truncation point is no longer the one the document reports",
+    );
     assert_ci_reaches_the_cos_suite();
 }
 
@@ -119,10 +143,16 @@ fn annotating_a_signed_document_keeps_its_signature_valid() {
 /// the enforcing test is present, green, and measuring nothing.
 #[test]
 fn every_malformed_file_opens_and_repairs_into_a_new_section() {
+    // "Opens" and "repairs" are two clauses and two tests. Naming only the
+    // repair walk would let the refusal case be deleted with this green.
     let source = enforcing_suite(
         "repair.rs",
         6,
-        &["every_malformed_file_repairs_and_saves_over_intact_original_bytes"],
+        &[
+            "open_refuses_a_damaged_file_instead_of_opening_it_quietly",
+            "every_malformed_file_repairs_and_saves_over_intact_original_bytes",
+            "damaged_files_in_the_external_corpora_repair_the_same_way",
+        ],
     );
     for (marker, missing) in [
         (
@@ -138,18 +168,40 @@ fn every_malformed_file_opens_and_repairs_into_a_new_section() {
             "the appended section is no longer required to carry the repair",
         ),
     ] {
-        assert!(
-            source.contains(marker),
-            "repair.rs no longer proves guarantee 6: {missing}"
-        );
+        states(&source, "repair.rs", marker, missing);
     }
     assert_ci_reaches_the_cos_suite();
 
+    // repair.rs returns early when corpus/malformed is absent, and the set is
+    // gitignored, so the enforcing test is only worth anything on a runner
+    // that generated it. Generating it is not enough either: with
+    // ONIONSKIN_CORPUS_REQUIRED the rerun turns a skip into a failure, which
+    // is what makes disabling the generation step above visible.
     let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
         .expect("the CI workflow is readable");
-    assert!(
-        job(&ci, "test").contains("./corpus/make-malformed.sh"),
-        "CI never generates corpus/malformed, so repair.rs skips it and guarantee 6 passes unmeasured"
+    let steps = job_steps(&ci, "test");
+    let generate = steps
+        .iter()
+        .find(|step| step.runs("./corpus/make-malformed.sh"))
+        .expect("CI never generates corpus/malformed, so repair.rs skips it and guarantee 6 passes unmeasured");
+    assert_eq!(
+        generate.get("if"),
+        Some("runner.os == 'Linux'"),
+        "the malformed set is generated on a different set of runners than the rerun below proves it on"
+    );
+    let prove = steps
+        .iter()
+        .find(|step| step.runs("cargo test -p onionskin-cos --test repair"))
+        .expect("CI never reruns the repair suite with the corpus made mandatory, so a skipped guarantee 6 still reports a pass");
+    assert_eq!(
+        prove.get("if"),
+        Some("runner.os == 'Linux'"),
+        "the mandatory-corpus rerun runs where the malformed set was not generated"
+    );
+    assert_eq!(
+        prove.get("env.ONIONSKIN_CORPUS_REQUIRED"),
+        Some("1"),
+        "the repair rerun still lets an absent corpus report a pass"
     );
 }
 
@@ -285,38 +337,81 @@ fn release_artifacts_build_the_windowed_viewer() {
         .expect("the CI workflow is readable");
     let release = std::fs::read_to_string(workspace_root().join(".github/workflows/release.yml"))
         .expect("the release workflow is readable");
-    let ci_shell = job(&ci, "shell");
     let build = job(&release, "build");
     assert!(
         !build.is_empty(),
         "the release workflow has no build job, so it publishes nothing testable"
     );
     assert!(
-        build.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
+        build
+            .lines()
+            .any(|line| line.trim() == "CARGO_NET_GIT_FETCH_WITH_CLI: true"),
         "release builds fetch git dependencies differently from CI"
     );
+
+    let build_steps = job_steps(&release, "build");
+    let shell_steps = job_steps(&ci, "shell");
+
+    // The one step that makes the artifact a viewer. `gate_step` is what
+    // refuses a conditioned or appended-to version of it: the command has to
+    // be the whole command, and the step has to run on every leg of the
+    // matrix, or some platform publishes an artifact it never built.
+    const SHELL_BUILD: &str = "cargo build --release -p onionskin-app --features shell";
+    gate_step(&build_steps, SHELL_BUILD);
+
+    // ...and no later step may quietly rebuild over it. Both scripts package
+    // whatever sits at target/release/onionskin, so a second, featureless
+    // build anywhere in this job replaces the viewer with a binary that opens
+    // no window, while the step above still reads correctly.
+    for step in &build_steps {
+        for command in step.commands() {
+            let builds_the_app =
+                command.contains("cargo build") && command.contains("-p onionskin-app");
+            assert!(
+                !builds_the_app || command.contains("--features shell"),
+                "a release step builds onionskin-app without the shell feature, overwriting the binary the packaging scripts ship: {command}"
+            );
+        }
+    }
+
     assert!(
-        build.contains("actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c"),
+        build_steps.iter().any(|step| step.action()
+            == Some("actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c")),
         "release builds do not install the reviewed Python setup action even though the packaging version gate uses shell helpers"
     );
-    for step in [
-        "      - name: Update Linux package index\n        if: runner.os == 'Linux'\n        run: sudo apt-get update",
-        "      - name: Install GPUI Linux dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get install -y libfontconfig1-dev libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev",
-        "      - name: Install macOS Metal toolchain\n        if: runner.os == 'macOS'\n        run: xcodebuild -downloadComponent MetalToolchain",
+
+    // Every prerequisite the shell build needs, mirrored from the job that is
+    // known to build it. Compared as steps, so a mirrored step that grew an
+    // `if:` or lost half its command no longer counts as mirrored.
+    for name in [
+        "Update Linux package index",
+        "Install GPUI Linux dependencies",
+        "Install macOS Metal toolchain",
     ] {
-        assert!(
-            ci_shell.contains(step),
-            "the CI shell job no longer contains the expected prerequisite step:\n{step}"
-        );
-        assert!(
-            build.contains(step),
-            "the release build job does not mirror the CI shell prerequisite step:\n{step}"
+        let named = |steps: &[Step], job: &str| {
+            let found = steps
+                .iter()
+                .filter(|step| step.get("name") == Some(name))
+                .count();
+            assert_eq!(
+                found, 1,
+                "the {job} job does not have exactly one {name} step"
+            );
+            let step = steps
+                .iter()
+                .find(|step| step.get("name") == Some(name))
+                .expect("counted above");
+            (
+                step.get("run").unwrap_or_default().to_owned(),
+                step.get("if").unwrap_or_default().to_owned(),
+            )
+        };
+        assert_eq!(
+            named(&shell_steps, "CI shell"),
+            named(&build_steps, "release build"),
+            "the release build job does not mirror the CI shell prerequisite step {name}"
         );
     }
-    assert!(
-        build.contains("cargo build --release -p onionskin-app --features shell"),
-        "release artifacts are not built with the windowed shell feature"
-    );
 }
 
 #[test]
@@ -373,10 +468,49 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         "Dependabot has no predictable update cadence"
     );
 
-    for section in ["advisories", "licenses", "bans", "sources", "graph"] {
-        assert!(
-            deny.contains(&format!("[{section}]")),
-            "cargo-deny policy is missing [{section}]"
+    // The exact set of keys each section declares. Pinning values alone leaves
+    // every knob nobody named invisible, and cargo-deny has plenty: a
+    // `[graph] exclude` mutes a crate out of the scan so its advisory can be
+    // deleted with nothing failing, `disable-yank-checking` sits beside an
+    // untouched `yanked = "deny"`, `[sources] allow-org` trusts a whole GitHub
+    // organisation, and a quoted `"unmaintained"` key defeats an
+    // absent-key assertion while deserializing normally. cargo-deny rejects
+    // keys it does not know, so pinning the set closes all of them at once.
+    for (section, keys) in [
+        ("graph", &["all-features", "targets"][..]),
+        ("advisories", &["ignore", "version", "yanked"][..]),
+        (
+            "licenses",
+            &["allow", "confidence-threshold", "exceptions"][..],
+        ),
+        (
+            "bans",
+            &[
+                "allow",
+                "allow-wildcard-paths",
+                "deny",
+                "highlight",
+                "multiple-versions",
+                "skip",
+                "skip-tree",
+                "wildcards",
+            ][..],
+        ),
+        (
+            "sources",
+            &[
+                "allow-git",
+                "allow-registry",
+                "required-git-spec",
+                "unknown-git",
+                "unknown-registry",
+            ][..],
+        ),
+    ] {
+        assert_eq!(
+            policy_keys(&deny, section),
+            keys,
+            "the set of settings [{section}] declares changed"
         );
     }
 
@@ -389,14 +523,12 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         ("graph", "all-features", "true"),
         ("advisories", "yanked", "\"deny\""),
         ("licenses", "exceptions", "[]"),
-        ("licenses", "confidence-threshold", "0.8"),
         ("bans", "wildcards", "\"deny\""),
         // The wildcard ban only means anything once the workspace's own path
         // dependencies stop reading as wildcards, which is what `publish =
         // false` buys. Without it the check fails on our own crates, and the
         // way out of that is to stop denying wildcards at all.
         ("bans", "allow-wildcard-paths", "true"),
-        ("bans", "multiple-versions", "\"warn\""),
         ("bans", "allow", "[]"),
         ("bans", "skip", "[]"),
         ("bans", "skip-tree", "[]"),
@@ -411,18 +543,22 @@ fn supply_chain_policy_is_checked_in_and_gated() {
             "cargo-deny policy weakened: [{section}] {key} must be {required}"
         );
     }
-    // cargo-deny's default reports every unmaintained advisory. Narrowing that
-    // to "none" or "workspace" mutes whole classes at once, which is what an
-    // exception list exists to avoid.
-    assert_eq!(
-        policy_setting(&deny, "advisories", "unmaintained"),
-        None,
-        "the policy narrows which unmaintained advisories are reported; tolerate them one ID at a time instead"
+    // Floors rather than equalities, so tightening the policy later is not a
+    // test failure. Duplicate versions are a warning today because gpui brings
+    // 66 of them; the day they are cleaned up, "deny" must not fail here.
+    assert!(
+        matches!(
+            policy_setting(&deny, "bans", "multiple-versions").as_deref(),
+            Some("\"warn\"") | Some("\"deny\"")
+        ),
+        "duplicate crate versions are not reported at all"
     );
-    assert_eq!(
-        policy_setting(&deny, "licenses", "unused-allowed-license"),
-        None,
-        "the policy silences the warning that keeps the license allow-list from outgrowing the tree"
+    let confidence = policy_setting(&deny, "licenses", "confidence-threshold")
+        .and_then(|value| value.parse::<f64>().ok())
+        .expect("the policy states a license confidence threshold");
+    assert!(
+        confidence >= 0.8,
+        "license detection confidence is below the reviewed floor: {confidence}"
     );
     assert_eq!(
         policy_setting(&deny, "graph", "targets").as_deref(),
@@ -499,66 +635,119 @@ fn supply_chain_policy_is_checked_in_and_gated() {
     let supply_chain = job(&ci, "supply-chain");
     assert!(!supply_chain.is_empty(), "CI has no supply-chain job");
     assert!(
-        supply_chain.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
+        supply_chain
+            .lines()
+            .any(|line| line.trim() == "CARGO_NET_GIT_FETCH_WITH_CLI: true"),
         "the supply-chain job fetches git dependencies differently from the rest of CI"
     );
-    assert!(
-        supply_chain.contains("fetch-depth: 0"),
-        "the secret scanner cannot inspect git history from a shallow checkout"
+    let steps = job_steps(&ci, "supply-chain");
+
+    // The cargo-deny invocation itself. The action builds its command line as
+    // `cargo-deny --manifest-path X <arguments> <command> <command-arguments>`,
+    // so `arguments: --config other.toml` points it at a policy this test never
+    // reads and `command: check bans` narrows it to one section of four. Both
+    // leave the action pin untouched and both stay green. Pinning the whole
+    // `with:` block is the only way to say "this policy, all four sections".
+    let deny_action = steps
+        .iter()
+        .find(|step| {
+            step.action()
+                .is_some_and(|action| action.starts_with("EmbarkStudios/cargo-deny-action@"))
+        })
+        .expect("CI does not run cargo-deny");
+    assert_eq!(
+        deny_action.action(),
+        Some("EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25"),
+        "CI does not use the reviewed cargo-deny action pin"
     );
-    assert!(
-        supply_chain.contains("actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"),
+    assert_eq!(
+        deny_action.keys_under("with"),
+        vec!["command"],
+        "the cargo-deny step passes more than `command`, which can point it at another policy file or narrow it to one section"
+    );
+    assert_eq!(
+        deny_action.get("with.command"),
+        Some("check"),
+        "cargo-deny does not check all four sections"
+    );
+    assert_eq!(
+        deny_action.get("if"),
+        None,
+        "the cargo-deny step is conditional, so some event skips the whole policy"
+    );
+
+    let checkout = steps
+        .iter()
+        .find(|step| {
+            step.action()
+                .is_some_and(|action| action.starts_with("actions/checkout@"))
+        })
+        .expect("the supply-chain job does not check the repository out");
+    assert_eq!(
+        checkout.action(),
+        Some("actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"),
         "CI does not use the reviewed checkout v6 pin"
     );
-    assert!(
-        supply_chain.contains("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c"),
-        "CI does not use the reviewed rust-toolchain stable pin"
+    assert_eq!(
+        checkout.get("with.fetch-depth"),
+        Some("0"),
+        "the secret scanner cannot inspect git history from a shallow checkout"
     );
+    for action in [
+        "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+        "Swatinem/rust-cache@e172ef532f714507ca8b9ce7978a442736438fc1",
+    ] {
+        assert!(
+            steps.iter().any(|step| step.action() == Some(action)),
+            "CI does not use the reviewed pin {action}"
+        );
+    }
+    for step in &steps {
+        let Some(action) = step.action() else {
+            continue;
+        };
+        let sha = action
+            .split_once('@')
+            .map(|(_, pin)| pin)
+            .unwrap_or_default();
+        assert!(
+            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "supply-chain action is not pinned to a full commit SHA: {action}"
+        );
+    }
+
+    // The secret scan, and the check that keeps this job honest about its own
+    // policy. Whole commands, so `|| true` or an extra flag fails here.
+    gate_step(&steps, "./gitleaks detect --redact --source .");
+    let install = steps
+        .iter()
+        .find(|step| {
+            step.commands().iter().any(|command| {
+                command.contains(
+                    "gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz",
+                )
+            })
+        })
+        .expect("CI does not install the reviewed Gitleaks release");
     assert!(
-        supply_chain.contains("Swatinem/rust-cache@e172ef532f714507ca8b9ce7978a442736438fc1"),
-        "CI does not use the reviewed rust-cache pin"
-    );
-    assert!(
-        supply_chain
-            .contains("EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25"),
-        "CI does not run cargo-deny"
-    );
-    assert!(
-        supply_chain.contains("https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz"),
-        "CI does not install the reviewed Gitleaks release"
-    );
-    assert!(
-        supply_chain.contains(
-            "echo \"a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  gitleaks.tar.gz\" | sha256sum -c -"
+        install.commands().contains(
+            &"echo \"a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  gitleaks.tar.gz\" | sha256sum -c -"
         ),
         "CI does not verify the reviewed Gitleaks release checksum against the downloaded tarball"
     );
-    assert!(
-        supply_chain.contains("./gitleaks detect --redact --source ."),
-        "CI does not run Gitleaks"
+    assert_eq!(
+        install.get("if"),
+        None,
+        "the Gitleaks install is conditional, so the scan below can run against nothing"
     );
+    gate_step(
+        &steps,
+        "cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated",
+    );
+
     assert!(
         !supply_chain.contains("GITLEAKS_LICENSE"),
         "the secret scan must not depend on an organization-only action license secret"
-    );
-    for line in supply_chain
-        .lines()
-        .filter(|line| line.trim_start().starts_with("- uses: "))
-    {
-        let Some((_, reference)) = line.split_once('@') else {
-            panic!("action is not pinned to a reviewed ref: {line}");
-        };
-        let sha = reference.split_whitespace().next().unwrap_or_default();
-        assert!(
-            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "supply-chain action is not pinned to a full commit SHA: {line}"
-        );
-    }
-    assert!(
-        supply_chain.contains(
-            "run: cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated"
-        ),
-        "the supply-chain job runs cargo-deny without checking that deny.toml still denies anything, so it stays green against a blanket policy"
     );
     assert!(
         !supply_chain.contains("continue-on-error"),
@@ -3137,53 +3326,258 @@ fn output_text(output: &Output) -> String {
 }
 
 /// One top-level job of a workflow: its header line and everything indented
-/// under it, with comments removed. Scoped, so that what another job is
-/// allowed to do stays that job's business; stripped, so a step that was
-/// commented out cannot answer for the step that runs.
+/// under it, verbatim. Scoped, so that what another job is allowed to do stays
+/// that job's business.
 fn job(workflow: &str, name: &str) -> String {
     let header = format!("  {name}:");
     workflow
         .lines()
         .skip_while(|line| *line != header)
         .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
-        .map(without_comment)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// The source of the `crates/cos` test file that enforces guarantee `number`,
-/// having proved the file still claims that guarantee and still runs each
-/// named test as a plain `#[test]`. An `#[ignore]` or a rename between the
-/// attribute and the signature breaks the match, which is the point: a pointer
-/// guarantee is worth exactly as much as the pointer staying true.
+/// One step of a workflow job, read as the block structure YAML defines rather
+/// than as text. Matching a command as a substring of a job cannot tell
+/// `run: cargo deny check` from `run: cargo deny check || true`, nor see the
+/// `if:` that skips the step entirely, so nothing here matches substrings.
+/// Nested mappings are flattened: a `with:` block's `command` is
+/// `with.command`.
+#[derive(Default)]
+struct Step {
+    entries: Vec<(String, String)>,
+}
+
+impl Step {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// The keys of a nested mapping, sorted, so a `with:` block can be pinned
+    /// whole rather than one key at a time.
+    fn keys_under(&self, prefix: &str) -> Vec<&str> {
+        let prefix = format!("{prefix}.");
+        let mut keys = self
+            .entries
+            .iter()
+            .filter_map(|(name, _)| name.strip_prefix(&prefix))
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// The action this step runs, without the `# vN` note that follows a
+    /// commit pin. An action reference never contains whitespace.
+    fn action(&self) -> Option<&str> {
+        self.get("uses")?.split_whitespace().next()
+    }
+
+    /// Every command line the step runs, one per line of its `run:` scalar.
+    fn commands(&self) -> Vec<&str> {
+        self.get("run")
+            .map(|run| run.lines().map(str::trim).collect())
+            .unwrap_or_default()
+    }
+
+    fn runs(&self, command: &str) -> bool {
+        self.commands().contains(&command)
+    }
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// The steps of one job. A line that is a comment is not a key, and a `#`
+/// inside a command stays part of the command, because indentation decides
+/// what is structure and nothing here scans for quotes.
+fn job_steps(workflow: &str, job_name: &str) -> Vec<Step> {
+    let body = job(workflow, job_name);
+    let mut steps: Vec<Step> = Vec::new();
+    let mut in_steps = false;
+    let mut scalar: Option<(String, usize)> = None;
+    let mut parent: Option<String> = None;
+
+    for line in body.lines() {
+        // A block scalar owns every line indented past its key, comments and
+        // blank lines included: they are the command, not the workflow.
+        if let Some((path, key_indent)) = scalar.clone() {
+            if line.trim().is_empty() || indent_of(line) > key_indent {
+                if let Some(value) = steps
+                    .last_mut()
+                    .and_then(|step| step.entries.iter_mut().find(|(name, _)| *name == path))
+                    .map(|(_, value)| value)
+                {
+                    value.push('\n');
+                    value.push_str(line.trim());
+                }
+                continue;
+            }
+            scalar = None;
+        }
+
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = indent_of(line);
+        if !in_steps {
+            in_steps = indent == 4 && trimmed == "steps:";
+            continue;
+        }
+        if indent <= 4 {
+            in_steps = false;
+            continue;
+        }
+
+        let (declaration, starts_step) = match trimmed.strip_prefix("- ") {
+            Some(rest) if indent == 6 => (rest, true),
+            _ => (trimmed, false),
+        };
+        if starts_step {
+            steps.push(Step::default());
+            parent = None;
+        }
+        let Some((key, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let path = match &parent {
+            Some(name) if indent >= 10 => format!("{name}.{key}"),
+            _ => {
+                parent = None;
+                key.to_owned()
+            }
+        };
+        let Some(step) = steps.last_mut() else {
+            continue;
+        };
+        if value.is_empty() {
+            // A mapping key such as `with:` or `env:`; its entries follow.
+            parent = Some(path);
+            continue;
+        }
+        step.entries.push((path.clone(), value.to_owned()));
+        if value.starts_with('|') || value.starts_with('>') {
+            step.entries.last_mut().expect("just pushed").1.clear();
+            scalar = Some((path, indent));
+        }
+    }
+    steps
+}
+
+/// The one step of `steps` that runs `command` as its whole command, proved to
+/// be a gate: appending `|| true`, appending an argument, or conditioning the
+/// step away all stop it being the gate it was, and none of them removes the
+/// text a substring match would have looked for.
+fn gate_step<'a>(steps: &'a [Step], command: &str) -> &'a Step {
+    let matching = steps
+        .iter()
+        .filter(|step| step.runs(command))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one step whose whole command is `{command}`, found {}",
+        matching.len()
+    );
+    let step = matching[0];
+    assert_eq!(
+        step.get("if"),
+        None,
+        "the step running `{command}` is conditional, so it can be skipped without being removed"
+    );
+    assert_eq!(
+        step.get("continue-on-error"),
+        None,
+        "the step running `{command}` cannot fail the job"
+    );
+    step
+}
+
+/// The `crates/cos` test file that enforces guarantee `number`, having proved
+/// the file still claims that guarantee and still runs each named test as a
+/// plain `#[test]`.
 fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> String {
     let path = workspace_root().join("crates/cos/tests").join(file);
-    let file_source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "{} is unreadable ({error}), so guarantee {number} is unchecked",
             path.display()
         )
     });
     assert!(
-        file_source.starts_with(&format!("//! Guarantee test {number}:")),
+        source.starts_with(&format!("//! Guarantee test {number}:")),
         "{} no longer claims guarantee {number}",
         path.display()
     );
-    // Code only from here on: an assertion deleted and left behind as a
-    // comment must not go on answering for the assertion.
-    let source = file_source
-        .lines()
-        .map(without_line_comment)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let code = code_lines(&source).join("\n");
     for name in tests {
         assert!(
-            source.contains(&format!("\n#[test]\nfn {name}(")),
-            "{} no longer runs {name} as a plain #[test], so guarantee {number} is unchecked",
-            path.display()
+            code.contains(&format!("\n#[test]\nfn {name}(")),
+            "{file} no longer runs {name} as a plain #[test], so guarantee {number} is unchecked"
         );
     }
     source
+}
+
+/// A Rust source with its whole-line comments dropped. Nothing here scans for
+/// quotes: whether a line is a comment is decided by its first two non-space
+/// characters, which one unbalanced quote elsewhere cannot change.
+fn code_lines(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect()
+}
+
+/// Proves `marker` is stated by an assertion or an error return, not merely
+/// present. An assertion deleted and left behind as a comment, whole-line or
+/// trailing, no longer answers for the assertion.
+fn states(source: &str, file: &str, marker: &str, missing: &str) {
+    let code = code_lines(source);
+    let at = code
+        .iter()
+        .position(|line| line.contains(marker))
+        .unwrap_or_else(|| panic!("{file} no longer proves its guarantee: {missing}"));
+    // Back to the start of the statement the marker sits in.
+    let from = code[..at]
+        .iter()
+        .rposition(|line| {
+            let end = line.trim_end();
+            end.ends_with(';') || end.ends_with('{') || end.ends_with('}')
+        })
+        .map_or(0, |line| line + 1);
+    let statement = code[from..=at].join("\n");
+    assert!(
+        // The corpus walks fail a file through their tally rather than through
+        // an assert; the tally is what the pass-count floor is then checked
+        // against, so it is the same thing said in the harness's own terms.
+        [
+            "assert!",
+            "assert_eq!",
+            "assert_ne!",
+            "panic!",
+            "Err(",
+            "tally.fail(",
+        ]
+        .iter()
+        .any(|opener| statement.contains(opener)),
+        "{file} no longer proves its guarantee: {missing} (the text is still there, outside any assertion)"
+    );
+}
+
+/// Proves `marker` appears in code rather than in a comment, for a marker that
+/// is an expression rather than a message and so has no assertion to sit in.
+fn mentions(source: &str, file: &str, marker: &str, missing: &str) {
+    assert!(
+        code_lines(source).iter().any(|line| line.contains(marker)),
+        "{file} no longer proves its guarantee: {missing}"
+    );
 }
 
 /// Guarantees 1, 2 and 6 are enforced in `crates/cos`, which only helps if CI
@@ -3193,10 +3587,7 @@ fn assert_ci_reaches_the_cos_suite() {
     let workspace = workspace_root();
     let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
         .expect("the CI workflow is readable");
-    assert!(
-        job(&ci, "test").contains("- run: cargo test --workspace"),
-        "CI no longer runs the workspace test suite, so the cos guarantees run nowhere"
-    );
+    gate_step(&job_steps(&ci, "test"), "cargo test --workspace");
     let manifest = std::fs::read_to_string(workspace.join("Cargo.toml"))
         .expect("the workspace manifest is readable");
     assert!(
@@ -3205,72 +3596,70 @@ fn assert_ci_reaches_the_cos_suite() {
     );
 }
 
-/// One section of a TOML document with its comments removed. Stripping them is
-/// what makes an assertion about this text an assertion about the setting: a
-/// commented-out `yanked = "deny"` reads identically to the real thing, and a
-/// policy that keeps the reviewed settings in comments and permissive ones in
-/// force passes `cargo deny check` with all four sections green.
-fn toml_section(document: &str, name: &str) -> String {
+/// One section of a TOML document, verbatim apart from its whole-line
+/// comments. Those go because cargo-deny does not read them and a reviewed
+/// setting parked in one reads exactly like the setting itself; nothing else
+/// is stripped, so a value that grew a trailing comment stops comparing equal
+/// rather than being quietly trimmed back into shape.
+fn toml_section(document: &str, name: &str) -> Vec<String> {
     let header = format!("[{name}]");
     document
         .lines()
         .skip_while(|line| line.trim() != header)
         .skip(1)
         .take_while(|line| !line.trim_start().starts_with('['))
-        .map(without_comment)
-        .collect::<Vec<_>>()
-        .join("\n")
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .map(str::to_owned)
+        .collect()
 }
 
-/// A TOML or YAML line up to its first comment marker, leaving `#` inside a
-/// string alone.
-fn without_comment(line: &str) -> &str {
-    let mut quoted = false;
-    for (index, byte) in line.bytes().enumerate() {
-        match byte {
-            b'"' => quoted = !quoted,
-            b'#' if !quoted => return &line[..index],
-            _ => {}
+/// Every key `section` declares, sorted, with a quoted key read as the key it
+/// is. Pinning the set is what stops a knob nobody thought to name - a
+/// `[graph] exclude` that mutes a crate out of the scan, or a
+/// `disable-yank-checking` beside an untouched `yanked = "deny"` - from
+/// disarming the policy while every pinned value still reads correctly.
+fn policy_keys(document: &str, section: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut depth = 0usize;
+    for line in toml_section(document, section) {
+        let trimmed = line.trim();
+        if depth == 0 {
+            if let Some((key, _)) = trimmed.split_once('=') {
+                keys.push(key.trim().trim_matches('"').trim_matches('\'').to_owned());
+            }
         }
+        depth = (depth + opens(trimmed)).saturating_sub(closes(trimmed));
     }
-    line
+    keys.sort();
+    keys
 }
 
-/// A Rust line up to its first `//`, leaving one inside a string literal (a
-/// URL, say) alone. Guarantees 1, 2 and 6 assert that another crate's test
-/// still states their contract; without this a maintainer could delete the
-/// assertion and leave its message behind as a comment.
-fn without_line_comment(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut quoted = false;
-    for index in 0..bytes.len() {
-        match bytes[index] {
-            b'"' if index == 0 || bytes[index - 1] != b'\\' => quoted = !quoted,
-            b'/' if !quoted && bytes.get(index + 1) == Some(&b'/') => return &line[..index],
-            _ => {}
-        }
-    }
-    line
-}
-
-/// The value of `key` in `section`, as cargo-deny would read it: comments
-/// gone, and a value spread over several lines joined onto one so an array can
-/// be compared whole. `None` when the key is absent, which is a distinct
-/// answer from an empty value.
+/// The value of `key` in `section`, as cargo-deny would read it: a value
+/// spread over several lines is joined onto one so an array can be compared
+/// whole. `None` when the key is absent, which is a distinct answer from an
+/// empty value.
 fn policy_setting(document: &str, section: &str, key: &str) -> Option<String> {
     let body = toml_section(document, section);
-    let mut lines = body.lines().map(str::trim);
-    let first = lines.find_map(|line| line.strip_prefix(key)?.trim_start().strip_prefix('='))?;
+    let mut lines = body.iter().map(|line| line.trim());
+    let mut value = lines
+        .find_map(|line| {
+            Some(
+                line.strip_prefix(key)?
+                    .trim_start()
+                    .strip_prefix('=')?
+                    .trim(),
+            )
+        })?
+        .to_owned();
 
-    let mut value = first.trim().to_owned();
-    while unbalanced(&value) {
-        let next = lines.next()?.trim();
+    while opens(&value) > closes(&value) {
+        let next = lines.next()?;
         if next.is_empty() {
             continue;
         }
         if next.starts_with(']') {
             // TOML allows a trailing comma before the bracket; a joined value
-            // that keeps it would not compare equal to the array it means.
+            // that kept it would not compare equal to the array it means.
             while value.ends_with(',') {
                 value.pop();
             }
@@ -3282,10 +3671,10 @@ fn policy_setting(document: &str, section: &str, key: &str) -> Option<String> {
     Some(value)
 }
 
-/// Whether a value has an array or table still open, so the next line belongs
-/// to it.
-fn unbalanced(value: &str) -> bool {
-    let opens = value.chars().filter(|c| *c == '[' || *c == '{').count();
-    let closes = value.chars().filter(|c| *c == ']' || *c == '}').count();
-    opens > closes
+fn opens(value: &str) -> usize {
+    value.chars().filter(|c| *c == '[' || *c == '{').count()
+}
+
+fn closes(value: &str) -> usize {
+    value.chars().filter(|c| *c == ']' || *c == '}').count()
 }
