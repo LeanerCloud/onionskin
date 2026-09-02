@@ -408,6 +408,7 @@ impl Canvas {
             ViewAction::ActualSize => self.model.actual_size(),
             ViewAction::ZoomOut => self.model.zoom_out(),
             ViewAction::ZoomIn => self.model.zoom_in(),
+            ViewAction::ZoomTo(zoom) => self.model.zoom_to(zoom),
             ViewAction::Fit(mode) => self.model.fit(mode),
             ViewAction::FitVisible => self.model.fit_visible(),
             ViewAction::SetLayout(mode) => self.model.set_layout_mode(mode),

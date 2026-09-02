@@ -55,6 +55,7 @@ impl MenuCommand {
             MenuCommand::ActualSize,
             MenuCommand::ZoomOut,
             MenuCommand::ZoomIn,
+            MenuCommand::ZoomTo,
             MenuCommand::FitPage,
             MenuCommand::FitWidth,
             MenuCommand::FitHeight,
@@ -114,6 +115,7 @@ impl MenuCommand {
             Self::ActualSize => "view.actual-size",
             Self::ZoomOut => "view.zoom-out",
             Self::ZoomIn => "view.zoom-in",
+            Self::ZoomTo => "view.zoom-to",
             Self::FitPage => "view.fit-page",
             Self::FitWidth => "view.fit-width",
             Self::FitHeight => "view.fit-height",
@@ -173,7 +175,10 @@ impl MenuCommand {
             // Read Mode's Acrobat default is Ctrl+H, and cmd-h is Hide on
             // macOS. Taking Hide from the user is worse than shipping this
             // one unbound; keymap.json can bind it.
-            Self::ReadMode
+            // Acrobat's Zoom To is Ctrl+M, and cmd-m is Minimize on macOS.
+            // Same call as Read Mode below: keymap.json can bind it.
+            Self::ZoomTo
+            | Self::ReadMode
             | Self::OpenRecent
             | Self::CloseOtherTabs
             | Self::SaveAs

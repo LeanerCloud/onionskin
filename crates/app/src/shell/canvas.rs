@@ -107,6 +107,9 @@ pub(super) enum ViewAction {
     ActualSize,
     ZoomOut,
     ZoomIn,
+    /// An explicit magnification, 1.0 being actual size. Clamped to what the
+    /// current page can be rasterized at, the way every other zoom is.
+    ZoomTo(f32),
     Fit(FitMode),
     /// Fit the page's marks rather than its media box. The rectangle is not
     /// carried here because only the canvas can read it off the rendered
@@ -1490,6 +1493,16 @@ impl CanvasModel {
     #[cfg(test)]
     pub(in crate::shell) fn request_snapshot_for_test(&mut self, region: PageRect) {
         self.document.request_snapshot(region);
+    }
+
+    /// Whether the current page already has a rendered raster.
+    ///
+    /// The render worker runs in a test too, so a test that needs a raster
+    /// has to say "seed one unless the real one already arrived" rather than
+    /// race the worker for the right to supply it.
+    #[cfg(test)]
+    pub(in crate::shell) fn has_rendered_current_page_for_test(&self) -> bool {
+        self.sources.contains_key(&self.viewport.current_page())
     }
 
     #[cfg(test)]

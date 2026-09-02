@@ -799,6 +799,13 @@ impl ShellFrame {
                 self.toggle_quick_action_visibility(action, cx);
             }
             Activation::ToggleSidePanel => self.toggle_side_panel(cx),
+            // A magnification is only offered by the Zoom To dialog, so
+            // choosing one dismisses it. Every other view action reaches
+            // here from a surface that stays where it is.
+            Activation::View(action @ ViewAction::ZoomTo(_)) => {
+                self.close_dialog(cx);
+                self.run_view_action(action, cx);
+            }
             Activation::View(action) => self.run_view_action(action, cx),
             Activation::SubmitPageEntry => self.submit_page_entry(cx),
             Activation::Pane(action) => self.run_pane_action(action, cx),
@@ -1034,6 +1041,11 @@ impl ShellFrame {
             }
             MenuCommand::KeyboardShortcuts => {
                 self.show_dialog(ShellDialog::KeyboardShortcuts, cx);
+                Ok(())
+            }
+            MenuCommand::ZoomTo => {
+                self.main_menu_open = false;
+                self.show_dialog(ShellDialog::ZoomTo, cx);
                 Ok(())
             }
             MenuCommand::Tools => {
@@ -4474,6 +4486,7 @@ mod tests {
     #[gpui::test]
     fn the_fit_visible_keystroke_fits_the_pages_marks(cx: &mut TestAppContext) {
         let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
         window
             .update(cx, |frame, _window, cx| {
                 frame
@@ -4482,10 +4495,14 @@ mod tests {
                     .expect("the seed is open")
                     .canvas
                     .update(cx, |canvas, _cx| {
-                        canvas
-                            .model
-                            .seed_visible_raster_for_test([0, 0, 0, 255])
-                            .expect("the visible page takes a raster");
+                        // The worker may already have answered the visible
+                        // page; only stand in for it when it has not.
+                        if !canvas.model.has_rendered_current_page_for_test() {
+                            canvas
+                                .model
+                                .seed_visible_raster_for_test([0, 0, 0, 255])
+                                .expect("the visible page takes a raster");
+                        }
                     });
                 assert!(frame.active_view_state(cx).unwrap().fit_mode().is_some());
             })
@@ -4501,6 +4518,65 @@ mod tests {
                     matches!(fit, Some(onionskin_core::FitMode::Visible(_))),
                     "the fit visible keystroke did not reach the canvas: {fit:?}"
                 );
+            })
+            .unwrap();
+    }
+
+    /// Zoom To ships unbound because Acrobat's Ctrl+M is Minimize on macOS,
+    /// so its keystroke route is the one `keymap.json` gives it. Pressed on a
+    /// real window, which proves both halves at once: the file's binding
+    /// reaches the command, and the command reaches the dialog.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keymap_binding_opens_the_zoom_to_dialog(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("zoom-to-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            r#"{"view.zoom-to": "cmd-m"}"#,
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        window
+            .update(cx, |frame, _window, _cx| assert!(frame.dialog.is_none()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.zoom-to"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame.dialog,
+                    Some(ShellDialog::ZoomTo),
+                    "the bound keystroke did not open the magnification chooser"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The dialog is a chooser, so picking a magnification has to both apply
+    /// it and put the dialog away. Driven through `run_activation`, which is
+    /// the one route a click and a screen reader share.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn choosing_a_magnification_applies_it_and_closes_the_chooser(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::MainMenu(MenuCommand::ZoomTo), window, cx);
+                assert_eq!(frame.dialog, Some(ShellDialog::ZoomTo));
+                frame.run_activation(Activation::View(ViewAction::ZoomTo(2.0)), window, cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(frame.dialog.is_none(), "the chooser stayed up");
+                let view = frame.active_view_state(cx).expect("the seed is open");
+                assert!((view.zoom - 2.0).abs() < 1e-4, "{}", view.zoom);
+                assert_eq!(view.zoom_policy, onionskin_core::ZoomPolicy::Fixed);
             })
             .unwrap();
     }

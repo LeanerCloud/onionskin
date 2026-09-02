@@ -1,7 +1,7 @@
-//! The shell's modal surfaces: Preferences, About, and the local keyboard
-//! shortcut reference.
+//! The shell's modal surfaces: Preferences, About, Zoom To, and the local
+//! keyboard shortcut reference.
 //!
-//! One host for all three. A dialog is a panel over a backdrop that takes
+//! One host for all four. A dialog is a panel over a backdrop that takes
 //! the click that dismisses it, which is the same shape the menus already
 //! use; what differs is only the body.
 //!
@@ -17,6 +17,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _,
 };
 
+use super::canvas::ViewAction;
 use super::chrome::accessible::{Activation, Element, Rects, Surface};
 use super::chrome::{ShellFrame, ThemeTokens};
 use crate::keymap::{platform_keystroke, Binding};
@@ -27,6 +28,7 @@ pub(in crate::shell) enum ShellDialog {
     Preferences(PreferenceCategory),
     About,
     KeyboardShortcuts,
+    ZoomTo,
 }
 
 impl ShellDialog {
@@ -35,8 +37,27 @@ impl ShellDialog {
             Self::Preferences(_) => "Preferences",
             Self::About => "About Onionskin",
             Self::KeyboardShortcuts => "Keyboard Shortcuts",
+            Self::ZoomTo => "Zoom To",
         }
     }
+}
+
+/// The magnifications Acrobat's Zoom To dialog offers, as percentages.
+///
+/// A chosen magnification goes through the same clamp every other zoom does,
+/// so a page too large to rasterize at 3200% lands at the largest scale it
+/// can be drawn at rather than being refused.
+pub(in crate::shell) const MAGNIFICATIONS: [u32; 12] = [
+    25, 50, 75, 100, 125, 150, 200, 400, 800, 1600, 2400, 3200,
+];
+
+/// One row per magnification, as the dialog prints them and as it describes
+/// them: the label and the view action are built together so a screen reader
+/// cannot be offered a magnification a click would not apply.
+fn magnification_rows() -> impl Iterator<Item = (String, ViewAction)> {
+    MAGNIFICATIONS
+        .into_iter()
+        .map(|percent| (format!("{percent}%"), ViewAction::ZoomTo(percent as f32 / 100.0)))
 }
 
 /// What the About panel says. Kept as data so a test can assert the version
@@ -88,6 +109,13 @@ pub(in crate::shell) fn accessible(
             row_labels(about_lines().into_iter().map(|line| (line, String::new())))
         }
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
+        ShellDialog::ZoomTo => magnification_rows()
+            .enumerate()
+            .map(|(index, (label, action))| {
+                Element::new(("zoom-to-magnification", index), Role::Button, label)
+                    .with_activation(Activation::View(action))
+            })
+            .collect(),
     };
 
     let mut described = Element::new("dialog", Role::Dialog, dialog.title()).child(
@@ -138,6 +166,7 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
             .into_any_element(),
+        ShellDialog::ZoomTo => render_magnifications(rects, theme, cx).into_any_element(),
     };
 
     div()
@@ -195,6 +224,38 @@ pub(in crate::shell) fn render_dialog(
         )
 }
 
+/// The Zoom To body: one row per magnification, each applying it.
+fn render_magnifications(
+    rects: Rects,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> gpui::Div {
+    let mut list =
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .on_children_prepainted(move |bounds, window, _cx| {
+                rects.record(Surface::Dialog, &bounds, window);
+            });
+    for (index, (label, action)) in magnification_rows().enumerate() {
+        list = list.child(
+            div()
+                .id(("zoom-to-magnification", index))
+                .py_1()
+                .px_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(move |row| row.bg(theme.selected))
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::View(action), window, cx);
+                }))
+                .child(label),
+        );
+    }
+    list
+}
+
 /// The printed rows of About and the shortcut reference.
 ///
 /// The list is what the description reads as the dialog's body, so it is what
@@ -226,6 +287,32 @@ fn rows(rows: impl IntoIterator<Item = (String, String)>, rects: Rects) -> gpui:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The printed label and the applied zoom come from one place, so a
+    /// magnification cannot say one thing and do another, and every one of
+    /// them is a zoom the viewport will take.
+    #[test]
+    fn every_magnification_row_applies_the_zoom_it_prints() {
+        let rows: Vec<_> = magnification_rows().collect();
+
+        assert_eq!(rows.len(), MAGNIFICATIONS.len());
+        for (percent, (label, action)) in MAGNIFICATIONS.into_iter().zip(rows) {
+            assert_eq!(label, format!("{percent}%"));
+            let ViewAction::ZoomTo(zoom) = action else {
+                panic!("{label} is not a magnification: {action:?}");
+            };
+            assert!((zoom * 100.0 - percent as f32).abs() < 1e-3, "{label}");
+            assert!(
+                (onionskin_core::MIN_ZOOM..=onionskin_core::MAX_ZOOM).contains(&zoom),
+                "{label} is outside the zoom range the viewport offers"
+            );
+        }
+        assert!(rows_contain(1.0), "actual size is one of the choices");
+    }
+
+    fn rows_contain(zoom: f32) -> bool {
+        magnification_rows().any(|(_, action)| action == ViewAction::ZoomTo(zoom))
+    }
 
     #[test]
     fn about_names_the_build_rather_than_a_typed_version() {

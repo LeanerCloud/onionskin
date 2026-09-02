@@ -114,6 +114,7 @@ pub(in crate::shell) enum MenuCommand {
     ActualSize,
     ZoomOut,
     ZoomIn,
+    ZoomTo,
     FitPage,
     FitWidth,
     FitHeight,
@@ -549,6 +550,7 @@ fn view_menu_entries(
         ),
         entry(MenuCommand::ZoomOut, "Zoom Out", availability, false),
         entry(MenuCommand::ZoomIn, "Zoom In", availability, false),
+        entry(MenuCommand::ZoomTo, "Zoom To…", availability, false),
         entry(
             MenuCommand::FitPage,
             "Fit Page",
@@ -699,7 +701,10 @@ impl MenuCommand {
             Self::TwoPage => ViewAction::SetLayout(PageLayoutMode::TwoPage),
             Self::TwoPageContinuous => ViewAction::SetLayout(PageLayoutMode::TwoPageContinuous),
             Self::ToggleCover => ViewAction::SetShowCover(!view.show_cover),
-            Self::Open
+            // Opens the magnification chooser rather than changing the view
+            // itself; the dialog's rows carry the view actions.
+            Self::ZoomTo
+            | Self::Open
             | Self::OpenRecent
             | Self::Quit
             | Self::SaveAs
@@ -764,6 +769,7 @@ impl MenuCommand {
             | Self::ActualSize
             | Self::ZoomOut
             | Self::ZoomIn
+            | Self::ZoomTo
             | Self::FitPage
             | Self::FitWidth
             | Self::FitHeight
@@ -904,6 +910,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ActualSize
         | MenuCommand::ZoomOut
         | MenuCommand::ZoomIn
+        | MenuCommand::ZoomTo
         | MenuCommand::FitPage
         | MenuCommand::FitWidth
         | MenuCommand::FitHeight
