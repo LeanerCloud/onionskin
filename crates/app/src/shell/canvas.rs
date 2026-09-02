@@ -1338,16 +1338,21 @@ impl CanvasModel {
 
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
-        // Everything the store hands out from here until `paint_list` ends is
-        // this frame's, and exempt from eviction: the exact-zoom cache, and
-        // the other-zoom cache a rescaled placeholder paints from. Draining
-        // inside the frame matters when several rasters land at once: four of
-        // them at 6x are 266 MiB against a 202 MiB budget, and unframed they
-        // would evict each other as they arrived.
+        // The rasters this drains are exempt from eviction until the frame
+        // closes below. That matters when several land at once: four of them
+        // at 6x are 266 MiB against a 202 MiB budget, and unframed they would
+        // evict each other as they arrived.
+        //
+        // The frame closes here rather than in `paint_list`, so an update
+        // that is not followed by a paint, which is every pointer move and
+        // every poll tick, leaves nothing open behind it. Its pages stay
+        // exempt for one more frame, which is what carries them into the
+        // paint.
         self.tiles.begin_frame();
         self.drain_render_responses()?;
         self.schedule_visible_renders(&visible)?;
         self.drain_render_responses()?;
+        self.tiles.end_frame();
         Ok(())
     }
 
@@ -1360,8 +1365,13 @@ impl CanvasModel {
         Ok(drained)
     }
 
-    pub fn drain_render_responses(&mut self) -> Result<usize, CanvasError> {
-        self.sync_signature()?;
+    /// Apply every render answer waiting, dropping the ones whose generation
+    /// the current signature has moved past.
+    ///
+    /// The signature is the caller's to refresh. This used to re-derive it
+    /// per drain, which re-walked the layout for a visible set `update` had
+    /// computed moments earlier and could not have changed since.
+    fn drain_render_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
         while let Some(response) = self.document.try_render_response()? {
             drained += usize::from(self.apply_render_response(response));
@@ -1369,7 +1379,14 @@ impl CanvasModel {
         Ok(drained)
     }
 
+    /// What to draw this frame, in canvas coordinates.
+    ///
+    /// Opens a store frame of its own. `update` pins the cache each visible
+    /// page has at the exact zoom; the paint may instead fall back to a cache
+    /// at another zoom, and that one has to be exempt from eviction too while
+    /// the rest of the frame is cut.
     pub fn paint_list(&mut self) -> Result<PaintList, CanvasError> {
+        self.tiles.begin_frame();
         let visible = self.viewport.visible_pages()?;
         let mut paint = PaintList {
             pages: visible
@@ -1610,11 +1627,6 @@ impl CanvasModel {
         // life of the process.
         self.failed_geometry.clear();
         Ok(true)
-    }
-
-    fn sync_signature(&mut self) -> Result<bool, CanvasError> {
-        let visible = self.viewport.visible_pages()?;
-        self.update_signature(&visible)
     }
 
     /// Ask for a render of every visible page that has no raster at the
@@ -3937,10 +3949,73 @@ mod tests {
             .zoom_to(2.0, ViewPoint { x: 400.0, y: 300.0 })
             .unwrap();
 
-        assert_eq!(model.drain_render_responses().unwrap(), 0);
-        assert!(model.tiles.is_empty());
-        assert!(!model.requests.contains_key(&stale.page));
+        model.update().expect("the frame runs");
+        assert!(
+            model.tiles.is_empty(),
+            "the raster answering the pre-zoom request was accepted"
+        );
+        assert_ne!(
+            model.requests.get(&stale.page),
+            Some(&stale),
+            "the pre-zoom request is still the one outstanding"
+        );
         assert_ne!(model.generation, stale.generation);
+    }
+
+    /// Every pointer move and every poll tick runs an update that no paint
+    /// follows. The store exempts a frame's pages from eviction, so an update
+    /// that left its frame open would keep exempting whatever arrived next:
+    /// the store's own note calls that a document delivering pages faster
+    /// than it repaints filling memory with caches eviction may not take.
+    #[test]
+    fn an_update_that_paints_nothing_leaves_no_frame_open() {
+        let mut model = model();
+        model.tiles = TileStore::with_budget(1);
+        model.update().expect("the frame runs");
+
+        // Two pages nothing is showing, so only an open frame could exempt
+        // them. The store never evicts the entry a caller just asked for, so
+        // the second survives either way and the first is the witness.
+        model
+            .tiles
+            .insert(7, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+        model
+            .tiles
+            .insert(8, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+
+        assert!(
+            model.tiles.base(7).is_none(),
+            "the update's frame is still open, so its pages cannot be evicted"
+        );
+        assert_eq!(model.tiles.len(), 1);
+    }
+
+    /// `update` pins the cache each visible page has at the exact zoom. A
+    /// page painting from a scaled raster instead, because its exact-zoom
+    /// render has not landed, is pinned by nothing that update did, so the
+    /// paint has to declare its own frame: compositing the page's tiles is
+    /// what puts the store over its budget, and the next thing to ask it for
+    /// anything would otherwise take the cache the frame just painted from.
+    #[test]
+    fn the_paint_declares_the_pages_it_painted() {
+        let mut model = model();
+        let source_zoom = 0.5_f32;
+        assert_ne!(model.viewport.zoom().to_bits(), source_zoom.to_bits());
+        let raster = || BaseRaster::new(1, 1, source_zoom, vec![255, 255, 255, 255]);
+        // Room for the base raster and nothing more, so the tile the paint
+        // composites is what carries the store over.
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.insert(0, raster());
+        assert_eq!(model.tiles.over_budget(), 0, "the setup starts under budget");
+
+        let paint = model.paint_list().expect("the frame paints");
+
+        assert!(!paint.tiles.is_empty(), "page zero painted from the scaled raster");
+        model.tiles.insert(9, raster());
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the raster the frame painted from was evicted by the next insert"
+        );
     }
 
     #[test]
