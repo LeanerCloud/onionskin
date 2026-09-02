@@ -1641,7 +1641,7 @@ impl CanvasModel {
         let zoom = self.viewport.zoom();
         let mut queued = 0;
         for placement in visible {
-            let Some(geometry) = self.viewport.page_geometry(placement.page).cloned() else {
+            let Some(geometry) = self.viewport.page_geometry(placement.page) else {
                 continue;
             };
             let request = RenderRequest {
@@ -1659,7 +1659,7 @@ impl CanvasModel {
             // with immediately, at whatever zoom the store still holds.
             let source = self.tiles.base(placement.page);
             self.document
-                .request_render_with_geometry(request, &geometry, source)?;
+                .request_render_with_geometry(request, geometry, source)?;
             self.requests.insert(placement.page, request);
             queued += 1;
         }
