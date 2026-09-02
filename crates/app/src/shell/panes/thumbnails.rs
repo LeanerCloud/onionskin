@@ -19,7 +19,7 @@ use gpui::{
 };
 use onionskin_core::PageIndex;
 
-use super::super::canvas::{raster_image, CanvasError};
+use super::super::canvas::raster_image;
 use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::Canvas;
@@ -363,15 +363,16 @@ fn request_band(
         .clone()
         .filter(|page| !state.thumbnails.images.contains_key(page))
         .collect();
-    let outcome = canvas.update(cx, |canvas, _cx| {
-        for page in missing {
-            // Asked for unconditionally: the canvas skips a request that is
-            // already outstanding at this size and epoch, and skipping here
-            // instead would leave a page waiting on a picture the canvas has
-            // since decided to drop.
-            canvas.model.request_thumbnail(page, zoom)?;
-        }
-        Ok::<(), CanvasError>(())
+    let outcome = canvas.update(cx, |canvas, cx| {
+        // Asked for unconditionally: the canvas skips a request that is
+        // already outstanding at this size and epoch, and skipping here
+        // instead would leave a page waiting on a picture the canvas has
+        // since decided to drop.
+        let outcome = missing
+            .into_iter()
+            .try_for_each(|page| canvas.model.request_thumbnail(page, zoom));
+        canvas.arm_poll(cx);
+        outcome
     });
     if let Err(error) = outcome {
         state.feedback = Some(error.to_string());

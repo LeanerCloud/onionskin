@@ -914,6 +914,27 @@ mod tests {
     fn a_requested_thumbnail_arrives_and_becomes_a_picture(cx: &mut gpui::TestAppContext) {
         let (frame, cx) = frame_over(super::super::fixtures::outline_pdf(), cx);
 
+        // Let the document finish its own rendering first. Opening the pane
+        // while that poll loop is still running masks a failure to start one
+        // for the thumbnail requests themselves.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            cx.run_until_parked();
+            let settled = cx.update(|_window, app| {
+                let canvas = frame.read(app).active_canvas().expect("a tab").read(app);
+                !canvas.polling && !canvas.model.has_pending_work()
+            });
+            if settled {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the initial canvas work never settled"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            cx.executor().advance_clock(super::super::POLL_INTERVAL);
+        }
+
         cx.update(|_window, app| {
             frame.update(app, |frame, cx| {
                 frame.run_pane_action(PaneAction::Select(NavigationPane::Thumbnails), cx);
@@ -929,14 +950,19 @@ mod tests {
             0..3,
             "every row of a three-page document is on screen"
         );
+        cx.update(|_window, app| {
+            let canvas = frame.read(app).active_canvas().expect("a tab").read(app);
+            assert!(
+                canvas.polling,
+                "the deferred thumbnail requests did not rearm canvas polling"
+            );
+        });
 
-        // The worker is a real thread, so the pictures arrive when they
-        // arrive. Collect on a deadline rather than after a fixed wait.
+        // The worker is a real thread. Drive GPUI's normal timer and observer
+        // path until every picture arrives; nothing here drains or collects a
+        // thumbnail directly.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            cx.update(|_window, app| {
-                frame.update(app, |frame, cx| frame.collect_thumbnails(cx));
-            });
             cx.run_until_parked();
             let arrived =
                 cx.update(|_window, app| frame.read(app).navigation().thumbnails.image_count());
@@ -949,6 +975,7 @@ mod tests {
                 band.len()
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
+            cx.executor().advance_clock(super::super::POLL_INTERVAL);
         }
 
         cx.update(|_window, app| {
