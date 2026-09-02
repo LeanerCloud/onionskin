@@ -159,6 +159,23 @@ pub struct SnapshotRequest {
     pub region: PageRect,
 }
 
+/// The immutable document state an export worker reopens away from the UI.
+pub struct ExportSnapshot {
+    bytes: Arc<Vec<u8>>,
+    layer_visibility_differences: Vec<(ObjRef, bool)>,
+}
+
+impl ExportSnapshot {
+    /// Reopen the original bytes and restore the session's live layer state.
+    pub fn open(self) -> Result<Document> {
+        let mut document = Document::open_shared(self.bytes)?;
+        for (layer, visible) in self.layer_visibility_differences {
+            document.set_layer_visible(layer, visible)?;
+        }
+        Ok(document)
+    }
+}
+
 const PAGE_CACHE_LIMIT: usize = 128;
 const TEXT_CACHE_LIMIT: usize = 16;
 
@@ -225,6 +242,30 @@ impl Document {
 
     pub fn bytes(&self) -> Arc<Vec<u8>> {
         Arc::clone(&self.bytes)
+    }
+
+    /// Capture the original bytes and layer changes for a background export.
+    pub fn export_snapshot(&self) -> Result<ExportSnapshot> {
+        let layer_visibility_differences = match &self.layers {
+            None => Vec::new(),
+            Some(live_layers) => {
+                let defaults = layers::read(&self.cos)?;
+                live_layers
+                    .iter()
+                    .filter_map(|live| {
+                        let default = defaults
+                            .iter()
+                            .find(|default| default.id == live.id)
+                            .expect("live layers came from this document");
+                        (live.visible != default.visible).then_some((live.id, live.visible))
+                    })
+                    .collect()
+            }
+        };
+        Ok(ExportSnapshot {
+            bytes: self.bytes(),
+            layer_visibility_differences,
+        })
     }
 
     pub fn provenance(&self) -> &Provenance {
@@ -891,6 +932,52 @@ mod tests {
             dark_pixels(&doc.render_page_now(0, 1.0).expect("the page renders")),
             dark_pixels(&before)
         );
+    }
+
+    #[test]
+    fn an_export_snapshot_reopens_with_live_layer_visibility() {
+        let mut doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
+        let layer = doc.layers().expect("the layers read")[0].clone();
+        assert!(doc
+            .set_layer_visible(layer.id, false)
+            .expect("the layer toggles"));
+
+        let mut reopened = doc
+            .export_snapshot()
+            .expect("the snapshot is prepared")
+            .open()
+            .expect("the snapshot reopens");
+
+        assert!(!reopened.layers().expect("the layers read")[0].visible);
+        assert_eq!(
+            dark_pixels(
+                &reopened
+                    .render_page_now(0, 1.0)
+                    .expect("the reopened page renders")
+            ),
+            0,
+            "the worker document renders the live hidden state"
+        );
+    }
+
+    #[test]
+    fn an_export_snapshot_omits_unchanged_layer_defaults() {
+        let mut doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
+        doc.layers().expect("the layers read");
+
+        let snapshot = doc.export_snapshot().expect("the snapshot is prepared");
+
+        assert!(snapshot.layer_visibility_differences.is_empty());
+    }
+
+    #[test]
+    fn an_export_snapshot_shares_the_original_bytes() {
+        let doc = Document::open_bytes(optional_content_document()).expect("the fixture opens");
+        let original = doc.bytes();
+
+        let snapshot = doc.export_snapshot().expect("the snapshot is prepared");
+
+        assert!(Arc::ptr_eq(&original, &snapshot.bytes));
     }
 
     /// A page carrying both an optional content group and an annotation, so
