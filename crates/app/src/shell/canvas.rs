@@ -1101,15 +1101,11 @@ impl CanvasModel {
         }
     }
 
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
     pub fn status(&self) -> Option<&CanvasStatus> {
         self.status.as_ref()
     }
 
-    pub fn has_pending_render(&self) -> bool {
+    fn has_pending_render(&self) -> bool {
         !self.requests.is_empty()
     }
 
@@ -1356,7 +1352,7 @@ impl CanvasModel {
         Ok(())
     }
 
-    pub fn drain_geometry_responses(&mut self) -> Result<usize, CanvasError> {
+    fn drain_geometry_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
         while let Some(response) = self.document.try_page_geometry_response()? {
             drained += 1;
@@ -3653,12 +3649,12 @@ mod tests {
     fn successful_view_commands_reuse_render_generation_scheduling() {
         let mut model = model();
         model.update().unwrap();
-        let generation = model.generation();
+        let generation = model.generation;
 
         assert!(model.zoom_to(2.0).unwrap());
         model.update().unwrap();
 
-        assert!(model.generation() > generation);
+        assert!(model.generation > generation);
         assert!(model.has_pending_render());
     }
 
