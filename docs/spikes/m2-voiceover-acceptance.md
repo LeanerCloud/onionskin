@@ -160,12 +160,18 @@ Turn VoiceOver off (Cmd-F5) and drive the app with the keyboard only.
 
 - Tab and Shift-Tab move between surfaces, not between controls: one press
   goes from the global bar to the tab strip, to the tool rail, to the pane
-  strip, to an open pane, to the document, to the find bar, to the page
-  controls, and wraps at both ends. Each surface is entered at its first
-  control, so Shift-Tab undoes Tab.
+  strip, to an open pane, to the document, to the quick actions, to the find
+  bar, to the page controls, to the side panel toggle, and wraps at both ends.
+  Which of those are on screen depends on what you have open, and the ones
+  that are not are skipped rather than being silent stops. Each surface is
+  entered at its first control, so Shift-Tab undoes Tab.
 - The arrow keys move inside the surface you are in, in both axes, and wrap
   there rather than leaving it. Right or Down along the page controls reaches
   Zoom In; from the last control it comes back to the first.
+- A surface whose first control is a text field, which the find bar is, is
+  still one Tab to enter and one Tab to leave, and Up and Down carry you from
+  the field to the buttons beside it. Left and Right in a field move the
+  caret, because the field keeps those two for itself.
 - **Failure**: Tab that steps one control at a time, so that crossing an open
   Page Thumbnails pane takes one press per page; an arrow that leaves the
   surface it started in; a surface Tab cannot reach at all.
@@ -219,10 +225,15 @@ Open a second application over Onionskin and interact with it.
 
 ### Step 9: operating the window that is not in front
 
-Still with the other application covering Onionskin, so macOS reports the
-Onionskin window as not visible. Note what the page controls say the zoom is,
-if you can see it, or just remember that the document opened fitted to the
-page.
+The window has to be **fully** covered for this step to test anything: macOS
+only clears `NSWindowOcclusionStateVisible` when an opaque window covers the
+Onionskin window completely, and while any sliver of it shows, gpui keeps
+drawing frames and the old frame-driven code would pass this step too. Put the
+other application full screen on the same display as Onionskin, or size and
+position it so that no part of the Onionskin window is visible.
+
+Remember that the document opened fitted to the page, so it is not at 100 per
+cent.
 
 Move VoiceOver into Onionskin without bringing it forward: press
 Ctrl-Option-F1 twice for the application chooser and pick Onionskin, or use

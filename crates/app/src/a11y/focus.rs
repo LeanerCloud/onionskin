@@ -155,6 +155,13 @@ impl Ring {
 /// Ordered by where each group's first stop reads, not by where its container
 /// sits: a container declared before the stops it ends up holding would
 /// otherwise put those stops ahead of controls that read before them.
+///
+/// Groups run one after another, so flattening them is reading order only
+/// while containers do not nest with stops on both sides of the nesting: a
+/// toolbar holding a, then a group holding b, then c gives a, c, b. No
+/// surface is built that way today. It matters only to [`Ring::rebuild`],
+/// which uses the flattened index to keep focus somewhere sensible when the
+/// element it was on disappears.
 fn grouped<A>(root: &Element<A>) -> Vec<Vec<ElementId>> {
     let mut stops = Vec::new();
     collect(root, 0, &mut 0, &mut stops);

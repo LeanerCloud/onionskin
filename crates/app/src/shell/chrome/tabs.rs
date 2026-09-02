@@ -956,6 +956,12 @@ impl ShellFrame {
     /// the user next brought the window forward. Publishing here as well as
     /// in `render` is what lets the tree answer while the window is not
     /// drawing.
+    ///
+    /// One thing is a frame behind and stays that way: the description takes
+    /// its rectangles from `a11y.rects`, which only a drawn frame fills. A
+    /// press on a window that is not drawing publishes the right labels,
+    /// states and actions with the rectangles of the last frame that drew, so
+    /// a reader's cursor is drawn in the old place until the window does.
     pub(in crate::shell) fn serve_accessibility(
         &mut self,
         window: &mut Window,
@@ -7551,9 +7557,10 @@ mod tests {
             0,
             "the shell parsed a page's content stream with nothing listening"
         );
-        assert!(
-            page_text(window, cx).is_empty(),
-            "the tree carried a page's words with nothing listening"
+        assert_eq!(
+            page_text(window, cx),
+            vec!["Page 1 has not been read yet".to_owned()],
+            "the page said something other than that it had not been read"
         );
 
         window

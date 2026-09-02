@@ -500,6 +500,19 @@ impl Canvas {
             .with_role_description("page");
             page.bounds = Some(Rects::view_rect(outline.rect, origin, scale));
             match outline.text {
+                // Nobody was listening when this was built, so the words were
+                // not read rather than absent. A client that has just
+                // attached is handed the last tree published before it
+                // arrived, so for one turn of the run loop this is what it
+                // has: a page with no children would tell it the page is
+                // empty, which is the one thing that is not true.
+                Ok(_) if !with_text => {
+                    page = page.child(A11yElement::new(
+                        ("page-unread", outline.page),
+                        Role::Label,
+                        format!("Page {number} has not been read yet"),
+                    ));
+                }
                 // An unmeasured page has no layout to place its words in, so
                 // it carries no runs. Saying so keeps "still loading" from
                 // sounding like "this page has no text on it".
