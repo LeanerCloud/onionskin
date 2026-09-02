@@ -7060,6 +7060,24 @@ mod tests {
             !row.contains(&after_tab),
             "Tab stayed inside the page controls, on {after_tab}"
         );
+
+        // The end of the row wraps to the start of the row. A ring that is
+        // still flat underneath answers every other arrow correctly and only
+        // gives itself away here, by spilling into the surface next door.
+        let last = row.last().expect("the row has stops").clone();
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(frame.a11y.focus_key(&gpui::ElementId::Name(last.clone().into())));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "right");
+        cx.run_until_parked();
+
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some(row[0].as_str()),
+            "the arrow ran off the end of the page controls instead of wrapping in them"
+        );
     }
 
     /// The defect in the ledger: with a pane open, every row was a tab stop,
@@ -7110,6 +7128,17 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(focused_key(window, cx).as_deref(), Some(rows[1].as_str()));
+
+        // And they stay in the pane: the last row wraps to the first rather
+        // than falling into whatever the pane is next to.
+        cx.simulate_keystrokes(window.into(), "down");
+        cx.run_until_parked();
+
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some(rows[0].as_str()),
+            "the arrow left the pane at its last row"
+        );
     }
 
     /// The ledger's focus-dispatch defect: an AccessKit focus request moved
