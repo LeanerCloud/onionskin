@@ -314,6 +314,43 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         deny.contains("required-git-spec = \"rev\""),
         "allowed git sources can be branch-based or unpinned"
     );
+    // The wildcard ban only means anything once the workspace's own path
+    // dependencies stop reading as wildcards, which is what `publish = false`
+    // buys. Without it the check fails on our own crates, and the way out of
+    // that is to stop denying wildcards at all.
+    assert!(
+        deny.contains("allow-wildcard-paths = true"),
+        "the wildcard ban fires on the workspace's own path dependencies, so it cannot stay denied"
+    );
+    let manifest = std::fs::read_to_string(workspace.join("Cargo.toml"))
+        .expect("the workspace manifest is readable");
+    assert!(
+        toml_section(&manifest, "workspace.package").contains("publish = false"),
+        "the workspace is not marked unpublished, so allow-wildcard-paths does not apply to it"
+    );
+    // Exceptions are the part of a policy that rots. Every one has to name a
+    // single advisory and say why it is tolerated: a bare crate name would
+    // mute every future advisory against that crate, which is a blanket allow
+    // wearing an exception's clothes.
+    for entry in toml_section(&deny, "advisories")
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("{ id"))
+    {
+        assert!(
+            entry.contains("id = \"RUSTSEC-"),
+            "an advisory exception is not pinned to one advisory ID: {entry}"
+        );
+        let reason = entry
+            .split_once("reason = \"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(reason, _)| reason)
+            .unwrap_or_default();
+        assert!(
+            reason.len() > 20,
+            "an advisory exception carries no reviewed reason: {entry}"
+        );
+    }
     for source in [
         "https://github.com/IAmJSD/gpui",
         "https://github.com/cristim/hayro",

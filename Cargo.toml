@@ -31,6 +31,10 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+# Nothing here is published: Onionskin is an application, and its crates are
+# internal. It also makes cargo-deny's allow-wildcard-paths apply, so the
+# workspace's own path dependencies stop reading as wildcard requirements.
+publish = false
 
 [workspace.dependencies]
 # internal

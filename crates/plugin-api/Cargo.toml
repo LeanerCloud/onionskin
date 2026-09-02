@@ -3,6 +3,7 @@ name = "onionskin-plugin-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 onionskin-core.workspace = true

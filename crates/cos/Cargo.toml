@@ -3,6 +3,7 @@ name = "onionskin-cos"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Declared here rather than in the workspace root so parallel M1 spikes do not
 # collide on the root manifest.
