@@ -6980,11 +6980,13 @@ mod tests {
             "a screen reader's press on Previous Page did not turn the page"
         );
 
-        // And the tree says so. Running the press and publishing nothing
-        // leaves a reader on a background window announcing the state before
-        // it: the control it just pressed still reads as available, and the
-        // step 9 of the acceptance script hears nothing. Previous Page is
-        // dimmed on the first page, so its own node carries the answer.
+        // And the tree a reader reads says so. Previous Page is dimmed on
+        // the first page, so its own node carries the answer. That this
+        // happens without a frame is
+        // `serving_a_screen_reader_publishes_the_tree_without_a_frame`: gpui
+        // draws every dirty window at the end of its own effect flush under
+        // cfg(test) (`app.rs`, `flush_effects`), so a test that lets the
+        // flush finish cannot tell which publish it is reading.
         window
             .update(cx, |frame, _window, _cx| {
                 let node = frame
@@ -6999,7 +7001,53 @@ mod tests {
             .unwrap();
     }
 
-    /// The other half of what a screen reader asks for: moving its cursor
+    /// The publish half of serving a screen reader off the frame.
+    ///
+    /// Read inside one window update, before GPUI flushes its effects, which
+    /// is the only place in this harness where no frame can have intervened:
+    /// under cfg(test) gpui draws every dirty window at the end of a flush,
+    /// so after `run_until_parked` a render has always republished and a
+    /// shell that published nothing of its own looks identical.
+    ///
+    /// That the wake is what calls this is the mutation on `Shared::wake`,
+    /// which kills the press test above. This is the other link in the same
+    /// chain: what the wake calls has to publish, or a reader working a
+    /// window that is not drawing hears the state from before the press.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn serving_a_screen_reader_publishes_the_tree_without_a_frame(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let before = frame
+                    .a11y
+                    .published_node(&"previous-page".into())
+                    .expect("the published tree carries no Previous Page node");
+                assert!(
+                    !before.is_disabled(),
+                    "the fixture opens with Previous Page already dimmed"
+                );
+
+                frame
+                    .a11y
+                    .deliver(&"previous-page".into(), accesskit::Action::Click);
+                frame.serve_accessibility(window, cx);
+
+                let after = frame
+                    .a11y
+                    .published_node(&"previous-page".into())
+                    .expect("the published tree carries no Previous Page node");
+                assert!(
+                    after.is_disabled(),
+                    "serving the request ran the control and published nothing about it"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The other half of what a screen reader asks for: moving its cursor    /// The other half of what a screen reader asks for: moving its cursor
     /// onto a control has to move the shell's own focus, or the next Enter
     /// runs whatever the ring was left on.
     #[cfg(feature = "shell-test-support")]
