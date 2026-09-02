@@ -33,8 +33,9 @@ use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
 use super::super::{record_opened, repair_notice, ShellSettings};
 use super::accessible::{
-    ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusPrevious,
-    ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
+    ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusNextInGroup,
+    FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField,
+    SHELL_KEY_CONTEXT,
 };
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
@@ -530,7 +531,10 @@ impl ShellFrame {
         if let Some(tab) = self.tabs.active() {
             let canvas = tab.canvas.clone();
             let title = tab.title().to_owned();
-            root = root.child(canvas.update(cx, |canvas, _cx| canvas.accessible(&title, scale)));
+            let with_text = self.a11y.wants_page_text();
+            root = root.child(
+                canvas.update(cx, |canvas, _cx| canvas.accessible(&title, scale, with_text)),
+            );
             if visibility.quick_actions {
                 let mut described = quick_actions::accessible(
                     &self.quick_action_entries(cx),
@@ -812,12 +816,7 @@ impl ShellFrame {
             Activation::CloseDialog => self.close_dialog(cx),
             Activation::CancelExport => self.cancel_export(cx),
             Activation::Focus(field) => {
-                let input = match field {
-                    TextField::Search => &self.search_input,
-                    TextField::Find => &self.find_input,
-                    TextField::Page => &self.page_input,
-                };
-                window.focus(&input.read(cx).focus_handle(cx));
+                window.focus(&self.text_field(field).read(cx).focus_handle(cx));
             }
             // The page keys are bound window-wide, so landing on the
             // document is about where the ring is, not about a focus handle
@@ -839,6 +838,25 @@ impl ShellFrame {
         self.step_focus(A11yStep::Previous, window, cx);
     }
 
+    /// Right or Down: the next control inside the group focus is in.
+    fn focus_next_in_group(
+        &mut self,
+        _: &FocusNextInGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_focus_within(A11yStep::Next, window, cx);
+    }
+
+    fn focus_previous_in_group(
+        &mut self,
+        _: &FocusPreviousInGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_focus_within(A11yStep::Previous, window, cx);
+    }
+
     /// Moves GPUI's focus as well as the ring's.
     ///
     /// Tabbing out of a text field has to take the field's focus with it, or
@@ -849,8 +867,46 @@ impl ShellFrame {
             cx.propagate();
             return;
         }
-        window.focus(self.a11y.focus_handle());
+        self.focus_ring_target(window, cx);
         cx.notify();
+    }
+
+    /// The same, inside one group.
+    ///
+    /// Propagates while a text field has focus: the field binds the arrows it
+    /// needs in its own context, and the ones it does not bind are still the
+    /// field's rather than the ring's. Tab is how a user leaves it.
+    fn step_focus_within(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_field_focused(window, cx) || !self.a11y.step_within(step) {
+            cx.propagate();
+            return;
+        }
+        self.focus_ring_target(window, cx);
+        cx.notify();
+    }
+
+    /// Put GPUI's focus where the ring's stop wants the keys to go.
+    ///
+    /// A stop that is a text field takes the keys itself, so that a screen
+    /// reader moving its cursor onto the find field types into the find
+    /// field. Every other stop leaves them with the chrome, which is where
+    /// the ring's own keys are dispatched from, and moving them off a field
+    /// is what stops the field the user has left from keeping Enter.
+    fn focus_ring_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.a11y.focused_activation() {
+            Some(Activation::Focus(field)) => {
+                window.focus(&self.text_field(field).read(cx).focus_handle(cx));
+            }
+            _ => window.focus(self.a11y.focus_handle()),
+        }
+    }
+
+    fn text_field(&self, field: TextField) -> &Entity<SearchInput> {
+        match field {
+            TextField::Search => &self.search_input,
+            TextField::Find => &self.find_input,
+            TextField::Page => &self.page_input,
+        }
     }
 
     /// Enter or Space: run what clicking the focused control would run.
@@ -874,22 +930,58 @@ impl ShellFrame {
         self.run_activation(activation, window, cx);
     }
 
-    fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
+    /// The element id of the text field GPUI's focus is in, if it is in one.
+    /// The id the field publishes, so the ring and the tree name it the same
+    /// way.
+    fn focused_text_field(&self, window: &Window, cx: &App) -> Option<gpui::ElementId> {
         [&self.search_input, &self.find_input, &self.page_input]
             .into_iter()
-            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            .map(|input| input.read(cx).element_id().into())
+    }
+
+    fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
+        self.focused_text_field(window, cx).is_some()
+    }
+
+    /// Serve the accessibility contract without waiting for a frame.
+    ///
+    /// Scheduled by the adapter's wake, onto the main queue rather than onto
+    /// the window's display link: gpui runs a window's display link only
+    /// while macOS reports the window visible, so a screen reader working a
+    /// window with something in front of it would otherwise be answered when
+    /// the user next brought the window forward. Publishing here as well as
+    /// in `render` is what lets the tree answer while the window is not
+    /// drawing.
+    pub(in crate::shell) fn serve_accessibility(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_accessibility_requests(window, cx);
+        let focused_field = self.focused_text_field(window, cx);
+        let described = self.accessible(window, cx);
+        self.a11y.publish(&described, focused_field, window, cx);
+        // The window may be drawing after all, in which case whatever the
+        // request changed has to be drawn.
+        cx.notify();
     }
 
     /// Run what a screen reader asked for.
     ///
-    /// Drained on the frame after the request arrives: the AccessKit handler
-    /// runs inside an `NSAccessibility` message, with no `App` in reach, so
-    /// it can only record what was asked.
+    /// The AccessKit handler runs inside an `NSAccessibility` message, with
+    /// no `App` in reach, so all it can do is record what was asked and wake
+    /// the shell to run it here.
     fn run_accessibility_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for (key, request) in self.a11y.take_requests() {
             match request {
                 A11yRequest::Focus => {
                     if self.a11y.focus_key(&key) {
+                        // The cursor moved, so the keys follow it. A reader
+                        // that lands on a control while a text field still
+                        // holds GPUI's focus would otherwise leave the next
+                        // Enter with the field.
+                        self.focus_ring_target(window, cx);
                         cx.notify();
                     }
                 }
@@ -2994,6 +3086,8 @@ impl Render for ShellFrame {
             .on_action(cx.listener(Self::dismiss_overlay))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
+            .on_action(cx.listener(Self::focus_next_in_group))
+            .on_action(cx.listener(Self::focus_previous_in_group))
             .on_action(cx.listener(Self::activate_focused))
             .child(frame);
         if self.main_menu_open
@@ -3049,16 +3143,12 @@ impl Render for ShellFrame {
 
         // Published after the surfaces are built, so the description is of
         // this frame, and using the rectangles the previous frame measured,
-        // which is the only frame that has any. Everything a screen reader
-        // asked for since then runs here too, because its handler had no
-        // `App` to run it in.
+        // which is the only frame that has any. What a screen reader asked
+        // for is not run here: its handler wakes the shell instead, because a
+        // window that is not visible draws no frame to run it on.
+        let focused_field = self.focused_text_field(window, cx);
         let described = self.accessible(window, cx);
-        self.a11y.publish(&described, window);
-        if self.a11y.has_requests() {
-            cx.defer_in(window, |frame, window, cx| {
-                frame.run_accessibility_requests(window, cx);
-            });
-        }
+        self.a11y.publish(&described, focused_field, window, cx);
         root
     }
 }
@@ -6746,6 +6836,11 @@ mod tests {
     fn the_page_and_its_words_keep_their_places_after_the_view_moves(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["hello.pdf"], cx);
         cx.run_until_parked();
+        // The words are only extracted for something that is listening.
+        window
+            .update(cx, |frame, _window, _cx| frame.a11y.attach_client())
+            .unwrap();
+        cx.run_until_parked();
 
         // Turned and zoomed in, so the page is larger than the view and the
         // scroll below has somewhere to go.
@@ -6838,9 +6933,19 @@ mod tests {
     /// path with no keyboard and no mouse in it. The unit tests in
     /// `crate::a11y` say which element a request resolves to; this says that
     /// resolving it is followed by running it.
+    ///
+    /// Nothing here asks for a frame, and that is the point: gpui draws no
+    /// frame for a window macOS reports as not visible, so a press that had
+    /// to wait for one would sit in the queue until the user brought the
+    /// window forward. The adapter wakes the shell on the main queue instead.
+    /// A test window that nothing has marked dirty is the closest this
+    /// harness gets to that window, and it is close enough to fail if the
+    /// wake goes away.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
-    fn a_screen_reader_press_runs_the_control_it_named(cx: &mut TestAppContext) {
+    fn a_screen_reader_press_runs_the_control_it_named_without_waiting_for_a_frame(
+        cx: &mut TestAppContext,
+    ) {
         let (window, _) = bound_window(&["two-page.pdf"], cx);
         cx.run_until_parked();
         let before = current_page(window, cx);
@@ -6850,13 +6955,10 @@ mod tests {
         );
 
         window
-            .update(cx, |frame, _window, cx| {
+            .update(cx, |frame, _window, _cx| {
                 frame
                     .a11y
                     .deliver(&"previous-page".into(), accesskit::Action::Click);
-                // The queue is drained by the frame after the request, so ask
-                // for that frame.
-                cx.notify();
             })
             .unwrap();
         cx.run_until_parked();
@@ -6879,16 +6981,322 @@ mod tests {
         assert_ne!(focused_key(window, cx).as_deref(), Some("zoom-in"));
 
         window
-            .update(cx, |frame, _window, cx| {
+            .update(cx, |frame, _window, _cx| {
                 frame
                     .a11y
                     .deliver(&"zoom-in".into(), accesskit::Action::Focus);
-                cx.notify();
             })
             .unwrap();
         cx.run_until_parked();
 
         assert_eq!(focused_key(window, cx).as_deref(), Some("zoom-in"));
+    }
+
+    /// The tab stops the named container holds, as the published tree has
+    /// them. Used to say that focus left a surface rather than that it landed
+    /// on one named control, which would pass for the wrong reason the moment
+    /// the surface's own order changed.
+    #[cfg(feature = "shell-test-support")]
+    fn stops_under(
+        window: gpui::WindowHandle<ShellFrame>,
+        cx: &mut TestAppContext,
+        container: &'static str,
+    ) -> Vec<String> {
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .accessible(window, cx)
+                    .find(&container.into())
+                    .unwrap_or_else(|| panic!("the tree carries no {container} node"))
+                    .walk()
+                    .filter(|element| element.is_tab_stop())
+                    .map(|element| element.key.to_string())
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn zoom(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> f32 {
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .active_canvas()
+                    .unwrap()
+                    .read(cx)
+                    .model
+                    .view_state()
+                    .zoom
+            })
+            .unwrap()
+    }
+
+    /// The arrows move inside the surface focus is in, and Tab leaves it.
+    ///
+    /// Driven with real keystrokes, and asserting on the whole surface rather
+    /// than on one control: a flat ring answers "the control next to it" to
+    /// both keys, which is the defect this replaces.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn an_arrow_moves_inside_the_page_controls_and_tab_leaves_them(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        let row = stops_under(window, cx, "page-controls");
+        assert!(
+            row.len() > 3,
+            "the page controls published {} stops, so this would prove little",
+            row.len()
+        );
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(frame.a11y.focus_key(&"first-page".into()));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "right");
+        cx.run_until_parked();
+
+        let after_arrow = focused_key(window, cx).expect("the arrow left the ring empty");
+        assert_eq!(
+            after_arrow,
+            row[row
+                .iter()
+                .position(|key| key == "first-page")
+                .expect("First Page is in the row")
+                + 1],
+            "the arrow did not move to the next control in the row"
+        );
+
+        cx.simulate_keystrokes(window.into(), "tab");
+        cx.run_until_parked();
+
+        let after_tab = focused_key(window, cx).expect("Tab left the ring empty");
+        assert!(
+            !row.contains(&after_tab),
+            "Tab stayed inside the page controls, on {after_tab}"
+        );
+    }
+
+    /// The defect in the ledger: with a pane open, every row was a tab stop,
+    /// so Tab crossed the pane one page at a time. Tab now steps over the
+    /// whole pane.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn tab_steps_over_an_open_pane_rather_than_through_its_rows(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.run_pane_action(PaneAction::Select(NavigationPane::Thumbnails), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let rows = stops_under(window, cx, "thumbnail-rows");
+        assert!(
+            rows.len() > 1,
+            "the pane published {} rows, so Tab skipping them would prove nothing",
+            rows.len()
+        );
+        assert_eq!(rows[0], "thumbnail-row-0");
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.a11y.focus_key(&("thumbnail-row", 0_usize).into()),
+                    "the first thumbnail row is not in the tab order"
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "tab");
+        cx.run_until_parked();
+
+        let after = focused_key(window, cx).expect("Tab left the ring empty");
+        assert!(
+            !rows.contains(&after),
+            "Tab moved to the next row, {after}, instead of leaving the pane"
+        );
+
+        // And the arrows are what reaches the rest of the pane.
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(frame.a11y.focus_key(&("thumbnail-row", 0_usize).into()));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "down");
+        cx.run_until_parked();
+
+        assert_eq!(focused_key(window, cx).as_deref(), Some(rows[1].as_str()));
+    }
+
+    /// The ledger's focus-dispatch defect: an AccessKit focus request moved
+    /// the ring but left GPUI's focus in the text field the user had been
+    /// typing in, so the next Enter went to the field and the control the
+    /// reader was sitting on never ran.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_screen_reader_cursor_takes_the_keys_off_a_text_field(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(
+                    frame.text_field_focused(window, cx),
+                    "the find bar did not take the keys, so this would prove nothing"
+                );
+            })
+            .unwrap();
+        let before = zoom(window, cx);
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                frame
+                    .a11y
+                    .deliver(&"zoom-in".into(), accesskit::Action::Focus);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        assert!(
+            zoom(window, cx) > before,
+            "Enter after the reader moved onto Zoom In did not zoom in: the field kept the keys"
+        );
+    }
+
+    /// A reader moving its cursor onto a text field has to put the keys in
+    /// the field, or it types into nothing.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_screen_reader_cursor_on_a_text_field_gives_it_the_keys(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                frame
+                    .a11y
+                    .deliver(&"global-search-input".into(), accesskit::Action::Focus);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(
+                    frame
+                        .search_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window),
+                    "the reader's cursor left the search field without the keys"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The same contract the other way round: GPUI's focus moving into a
+    /// field has to move the reader's cursor there, or the tree keeps naming
+    /// the control the ring was left on.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn focusing_a_text_field_moves_the_published_cursor_onto_it(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(frame.a11y.focus_key(&"zoom-in".into()));
+            })
+            .unwrap();
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some(FIND_INPUT_ID),
+            "the tree still names the control the ring was left on"
+        );
+    }
+
+    /// The UI-thread extraction the ledger records: the shell parsed every
+    /// visible page's content stream on every frame, whether or not anything
+    /// was listening, so a scroll paid for text nobody could hear.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_page_s_text_is_not_extracted_until_a_screen_reader_attaches(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+
+        assert_eq!(
+            extracted_pages(window, cx),
+            0,
+            "the shell parsed a page's content stream with nothing listening"
+        );
+        assert!(
+            page_text(window, cx).is_empty(),
+            "the tree carried a page's words with nothing listening"
+        );
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                frame.a11y.attach_client();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            extracted_pages(window, cx) > 0,
+            "the shell never extracted the page after a client attached"
+        );
+        let text = page_text(window, cx);
+        assert!(
+            text.iter().any(|run| run.contains("Hello Onionskin")),
+            "the page published no words to the attached client: {text:?}"
+        );
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn extracted_pages(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> usize {
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .active_canvas()
+                    .unwrap()
+                    .read(cx)
+                    .model
+                    .extracted_pages()
+            })
+            .unwrap()
+    }
+
+    /// Every run of words the tree carries under the first page.
+    #[cfg(feature = "shell-test-support")]
+    fn page_text(
+        window: gpui::WindowHandle<ShellFrame>,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .accessible(window, cx)
+                    .find(&("page", 0usize).into())
+                    .expect("the tree carries no page node")
+                    .children
+                    .iter()
+                    .map(|child| child.label.clone())
+                    .collect()
+            })
+            .unwrap()
     }
 
     /// Escape peels overlays off one at a time, topmost first. Before P12 the
@@ -7140,6 +7548,13 @@ mod tests {
     #[gpui::test]
     fn the_page_publishes_its_own_words_under_the_page_they_are_on(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        // The words are extracted for a listening client and not before.
+        // That nothing is extracted without one is
+        // `a_page_s_text_is_not_extracted_until_a_screen_reader_attaches`.
+        window
+            .update(cx, |frame, _window, _cx| frame.a11y.attach_client())
+            .unwrap();
         cx.run_until_parked();
 
         window

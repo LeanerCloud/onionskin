@@ -466,12 +466,21 @@ impl Canvas {
     /// one node per run of text, so a screen reader navigates the page rather
     /// than being handed it as a single string.
     ///
-    pub(in crate::shell) fn accessible(&mut self, title: &str, scale: f32) -> A11yElement {
+    /// `with_text` is whether anything is listening. Extracting a page's
+    /// words parses its content stream on the thread that draws, so it waits
+    /// until a screen reader has attached rather than running on every frame
+    /// of every scroll for nobody.
+    pub(in crate::shell) fn accessible(
+        &mut self,
+        title: &str,
+        scale: f32,
+        with_text: bool,
+    ) -> A11yElement {
         let origin = self.model.canvas_origin();
         let page_count = self.model.viewport().page_count();
         let mut document = A11yElement::new("document", Role::Document, title.to_owned())
             .with_activation(Activation::FocusDocument);
-        let pages = match self.model.accessible_pages() {
+        let pages = match self.model.accessible_pages(with_text) {
             Ok(pages) => pages,
             Err(error) => {
                 return document.child(A11yElement::new(

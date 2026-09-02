@@ -171,10 +171,14 @@ impl Rects {
 gpui::actions!(
     onionskin_a11y,
     [
-        /// Tab: the next control in reading order.
+        /// Tab: the next group of controls, entered at its first control.
         FocusNext,
-        /// Shift-Tab: the previous one.
+        /// Shift-Tab: the previous group.
         FocusPrevious,
+        /// Right or Down: the next control inside the group focus is in.
+        FocusNextInGroup,
+        /// Left or Up: the previous one.
+        FocusPreviousInGroup,
         /// Enter or Space on the focused control.
         ActivateFocused,
     ]
@@ -191,9 +195,44 @@ pub(in crate::shell) fn install_keybindings(cx: &mut gpui::App) {
     cx.bind_keys([
         gpui::KeyBinding::new("tab", FocusNext, context),
         gpui::KeyBinding::new("shift-tab", FocusPrevious, context),
+        // Both axes move inside the group, because a group is a list either
+        // way and a screen-reader user reaching for an arrow does not know
+        // which way the surface happens to be drawn.
+        gpui::KeyBinding::new("right", FocusNextInGroup, context),
+        gpui::KeyBinding::new("down", FocusNextInGroup, context),
+        gpui::KeyBinding::new("left", FocusPreviousInGroup, context),
+        gpui::KeyBinding::new("up", FocusPreviousInGroup, context),
         gpui::KeyBinding::new("enter", ActivateFocused, context),
         gpui::KeyBinding::new("space", ActivateFocused, context),
     ]);
+}
+
+/// How the platform's AccessKit handlers reach the shell.
+///
+/// They run on the main thread inside an `NSAccessibility` message with no
+/// `App` to run anything in, so all they can do is ask for the shell to be
+/// served. This dispatches that onto the main queue
+/// (`ForegroundExecutor`, gpui `platform/mac/dispatcher.rs`), which macOS
+/// runs whether or not the window is visible.
+///
+/// Asking for a frame instead would not do: gpui runs a window's display link
+/// only while macOS reports the window visible (`platform/mac/window.rs`,
+/// `window_did_change_occlusion_state`) and `App::refresh_windows` only marks
+/// a window dirty, so a press on a window with something in front of it would
+/// wait for the user to bring the window forward.
+fn wake(window: &Window, cx: &mut gpui::Context<super::tabs::ShellFrame>) -> crate::a11y::Wake {
+    let frame = cx.entity().downgrade();
+    let window = window.to_async(cx);
+    Box::new(move || {
+        let frame = frame.clone();
+        window
+            .spawn(async move |cx| {
+                let _ = cx.update(|window, app| {
+                    let _ = frame.update(app, |frame, cx| frame.serve_accessibility(window, cx));
+                });
+            })
+            .detach();
+    })
 }
 
 /// The shell's accessibility state: the platform adapter, the tab order, the
@@ -249,8 +288,36 @@ impl ShellAccessibility {
             .deliver(key, action);
     }
 
+    /// Tab: to the next group of controls.
     pub(in crate::shell) fn step(&mut self, step: crate::a11y::Step) -> bool {
         self.ring.step(step)
+    }
+
+    /// An arrow key: to the next control inside the group focus is in.
+    pub(in crate::shell) fn step_within(&mut self, step: crate::a11y::Step) -> bool {
+        self.ring.step_within(step)
+    }
+
+    /// Whether the shell should pay to describe a page's own words.
+    ///
+    /// Extracting them parses a content stream, on the thread that draws, on
+    /// the first frame each page is visible for. That is a scroll's worth of
+    /// work for something nobody is listening to until a screen reader
+    /// attaches, so it waits until one has.
+    pub(in crate::shell) fn wants_page_text(&self) -> bool {
+        self.adapter
+            .as_ref()
+            .is_some_and(crate::a11y::Adapter::is_active)
+    }
+
+    /// Attach a client the way a screen reader attaches one, for a test with
+    /// no screen reader to do it.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn attach_client(&mut self) {
+        self.adapter
+            .as_ref()
+            .expect("the adapter is attached on the first frame")
+            .activate();
     }
 
     pub(in crate::shell) fn focus_key(&mut self, key: &gpui::ElementId) -> bool {
@@ -263,24 +330,31 @@ impl ShellAccessibility {
     /// The attach happens here because the spike records it as an ordering
     /// constraint: the adapter has to exist before anything queries the view,
     /// and the first render is the earliest point a `&Window` is in reach.
-    pub(in crate::shell) fn publish(&mut self, root: &Element, window: &Window) {
+    /// `focused_field` is the text field GPUI's focus is in, if it is in
+    /// one. It wins over the ring's own cursor, because that is where the
+    /// keys are actually going: clicking into the find field has to move a
+    /// screen reader's cursor there too. It is applied after the rebuild,
+    /// since a field that has only just appeared is not in the old order.
+    pub(in crate::shell) fn publish(
+        &mut self,
+        root: &Element,
+        focused_field: Option<gpui::ElementId>,
+        window: &Window,
+        cx: &mut gpui::Context<super::tabs::ShellFrame>,
+    ) {
         self.ring.rebuild(root);
+        if let Some(key) = focused_field {
+            self.ring.focus(&key);
+        }
         self.actions = root
             .walk()
             .filter_map(|element| Some((element.key.clone(), element.activation.clone()?)))
             .collect();
         let adapter = self
             .adapter
-            .get_or_insert_with(|| crate::a11y::Adapter::attach(window));
+            .get_or_insert_with(|| crate::a11y::Adapter::attach(window, wake(window, cx)));
         adapter.observe_window_active(window.is_window_active());
         adapter.publish(root, self.ring.focused());
-    }
-
-    /// Whether a screen reader asked for anything since the last frame.
-    pub(in crate::shell) fn has_requests(&self) -> bool {
-        self.adapter
-            .as_ref()
-            .is_some_and(crate::a11y::Adapter::has_requests)
     }
 
     /// What a screen reader asked the shell to do since the last frame.

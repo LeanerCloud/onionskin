@@ -11,7 +11,7 @@ pub(crate) mod focus;
 pub(crate) mod probe;
 pub(crate) mod tree;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use accesskit::{ActionRequest, TreeUpdate};
@@ -40,26 +40,73 @@ pub(crate) struct Adapter {
     platform: platform::Adapter,
 }
 
+/// What the shell does when a screen reader touches it outside a frame.
+///
+/// The AccessKit handlers have no `App` in reach, so they cannot run anything
+/// themselves. This is how they ask the shell to serve them: it has to reach
+/// the main run loop directly, because the shell cannot wait for a frame that
+/// a window macOS reports as not visible will never draw.
+pub(crate) type Wake = Box<dyn Fn()>;
+
 /// State the platform adapter's handlers touch from outside a GPUI update.
 ///
 /// The AccessKit handlers run on the main thread but inside an
 /// `NSAccessibility` message, with no `App` in reach, so they can only read
-/// and write plain cells. Everything they collect is drained on the next
-/// frame.
-#[derive(Default)]
+/// and write plain cells. Everything they collect is drained by the wake they
+/// schedule.
 struct Shared {
     /// The last tree the shell published, for `request_initial_tree`.
     published: RefCell<Option<TreeUpdate>>,
     requests: RefCell<Vec<ActionRequest>>,
+    /// Whether a client has asked for the tree. Until one has, nothing reads
+    /// what the shell publishes, and the expensive half of building it is
+    /// skipped.
+    active: Cell<bool>,
+    wake: Option<Wake>,
 }
 
 impl Shared {
+    fn new(wake: Option<Wake>) -> Self {
+        Self {
+            published: RefCell::new(None),
+            requests: RefCell::new(Vec::new()),
+            active: Cell::new(false),
+            wake,
+        }
+    }
+
     /// Record what a screen reader asked for. The platform's action handler
     /// does nothing else, and the tests come through the same door.
+    ///
+    /// Woken only when the queue was empty: a burst of requests is one drain,
+    /// and the drain takes all of them.
     fn record(&self, request: ActionRequest) {
         #[cfg(all(feature = "a11y-probe", target_os = "macos"))]
         probe::record_delivery();
-        self.requests.borrow_mut().push(request);
+        let idle = {
+            let mut requests = self.requests.borrow_mut();
+            let idle = requests.is_empty();
+            requests.push(request);
+            idle
+        };
+        if idle {
+            self.wake();
+        }
+    }
+
+    /// A client has attached. The shell has more to say than it published
+    /// while nobody was listening, so ask it to say it.
+    fn activate(&self) {
+        if self.active.replace(true) {
+            return;
+        }
+        self.wake();
+    }
+
+    fn wake(&self) {
+        if let Some(wake) = &self.wake {
+            wake();
+        }
     }
 }
 
@@ -70,8 +117,8 @@ impl Adapter {
     /// coincidence: the adapter has to exist before anything queries the
     /// view, so this is called on the shell's first render, which is the
     /// earliest point a `&Window` is in reach.
-    pub(crate) fn attach(window: &Window) -> Self {
-        let shared = Rc::new(Shared::default());
+    pub(crate) fn attach(window: &Window, wake: Wake) -> Self {
+        let shared = Rc::new(Shared::new(Some(wake)));
         let platform = platform::Adapter::attach(window, Rc::clone(&shared));
         Self {
             ids: Ids::default(),
@@ -90,7 +137,7 @@ impl Adapter {
     pub(crate) fn detached() -> Self {
         Self {
             ids: Ids::default(),
-            shared: Rc::new(Shared::default()),
+            shared: Rc::new(Shared::new(None)),
             platform: platform::Adapter::detached(),
         }
     }
@@ -114,7 +161,13 @@ impl Adapter {
     pub(crate) fn publish<A>(&mut self, root: &Element<A>, focus: Option<&ElementId>) {
         let update = tree::update(root, focus, &mut self.ids);
         *self.shared.published.borrow_mut() = Some(update.clone());
-        self.platform.update(update);
+        // A push the platform accepted means a client took it, which is the
+        // other door into the active state: AccessKit only asks for an
+        // initial tree once, and a client that arrived while the shell had
+        // published nothing comes back through this one.
+        if self.platform.update(update) {
+            self.shared.activate();
+        }
     }
 
     /// Tell the adapter whether the window is the one the user is in.
@@ -127,8 +180,26 @@ impl Adapter {
         self.platform.set_view_focused(active);
     }
 
+    /// Only the drain's own test asks: the shell is woken when there is
+    /// something to take, rather than looking for itself.
+    #[cfg(test)]
     pub(crate) fn has_requests(&self) -> bool {
         !self.shared.requests.borrow().is_empty()
+    }
+
+    /// Whether anything is reading what the shell publishes.
+    ///
+    /// False until a client asks for the tree, which is how the shell knows
+    /// not to pay for the parts of the description nobody would hear.
+    pub(crate) fn is_active(&self) -> bool {
+        self.shared.active.get()
+    }
+
+    /// Attach a client the way the platform attaches one, for a test that
+    /// has no screen reader to do it.
+    #[cfg(test)]
+    pub(crate) fn activate(&self) {
+        self.shared.activate();
     }
 
     /// Everything a screen reader asked for since the last frame, resolved
@@ -171,7 +242,12 @@ mod platform {
     struct Activation(Rc<Shared>);
 
     impl ActivationHandler for Activation {
+        /// AccessKit calls this the first time a client queries the view, and
+        /// never again: the adapter is Active from here on
+        /// (accesskit_macos 0.26.3 `adapter.rs`, `get_or_init_context`). It
+        /// is therefore the shell's only notice that anything is listening.
         fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+            self.0.activate();
             self.0.published.borrow().clone()
         }
     }
@@ -229,16 +305,19 @@ mod platform {
             }
         }
 
-        pub(super) fn update(&mut self, update: TreeUpdate) {
+        /// Push the tree, and answer whether a client took it.
+        pub(super) fn update(&mut self, update: TreeUpdate) -> bool {
             let Some(adapter) = &mut self.inner else {
-                return;
+                return false;
             };
             // The factory only runs when a client is attached, so a build
             // with no screen reader costs one move of an already-built
             // update.
-            if let Some(events) = adapter.update_if_active(move || update) {
-                events.raise();
-            }
+            let Some(events) = adapter.update_if_active(move || update) else {
+                return false;
+            };
+            events.raise();
+            true
         }
 
         pub(super) fn set_view_focused(&mut self, focused: bool) {
@@ -277,7 +356,9 @@ mod platform {
             Self
         }
 
-        pub(super) fn update(&mut self, _update: TreeUpdate) {}
+        pub(super) fn update(&mut self, _update: TreeUpdate) -> bool {
+            false
+        }
 
         pub(super) fn set_view_focused(&mut self, _focused: bool) {}
     }
@@ -285,9 +366,18 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use accesskit::{Action, Role};
+    use accesskit::{Action, NodeId, Role};
 
     use super::*;
+
+    fn request(target_node: NodeId, action: Action) -> ActionRequest {
+        ActionRequest {
+            action,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node,
+            data: None,
+        }
+    }
 
     /// A chrome-shaped tree: two controls a screen reader can press.
     fn tree() -> Element<()> {
@@ -355,6 +445,58 @@ mod tests {
 
         assert!(adapter.has_requests());
         assert_eq!(adapter.take_requests(), Vec::new());
+    }
+
+    /// The queue is drained by a wake the handler schedules, not by the next
+    /// frame: a window macOS reports as not visible draws no frame, and a
+    /// request that waits for one never runs. One wake per burst, and a fresh
+    /// one once the queue has been emptied.
+    #[test]
+    fn a_request_wakes_the_shell_once_per_burst() {
+        let woken = Rc::new(Cell::new(0_usize));
+        let counter = Rc::clone(&woken);
+        let shared = Shared::new(Some(Box::new(move || {
+            counter.set(counter.get() + 1);
+        })));
+
+        shared.record(request(NodeId(1), accesskit::Action::Click));
+        shared.record(request(NodeId(2), accesskit::Action::Click));
+        assert_eq!(woken.get(), 1, "a burst of presses woke the shell twice");
+
+        shared.requests.borrow_mut().clear();
+        shared.record(request(NodeId(3), accesskit::Action::Click));
+        assert_eq!(woken.get(), 2, "a press after the drain did not wake the shell");
+    }
+
+    /// The shell has no other notice that a screen reader has arrived, and it
+    /// publishes less while nobody is listening, so the attach has to wake it
+    /// to say the rest.
+    #[test]
+    fn a_client_asking_for_the_tree_makes_the_adapter_active_and_wakes_the_shell() {
+        let woken = Rc::new(Cell::new(0_usize));
+        let counter = Rc::clone(&woken);
+        let shared = Shared::new(Some(Box::new(move || {
+            counter.set(counter.get() + 1);
+        })));
+
+        assert!(!shared.active.get());
+        shared.activate();
+        assert!(shared.active.get());
+        assert_eq!(woken.get(), 1);
+
+        shared.activate();
+        assert_eq!(woken.get(), 1, "a second client woke the shell again");
+    }
+
+    #[test]
+    fn an_adapter_nothing_has_asked_is_not_active() {
+        let mut adapter = Adapter::detached();
+        adapter.publish(&tree(), None);
+
+        assert!(!adapter.is_active());
+
+        adapter.activate();
+        assert!(adapter.is_active());
     }
 
     /// AccessKit's action set is much wider than the two the shell publishes.

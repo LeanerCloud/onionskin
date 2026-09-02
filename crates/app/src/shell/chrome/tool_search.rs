@@ -312,6 +312,13 @@ impl SearchInput {
         &self.buffer.content
     }
 
+    /// The key the field's own node is published under, so a caller matching
+    /// GPUI's focus against the tree names the field the same way the tree
+    /// does.
+    pub(in crate::shell) fn element_id(&self) -> &'static str {
+        self.element_id
+    }
+
     /// What the field tells a screen reader.
     ///
     /// The name comes from the caller, because a text field is drawn with no
