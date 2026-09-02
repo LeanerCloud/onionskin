@@ -873,11 +873,14 @@ impl ShellFrame {
 
     /// The same, inside one group.
     ///
-    /// Propagates while a text field has focus: the field binds the arrows it
-    /// needs in its own context, and the ones it does not bind are still the
-    /// field's rather than the ring's. Tab is how a user leaves it.
+    /// No guard for a focused text field, and that is deliberate. The field
+    /// binds the arrows its caret needs in its own key context, which GPUI
+    /// resolves ahead of the shell's, so Left and Right never arrive here
+    /// while a field has the keys. Refusing the ones that do arrive would
+    /// strand the field: the find bar's first stop is its own input, so Up
+    /// and Down are how a user reaches the eight controls beside it.
     fn step_focus_within(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
-        if self.text_field_focused(window, cx) || !self.a11y.step_within(step) {
+        if !self.a11y.step_within(step) {
             cx.propagate();
             return;
         }
@@ -4458,7 +4461,11 @@ mod tests {
             .update(cx, |frame, _window, cx| frame.menu_state(cx))
             .unwrap();
         let installed = bindings.clone();
+        // In the order `shell::run` installs them, and all of them: the
+        // search field's own bindings were missing here, so a shell binding
+        // that shadowed one of the field's keys looked harmless.
         cx.update(|cx| {
+            crate::shell::chrome::install_search_keybindings(cx);
             crate::shell::find_bar::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);
@@ -7298,6 +7305,154 @@ mod tests {
             before - 1,
             "the ring took the arrow the keymap bound"
         );
+    }
+
+    /// Every stop the tree publishes can be reached with the keyboard.
+    ///
+    /// The sweep the ring exists for. A ring that leads somewhere it cannot
+    /// leave is worse than no ring: the controls past the dead end are
+    /// published, announced, and unreachable, and nothing else here would
+    /// notice. Walks Tab once per group and the arrows once per stop in the
+    /// widest group, which covers every group and every stop in it.
+    ///
+    /// With the find bar open, because its first stop is its text field,
+    /// which is the shape that dead-ends.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn every_published_stop_can_be_reached_from_the_keyboard(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(Some("page".to_owned()), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let stops = stops_under(window, cx, "window");
+        let sizes = window
+            .update(cx, |frame, _window, _cx| frame.a11y.group_sizes())
+            .unwrap();
+        assert!(
+            stops.len() > 20 && sizes.len() > 4,
+            "the window published {} stops in {} groups, which would prove little",
+            stops.len(),
+            sizes.len()
+        );
+        let widest = sizes.iter().copied().max().unwrap_or(0);
+
+        let mut reached = std::collections::BTreeSet::new();
+        let mut note = |window, cx: &mut TestAppContext, reached: &mut std::collections::BTreeSet<String>| {
+            if let Some(key) = focused_key(window, cx) {
+                reached.insert(key);
+            }
+        };
+        for _ in 0..sizes.len() {
+            cx.simulate_keystrokes(window.into(), "tab");
+            cx.run_until_parked();
+            note(window, cx, &mut reached);
+            for _ in 0..widest {
+                cx.simulate_keystrokes(window.into(), "down");
+                cx.run_until_parked();
+                note(window, cx, &mut reached);
+            }
+        }
+
+        let missing: Vec<&String> = stops.iter().filter(|stop| !reached.contains(*stop)).collect();
+        assert!(
+            missing.is_empty(),
+            "{} of {} published stops cannot be reached from the keyboard: {missing:?}",
+            missing.len(),
+            stops.len()
+        );
+    }
+
+    /// The find bar is the surface that dead-ends: its first stop is its text
+    /// field, so Tab enters the group there and GPUI focus goes into the
+    /// input. The arrows have to keep working from inside it or the eight
+    /// controls beside it are published and unreachable.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_arrows_walk_the_find_bar_out_of_its_own_field(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(Some("page".to_owned()), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let bar = stops_under(window, cx, "find-bar");
+        assert!(bar.len() > 4, "the find bar published {} stops", bar.len());
+        assert_eq!(
+            bar[0], FIND_INPUT_ID,
+            "the find bar no longer starts with its field, so this proves nothing"
+        );
+
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(frame.a11y.focus_key(&FIND_INPUT_ID.into()));
+                frame.focus_ring_target(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(
+                    frame.text_field_focused(window, cx),
+                    "the ring on the field did not give it the keys"
+                );
+            })
+            .unwrap();
+
+        let mut walked = vec![FIND_INPUT_ID.to_owned()];
+        for _ in 1..bar.len() {
+            cx.simulate_keystrokes(window.into(), "down");
+            cx.run_until_parked();
+            walked.push(focused_key(window, cx).expect("the arrow left the ring empty"));
+        }
+
+        assert_eq!(walked, bar, "the arrows did not walk the find bar in order");
+    }
+
+    /// And the arrows the field itself needs stay with the field: Left and
+    /// Right move the caret, not the ring. Deleting the guard that does this
+    /// used to break no test.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_find_field_keeps_the_arrows_that_move_its_caret(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["two-page.pdf"], cx);
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_find_bar(Some("page".to_owned()), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let before = window
+            .update(cx, |frame, window, cx| {
+                assert!(frame.a11y.focus_key(&FIND_INPUT_ID.into()));
+                frame.focus_ring_target(window, cx);
+                frame.find_input.read(cx).selected_range()
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "left");
+        cx.run_until_parked();
+
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some(FIND_INPUT_ID),
+            "Left moved the focus ring instead of the caret"
+        );
+        window
+            .update(cx, |frame, _window, cx| {
+                let after = frame.find_input.read(cx).selected_range();
+                assert_ne!(after, before, "Left did not move the caret");
+                assert_eq!(
+                    frame.find_input.read(cx).query(),
+                    "page",
+                    "the query changed while walking the caret"
+                );
+            })
+            .unwrap();
     }
 
     /// The UI-thread extraction the ledger records: the shell parsed every

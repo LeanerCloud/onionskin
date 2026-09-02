@@ -197,7 +197,10 @@ pub(in crate::shell) fn install_keybindings(cx: &mut gpui::App) {
         gpui::KeyBinding::new("shift-tab", FocusPrevious, context),
         // Both axes move inside the group, because a group is a list either
         // way and a screen-reader user reaching for an arrow does not know
-        // which way the surface happens to be drawn.
+        // which way the surface happens to be drawn. A focused text field
+        // keeps Left and Right for its caret by binding them in its own
+        // context, which GPUI resolves ahead of this one; Up and Down are
+        // what carries the ring out of the field.
         gpui::KeyBinding::new("right", FocusNextInGroup, context),
         gpui::KeyBinding::new("down", FocusNextInGroup, context),
         gpui::KeyBinding::new("left", FocusPreviousInGroup, context),
@@ -308,6 +311,14 @@ impl ShellAccessibility {
         self.adapter
             .as_ref()
             .is_some_and(crate::a11y::Adapter::is_active)
+    }
+
+    /// How many stops each group holds, for the sweep that walks every one
+    /// of them with the keyboard. Only used to bound the walk: a wrong
+    /// answer makes the sweep fail, never pass.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn group_sizes(&self) -> Vec<usize> {
+        self.ring.groups().iter().map(Vec::len).collect()
     }
 
     /// Attach a client the way a screen reader attaches one, for a test with
