@@ -227,12 +227,11 @@ impl ViewRotation {
     /// four arms of identical algebra written a second time.
     pub fn rotate_rect_within(self, rect: ViewRect, within: ViewSize) -> ViewRect {
         let ViewRect { origin, size } = rect;
-        let page = within;
         match self {
             Self::None => ViewRect { origin, size },
             Self::Clockwise90 => ViewRect {
                 origin: ViewPoint {
-                    x: page.height - origin.y - size.height,
+                    x: within.height - origin.y - size.height,
                     y: origin.x,
                 },
                 size: ViewSize {
@@ -242,15 +241,15 @@ impl ViewRotation {
             },
             Self::HalfTurn => ViewRect {
                 origin: ViewPoint {
-                    x: page.width - origin.x - size.width,
-                    y: page.height - origin.y - size.height,
+                    x: within.width - origin.x - size.width,
+                    y: within.height - origin.y - size.height,
                 },
                 size,
             },
             Self::Clockwise270 => ViewRect {
                 origin: ViewPoint {
                     x: origin.y,
-                    y: page.width - origin.x - size.width,
+                    y: within.width - origin.x - size.width,
                 },
                 size: ViewSize {
                     width: size.height,
