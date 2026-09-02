@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::{File, OpenOptions};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use accesskit::Role;
@@ -10,12 +12,13 @@ use gpui::{
     div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EntityId,
     Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _,
-    Styled as _, Window, WindowHandle,
+    Styled as _, Timer, Window, WindowHandle,
 };
 use onionskin_core::{Document, ViewSize};
-use onionskin_plugin_api::{ExportedFile, PageIndex, ToolCapability};
+use onionskin_plugin_api::{ExportOutputKind, PageIndex, ToolCapability};
+use tempfile::{NamedTempFile, TempDir};
 
-use super::super::canvas::{CanvasError, CanvasModel, CanvasViewState, ViewAction};
+use super::super::canvas::{CanvasError, CanvasModel, CanvasViewState, PreparedExport, ViewAction};
 use super::super::context_menu::{
     canvas_context_entries, tool_with, CanvasContextCommand, CanvasContextEntry,
 };
@@ -253,9 +256,84 @@ pub(in crate::shell) struct ShellFrame {
     dialog: Option<ShellDialog>,
     recent_menu_open: bool,
     home: HomeState,
+    export_job: Option<ExportJob>,
+    next_export_id: u64,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     a11y: ShellAccessibility,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ExportPhaseValue {
+    Running,
+    Cancelling,
+    Publishing,
+}
+
+struct ExportPhase(AtomicU8);
+
+impl ExportPhase {
+    fn new() -> Self {
+        Self(AtomicU8::new(ExportPhaseValue::Running as u8))
+    }
+
+    fn load(&self) -> ExportPhaseValue {
+        match self.0.load(Ordering::Acquire) {
+            value if value == ExportPhaseValue::Running as u8 => ExportPhaseValue::Running,
+            value if value == ExportPhaseValue::Cancelling as u8 => ExportPhaseValue::Cancelling,
+            value if value == ExportPhaseValue::Publishing as u8 => ExportPhaseValue::Publishing,
+            _ => unreachable!("export phase is written only from ExportPhaseValue"),
+        }
+    }
+
+    fn cancel(&self) -> bool {
+        self.0
+            .compare_exchange(
+                ExportPhaseValue::Running as u8,
+                ExportPhaseValue::Cancelling as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn begin_publishing(&self) -> bool {
+        self.0
+            .compare_exchange(
+                ExportPhaseValue::Running as u8,
+                ExportPhaseValue::Publishing as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn is_cancelling(&self) -> bool {
+        self.load() == ExportPhaseValue::Cancelling
+    }
+}
+
+struct ExportJob {
+    id: u64,
+    origin: EntityId,
+    phase: Arc<ExportPhase>,
+    completed: Arc<AtomicUsize>,
+    total: usize,
+    last_displayed: usize,
+}
+
+fn export_progress_label(job: &ExportJob) -> String {
+    match job.phase.load() {
+        ExportPhaseValue::Running => {
+            format!("Exporting {} of {} pages", job.last_displayed, job.total)
+        }
+        ExportPhaseValue::Cancelling => format!(
+            "Cancelling export, {} of {} pages complete",
+            job.last_displayed, job.total
+        ),
+        ExportPhaseValue::Publishing => "Finishing export".to_owned(),
+    }
 }
 
 fn activate_tab<T>(
@@ -367,6 +445,8 @@ impl ShellFrame {
             dialog: None,
             recent_menu_open: false,
             home: HomeState::default(),
+            export_job: None,
+            next_export_id: 0,
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);
@@ -416,6 +496,21 @@ impl ShellFrame {
             );
         }
         root = root.child(self.accessible_tabs());
+        if let Some(job) = &self.export_job {
+            let can_cancel = job.phase.load() == ExportPhaseValue::Running;
+            root = root.child(
+                A11yElement::new(
+                    "export-progress",
+                    Role::ProgressIndicator,
+                    export_progress_label(job),
+                )
+                .child(
+                    A11yElement::new("cancel-export", Role::Button, "Cancel Export")
+                        .with_state(A11yState::enabled(can_cancel))
+                        .with_activation(Activation::CancelExport),
+                ),
+            );
+        }
 
         let visibility = self.shell_view_state.visibility();
         if visibility.rail {
@@ -715,6 +810,7 @@ impl ShellFrame {
             Activation::ShowPreferences(category) => self.show_preferences(category, cx),
             Activation::ChangePreference(change) => self.change_preference(change, cx),
             Activation::CloseDialog => self.close_dialog(cx),
+            Activation::CancelExport => self.cancel_export(cx),
             Activation::Focus(field) => {
                 let input = match field {
                     TextField::Search => &self.search_input,
@@ -1351,19 +1447,16 @@ impl ShellFrame {
         }
     }
 
-    /// Ask where the export goes, then run it.
-    ///
-    /// Nothing is produced until the user has chosen a destination, and the
-    /// codec produces every page before this writes any of them, so a page
-    /// that fails to render leaves no files at all. A write that fails after
-    /// that is disk trouble, not a broken page: it stops on the file it was
-    /// on and names it, because the earlier files are already there and the
-    /// user needs to know how far the set got.
+    /// Ask where the export goes, then install one background job.
     fn start_export(&mut self, target: ExportTarget, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.active() else {
             return;
         };
         let canvas = tab.canvas.clone();
+        if self.export_job.is_some() {
+            report_export_failure(&canvas, ExportFailure::AlreadyInProgress, cx);
+            return;
+        }
         let origin = canvas.entity_id();
         let extension = canvas
             .read(cx)
@@ -1403,12 +1496,134 @@ impl ShellFrame {
             frame
                 .update(cx, |frame, cx| {
                     if frame.is_active_canvas(origin) {
-                        run_export(&canvas, target, &path, cx);
+                        if frame.export_job.is_some() {
+                            report_export_failure(&canvas, ExportFailure::AlreadyInProgress, cx);
+                            return;
+                        }
+                        let prepared = canvas.update(cx, |canvas, _cx| {
+                            canvas.model.prepare_export(target.codec(), EXPORT_DPI)
+                        });
+                        match prepared {
+                            Ok(prepared) => {
+                                frame.launch_export(origin, canvas.clone(), path, prepared, cx)
+                            }
+                            Err(error) => report_export_failure(&canvas, error, cx),
+                        }
                     }
                 })
                 .ok();
         })
         .detach();
+    }
+
+    fn launch_export(
+        &mut self,
+        origin: EntityId,
+        canvas: Entity<Canvas>,
+        path: PathBuf,
+        prepared: PreparedExport,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.next_export_id;
+        self.next_export_id = self.next_export_id.wrapping_add(1);
+        let phase = Arc::new(ExportPhase::new());
+        let completed = Arc::new(AtomicUsize::new(0));
+        let total = prepared.request.pages.pages().count();
+        self.export_job = Some(ExportJob {
+            id,
+            origin,
+            phase: Arc::clone(&phase),
+            completed: Arc::clone(&completed),
+            total,
+            last_displayed: 0,
+        });
+        let task =
+            cx.background_spawn(
+                async move { run_export_worker(prepared, &path, &phase, &completed) },
+            );
+        cx.spawn(async move |frame, cx| {
+            let result = task.await;
+            _ = frame.update(cx, |frame, cx| {
+                frame.finish_export(id, origin, &canvas, result, cx);
+            });
+        })
+        .detach();
+        self.arm_export_poll(id, cx);
+        cx.notify();
+    }
+
+    fn arm_export_poll(&mut self, id: u64, cx: &mut Context<Self>) {
+        cx.spawn(async move |frame, cx| loop {
+            Timer::after(super::super::POLL_INTERVAL).await;
+            let keep_polling = frame
+                .update(cx, |frame, cx| {
+                    let (keep_polling, changed) = frame.poll_export_progress(id);
+                    if changed {
+                        cx.notify();
+                    }
+                    keep_polling
+                })
+                .unwrap_or(false);
+            if !keep_polling {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    fn poll_export_progress(&mut self, id: u64) -> (bool, bool) {
+        let Some(job) = self.export_job.as_mut().filter(|job| job.id == id) else {
+            return (false, false);
+        };
+        let completed = job.completed.load(Ordering::Acquire);
+        let changed = completed != job.last_displayed;
+        if changed {
+            job.last_displayed = completed;
+        }
+        (true, changed)
+    }
+
+    fn finish_export(
+        &mut self,
+        id: u64,
+        origin: EntityId,
+        canvas: &Entity<Canvas>,
+        result: Result<ExportOutcome, ExportFailure>,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.export_job.as_ref(), Some(job) if job.id == id) {
+            return;
+        }
+        self.export_job = None;
+        if let Err(error) = result {
+            if self
+                .tabs
+                .tabs()
+                .iter()
+                .any(|tab| tab.canvas.entity_id() == origin)
+            {
+                report_export_failure(canvas, error, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn cancel_export(&mut self, cx: &mut Context<Self>) {
+        if self
+            .export_job
+            .as_ref()
+            .is_some_and(|job| job.phase.cancel())
+        {
+            cx.notify();
+        }
+    }
+
+    fn cancel_export_for(&mut self, origin: EntityId) {
+        if let Some(job) = &self.export_job {
+            if job.origin == origin {
+                job.phase.cancel();
+            }
+        }
     }
 
     fn run_tab_command(
@@ -1421,6 +1636,9 @@ impl ShellFrame {
         self.tab_context_menu = None;
         match command {
             TabCommand::Close => {
+                if let Some(tab) = self.tabs.tabs().get(index) {
+                    self.cancel_export_for(tab.canvas.entity_id());
+                }
                 close_tab(&mut self.tabs, &mut self.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
@@ -1430,6 +1648,15 @@ impl ShellFrame {
                 cx.notify();
             }
             TabCommand::CloseOthers => {
+                if let Some(kept) = self.tabs.tabs().get(index) {
+                    if self
+                        .export_job
+                        .as_ref()
+                        .is_some_and(|job| job.origin != kept.canvas.entity_id())
+                    {
+                        self.cancel_export(cx);
+                    }
+                }
                 close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
@@ -1439,6 +1666,7 @@ impl ShellFrame {
                 cx.notify();
             }
             TabCommand::CloseAll => {
+                self.cancel_export(cx);
                 self.tabs.close_all();
                 self.search_feedback = None;
                 self.navigation.document_changed();
@@ -2534,6 +2762,14 @@ impl ShellFrame {
     }
 }
 
+impl Drop for ShellFrame {
+    fn drop(&mut self) {
+        if let Some(job) = &self.export_job {
+            job.phase.cancel();
+        }
+    }
+}
+
 impl Render for ShellFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.shell_view_state.tokens();
@@ -2634,6 +2870,12 @@ impl Render for ShellFrame {
             });
             let find_state = self.find;
             let find_input = self.find_input.clone();
+            let export_progress = self.export_job.as_ref().map(|job| {
+                (
+                    export_progress_label(job),
+                    job.phase.load() == ExportPhaseValue::Running,
+                )
+            });
             let canvas_view = div()
                 .id("document-view")
                 .relative()
@@ -2658,6 +2900,45 @@ impl Render for ShellFrame {
                         theme,
                         cx,
                     ))
+                })
+                .when_some(export_progress, |view, (label, can_cancel)| {
+                    view.child(
+                        div()
+                            .id("export-progress")
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .m_3()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .bg(theme.raised)
+                            .text_color(theme.text)
+                            .child(label)
+                            .child(
+                                div()
+                                    .id("cancel-export")
+                                    .px_2()
+                                    .rounded_sm()
+                                    .text_color(if can_cancel {
+                                        theme.text
+                                    } else {
+                                        theme.muted_text
+                                    })
+                                    .when(can_cancel, |button| {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(move |button| button.bg(theme.subtle_hover))
+                                    })
+                                    .on_click(cx.listener(|frame, _event, window, cx| {
+                                        frame.run_activation(Activation::CancelExport, window, cx);
+                                    }))
+                                    .child("Cancel Export"),
+                            ),
+                    )
                 });
             let document_column = div()
                 .w(document_bounds.size.width)
@@ -2907,117 +3188,407 @@ pub(super) fn tab_context_entries(
 /// `File > Export To` has somewhere to put the user's choice.
 const EXPORT_DPI: f32 = 150.0;
 
-/// Run a chosen export and write it, reporting any failure on the document it
-/// came from.
-fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &mut App) {
-    let exported = canvas.update(cx, |canvas, _cx| {
-        canvas.model.export(target.codec(), EXPORT_DPI)
-    });
-    let result = match exported {
-        Ok(files) => write_export(path, &files),
-        Err(error) => Err(ExportFailure::Codec(error)),
-    };
-    if let Err(failure) = result {
-        report_export_failure(canvas, failure, cx);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportOutcome {
+    Complete,
+    Cancelled,
+}
+
+fn run_export_worker(
+    prepared: PreparedExport,
+    chosen: &Path,
+    phase: &ExportPhase,
+    completed: &AtomicUsize,
+) -> Result<ExportOutcome, ExportFailure> {
+    run_export_worker_observed(prepared, chosen, phase, completed, &NoopExportObserver)
+}
+
+trait ExportObserver: Send + Sync {
+    fn writer_opened(&self) {}
+    fn writer_closed(&self) {}
+    fn page_completed(&self, _page: PageIndex) {}
+    fn before_publish(&self) {}
+    fn after_publish_started(&self) {}
+}
+
+struct NoopExportObserver;
+
+impl ExportObserver for NoopExportObserver {}
+
+fn run_export_worker_observed(
+    prepared: PreparedExport,
+    chosen: &Path,
+    phase: &ExportPhase,
+    completed: &AtomicUsize,
+    observer: &dyn ExportObserver,
+) -> Result<ExportOutcome, ExportFailure> {
+    match prepared.output_kind {
+        ExportOutputKind::Single => export_single(prepared, chosen, phase, completed, observer),
+        ExportOutputKind::PerPage => export_per_page(prepared, chosen, phase, completed, observer),
     }
 }
 
-fn write_export(chosen: &Path, files: &[ExportedFile]) -> Result<(), ExportFailure> {
-    let paths = files
-        .iter()
-        .map(|file| export_path(chosen, file.page, files.len()))
-        .collect::<Vec<_>>();
-    if files.len() <= 1 {
-        for (path, file) in paths.iter().zip(files) {
-            std::fs::write(path, &file.bytes).map_err(|source| ExportFailure::Write {
-                path: path.clone(),
+fn export_single(
+    prepared: PreparedExport,
+    chosen: &Path,
+    phase: &ExportPhase,
+    completed: &AtomicUsize,
+    observer: &dyn ExportObserver,
+) -> Result<ExportOutcome, ExportFailure> {
+    let parent = chosen.parent().unwrap_or_else(|| Path::new("."));
+    let mut output = NamedTempFile::new_in(parent).map_err(|source| ExportFailure::Write {
+        path: chosen.to_path_buf(),
+        source,
+    })?;
+    observer.writer_opened();
+    let mut document = prepared
+        .snapshot
+        .open()
+        .map_err(|error| ExportFailure::Codec(CanvasError::Core(error)))?;
+    for (position, page) in prepared.request.pages.pages().enumerate() {
+        if phase.is_cancelling() {
+            return Ok(ExportOutcome::Cancelled);
+        }
+        let bytes = prepared
+            .codec
+            .export_page(&mut document, &prepared.request, page, position == 0)
+            .map_err(|error| ExportFailure::Codec(CanvasError::Export(error)))?;
+        if phase.is_cancelling() {
+            return Ok(ExportOutcome::Cancelled);
+        }
+        output
+            .write_all(&bytes)
+            .map_err(|source| ExportFailure::Write {
+                path: chosen.to_path_buf(),
                 source,
             })?;
+        if phase.is_cancelling() {
+            return Ok(ExportOutcome::Cancelled);
         }
-        return Ok(());
+        output.flush().map_err(|source| ExportFailure::Write {
+            path: chosen.to_path_buf(),
+            source,
+        })?;
+        if phase.is_cancelling() {
+            return Ok(ExportOutcome::Cancelled);
+        }
+        completed.fetch_add(1, Ordering::Release);
+        observer.page_completed(page);
     }
+    observer.writer_closed();
+    observer.before_publish();
+    if !phase.begin_publishing() {
+        return Ok(ExportOutcome::Cancelled);
+    }
+    observer.after_publish_started();
+    output.persist_noclobber(chosen).map_err(|failure| {
+        if failure.error.kind() == std::io::ErrorKind::AlreadyExists {
+            ExportFailure::Exists {
+                path: chosen.to_path_buf(),
+            }
+        } else {
+            ExportFailure::Write {
+                path: chosen.to_path_buf(),
+                source: failure.error,
+            }
+        }
+    })?;
+    Ok(ExportOutcome::Complete)
+}
 
+fn export_per_page(
+    prepared: PreparedExport,
+    chosen: &Path,
+    phase: &ExportPhase,
+    completed: &AtomicUsize,
+    observer: &dyn ExportObserver,
+) -> Result<ExportOutcome, ExportFailure> {
+    let paths = prepared
+        .request
+        .pages
+        .pages()
+        .map(|page| export_path(chosen, Some(page), prepared.page_count))
+        .collect::<Vec<_>>();
+    preflight_export_paths(&paths)?;
+    let parent = chosen.parent().unwrap_or_else(|| Path::new("."));
+    let quarantine = tempfile::tempdir_in(parent).map_err(|source| ExportFailure::Write {
+        path: chosen.to_path_buf(),
+        source,
+    })?;
+    let mut document = prepared
+        .snapshot
+        .open()
+        .map_err(|error| ExportFailure::Codec(CanvasError::Core(error)))?;
+    let mut owned = Vec::new();
+    for ((position, page), path) in prepared.request.pages.pages().enumerate().zip(paths) {
+        if phase.is_cancelling() {
+            return cancel_per_page(owned, quarantine);
+        }
+        let bytes =
+            match prepared
+                .codec
+                .export_page(&mut document, &prepared.request, page, position == 0)
+            {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return fail_per_page(
+                        ExportFailure::Codec(CanvasError::Export(error)),
+                        owned,
+                        quarantine,
+                    )
+                }
+            };
+        if phase.is_cancelling() {
+            return cancel_per_page(owned, quarantine);
+        }
+        let mut writer = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(writer) => writer,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                return fail_per_page(ExportFailure::Exists { path }, owned, quarantine)
+            }
+            Err(source) => {
+                return fail_per_page(ExportFailure::Write { path, source }, owned, quarantine)
+            }
+        };
+        observer.writer_opened();
+        let identity = match FileIdentity::from_file(&writer) {
+            Ok(identity) => identity,
+            Err(source) => {
+                drop(writer);
+                observer.writer_closed();
+                owned.push(OwnedExport {
+                    path,
+                    identity: None,
+                });
+                return fail_per_page(
+                    ExportFailure::Write {
+                        path: chosen.to_path_buf(),
+                        source,
+                    },
+                    owned,
+                    quarantine,
+                );
+            }
+        };
+        owned.push(OwnedExport {
+            path: path.clone(),
+            identity: Some(identity),
+        });
+        if phase.is_cancelling() {
+            drop(writer);
+            observer.writer_closed();
+            return cancel_per_page(owned, quarantine);
+        }
+        if let Err(source) = writer.write_all(&bytes) {
+            drop(writer);
+            observer.writer_closed();
+            return fail_per_page(ExportFailure::Write { path, source }, owned, quarantine);
+        }
+        if phase.is_cancelling() {
+            drop(writer);
+            observer.writer_closed();
+            return cancel_per_page(owned, quarantine);
+        }
+        if let Err(source) = writer.flush() {
+            drop(writer);
+            observer.writer_closed();
+            return fail_per_page(ExportFailure::Write { path, source }, owned, quarantine);
+        }
+        if phase.is_cancelling() {
+            drop(writer);
+            observer.writer_closed();
+            return cancel_per_page(owned, quarantine);
+        }
+        drop(writer);
+        observer.writer_closed();
+        completed.fetch_add(1, Ordering::Release);
+        observer.page_completed(page);
+    }
+    observer.before_publish();
+    if !phase.begin_publishing() {
+        return cancel_per_page(owned, quarantine);
+    }
+    observer.after_publish_started();
+    Ok(ExportOutcome::Complete)
+}
+
+fn preflight_export_paths(paths: &[PathBuf]) -> Result<(), ExportFailure> {
     let mut seen = HashSet::new();
-    for path in &paths {
+    for path in paths {
         if !seen.insert(path.clone()) {
             return Err(ExportFailure::Duplicate { path: path.clone() });
         }
-    }
-    let mut reserved = Vec::new();
-    for path in paths {
-        match reserve_export_destination(&path) {
-            Ok(file) => reserved.push((path, file)),
-            Err(failure) => {
-                let cleanup_paths = reserved.into_iter().map(|(path, _)| path).collect();
-                return match remove_export_paths(cleanup_paths) {
-                    Ok(()) => Err(failure),
-                    Err(cleanup) => Err(ExportFailure::Cleanup {
-                        primary: Box::new(failure),
-                        path: cleanup.path,
-                        source: cleanup.source,
-                    }),
-                };
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => return Err(ExportFailure::Exists { path: path.clone() }),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(ExportFailure::Write {
+                    path: path.clone(),
+                    source,
+                })
             }
         }
-    }
-    write_reserved_exports(reserved, files)
-}
-
-fn reserve_export_destination(path: &Path) -> Result<File, ExportFailure> {
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(file) => Ok(file),
-        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(ExportFailure::Exists {
-                path: path.to_path_buf(),
-            })
-        }
-        Err(source) => Err(ExportFailure::Write {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-fn write_reserved_exports<W: std::io::Write>(
-    mut reserved: Vec<(PathBuf, W)>,
-    files: &[ExportedFile],
-) -> Result<(), ExportFailure> {
-    let mut index = 0;
-    while index < files.len() {
-        let result = {
-            let (path, writer) = &mut reserved[index];
-            writer
-                .write_all(&files[index].bytes)
-                .map_err(|source| (path.clone(), source))
-        };
-        if let Err((path, source)) = result {
-            let failure = ExportFailure::Write { path, source };
-            let cleanup_paths = reserved.drain(index..).map(|(path, _)| path).collect();
-            return match remove_export_paths(cleanup_paths) {
-                Ok(()) => Err(failure),
-                Err(cleanup) => Err(ExportFailure::Cleanup {
-                    primary: Box::new(failure),
-                    path: cleanup.path,
-                    source: cleanup.source,
-                }),
-            };
-        }
-        index += 1;
     }
     Ok(())
 }
 
-fn remove_export_paths(paths: Vec<PathBuf>) -> Result<(), ExportCleanupFailure> {
+fn cancel_per_page(
+    paths: Vec<OwnedExport>,
+    quarantine: TempDir,
+) -> Result<ExportOutcome, ExportFailure> {
+    match remove_export_paths(paths, quarantine) {
+        Ok(()) => Ok(ExportOutcome::Cancelled),
+        Err(cleanup) => Err(ExportFailure::Cleanup {
+            primary: Box::new(ExportFailure::Cancelled),
+            path: cleanup.path,
+            source: cleanup.source,
+        }),
+    }
+}
+
+fn fail_per_page(
+    failure: ExportFailure,
+    paths: Vec<OwnedExport>,
+    quarantine: TempDir,
+) -> Result<ExportOutcome, ExportFailure> {
+    match remove_export_paths(paths, quarantine) {
+        Ok(()) => Err(failure),
+        Err(cleanup) => Err(ExportFailure::Cleanup {
+            primary: Box::new(failure),
+            path: cleanup.path,
+            source: cleanup.source,
+        }),
+    }
+}
+
+struct OwnedExport {
+    path: PathBuf,
+    identity: Option<FileIdentity>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    volume: u64,
+    file: u64,
+}
+
+impl FileIdentity {
+    #[cfg(unix)]
+    fn from_file(file: &File) -> std::io::Result<Self> {
+        Self::from_metadata(&file.metadata()?)
+    }
+
+    #[cfg(unix)]
+    fn from_metadata(metadata: &std::fs::Metadata) -> std::io::Result<Self> {
+        use std::os::unix::fs::MetadataExt as _;
+
+        Ok(Self {
+            volume: metadata.dev(),
+            file: metadata.ino(),
+        })
+    }
+
+    #[cfg(windows)]
+    fn from_file(file: &File) -> std::io::Result<Self> {
+        Self::from_metadata(&file.metadata()?)
+    }
+
+    #[cfg(windows)]
+    fn from_metadata(metadata: &std::fs::Metadata) -> std::io::Result<Self> {
+        use std::os::windows::fs::MetadataExt as _;
+
+        Ok(Self {
+            volume: u64::from(
+                metadata
+                    .volume_serial_number()
+                    .ok_or_else(|| std::io::Error::other("volume identity is unavailable"))?,
+            ),
+            file: metadata
+                .file_index()
+                .ok_or_else(|| std::io::Error::other("file identity is unavailable"))?,
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn from_file(_file: &File) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe export rollback is unsupported on this platform",
+        ))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn from_metadata(_metadata: &std::fs::Metadata) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe export rollback is unsupported on this platform",
+        ))
+    }
+
+    fn from_path(path: &Path) -> std::io::Result<Self> {
+        Self::from_metadata(&std::fs::symlink_metadata(path)?)
+    }
+}
+
+fn remove_export_paths(
+    paths: Vec<OwnedExport>,
+    quarantine: TempDir,
+) -> Result<(), ExportCleanupFailure> {
     let mut first_error = None;
-    for path in paths {
-        if let Err(source) = std::fs::remove_file(&path) {
-            first_error.get_or_insert(ExportCleanupFailure { path, source });
+    for (index, owned) in paths.into_iter().enumerate() {
+        let quarantine_path = quarantine.path().join(index.to_string());
+        let result = remove_owned_export(&owned, &quarantine_path);
+        if let Err(source) = result {
+            first_error.get_or_insert(ExportCleanupFailure {
+                path: owned.path,
+                source,
+            });
         }
     }
     match first_error {
-        Some(error) => Err(error),
+        Some(error) => {
+            let _ = quarantine.keep();
+            Err(error)
+        }
         None => Ok(()),
     }
+}
+
+fn remove_owned_export(owned: &OwnedExport, quarantine: &Path) -> std::io::Result<()> {
+    let Some(expected) = owned.identity else {
+        return Err(std::io::Error::other(
+            "export file identity was unavailable",
+        ));
+    };
+    match std::fs::rename(&owned.path, quarantine) {
+        Ok(()) => {}
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(source),
+    }
+    match FileIdentity::from_path(quarantine) {
+        Ok(actual) if actual == expected => std::fs::remove_file(quarantine),
+        Ok(_) => restore_quarantined_export(quarantine, &owned.path).map_err(|source| {
+            std::io::Error::new(
+                source.kind(),
+                format!("replacement was preserved in {}: {source}", quarantine.display()),
+            )
+        }),
+        Err(identity_error) => match restore_quarantined_export(quarantine, &owned.path) {
+            Ok(()) => Err(identity_error),
+            Err(restore_error) => Err(std::io::Error::new(
+                restore_error.kind(),
+                format!(
+                    "identity check failed ({identity_error}); file was preserved in {} but could not be restored: {restore_error}",
+                    quarantine.display()
+                ),
+            )),
+        },
+    }
+}
+
+fn restore_quarantined_export(quarantine: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(quarantine, destination)?;
+    std::fs::remove_file(quarantine)
 }
 
 #[derive(Debug)]
@@ -3053,6 +3624,8 @@ fn export_path(chosen: &Path, page: Option<PageIndex>, count: usize) -> PathBuf 
 /// to look for, nor how far the set got.
 #[derive(Debug)]
 enum ExportFailure {
+    AlreadyInProgress,
+    Cancelled,
     Codec(CanvasError),
     Exists {
         path: PathBuf,
@@ -3074,6 +3647,8 @@ enum ExportFailure {
 impl fmt::Display for ExportFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AlreadyInProgress => write!(f, "an export is already in progress"),
+            Self::Cancelled => write!(f, "export cancelled"),
             Self::Codec(error) => write!(f, "export failed: {error}"),
             Self::Exists { path } => write!(
                 f,
@@ -3123,14 +3698,17 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
 
     #[cfg(feature = "shell-test-support")]
     use gpui::{TestAppContext, VisualTestContext};
     use onionskin_core::{PageLayoutMode, ViewPoint, ViewRotation, ZoomPolicy};
 
     use crate::preferences::ThemePreference;
-    use onionskin_plugin_api::{PluginRegistry, PointerInput, ToolCtx, ToolPlugin};
+    use onionskin_plugin_api::{
+        CodecPlugin, ExportError, ExportRequest, PageRange, PluginRegistry, PointerInput, ToolCtx,
+        ToolPlugin,
+    };
 
     use super::*;
     use crate::shell::canvas::CanvasModel;
@@ -3138,6 +3716,185 @@ mod tests {
     use crate::shell::canvas::CanvasStatus;
     #[cfg(feature = "shell-test-support")]
     use crate::shell::panes::NavigationPane;
+
+    #[cfg(feature = "shell-test-support")]
+    fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &mut App) {
+        let prepared = canvas.update(cx, |canvas, _cx| {
+            canvas.model.prepare_export(target.codec(), EXPORT_DPI)
+        });
+        let result = match prepared {
+            Ok(prepared) => {
+                run_export_worker(prepared, path, &ExportPhase::new(), &AtomicUsize::new(0))
+            }
+            Err(error) => Err(ExportFailure::Codec(error)),
+        };
+        if let Err(error) = result {
+            report_export_failure(canvas, error, cx);
+        }
+    }
+
+    struct WorkerCodec {
+        kind: ExportOutputKind,
+        calls: Arc<Mutex<Vec<PageIndex>>>,
+        fail_on: Option<PageIndex>,
+        cancel_on: Option<(PageIndex, Arc<ExportPhase>)>,
+        on_page: Option<Arc<dyn Fn(PageIndex) + Send + Sync>>,
+    }
+
+    struct BlockingCodec {
+        kind: ExportOutputKind,
+        block_on: PageIndex,
+        calls: Arc<Mutex<Vec<PageIndex>>>,
+        started: Mutex<Option<mpsc::Sender<()>>>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    #[derive(Default)]
+    struct RecordingExportObserver {
+        open_writers: AtomicUsize,
+        max_open_writers: AtomicUsize,
+        before_publish: Option<Arc<dyn Fn() + Send + Sync>>,
+        after_publish_started: Option<Arc<dyn Fn() + Send + Sync>>,
+        page_completed: Option<Arc<dyn Fn(PageIndex) + Send + Sync>>,
+    }
+
+    impl ExportObserver for RecordingExportObserver {
+        fn writer_opened(&self) {
+            let open = self.open_writers.fetch_add(1, Ordering::AcqRel) + 1;
+            self.max_open_writers.fetch_max(open, Ordering::AcqRel);
+        }
+
+        fn writer_closed(&self) {
+            self.open_writers.fetch_sub(1, Ordering::AcqRel);
+        }
+
+        fn page_completed(&self, page: PageIndex) {
+            if let Some(callback) = &self.page_completed {
+                callback(page);
+            }
+        }
+
+        fn before_publish(&self) {
+            if let Some(callback) = &self.before_publish {
+                callback();
+            }
+        }
+
+        fn after_publish_started(&self) {
+            if let Some(callback) = &self.after_publish_started {
+                callback();
+            }
+        }
+    }
+
+    impl CodecPlugin for BlockingCodec {
+        fn id(&self) -> &'static str {
+            "blocking"
+        }
+
+        fn name(&self) -> &'static str {
+            "Blocking"
+        }
+
+        fn extension(&self) -> &'static str {
+            "test"
+        }
+
+        fn output_kind(&self) -> ExportOutputKind {
+            self.kind
+        }
+
+        fn export_page(
+            &self,
+            _doc: &mut Document,
+            _request: &ExportRequest,
+            page: PageIndex,
+            _first_in_request: bool,
+        ) -> Result<Vec<u8>, ExportError> {
+            self.calls.lock().unwrap().push(page);
+            if page == self.block_on {
+                if let Some(started) = self.started.lock().unwrap().take() {
+                    started.send(()).unwrap();
+                }
+                let (released, ready) = &*self.release;
+                let mut released = released.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+            }
+            Ok(format!("page-{page}").into_bytes())
+        }
+    }
+
+    impl CodecPlugin for WorkerCodec {
+        fn id(&self) -> &'static str {
+            "worker-test"
+        }
+
+        fn name(&self) -> &'static str {
+            "Worker Test"
+        }
+
+        fn extension(&self) -> &'static str {
+            "test"
+        }
+
+        fn output_kind(&self) -> ExportOutputKind {
+            self.kind
+        }
+
+        fn export_page(
+            &self,
+            _doc: &mut Document,
+            _request: &ExportRequest,
+            page: PageIndex,
+            _first_in_request: bool,
+        ) -> Result<Vec<u8>, ExportError> {
+            self.calls.lock().unwrap().push(page);
+            if let Some(on_page) = &self.on_page {
+                on_page(page);
+            }
+            if let Some((cancel_page, phase)) = &self.cancel_on {
+                if *cancel_page == page {
+                    phase.cancel();
+                }
+            }
+            if self.fail_on == Some(page) {
+                return Err(ExportError::Encode {
+                    page,
+                    source: Box::new(std::io::Error::other("codec failed")),
+                });
+            }
+            Ok(format!("page-{page}").into_bytes())
+        }
+    }
+
+    fn prepared_worker_export(
+        kind: ExportOutputKind,
+        calls: Arc<Mutex<Vec<PageIndex>>>,
+        fail_on: Option<PageIndex>,
+        cancel_on: Option<(PageIndex, Arc<ExportPhase>)>,
+        page_count: usize,
+    ) -> PreparedExport {
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(page_count))
+            .expect("the fixture opens");
+        PreparedExport {
+            snapshot: document.export_snapshot().expect("the snapshot prepares"),
+            codec: Arc::new(WorkerCodec {
+                kind,
+                calls,
+                fail_on,
+                cancel_on,
+                on_page: None,
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(page_count).expect("the fixture has pages"),
+                dpi: 72.0,
+            },
+            output_kind: kind,
+            page_count,
+        }
+    }
 
     struct OriginRecordingTool {
         inputs: Arc<Mutex<Vec<PointerInput>>>,
@@ -4658,295 +5415,502 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_page_export_writes_one_numbered_file_per_page() {
-        let dir = std::env::temp_dir().join(format!("onionskin-export-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let chosen = dir.join("report.png");
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
-            },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-        ];
+    fn the_export_phase_has_one_terminal_race_winner() {
+        let cancellation_wins = ExportPhase::new();
+        assert!(cancellation_wins.cancel());
+        assert!(!cancellation_wins.begin_publishing());
+        assert_eq!(cancellation_wins.load(), ExportPhaseValue::Cancelling);
 
-        write_export(&chosen, &files).expect("the export writes");
-
-        assert!(!chosen.exists(), "the undecorated name should not be used");
-        assert_eq!(std::fs::read(dir.join("report-01.png")).unwrap(), b"first");
-        assert_eq!(std::fs::read(dir.join("report-02.png")).unwrap(), b"second");
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+        let publication_wins = ExportPhase::new();
+        assert!(publication_wins.begin_publishing());
+        assert!(!publication_wins.cancel());
+        assert_eq!(publication_wins.load(), ExportPhaseValue::Publishing);
     }
 
     #[test]
-    fn a_multi_page_export_refuses_existing_derived_files_before_writing() {
-        let dir =
-            std::env::temp_dir().join(format!("onionskin-export-existing-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let chosen = dir.join("report.png");
-        let existing = dir.join("report-02.png");
-        std::fs::write(&existing, b"keep").expect("the conflicting export path is created");
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
-            },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-        ];
+    fn duplicate_per_page_destinations_fail_preflight() {
+        let path = PathBuf::from("report-01.test");
+        let failure = preflight_export_paths(&[path.clone(), path.clone()]).unwrap_err();
 
-        let failure =
-            write_export(&chosen, &files).expect_err("an existing derived file is refused");
+        assert!(
+            matches!(failure, ExportFailure::Duplicate { path: duplicate } if duplicate == path)
+        );
+    }
+
+    #[test]
+    fn a_per_page_worker_streams_pages_in_absolute_order() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let phase = ExportPhase::new();
+        let completed = AtomicUsize::new(0);
+        let prepared =
+            prepared_worker_export(ExportOutputKind::PerPage, Arc::clone(&calls), None, None, 3);
 
         assert_eq!(
-            failure.to_string(),
-            format!(
-                "{} already exists; choose another export name",
-                existing.display()
-            )
+            run_export_worker(prepared, &chosen, &phase, &completed).unwrap(),
+            ExportOutcome::Complete
         );
-        assert!(!dir.join("report-01.png").exists(), "nothing was written");
-        assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+        assert_eq!(*calls.lock().unwrap(), [0, 1, 2]);
+        assert_eq!(completed.load(Ordering::Acquire), 3);
+        assert_eq!(
+            std::fs::read(dir.path().join("report-01.test")).unwrap(),
+            b"page-0"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("report-02.test")).unwrap(),
+            b"page-1"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("report-03.test")).unwrap(),
+            b"page-2"
+        );
+    }
+
+    #[test]
+    fn immediate_prepublication_cancellation_wins_for_both_output_kinds() {
+        for kind in [ExportOutputKind::Single, ExportOutputKind::PerPage] {
+            let dir = tempfile::tempdir().expect("the test directory opens");
+            let chosen = dir.path().join("report.test");
+            let phase = Arc::new(ExportPhase::new());
+            let cancel_phase = Arc::clone(&phase);
+            let observer = RecordingExportObserver {
+                before_publish: Some(Arc::new(move || {
+                    assert!(cancel_phase.cancel());
+                })),
+                ..RecordingExportObserver::default()
+            };
+            let prepared =
+                prepared_worker_export(kind, Arc::new(Mutex::new(Vec::new())), None, None, 2);
+
+            assert_eq!(
+                run_export_worker_observed(
+                    prepared,
+                    &chosen,
+                    &phase,
+                    &AtomicUsize::new(0),
+                    &observer,
+                )
+                .unwrap(),
+                ExportOutcome::Cancelled
+            );
+            assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+        }
+    }
+
+    #[test]
+    fn a_blocked_single_file_worker_keeps_the_destination_absent_until_success() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(1)).unwrap();
+        let prepared = PreparedExport {
+            snapshot: document.export_snapshot().unwrap(),
+            codec: Arc::new(BlockingCodec {
+                kind: ExportOutputKind::Single,
+                block_on: 0,
+                calls,
+                started: Mutex::new(Some(started_tx)),
+                release: Arc::clone(&release),
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(1).unwrap(),
+                dpi: 72.0,
+            },
+            output_kind: ExportOutputKind::Single,
+            page_count: 1,
+        };
+        let worker_path = chosen.clone();
+        let worker = std::thread::spawn(move || {
+            run_export_worker(
+                prepared,
+                &worker_path,
+                &ExportPhase::new(),
+                &AtomicUsize::new(0),
+            )
+        });
+
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(!chosen.exists());
+        let (released, ready) = &*release;
+        *released.lock().unwrap() = true;
+        ready.notify_all();
+        assert_eq!(worker.join().unwrap().unwrap(), ExportOutcome::Complete);
+        assert_eq!(std::fs::read(chosen).unwrap(), b"page-0");
+    }
+
+    #[test]
+    fn a_many_page_worker_never_has_more_than_one_destination_writer_open() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let observer = RecordingExportObserver::default();
+        let prepared = prepared_worker_export(
+            ExportOutputKind::PerPage,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            None,
+            128,
+        );
+
+        assert_eq!(
+            run_export_worker_observed(
+                prepared,
+                &chosen,
+                &ExportPhase::new(),
+                &AtomicUsize::new(0),
+                &observer,
+            )
+            .unwrap(),
+            ExportOutcome::Complete
+        );
+        assert_eq!(observer.open_writers.load(Ordering::Acquire), 0);
+        assert_eq!(observer.max_open_writers.load(Ordering::Acquire), 1);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 128);
+    }
+
+    #[test]
+    fn rollback_preserves_a_completed_page_replaced_by_another_writer() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let first = dir.path().join("report-01.test");
+        let phase = Arc::new(ExportPhase::new());
+        let replace_path = first.clone();
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(3))
+            .expect("the fixture opens");
+        let prepared = PreparedExport {
+            snapshot: document.export_snapshot().expect("the snapshot prepares"),
+            codec: Arc::new(WorkerCodec {
+                kind: ExportOutputKind::PerPage,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_on: None,
+                cancel_on: Some((1, Arc::clone(&phase))),
+                on_page: Some(Arc::new(move |page| {
+                    if page == 1 {
+                        std::fs::remove_file(&replace_path).unwrap();
+                        std::fs::write(&replace_path, b"replacement").unwrap();
+                    }
+                })),
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(3).unwrap(),
+                dpi: 72.0,
+            },
+            output_kind: ExportOutputKind::PerPage,
+            page_count: 3,
+        };
+
+        assert_eq!(
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap(),
+            ExportOutcome::Cancelled
+        );
+        assert_eq!(std::fs::read(first).unwrap(), b"replacement");
+        assert!(!dir.path().join("report-02.test").exists());
+        assert!(!dir.path().join("report-03.test").exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_multi_page_export_refuses_dangling_symlink_destinations_before_writing() {
-        let dir =
-            std::env::temp_dir().join(format!("onionskin-export-symlink-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let chosen = dir.join("report.png");
-        let existing = dir.join("report-02.png");
-        std::os::unix::fs::symlink(dir.join("missing-target"), &existing)
-            .expect("the conflicting symlink is created");
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
+    fn rollback_preserves_a_completed_page_replaced_by_a_symlink() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let first = dir.path().join("report-01.test");
+        let target = dir.path().join("target");
+        std::fs::write(&target, b"target").unwrap();
+        let phase = Arc::new(ExportPhase::new());
+        let replace_path = first.clone();
+        let link_target = target.clone();
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(3)).unwrap();
+        let prepared = PreparedExport {
+            snapshot: document.export_snapshot().unwrap(),
+            codec: Arc::new(WorkerCodec {
+                kind: ExportOutputKind::PerPage,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_on: None,
+                cancel_on: Some((1, Arc::clone(&phase))),
+                on_page: Some(Arc::new(move |page| {
+                    if page == 1 {
+                        std::fs::remove_file(&replace_path).unwrap();
+                        std::os::unix::fs::symlink(&link_target, &replace_path).unwrap();
+                    }
+                })),
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(3).unwrap(),
+                dpi: 72.0,
             },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-        ];
-
-        let failure =
-            write_export(&chosen, &files).expect_err("an existing derived symlink is refused");
+            output_kind: ExportOutputKind::PerPage,
+            page_count: 3,
+        };
 
         assert_eq!(
-            failure.to_string(),
-            format!(
-                "{} already exists; choose another export name",
-                existing.display()
-            )
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap(),
+            ExportOutcome::Cancelled
         );
-        assert!(!dir.join("report-01.png").exists(), "nothing was written");
-        assert!(std::fs::symlink_metadata(&existing)
-            .expect("the symlink still exists")
+        assert!(std::fs::symlink_metadata(&first)
+            .unwrap()
             .file_type()
             .is_symlink());
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+        assert_eq!(std::fs::read(first).unwrap(), b"target");
     }
 
     #[test]
-    fn a_multi_page_export_refuses_duplicate_derived_files_before_writing() {
-        let dir =
-            std::env::temp_dir().join(format!("onionskin-export-duplicate-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let chosen = dir.join("report.png");
-        let duplicate = dir.join("report-01.png");
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
+    fn rollback_never_deletes_a_completed_page_replaced_by_a_directory() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let first = dir.path().join("report-01.test");
+        let phase = Arc::new(ExportPhase::new());
+        let replace_path = first.clone();
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(3)).unwrap();
+        let prepared = PreparedExport {
+            snapshot: document.export_snapshot().unwrap(),
+            codec: Arc::new(WorkerCodec {
+                kind: ExportOutputKind::PerPage,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_on: None,
+                cancel_on: Some((1, Arc::clone(&phase))),
+                on_page: Some(Arc::new(move |page| {
+                    if page == 1 {
+                        std::fs::remove_file(&replace_path).unwrap();
+                        std::fs::create_dir(&replace_path).unwrap();
+                        std::fs::write(replace_path.join("marker"), b"replacement").unwrap();
+                    }
+                })),
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(3).unwrap(),
+                dpi: 72.0,
             },
-            ExportedFile {
-                page: Some(0),
-                bytes: b"second".to_vec(),
-            },
-        ];
+            output_kind: ExportOutputKind::PerPage,
+            page_count: 3,
+        };
 
         let failure =
-            write_export(&chosen, &files).expect_err("a duplicate derived file is refused");
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap_err();
+        assert!(failure.to_string().contains("preserved in"), "{failure}");
+        let preserved_marker = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("0/marker"))
+            .find(|path| path.exists())
+            .expect("the substituted directory is retained in quarantine");
+        assert_eq!(std::fs::read(preserved_marker).unwrap(), b"replacement");
+    }
+
+    #[test]
+    fn an_existing_derived_file_fails_before_any_page_runs() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let conflict = dir.path().join("report-02.test");
+        std::fs::write(&conflict, b"keep").unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let prepared =
+            prepared_worker_export(ExportOutputKind::PerPage, Arc::clone(&calls), None, None, 3);
+
+        let failure =
+            run_export_worker(prepared, &chosen, &ExportPhase::new(), &AtomicUsize::new(0))
+                .unwrap_err();
+
+        assert!(matches!(failure, ExportFailure::Exists { path } if path == conflict));
+        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(std::fs::read(&conflict).unwrap(), b"keep");
+        assert!(!dir.path().join("report-01.test").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_derived_symlink_fails_before_any_page_runs() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let conflict = dir.path().join("report-02.test");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &conflict).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let prepared =
+            prepared_worker_export(ExportOutputKind::PerPage, Arc::clone(&calls), None, None, 3);
+
+        let failure =
+            run_export_worker(prepared, &chosen, &ExportPhase::new(), &AtomicUsize::new(0))
+                .unwrap_err();
+
+        assert!(matches!(failure, ExportFailure::Exists { path } if path == conflict));
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(std::fs::symlink_metadata(conflict)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn a_codec_failure_removes_every_per_page_output() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let prepared = prepared_worker_export(
+            ExportOutputKind::PerPage,
+            Arc::clone(&calls),
+            Some(1),
+            None,
+            3,
+        );
+
+        let failure =
+            run_export_worker(prepared, &chosen, &ExportPhase::new(), &AtomicUsize::new(0))
+                .unwrap_err();
+
+        assert!(failure.to_string().contains("encoding page 2"));
+        assert_eq!(*calls.lock().unwrap(), [0, 1]);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancellation_after_page_one_removes_it_and_stops_before_page_three() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let phase = Arc::new(ExportPhase::new());
+        let prepared = prepared_worker_export(
+            ExportOutputKind::PerPage,
+            Arc::clone(&calls),
+            None,
+            Some((1, Arc::clone(&phase))),
+            3,
+        );
 
         assert_eq!(
-            failure.to_string(),
-            format!(
-                "{} would be written more than once; choose another export name",
-                duplicate.display()
-            )
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap(),
+            ExportOutcome::Cancelled
         );
-        assert!(!duplicate.exists(), "nothing was written");
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
-    }
-
-    /// A write that fails names the file it was on, so a user whose disk
-    /// filled up mid-export knows how far the set got.
-    #[test]
-    fn a_write_failure_names_the_file_it_stopped_on() {
-        let chosen = Path::new("/onionskin-does-not-exist/report.png");
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
-            },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-        ];
-
-        let failure = write_export(chosen, &files).expect_err("an unwritable path is refused");
-
-        assert!(
-            failure
-                .to_string()
-                .starts_with("/onionskin-does-not-exist/report-01.png could not be written: "),
-            "{failure}"
-        );
+        assert_eq!(*calls.lock().unwrap(), [0, 1]);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]
-    fn a_mid_write_failure_removes_unwritten_reserved_exports() {
-        struct Writer {
-            fail: bool,
-        }
-
-        impl std::io::Write for Writer {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                if self.fail {
-                    Err(std::io::Error::other("disk full"))
-                } else {
-                    Ok(bytes.len())
-                }
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let dir =
-            std::env::temp_dir().join(format!("onionskin-export-write-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let first = dir.join("report-01.png");
-        let second = dir.join("report-02.png");
-        let third = dir.join("report-03.png");
-        for path in [&first, &second, &third] {
-            File::create(path).expect("the reserved output is visible on disk");
-        }
-        let reserved = vec![
-            (first.clone(), Writer { fail: false }),
-            (second.clone(), Writer { fail: true }),
-            (third.clone(), Writer { fail: false }),
-        ];
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
-            },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-            ExportedFile {
-                page: Some(2),
-                bytes: b"third".to_vec(),
-            },
-        ];
-
-        let failure = write_reserved_exports(reserved, &files).expect_err("the second write fails");
-
-        assert!(
-            failure.to_string().starts_with(&format!(
-                "{} could not be written: disk full",
-                second.display()
-            )),
-            "{failure}"
+    fn cancellation_after_the_only_codec_return_publishes_nothing() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let phase = Arc::new(ExportPhase::new());
+        let prepared = prepared_worker_export(
+            ExportOutputKind::Single,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            Some((0, Arc::clone(&phase))),
+            1,
         );
-        assert!(first.exists(), "the completed page is kept");
-        assert!(!second.exists(), "the partial page is removed");
-        assert!(!third.exists(), "the unwritten reservation is removed");
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+
+        assert_eq!(
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap(),
+            ExportOutcome::Cancelled
+        );
+        assert!(!chosen.exists());
     }
 
     #[test]
-    fn a_cleanup_failure_is_reported_with_the_write_failure() {
-        struct Writer {
-            fail: bool,
-        }
-
-        impl std::io::Write for Writer {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                if self.fail {
-                    Err(std::io::Error::other("disk full"))
-                } else {
-                    Ok(bytes.len())
-                }
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let dir =
-            std::env::temp_dir().join(format!("onionskin-export-cleanup-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the test can make its own directory");
-        let first = dir.join("report-01.png");
-        let second = dir.join("report-02.png");
-        let third = dir.join("report-03.png");
-        File::create(&first).expect("the first reservation is visible on disk");
-        std::fs::create_dir(&second).expect("the second cleanup target will reject remove_file");
-        File::create(&third).expect("the third reservation is visible on disk");
-        let reserved = vec![
-            (first.clone(), Writer { fail: false }),
-            (second.clone(), Writer { fail: true }),
-            (third.clone(), Writer { fail: false }),
-        ];
-        let files = vec![
-            ExportedFile {
-                page: Some(0),
-                bytes: b"first".to_vec(),
-            },
-            ExportedFile {
-                page: Some(1),
-                bytes: b"second".to_vec(),
-            },
-            ExportedFile {
-                page: Some(2),
-                bytes: b"third".to_vec(),
-            },
-        ];
+    fn publication_preserves_an_existing_single_destination() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        std::fs::write(&chosen, b"keep").unwrap();
+        let prepared = prepared_worker_export(
+            ExportOutputKind::Single,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            None,
+            2,
+        );
 
         let failure =
-            write_reserved_exports(reserved, &files).expect_err("the write and cleanup fail");
-        let message = failure.to_string();
+            run_export_worker(prepared, &chosen, &ExportPhase::new(), &AtomicUsize::new(0))
+                .unwrap_err();
 
-        assert!(
-            message.contains(&format!(
-                "{} could not be written: disk full",
-                second.display()
-            )),
-            "{message}"
+        assert!(matches!(failure, ExportFailure::Exists { .. }));
+        assert_eq!(std::fs::read(chosen).unwrap(), b"keep");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_late_cancel_cannot_override_single_file_publication() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let phase = Arc::new(ExportPhase::new());
+        let cancel_phase = Arc::clone(&phase);
+        let observer = RecordingExportObserver {
+            after_publish_started: Some(Arc::new(move || {
+                assert!(!cancel_phase.cancel());
+            })),
+            ..RecordingExportObserver::default()
+        };
+        let prepared = prepared_worker_export(
+            ExportOutputKind::Single,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            None,
+            2,
         );
-        assert!(
-            message.contains(&format!(
-                "additionally {} could not be removed:",
-                second.display()
-            )),
-            "{message}"
+
+        assert_eq!(
+            run_export_worker_observed(prepared, &chosen, &phase, &AtomicUsize::new(0), &observer,)
+                .unwrap(),
+            ExportOutcome::Complete
         );
-        assert!(first.exists(), "the completed page is kept");
-        assert!(second.exists(), "the failed cleanup target remains visible");
-        assert!(!third.exists(), "cleanup still removes later pending files");
-        std::fs::remove_dir_all(&dir).expect("the test cleans up after itself");
+        assert_eq!(std::fs::read(chosen).unwrap(), b"page-0page-1");
+    }
+
+    #[test]
+    fn cancellation_preserves_an_existing_single_destination() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        std::fs::write(&chosen, b"keep").unwrap();
+        let phase = Arc::new(ExportPhase::new());
+        let prepared = prepared_worker_export(
+            ExportOutputKind::Single,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            Some((0, Arc::clone(&phase))),
+            1,
+        );
+
+        assert_eq!(
+            run_export_worker(prepared, &chosen, &phase, &AtomicUsize::new(0)).unwrap(),
+            ExportOutcome::Cancelled
+        );
+        assert_eq!(std::fs::read(chosen).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn a_late_cancel_cannot_override_per_page_publication() {
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("report.test");
+        let phase = Arc::new(ExportPhase::new());
+        let cancel_phase = Arc::clone(&phase);
+        let observer = RecordingExportObserver {
+            after_publish_started: Some(Arc::new(move || {
+                assert!(!cancel_phase.cancel());
+            })),
+            ..RecordingExportObserver::default()
+        };
+        let prepared = prepared_worker_export(
+            ExportOutputKind::PerPage,
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+            None,
+            2,
+        );
+
+        assert_eq!(
+            run_export_worker_observed(prepared, &chosen, &phase, &AtomicUsize::new(0), &observer,)
+                .unwrap(),
+            ExportOutcome::Complete
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("report-01.test")).unwrap(),
+            b"page-0"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("report-02.test")).unwrap(),
+            b"page-1"
+        );
     }
 
     #[cfg(feature = "shell-test-support")]
@@ -4987,6 +5951,354 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("onionskin-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("the test can make its own directory");
         dir
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    fn install_test_export_job(frame: &mut ShellFrame, origin: EntityId) -> Arc<ExportPhase> {
+        let phase = Arc::new(ExportPhase::new());
+        frame.export_job = Some(ExportJob {
+            id: 7,
+            origin,
+            phase: Arc::clone(&phase),
+            completed: Arc::new(AtomicUsize::new(1)),
+            total: 3,
+            last_displayed: 1,
+        });
+        phase
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn an_old_progress_timer_cannot_poll_a_rapidly_relaunched_export(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame.tabs.tabs()[0].canvas.clone();
+                let origin = canvas.entity_id();
+                install_test_export_job(frame, origin);
+                frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Complete), cx);
+                let completed = Arc::new(AtomicUsize::new(2));
+                frame.export_job = Some(ExportJob {
+                    id: 8,
+                    origin,
+                    phase: Arc::new(ExportPhase::new()),
+                    completed,
+                    total: 3,
+                    last_displayed: 0,
+                });
+
+                assert_eq!(frame.poll_export_progress(7), (false, false));
+                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 0);
+                assert_eq!(frame.poll_export_progress(8), (true, true));
+                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 2);
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn switching_tabs_does_not_cancel_the_origin_export(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+
+        let phase = window
+            .update(cx, |frame, _window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                let phase = install_test_export_job(frame, origin);
+                frame.activate(1, cx);
+                phase
+            })
+            .unwrap();
+
+        assert_eq!(phase.load(), ExportPhaseValue::Running);
+    }
+
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn a_second_export_is_refused_before_opening_another_prompt(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                install_test_export_job(frame, origin);
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+
+        assert!(!cx.did_prompt_for_new_path());
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(matches!(
+                    frame.tabs.tabs()[0].canvas.read(cx).model.status(),
+                    Some(CanvasStatus::Error { message, .. })
+                        if message.contains("already in progress")
+                ));
+            })
+            .unwrap();
+    }
+
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn two_pending_export_prompts_install_only_one_worker(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.png");
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+        cx.simulate_new_path_selection(|_| Some(first.clone()));
+        cx.simulate_new_path_selection(|_| Some(second.clone()));
+        cx.run_until_parked();
+
+        assert!(first.exists());
+        assert!(!second.exists());
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(matches!(
+                    frame.tabs.tabs()[0].canvas.read(cx).model.status(),
+                    Some(CanvasStatus::Error { message, .. })
+                        if message.contains("already in progress")
+                ));
+            })
+            .unwrap();
+    }
+
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    #[gpui::test]
+    fn worker_failure_releases_progress_and_the_export_guard(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("failed.test");
+        let completed = Arc::new(AtomicUsize::new(0));
+        let prepared = prepared_worker_export(
+            ExportOutputKind::PerPage,
+            Arc::new(Mutex::new(Vec::new())),
+            Some(1),
+            None,
+            3,
+        );
+        let result = run_export_worker(prepared, &chosen, &ExportPhase::new(), &completed);
+        assert_eq!(completed.load(Ordering::Acquire), 1);
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+
+        window
+            .update(cx, |frame, window, cx| {
+                let canvas = frame.tabs.tabs()[0].canvas.clone();
+                let origin = canvas.entity_id();
+                frame.export_job = Some(ExportJob {
+                    id: 7,
+                    origin,
+                    phase: Arc::new(ExportPhase::new()),
+                    completed: Arc::clone(&completed),
+                    total: 3,
+                    last_displayed: 0,
+                });
+                assert_eq!(frame.poll_export_progress(7), (true, true));
+                frame.start_export(ExportTarget::Png, cx);
+                assert!(frame.export_job.is_some());
+                frame.finish_export(7, origin, &canvas, result, cx);
+                assert!(frame.export_job.is_none());
+                assert!(frame
+                    .accessible(window, cx)
+                    .find(&"export-progress".into())
+                    .is_none());
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+
+        assert!(cx.did_prompt_for_new_path());
+        cx.simulate_new_path_selection(|_| None);
+        cx.run_until_parked();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn closing_the_origin_tab_cancels_its_export(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+
+        let phase = window
+            .update(cx, |frame, _window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                let phase = install_test_export_job(frame, origin);
+                frame.run_tab_command(TabCommand::Close, 0, cx).unwrap();
+                phase
+            })
+            .unwrap();
+
+        assert_eq!(phase.load(), ExportPhaseValue::Cancelling);
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn close_others_and_close_all_cancel_a_removed_origin(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let close_others_phase = window
+            .update(cx, |frame, _window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                let phase = install_test_export_job(frame, origin);
+                frame
+                    .run_tab_command(TabCommand::CloseOthers, 1, cx)
+                    .unwrap();
+                phase
+            })
+            .unwrap();
+        assert_eq!(close_others_phase.load(), ExportPhaseValue::Cancelling);
+
+        let origin = window
+            .update(cx, |frame, _window, _cx| {
+                frame.tabs.tabs()[0].canvas.entity_id()
+            })
+            .unwrap();
+        let close_all_phase = window
+            .update(cx, |frame, _window, cx| {
+                let phase = install_test_export_job(frame, origin);
+                frame.run_tab_command(TabCommand::CloseAll, 0, cx).unwrap();
+                phase
+            })
+            .unwrap();
+        assert_eq!(close_all_phase.load(), ExportPhaseValue::Cancelling);
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn export_progress_and_cancellation_are_accessible(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        let phase = window
+            .update(cx, |frame, window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                let phase = install_test_export_job(frame, origin);
+                let tree = frame.accessible(window, cx);
+                assert_eq!(
+                    tree.find(&"export-progress".into()).unwrap().label,
+                    "Exporting 1 of 3 pages"
+                );
+                let cancel = tree.find(&"cancel-export".into()).unwrap();
+                assert_eq!(cancel.activation, Some(Activation::CancelExport));
+                assert!(!cancel.state.disabled);
+                frame.run_activation(Activation::CancelExport, window, cx);
+                phase
+            })
+            .unwrap();
+
+        assert_eq!(phase.load(), ExportPhaseValue::Cancelling);
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                assert_eq!(
+                    tree.find(&"export-progress".into()).unwrap().label,
+                    "Cancelling export, 1 of 3 pages complete"
+                );
+                assert!(tree.find(&"cancel-export".into()).unwrap().state.disabled);
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let dir = tempfile::tempdir().expect("the test directory opens");
+        let chosen = dir.path().join("blocked.test");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let document = Document::open_bytes(crate::shell::fixtures::many_pages_pdf(3))
+            .expect("the fixture opens");
+        let prepared = PreparedExport {
+            snapshot: document.export_snapshot().expect("the snapshot prepares"),
+            codec: Arc::new(BlockingCodec {
+                kind: ExportOutputKind::PerPage,
+                block_on: 1,
+                calls: Arc::clone(&calls),
+                started: Mutex::new(Some(started_tx)),
+                release: Arc::clone(&release),
+            }),
+            request: ExportRequest {
+                pages: PageRange::whole(3).unwrap(),
+                dpi: 72.0,
+            },
+            output_kind: ExportOutputKind::PerPage,
+            page_count: 3,
+        };
+
+        let phase = Arc::new(ExportPhase::new());
+        let completed = Arc::new(AtomicUsize::new(0));
+        let worker_phase = Arc::clone(&phase);
+        let worker_completed = Arc::clone(&completed);
+        let worker = std::thread::spawn(move || {
+            run_export_worker(prepared, &chosen, &worker_phase, &worker_completed)
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the background codec started");
+
+        window
+            .update(cx, |frame, window, cx| {
+                let origin = frame.tabs.tabs()[0].canvas.entity_id();
+                frame.export_job = Some(ExportJob {
+                    id: 7,
+                    origin,
+                    phase: Arc::clone(&phase),
+                    completed: Arc::clone(&completed),
+                    total: 3,
+                    last_displayed: 0,
+                });
+                assert_eq!(frame.poll_export_progress(7), (true, true));
+                assert_eq!(
+                    frame
+                        .accessible(window, cx)
+                        .find(&"export-progress".into())
+                        .unwrap()
+                        .label,
+                    "Exporting 1 of 3 pages"
+                );
+                frame.activate(1, cx);
+                assert_eq!(frame.tabs.active_index(), Some(1));
+                frame.run_activation(Activation::CancelExport, window, cx);
+            })
+            .unwrap();
+        {
+            let (released, ready) = &*release;
+            *released.lock().unwrap() = true;
+            ready.notify_all();
+        }
+        assert_eq!(worker.join().unwrap().unwrap(), ExportOutcome::Cancelled);
+
+        assert_eq!(*calls.lock().unwrap(), [0, 1]);
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+        window
+            .update(cx, |frame, window, cx| {
+                frame.start_export(ExportTarget::Png, cx);
+                let canvas = frame
+                    .tabs
+                    .tabs()
+                    .iter()
+                    .find(|tab| tab.canvas.entity_id() == frame.export_job.as_ref().unwrap().origin)
+                    .unwrap()
+                    .canvas
+                    .clone();
+                let origin = frame.export_job.as_ref().unwrap().origin;
+                frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Cancelled), cx);
+                assert!(frame.export_job.is_none());
+                assert!(frame
+                    .accessible(window, cx)
+                    .find(&"export-progress".into())
+                    .is_none());
+                frame.start_export(ExportTarget::Png, cx);
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_new_path());
+        cx.simulate_new_path_selection(|_| None);
+        cx.run_until_parked();
     }
 
     #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]

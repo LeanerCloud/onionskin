@@ -74,6 +74,7 @@ pub(in crate::shell) enum Activation {
     ShowPreferences(PreferenceCategory),
     ChangePreference(PreferenceChange),
     CloseDialog,
+    CancelExport,
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.

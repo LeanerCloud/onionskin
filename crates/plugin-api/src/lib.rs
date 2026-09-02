@@ -13,7 +13,7 @@
 //! pages out to text, PNG and SVG. Import waits for the edit graph that can
 //! build a `Document` from something that is not a PDF, which is M3.
 
-pub use codec::{CodecPlugin, ExportError, ExportRequest, ExportedFile, PageRange};
+pub use codec::{CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageRange};
 /// Re-exported so a plugin crate needs this one dependency to name what the
 /// contract hands it: `Document` and `Viewport` for every trait here, the
 /// page-render types for what a codec gets back when it asks for a page.

@@ -2,7 +2,7 @@
 
 use image::{ExtendedColorType, ImageEncoder};
 use onionskin_plugin_api::{
-    BaseRaster, CodecPlugin, Document, ExportError, ExportRequest, ExportedFile,
+    BaseRaster, CodecPlugin, Document, ExportError, ExportOutputKind, ExportRequest, PageIndex,
 };
 
 /// One PNG per page, rasterized by the renderer that draws the canvas.
@@ -25,23 +25,22 @@ impl CodecPlugin for PngCodec {
         "png"
     }
 
-    fn export(
+    fn output_kind(&self) -> ExportOutputKind {
+        ExportOutputKind::PerPage
+    }
+
+    fn export_page(
         &self,
         doc: &mut Document,
         request: &ExportRequest,
-    ) -> Result<Vec<ExportedFile>, ExportError> {
+        page: PageIndex,
+        _first_in_request: bool,
+    ) -> Result<Vec<u8>, ExportError> {
         let zoom = request.zoom()?;
-        let mut out = Vec::new();
-        for page in request.pages.pages() {
-            let rendered = doc
-                .render_page_now(page, zoom)
-                .map_err(|source| ExportError::Page { page, source })?;
-            out.push(ExportedFile {
-                page: Some(page),
-                bytes: encode(&rendered.raster, page)?,
-            });
-        }
-        Ok(out)
+        let rendered = doc
+            .render_page_now(page, zoom)
+            .map_err(|source| ExportError::Page { page, source })?;
+        encode(&rendered.raster, page)
     }
 }
 

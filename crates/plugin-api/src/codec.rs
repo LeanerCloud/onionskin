@@ -58,8 +58,8 @@ pub struct ExportRequest {
 
 impl ExportRequest {
     /// The render zoom `dpi` asks for, validated. Rasterizing codecs call
-    /// this before their page loop so a bad resolution is reported as itself
-    /// rather than as a failure of page zero.
+    /// this before rendering so a bad resolution is reported as itself rather
+    /// than as a failure of the requested page.
     pub fn zoom(&self) -> Result<f32, ExportError> {
         if !self.dpi.is_finite() || self.dpi <= 0.0 {
             return Err(ExportError::InvalidDpi(self.dpi));
@@ -68,13 +68,13 @@ impl ExportRequest {
     }
 }
 
-/// One file an export produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportedFile {
-    /// The page this file holds, or `None` for one file covering the whole
-    /// request.
-    pub page: Option<PageIndex>,
-    pub bytes: Vec<u8>,
+/// How page chunks are published at the chosen destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportOutputKind {
+    /// Concatenate each request-relative page chunk into one destination.
+    Single,
+    /// Publish each absolute page chunk at its own derived destination.
+    PerPage,
 }
 
 #[derive(Debug)]
@@ -142,7 +142,7 @@ impl std::error::Error for ExportError {
 }
 
 /// A format an open document can be written out to.
-pub trait CodecPlugin: Send {
+pub trait CodecPlugin: Send + Sync {
     /// Stable identifier, e.g. "png". Namespaced by the plugin that registers
     /// it only if it needs to be; these are file formats, not commands.
     fn id(&self) -> &'static str;
@@ -150,19 +150,17 @@ pub trait CodecPlugin: Send {
     fn name(&self) -> &'static str;
     /// Filename extension, without the dot.
     fn extension(&self) -> &'static str;
+    fn output_kind(&self) -> ExportOutputKind;
 
-    /// Export `request` from `doc`.
-    ///
-    /// Everything is produced before anything is returned, so a page that
-    /// fails to render aborts the whole export naming that page and the
-    /// caller never writes a partial file. That is the reason this hands back
-    /// a `Vec` instead of streaming into a sink, and it costs the memory of
-    /// the range being exported.
-    fn export(
+    /// Export exactly one absolute page from a validated request.
+    /// `first_in_request` is relative to the requested range, not page zero.
+    fn export_page(
         &self,
         doc: &mut Document,
         request: &ExportRequest,
-    ) -> Result<Vec<ExportedFile>, ExportError>;
+        page: PageIndex,
+        first_in_request: bool,
+    ) -> Result<Vec<u8>, ExportError>;
 }
 
 #[cfg(test)]

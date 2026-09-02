@@ -203,9 +203,9 @@ fn every_exporter_round_trips_against_what_it_claims_to_be_faithful_to() {
 
         // PNG: the export decodes to exactly the pixels the canvas composites.
         let png = PngCodec
-            .export(&mut doc, &request)
+            .export_page(&mut doc, &request, 0, true)
             .unwrap_or_else(|e| panic!("{}: PNG export failed: {e}", short(file)));
-        let decoded = image::load_from_memory_with_format(&png[0].bytes, image::ImageFormat::Png)
+        let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
             .unwrap_or_else(|e| panic!("{}: export is not a PNG: {e}", short(file)))
             .to_rgba8();
         if decoded.dimensions() != (on_screen.width(), on_screen.height())
@@ -216,29 +216,28 @@ fn every_exporter_round_trips_against_what_it_claims_to_be_faithful_to() {
 
         // Text: the export is content's extraction and nothing else.
         let text = TextCodec
-            .export(&mut doc, &request)
+            .export_page(&mut doc, &request, 0, true)
             .unwrap_or_else(|e| panic!("{}: text export failed: {e}", short(file)));
         let expected = doc
             .page_text(0)
             .map(|page| page.flatten().text)
             .unwrap_or_default();
-        if String::from_utf8_lossy(&text[0].bytes) != expected {
+        if String::from_utf8_lossy(&text) != expected {
             tally.text_mismatches.push(short(file));
         }
 
         // SVG: an independent rasterizer lands on the same page.
         let svg = SvgCodec
-            .export(&mut doc, &request)
+            .export_page(&mut doc, &request, 0, true)
             .unwrap_or_else(|e| panic!("{}: SVG export failed: {e}", short(file)));
-        if svg[0].bytes.windows(6).any(|w| w == b"<image") {
+        if svg.windows(6).any(|w| w == b"<image") {
             // resvg is built here without its raster-image decoders, so a page
             // with an embedded bitmap would differ for a reason that says
             // nothing about the SVG.
             tally.skipped_embedded_raster += 1;
             continue;
         }
-        let Some(revectored) = rasterize_svg(&svg[0].bytes, on_screen.width(), on_screen.height())
-        else {
+        let Some(revectored) = rasterize_svg(&svg, on_screen.width(), on_screen.height()) else {
             tally.skipped_render += 1;
             continue;
         };

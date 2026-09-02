@@ -6,15 +6,15 @@ use std::time::{Duration, Instant};
 
 use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
-    Attachment, Document, FitMode, GeometryError, Layer, ObjRef, OutlineItem, PageAlignment,
-    PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement, PagePoint,
-    PageQuad, PageRect, Provenance, RenderRequest, RenderResponse, SearchOptions, SearchState,
-    SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint, ViewRect,
-    ViewRotation, ViewSize, Viewport, ViewportError,
+    Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
+    PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
+    PagePoint, PageQuad, PageRect, Provenance, RenderRequest, RenderResponse, SearchOptions,
+    SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
+    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
-    CommandCtx, CommandError, ExportError, ExportRequest, ExportedFile, Overlay, PageRange,
-    PluginRegistry, PointerInput, ToolCtx,
+    CodecPlugin, CommandCtx, CommandError, ExportError, ExportOutputKind, ExportRequest, Overlay,
+    PageRange, PluginRegistry, PointerInput, ToolCtx,
 };
 #[cfg(test)]
 use onionskin_render::PageRender;
@@ -390,6 +390,14 @@ pub struct CanvasModel {
     page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
 }
 
+pub(super) struct PreparedExport {
+    pub(super) snapshot: ExportSnapshot,
+    pub(super) codec: Arc<dyn CodecPlugin + Send + Sync>,
+    pub(super) request: ExportRequest,
+    pub(super) output_kind: ExportOutputKind,
+    pub(super) page_count: usize,
+}
+
 impl CanvasModel {
     pub fn new(
         mut document: Document,
@@ -456,27 +464,28 @@ impl CanvasModel {
         self.registry.codec(id).is_some()
     }
 
-    /// Export the whole document through the named codec.
-    ///
-    /// The registry and the document are paired here for the same reason
-    /// tool gestures are: the chrome should not have to hold both and get
-    /// their lifetimes right. Nothing is written to disk by this call, so a
-    /// caller that fails to save has still not left a half-written export
-    /// behind.
-    pub fn export(
-        &mut self,
+    /// Capture everything the background export worker needs.
+    pub(super) fn prepare_export(
+        &self,
         codec: &'static str,
         dpi: f32,
-    ) -> Result<Vec<ExportedFile>, CanvasError> {
+    ) -> Result<PreparedExport, CanvasError> {
+        let page_count = self.document.page_count();
         let request = ExportRequest {
-            pages: PageRange::whole(self.document.page_count())?,
+            pages: PageRange::whole(page_count)?,
             dpi,
         };
         let codec = self
             .registry
             .codec(codec)
             .ok_or(CanvasError::UnknownCodec(codec))?;
-        Ok(codec.export(&mut self.document, &request)?)
+        Ok(PreparedExport {
+            snapshot: self.document.export_snapshot()?,
+            output_kind: codec.output_kind(),
+            codec,
+            request,
+            page_count,
+        })
     }
 
     /// How this document was opened: clean, or repaired to make it open.

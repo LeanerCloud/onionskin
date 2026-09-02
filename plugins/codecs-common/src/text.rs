@@ -1,15 +1,17 @@
 //! Plain-text export.
 
-use onionskin_plugin_api::{CodecPlugin, Document, ExportError, ExportRequest, ExportedFile};
+use onionskin_plugin_api::{
+    CodecPlugin, Document, ExportError, ExportOutputKind, ExportRequest, PageIndex,
+};
 
 /// The document's text, in the order the content streams draw it.
 ///
-/// This is `content`'s extraction verbatim: the codec joins pages and adds
-/// nothing. In particular it does **not** reorder anything into reading
-/// order, so a two-column page comes out column by column exactly as the file
-/// draws it. Accessible-text ordering is an M6 row on the parity scoreboard,
-/// and claiming it here would be claiming layout analysis this milestone does
-/// not do.
+/// Each page is `content`'s extraction verbatim, with a blank-line prefix on
+/// every non-first request chunk so the worker can append pages into one file.
+/// It does **not** reorder anything into reading order, so a two-column page
+/// comes out column by column exactly as the file draws it. Accessible-text
+/// ordering is an M6 row on the parity scoreboard, and claiming it here would
+/// be claiming layout analysis this milestone does not do.
 pub struct TextCodec;
 
 /// Between pages. A blank line, so a reader can see where a page ended
@@ -29,26 +31,25 @@ impl CodecPlugin for TextCodec {
         "txt"
     }
 
-    fn export(
+    fn output_kind(&self) -> ExportOutputKind {
+        ExportOutputKind::Single
+    }
+
+    fn export_page(
         &self,
         doc: &mut Document,
-        request: &ExportRequest,
-    ) -> Result<Vec<ExportedFile>, ExportError> {
+        _request: &ExportRequest,
+        page: PageIndex,
+        first_in_request: bool,
+    ) -> Result<Vec<u8>, ExportError> {
+        let text = doc
+            .page_text(page)
+            .map_err(|source| ExportError::Page { page, source })?;
         let mut out = String::new();
-        for (position, page) in request.pages.pages().enumerate() {
-            let text = doc
-                .page_text(page)
-                .map_err(|source| ExportError::Page { page, source })?;
-            // Keyed on the page's position, not on what came out of it: a
-            // page with no text is still a page the reader passed.
-            if position > 0 {
-                out.push_str(PAGE_SEPARATOR);
-            }
-            out.push_str(&text.flatten().text);
+        if !first_in_request {
+            out.push_str(PAGE_SEPARATOR);
         }
-        Ok(vec![ExportedFile {
-            page: None,
-            bytes: out.into_bytes(),
-        }])
+        out.push_str(&text.flatten().text);
+        Ok(out.into_bytes())
     }
 }

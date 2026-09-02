@@ -1,6 +1,8 @@
 //! SVG page export.
 
-use onionskin_plugin_api::{CodecPlugin, Document, ExportError, ExportRequest, ExportedFile};
+use onionskin_plugin_api::{
+    CodecPlugin, Document, ExportError, ExportOutputKind, ExportRequest, PageIndex,
+};
 
 /// One SVG per page, converted by the same interpreter that rasterizes the
 /// canvas, so annotations and layer state match what is on screen.
@@ -22,21 +24,20 @@ impl CodecPlugin for SvgCodec {
         "svg"
     }
 
-    fn export(
+    fn output_kind(&self) -> ExportOutputKind {
+        ExportOutputKind::PerPage
+    }
+
+    fn export_page(
         &self,
         doc: &mut Document,
-        request: &ExportRequest,
-    ) -> Result<Vec<ExportedFile>, ExportError> {
-        let mut out = Vec::new();
-        for page in request.pages.pages() {
-            let converted = doc
-                .page_svg(page)
-                .map_err(|source| ExportError::Page { page, source })?;
-            out.push(ExportedFile {
-                page: Some(page),
-                bytes: converted.svg.into_bytes(),
-            });
-        }
-        Ok(out)
+        _request: &ExportRequest,
+        page: PageIndex,
+        _first_in_request: bool,
+    ) -> Result<Vec<u8>, ExportError> {
+        let converted = doc
+            .page_svg(page)
+            .map_err(|source| ExportError::Page { page, source })?;
+        Ok(converted.svg.into_bytes())
     }
 }

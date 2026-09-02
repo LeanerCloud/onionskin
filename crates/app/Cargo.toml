@@ -41,6 +41,7 @@ smallvec = { version = "1.13", optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 accesskit = { version = "0.24", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
+tempfile = { workspace = true, optional = true }
 
 onionskin-codecs-common = { workspace = true, optional = true }
 onionskin-commands-core = { workspace = true, optional = true }
@@ -109,6 +110,7 @@ shell = [
     "dep:accesskit",
     "dep:accesskit_macos",
     "dep:raw-window-handle",
+    "dep:tempfile",
 ]
 shell-test-support = ["shell", "gpui/test-support"]
 # Builds the app so that it reads its own accessibility tree back off the

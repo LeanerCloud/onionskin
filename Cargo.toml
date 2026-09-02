@@ -66,6 +66,7 @@ onionskin-tools-protect = { path = "plugins/tools-protect" }
 # the recents list are three JSON files the user is expected to edit by hand.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3.27"
 
 [profile.dev]
 opt-level = 1

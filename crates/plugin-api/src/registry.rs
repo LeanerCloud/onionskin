@@ -1,5 +1,7 @@
 //! The plugin registry: the kernel's catalog of everything installed.
 
+use std::sync::Arc;
+
 use crate::{CodecPlugin, Command, CommandPlugin, ToolPlugin};
 
 /// One plugin crate's entry point.
@@ -25,7 +27,7 @@ pub struct PluginRegistry {
     plugins: Vec<PluginEntry>,
     tools: Vec<Box<dyn ToolPlugin>>,
     commands: Vec<Command>,
-    codecs: Vec<Box<dyn CodecPlugin>>,
+    codecs: Vec<Arc<dyn CodecPlugin + Send + Sync>>,
 }
 
 impl PluginRegistry {
@@ -69,7 +71,7 @@ impl PluginRegistry {
     /// This is the surface a menu or a context menu binds an export entry to:
     /// a `Command` cannot carry a destination or report which page failed, so
     /// exports are looked up here and run through [`PluginRegistry::codec`].
-    pub fn register_codec(&mut self, codec: Box<dyn CodecPlugin>) {
+    pub fn register_codec(&mut self, codec: Box<dyn CodecPlugin + Send + Sync>) {
         assert!(!codec.id().is_empty(), "{} has an empty id", codec.name());
         assert!(
             !codec.extension().is_empty(),
@@ -81,7 +83,7 @@ impl PluginRegistry {
             "duplicate codec id {}",
             codec.id()
         );
-        self.codecs.push(codec);
+        self.codecs.push(Arc::from(codec));
     }
 
     pub fn register_commands(&mut self, plugin: &dyn CommandPlugin) {
@@ -115,19 +117,24 @@ impl PluginRegistry {
         &self.commands
     }
 
-    pub fn codecs(&self) -> impl Iterator<Item = &dyn CodecPlugin> {
+    pub fn codecs(&self) -> impl Iterator<Item = &(dyn CodecPlugin + Send + Sync)> {
         self.codecs.iter().map(|c| c.as_ref())
     }
 
-    pub fn codec(&self, id: &str) -> Option<&dyn CodecPlugin> {
-        self.codecs().find(|codec| codec.id() == id)
+    pub fn codec(&self, id: &str) -> Option<Arc<dyn CodecPlugin + Send + Sync>> {
+        self.codecs
+            .iter()
+            .find(|codec| codec.id() == id)
+            .map(Arc::clone)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Document, ExportError, ExportRequest, ExportedFile, PointerInput, ToolCtx};
+    use crate::{
+        Document, ExportError, ExportOutputKind, ExportRequest, PageIndex, PointerInput, ToolCtx,
+    };
 
     struct TestTool;
 
@@ -166,11 +173,17 @@ mod tests {
             "test"
         }
 
-        fn export(
+        fn output_kind(&self) -> ExportOutputKind {
+            ExportOutputKind::Single
+        }
+
+        fn export_page(
             &self,
             _doc: &mut Document,
             _request: &ExportRequest,
-        ) -> Result<Vec<ExportedFile>, ExportError> {
+            _page: PageIndex,
+            _first_in_request: bool,
+        ) -> Result<Vec<u8>, ExportError> {
             Ok(Vec::new())
         }
     }
@@ -186,6 +199,17 @@ mod tests {
             "test"
         );
         assert!(registry.codec("png").is_none());
+    }
+
+    #[test]
+    fn codec_lookups_share_the_exact_registered_handle() {
+        let mut registry = PluginRegistry::new();
+        registry.register_codec(Box::new(TestCodec));
+
+        let first = registry.codec("test").expect("codec is installed");
+        let second = registry.codec("test").expect("codec is installed");
+
+        assert!(Arc::ptr_eq(&first, &second));
     }
 
     #[test]
