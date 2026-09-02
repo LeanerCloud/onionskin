@@ -166,8 +166,11 @@ source IDs, severity, ownership, and required proof.
   confidence; the first tagged release is their real test.
 - Shell spike nit for M2: drag state not cleared on outside-window
   mouse-up.
-- parity/reference/ screenshot corpus not yet captured (needs Acrobat driven
-  on-screen; local-only per Legal posture rule 4).
+- **Partially resolved in B7 (REPO-010):** the Reader 25.001.20438 unified-shell
+  and document-Find baselines and matching Onionskin states are captured,
+  compared, hashed, and ledgered under the ignored parity directories. Eight
+  required states remain; private image bytes stay local-only per Legal posture
+  rule 4.
 
 ## 2026-08-31 forward-audit additions
 
@@ -193,8 +196,8 @@ source IDs, severity, ownership, and required proof.
   through pane feedback while cancellation remains silent.
 - **M2 parity acceptance (REPO-003/010; REPO-004 resolved):** this audit corrected
   the M2 plan header. Audit Task 2 reconciles all 403 Acrobat rows and adds an
-  executable totals contract. B7 still owns private reference comparison and final
-  acceptance.
+  executable totals contract. B7 has the privacy scaffold and first private
+  comparisons; it still owns the remaining eight states and final acceptance.
 - **Dependency/release policy (REPO-008/011/012, owner B6):** checked-in advisory,
   license, secret, and dependency-update policy is missing; repository guarantee
   stubs and packaging docs do not yet match landed behavior and release needs.

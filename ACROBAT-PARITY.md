@@ -80,6 +80,7 @@ Find-and-Thumbnails state.
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
 | M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |
+| M2-PARITY-REF | `docs/evidence/parity-reference.md`, `parity/README.md`, `crates/app/tests/parity_privacy.rs` | Private Reader 25.001.20438 and Onionskin captures are hashed and compared for the Actual Size shell and document-Find baselines as `B7-REF-001/002`; the executable privacy contract proves private roots are ignored and untracked. Eight required reference states remain open. |
 | M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs.rs` | Home list/thumbnail and recents tests. |
 | M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
 | M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |

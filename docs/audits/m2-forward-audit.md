@@ -14,8 +14,10 @@ and documentation defects that must close before final acceptance.
 
 At the reviewed baseline, the Acrobat feature matrix still reported zero
 implemented rows even though most M2 packages had landed. Audit Task 2 has since
-reconciled all 403 rows to 43 implemented, 24 partial, 256 planned, and 80 out of
-scope. B7 still owns private reference comparison and final acceptance.
+reconciled all 403 rows, and later hardening moved the live totals to 49
+implemented, 18 partial, 256 planned, and 80 out of scope. B7's privacy scaffold
+is landed, and its first two private comparisons are complete with public metadata
+ledgered. It still owns the remaining eight states and final acceptance.
 
 ## Method
 
@@ -36,7 +38,7 @@ regression test and real user path pass.
 
 | Unit | Main evidence | Audit disposition |
 |---|---|---|
-| M0 | scaffold/CI/corpus/matrix files | Mostly landed; private reference screenshots and first comparison remain open. |
+| M0 | scaffold/CI/corpus/matrix files | Mostly landed; the private evidence protocol and first two Reader/Onionskin baselines are complete, with eight required states still open. |
 | M1 | `docs/spikes/*`, retained `a11y_spike.rs` | Technical spikes landed; real VoiceOver acceptance remains open. |
 | P1-P7 foundation | `1eed2de` | Merged; hardening findings below remain. |
 | P4 render | `aa4d9b8` | Merged. |
@@ -179,7 +181,7 @@ UI-thread and whole-document buffering work is APP-010 under C1.
 | REPO-007 | Medium | root `README.md`, `.project-docs/INDEX.md`, `.editorconfig` | Resolved in Audit Task 3 | B6 | Added and resolved by this audit | Minimal build, status, documentation, and editor entry points exist without a Makefile or task runner; B6 retains its separate release and packaging-doc work. |
 | REPO-008 | High | `.github/workflows/ci.yml`; no checked-in policy | Confirmed open | B6 | Added by this audit | Checked-in advisory/license/secret/dependency policy passes with reviewed exceptions. |
 | REPO-009 | High | `corpus/checksums/hayro-corpus.sha256`; fresh 41-file acceptance download | Resolved in B1.4 | B1 | Resolved; historical row retained | Every merge-gating `hayro-corpus` PDF has an enforced SHA-256 verified for cached and freshly downloaded sets after strict R2 manifest ID validation and safe publication pass. |
-| REPO-010 | High | `PLAN.md:100-102,497`; no private corpus evidence | Confirmed acceptance blocker | B7 | Existing parity screenshot entry | Private reference corpus and first Onionskin comparison are captured and ledgered. |
+| REPO-010 | High | `PLAN.md:100-102,497`; `B7-REF-001/002` now ledgered | Partially resolved; acceptance blocker remains | B7 | Existing parity screenshot entry narrowed | Capture, compare, hash, and ledger B7-REF-003 through B7-REF-010; keep every private image ignored and untracked. |
 | REPO-011 | Medium | `crates/app/tests/guarantees.rs:6-65` | Confirmed open | B6 | Added by this audit | Landed guarantees execute or point to real enforcing tests; future ones stay explicit. |
 | REPO-012 | Medium | `packaging/README.md:34` | Confirmed status defect | B6 | Added by this audit | Packaging docs exactly match current feature flags and prerequisites. |
 
@@ -210,7 +212,8 @@ Every `known-issues.md` item is retained and assigned as follows:
   M2 matrix rows remain partial where it affects behavior.
 - P12/VoiceOver belongs to B5. Linux/Windows first-release validation belongs to
   B6 and stays explicitly unavailable until run on those hosts.
-- The private Acrobat screenshot corpus and first comparison belong to B7.
+- B7 has the private evidence protocol and first two comparisons; the remaining eight
+  reference states still belong to B7.
 
 `docs/plans/m2-app-hardening.md` is retained as a source ledger. Its live-item
 disposition table follows from a line-by-line revalidation against `7413186`.
@@ -279,9 +282,12 @@ The core auditor passed:
 - `cargo test -p onionskin-cos pages`
 - the focused guarantee-9 app test
 
-The app and repository auditors performed source/test/doc/history inspection only.
-No cargo bench, hosted CI, platform release, real VoiceOver, or Acrobat screenshot
-comparison was run. Those remain open and must not be inferred from this report.
+At the 2026-08-31 audit, the app and repository auditors performed
+source/test/doc/history inspection only. No cargo bench, hosted CI, platform
+release, real VoiceOver, or Acrobat screenshot comparison was run then. B7 later
+completed and ledgered B7-REF-001/002; the other eight reference states, along
+with the remaining verification named above, stay open and must not be inferred
+from this report.
 
 ### Current integration verification
 
