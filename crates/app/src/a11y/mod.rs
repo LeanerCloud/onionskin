@@ -335,6 +335,10 @@ mod platform {
 /// one, which is the platform the shell is developed and accepted on. The
 /// tree itself is platform-independent and is built and tested everywhere,
 /// so wiring another adapter is this module and nothing else.
+///
+/// Two things it owes [`Shared`] when it is wired: call `activate` when a
+/// client first asks for the tree, or the shell keeps skipping the page text
+/// nobody has asked for, and answer `update` with whether the push landed.
 #[cfg(not(target_os = "macos"))]
 mod platform {
     use std::rc::Rc;
