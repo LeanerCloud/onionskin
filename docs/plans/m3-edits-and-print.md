@@ -1,8 +1,10 @@
 # M3 implementation plan: first edits, first print
 
-Status: planning. No M3 code is written. This document is the authoritative
+Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
+folded in. No M3 code is written. This document is the authoritative
 decomposition; it supersedes PLAN.md's M3 paragraph wherever the two disagree,
-and section 8 lists every disagreement rather than resolving it silently.
+and section 8 lists every disagreement. The PLAN.md corrections those
+disagreements call for land as their own commit on this branch.
 
 M3 is the milestone where Onionskin stops being a viewer. It is the first time
 the product writes a byte, and every architectural claim the project has made
@@ -74,7 +76,7 @@ land on M3's desk rather than M2's:
 | Layers pane `Properties` disabled "Available in M3 with the properties dialog" | P13 |
 | `Copy With Formatting` and `Export Selection As` disabled "Available in M3 with rich-text export" | P22, and see section 8 item 12 for why only half of it can ship |
 | Find bar `Include Comments` disabled, "Comments arrive with the comment tools in M3" | P20 |
-| The encryption class split (`permissions-only` versus password-protected) that m2-viewer section 6 assigned as a `known-issues.md` ledger action **was never written**. `known-issues.md` has no encryption entry at all. | Section 9, decision A: the measurement is unconditional |
+| The encryption class split (`permissions-only` versus password-protected) that m2-viewer section 6 assigned as a `known-issues.md` ledger action **was never written**. `known-issues.md` has no encryption entry at all. | P1b produces the measurement (section 9, ruling A); the orchestrator lands the ledger entry |
 | Textual CI tripwires in `guarantees.rs` are evadable by a softened harness (CR-005, REPO-011) | Section 3, T9: every guarantee M3 un-ignores states the mutation that must break it |
 | `SearchResult::Unavailable::reason` is `&'static str`, to be widened "after P9 lands" | P20 (the comments filter needs a dynamic reason) |
 
@@ -415,20 +417,52 @@ start.
 from `tabs`, so callers outside `chrome` see no change. `accessible.rs`,
 `commands.rs` and the pane modules already demonstrate the target shape.
 
+**The acceptance test, and why the obvious one is not enough.** A green suite
+does not prove a 7278-line split preserved behaviour, because not every branch in
+that file has a test: a dropped match arm or a method that lost its only call
+site can leave all 500-odd shell tests green. The acceptance test is therefore
+mechanical and does not depend on coverage.
+
+1. **An item inventory, compared as a set.** Before the split, emit one line per
+   top-level item and per `impl` method in `tabs.rs`: its name, its signature,
+   and a hash of its body with whitespace and comments normalized. After the
+   split, emit the same across the new files. **The two sets must be equal.** A
+   moved body hashes the same; a changed body, a lost method or an invented one
+   all show up as a set difference. This is stronger than `git diff --stat`,
+   which says nothing about a body that moved and changed in the same commit.
+2. **Exhaustive dispatch, enforced by the compiler.** Every dispatch match P0
+   relocates (`run_main_menu_command`, the canvas and thumbnail context tables,
+   the pane action apply) loses its wildcard arm if it has one, so a lost arm
+   becomes a compile error rather than a silent fallthrough. Removing the
+   wildcards is part of P0 and is the mechanism that makes the split safe, not a
+   drive-by improvement.
+3. The suite, at the **same test count** before and after, plus clippy, plus the
+   accessibility probe (`--features a11y-probe --test a11y_probe`), which proves
+   the tree assembly moved intact.
+
 **Verification.**
-- `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` green, with the **same test count** before and after. A split that changes a count either lost a test or added one, and neither belongs in a refactor.
-- `cargo clippy -p onionskin-app --no-default-features --features shell,shell-test-support --all-targets -- -D warnings`.
-- `git diff --stat` shows no line of moved code changed: verified by diffing the concatenation of the new files against the old file with whitespace and `impl` headers normalized, recorded in the PR.
-- The accessibility probe (`--features a11y-probe --test a11y_probe`) still passes, so the tree assembly moved intact.
+- The item inventory before and after is identical as a set, with the two listings committed to the PR so a reviewer can diff them rather than trust a claim.
+- Every relocated dispatch match compiles without a wildcard arm.
+- `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` green at the same test count; `cargo test -p onionskin-app --features shell` green; `cargo clippy -p onionskin-app --no-default-features --features shell,shell-test-support --all-targets -- -D warnings`.
+- `cargo test -p onionskin-app --no-default-features` still green: the split must not disturb the feature gating that guarantee 5 rests on.
 
 **Review risk.** Whether this is a refactor or a rewrite wearing a refactor's
 name: the reviewer should reject any behaviour change, including "obvious"
-improvements. Whether the split lines follow M3's package boundaries or the
+improvements, and the item inventory is what makes that reviewable rather than a
+matter of trust. Whether the split lines follow M3's package boundaries or the
 author's taste, which is the difference between it buying parallelism and it
-buying nothing. Whether `frame_state.rs` became a second god object.
-**Mutation that must break its tests:** deleting any one moved method must fail
-compilation in exactly the file that now owns its callers, not scatter errors
-across five.
+buying nothing. Whether `frame_state.rs` became a second god object. Whether a
+wildcard arm was preserved "for now", which would silently readmit the failure
+mode the inventory exists to catch.
+
+**Mutation that must break its tests.** Not a mutation of the product: a mutation
+of the acceptance procedure itself, because that is the thing being trusted.
+**Take a copy of the pre-split `tabs.rs`, delete one match arm and one whole
+`impl` method from it, run the split procedure on that copy, and confirm the item
+inventory reports exactly those two as missing and nothing else.** If it reports
+nothing, the inventory is decorative and the split is unproven no matter how
+green the suite is. Run it, and record the two deliberately deleted names in the
+PR alongside the inventory's output.
 
 ### P1. cos: the edit surface M3 needs
 
@@ -494,18 +528,27 @@ section must fail the partition test.
 
 ### P1b. cos: empty-user-password decryption
 
-**Conditional on section 9, decision A.** Planned in full so the decision can be
-made on a real cost, not an estimate of an estimate. If the user rules against
-it, only the measurement (first bullet) survives, as an unconditional item in P1.
+**Ruled in, 2026-09-02** (section 9, ruling A): read-only, with editing disabled
+at open. This is a definite package, not a conditional one.
 
 **Goal.** Open the documents Acrobat opens without prompting.
 
-1. **The measurement, unconditional.** Of the roughly 35 corpus files cos
-   refuses with `Error::Encrypted` (5 pdf-association, 4 verapdf, 13
-   hayro/custom, 12 hayro-corpus, 1 fuzzed, per `docs/spikes/m1-cos.md`), how
-   many have an empty user password? m2-viewer assigned this as a
-   `known-issues.md` ledger action and it was never written; `known-issues.md`
-   has no encryption entry at all today.
+1. **The measurement**, which is also the input to the `known-issues.md` entry
+   m2-viewer assigned at M2 and nobody wrote. Its output is a table, committed
+   in this package as `docs/evidence/encryption-classes.md`, with one row per
+   corpus file that `cos::Document::open` refuses with `Error::Encrypted`
+   (roughly 35: 5 pdf-association, 4 verapdf, 13 hayro/custom, 12 hayro-corpus,
+   1 fuzzed, per `docs/spikes/m1-cos.md`), carrying five columns: the file path,
+   `/Encrypt /V` and `/R`, whether **algorithm 6 or 11 validates an empty user
+   password** (the permissions-only class Acrobat opens without prompting),
+   whether it validates an empty **owner** password, and the `/P` permission
+   bits decoded into named flags. The two counts that matter, and that the
+   ledger entry needs, are how many files fall in the permissions-only class and,
+   within that class, how many have `/P` bit 4 (modify) **set**, because those
+   are the ones ruling A's residual makes worse rather than better. The generator
+   is a committed test that fails if the tally drifts, not a one-off script, so
+   the numbers cannot go stale silently. **The orchestrator lands the
+   `known-issues.md` entry from it**; this package does not touch that file.
 2. `crates/crypto` gains the ISO 32000 standard security handler, read side:
    `/V` 1, 2, 4 and 5, `/R` 2 through 6; algorithm 2 and 2.A key derivation;
    algorithms 4 through 7 and 11 and 12 for password validation; per-object key
@@ -521,12 +564,27 @@ it, only the measurement (first bullet) survives, as an unconditional item in P1
    save is the whole reason this is coherent: the user never begins work they
    cannot keep.
 
-**Rows closed.** Moves `Open an encrypted document` (currently M6) to `partial`
-at M3, which is a scoreboard change outside M3's 99 and must be recorded as one.
+**Rows closed.** None of M3's 99. It moves `Open an encrypted document` from M6
+to `partial` at M3, a scoreboard change outside the 99 that must be recorded as
+one, with the Notes naming the read-only scope and the M6 write path.
+
+**The residual the user accepted, stated plainly.** Writing stays M6, so editing
+is disabled at open on every encrypted document. For a file whose `/P` bits
+forbid modification that matches Acrobat. **For a file whose `/P` bits allow
+modification, Onionskin will open it, render it, print it and export it, and
+refuse to let the user change it, which Acrobat would allow. That is a real
+regression against Acrobat, it was weighed, and it was accepted** in exchange for
+the class no longer being refused outright. It is not a defect to be filed later;
+it is the shape of the ruling, and the open-time notice must say so in words a
+user understands rather than naming a milestone alone.
 
 **Files.** `crates/crypto/src/{lib,standard,algorithms,filters}.rs`,
 `crates/crypto/Cargo.toml`, `crates/cos/src/{document,object,stream}.rs`,
-`crates/cos/Cargo.toml`, new `crates/cos/tests/encrypted.rs`.
+`crates/cos/Cargo.toml`, new `crates/cos/tests/encrypted.rs`, new
+`crates/cos/tests/encryption_classes.rs` (the measurement), new
+`docs/evidence/encryption-classes.md` (its output),
+`crates/core/src/session.rs` and `crates/app/src/shell/chrome/tabs.rs` (the
+open-time notice and the editing gate).
 
 **Depends on.** Nothing. Runs parallel to everything, off the critical path.
 
@@ -540,6 +598,8 @@ single guarded predicate, so the wiring surface in cos is small.
 - Round-trip: opening an encrypted file and saving with no edit is byte-identical (guarantee 1 must hold for this class too, and it is free, because a no-op save writes nothing).
 - A save with a pending edit on an encrypted document is refused with a typed error naming M6, and the edit tools were already disabled at open, asserted in the app.
 - Known-answer tests against the ISO 32000-2 algorithm vectors for each of `/R` 2, 3, 4 and 6.
+- The measurement's tally is asserted, not printed: the test fails if the number of files in either class changes, so a corpus refresh that alters the picture is visible rather than silent.
+- The open-time notice appears for an encrypted document and names the editing restriction in words, asserted on the notice text; the edit tools report disabled through the same `Requirement` query P7 owns, not through a second flag.
 
 **Review risk.** Whether AES-256 (`/R` 6) validation implements the full
 hardened hash iteration or the simplified `/R` 5 form that some producers
@@ -1348,7 +1408,12 @@ raster.
 **Rows closed.** 87 Page range and subset, 88 Page sizing and handling,
 89 Multiple pages per sheet (N-up), 93 Orientation, 94 Comments & Forms,
 97 Print as image, 98 Print to file / print to PDF. **7 rows.** Booklet (90) and
-Poster / tile (91) are the subject of section 9, decision B.
+Poster / tile (91) were ruled out of M3 and move to M4 (section 9, ruling B):
+both are pure imposition math over this package's `Sheet` model, so M4 adds them
+without reopening anything P15 builds. P15 must therefore leave `Sheet` and
+`Placement` able to express a sheet whose placements are not a uniform grid, and
+a test asserting one hand-built such sheet composes correctly is this package's
+only concession to them.
 
 **Files.** `crates/print/src/{lib,job,impose,sheet,render,backend}.rs`, new
 `crates/print/src/backend/file.rs`, `crates/print/Cargo.toml` (which today has
@@ -1762,11 +1827,11 @@ New Window must fail the shared-undo test.
 ## 5. Dependency graph, order and contention
 
 Three roots, all startable on day one: **P0** (splitting `ShellFrame`, app only),
-**P1** (cos, kernel only) and **P1b** (crypto, if section 9 decision A takes it).
-They touch disjoint crates, so day one has three branches and no conflict.
+**P1** (cos, kernel only) and **P1b** (crypto, ruled in). They touch disjoint
+crates, so day one has three branches and no conflict.
 
 ```
-P0  split ShellFrame                    P1  cos edit surface         P1b crypto (conditional)
+P0  split ShellFrame                    P1  cos edit surface         P1b crypto (ruled in)   
  │   (app only, no behaviour change)      └── P2  core::edit  (graph, undo/redo)
  │                                             ├── P3  core::save  (section, preview, generations)
  │                                             │    ├── P12 combine + split      (also P5, P11)
@@ -1801,8 +1866,9 @@ it is the natural second track.
 
 - P0 runs alone in `crates/app` from day one and must finish before any of P17
   through P22 starts. Nothing else touches `crates/app`, so it blocks nobody.
-- P1b touches only `crates/crypto` and a narrow seam in `crates/cos`, so it runs
-  the whole milestone alongside everything else.
+- P1b touches only `crates/crypto`, a narrow seam in `crates/cos` and one notice
+  in the app, so it runs the whole milestone alongside everything else. Its app
+  seam lands after P0, like every other app change.
 - Once P2 lands, P3, P4 and P7 are three independent branches in `crates/core`
   and `crates/plugin-api`.
 - P5 and P6 are independent of each other; both need P4.
@@ -1950,8 +2016,8 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY
 | 87 | Printing | Page range and subset | P15 |
 | 88 | Printing | Page sizing and handling | P15 |
 | 89 | Printing | Multiple pages per sheet (N-up) | P15 |
-| 90 | Printing | Booklet | **deferred to M4** (section 9, decision B) |
-| 91 | Printing | Poster / tile | **deferred to M4** (section 9, decision B) |
+| 90 | Printing | Booklet | **moved to M4** (section 9, ruling B) |
+| 91 | Printing | Poster / tile | **moved to M4** (section 9, ruling B) |
 | 92 | Printing | Print on both sides / duplex | P16 |
 | 93 | Printing | Orientation | P15 |
 | 94 | Printing | Comments & Forms | P15 |
@@ -1962,7 +2028,7 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY
 | 99 | Printing | Advanced Print Setup dialog | P17 |
 
 **Totals.** P8 5, P9 13, P10 10, P11 9, P12 6, P13 10, P14 8, P15 7, P16 1,
-P17 7, P18 7, P20 4, P21 1, P22 9, deferred 2. Sum 99. P0, P1, P1b, P2, P3, P4,
+P17 7, P18 7, P20 4, P21 1, P22 9, moved to M4 2. Sum 99. P0, P1, P1b, P2, P3, P4,
 P5, P6, P7 and P19 close zero rows and are named against them in section 4.
 
 **Rows outside M3's 99 that M3 changes**, which the scoreboard update has to
@@ -1973,9 +2039,10 @@ carry and which nobody should discover at review time:
   Highlight and Draw gates), and the Page Thumbnails pane context menu (P21
   enables its M3 entries; Crop Pages stays disabled on M5).
 - The Layers pane context menu's `Properties` entry goes live with P13.
-- If section 9 decision A is taken, `Open an encrypted document` moves from M6
-  to `partial` at M3.
-- If decision B is taken, rows 90 and 91 move from M3 to M4.
+- `Open an encrypted document` moves from M6 to `partial` at M3, per ruling A,
+  with Notes naming the read-only scope, the M6 write path and the accepted
+  regression for documents whose `/P` bits allow modification.
+- Rows 90 and 91 move from M3 to M4, per ruling B, with the reason recorded.
 - The `implemented` count moves from 49 to 49 plus whatever M3 lands; the
   executable totals contract in `crates/app/tests/guarantees.rs` recounts it, so
   a mismatch fails the build rather than living in the preamble.
@@ -2009,9 +2076,9 @@ Deliberately **not** built in M3, and why:
 
 - **A `Render` trait, a GPU backend, or vello.** Unchanged from M2's reasoning:
   one implementor, no consumer.
-- **Encrypted writing.** M6, per PLAN.md's risk list. Even if decision A takes
-  the read path, appending to an encrypted file stays M6, and P1b's coherence
-  depends on saying so at open time.
+- **Encrypted writing.** M6, per PLAN.md's risk list. Ruling A takes the read
+  path only; appending to an encrypted file stays M6, and P1b's coherence
+  depends on saying so at open time rather than at save time.
 - **The accessibility checker, reading-order repair and autotagging.** M5 and
   M6. P4 builds the reader and the maintenance hook, which is what makes those
   a checker rather than a repair job (T6).
@@ -2035,7 +2102,7 @@ Deferred within M3, with reasons and ledger actions:
 
 | Item | Decision | Ledger action |
 |---|---|---|
-| Booklet (row 90) and Poster / tile (row 91) | Deferred to M4, subject to section 9 decision B. | Move both rows to M4 in `ACROBAT-PARITY.md` with the reason; note it against PLAN.md decision 13, which names booklet in the M3 print list. |
+| Booklet (row 90) and Poster / tile (row 91) | **Moved to M4**, per ruling B. Both are pure imposition math over P15's `Sheet` model and land alongside M4's CUPS and Windows backends. | Move both rows to M4 in `ACROBAT-PARITY.md` with the reason. PLAN.md decision 13 names booklet in the M3 print list and is corrected in this branch's PLAN.md commit. |
 | Copy With Formatting to the clipboard (half of row 31) | Deferred. `gpui::ClipboardEntry` has only `String` and `Image`, so a rich-text flavour needs a fork addition (section 8, item 12). Export Selection As ships; the row is `partial`. | Add the cut to row 31's Notes; open a fork issue for a custom pasteboard flavour. |
 | `New Bookmarks From Structure` | Not M3. Needs the tagged tree, and its parity row already puts it at M6. P4 makes it cheap when it arrives. | None; the row is already correct. |
 | JPEG 2000 export, if no acceptable pure-Rust encoder exists | Row 53 ships `partial` naming JPEG and TIFF, with the reason. A C dependency is not an acceptable resolution (decision 4). | Split row 53's Notes if it happens; decided in P14, never carried as both outcomes. |
@@ -2071,14 +2138,21 @@ starts. Evidence is cited.
    missing when what is missing is the wiring and the level. What M3 actually
    owes: guarantee 2 must become true of an edit made by a **tool** through
    `core`, not of a synthetic `cos::set_object` call, which is P3's test and not
-   cos's. And guarantee 6 was **vacuous**: `repair.rs` returns early when
-   `corpus/malformed` is absent, the set is gitignored and generated by
-   `corpus/make-malformed.sh`, and CI never ran that script, so the enforcing
-   test was present, green and measuring nothing. The B6 work in the M2 close-out
-   branches rewrites the app-level guarantees to assert against the enforcing
-   suites **and** to assert the CI step that makes their corpus mandatory. M3
-   must inherit that rule for every guarantee it touches, and P4's tagged corpus
-   step is where it first applies.
+   cos's. And guarantee 6 **was vacuous**: `repair.rs` returns early when
+   `corpus/malformed` is absent, the set is gitignored, and CI never generated
+   it, so the enforcing test was present, green and measuring nothing.
+   **That half is fixed, and the fix is the pattern M3 copies.** The M2
+   close-out work adds two steps to CI's Linux leg: one that runs
+   `corpus/make-malformed.sh`, and a second that re-runs
+   `cargo test -p onionskin-cos --test repair` under
+   `ONIONSKIN_CORPUS_REQUIRED: 1`, because generating the set is not proof it
+   was measured and only the second step turns a silent skip into a failure. The
+   same work rewrites the app-level guarantees to assert against the enforcing
+   suites and against the CI steps that feed them. So what M3 owes is not a
+   defect report; it is inheriting that two-step rule for every guarantee it
+   touches, and **P4's tagged corpus is where it first applies**: a fetch step,
+   plus a re-run of the structure suite under `ONIONSKIN_CORPUS_REQUIRED`, or
+   guarantee 8's fixtures repeat guarantee 6's history one milestone later.
 
 3. **PLAN.md's stated undo model is wrong for two reachable cases.** "What does
    not transfer" item 1 and parity row 17 both say undo is "dropping edit-graph
@@ -2168,21 +2242,29 @@ starts. Evidence is cited.
 14. **The encryption ledger action M2 promised was never written.**
     m2-viewer section 6 assigned `known-issues.md` an entry distinguishing
     permissions-only encryption from password protection, with class counts.
-    `known-issues.md` contains no encryption entry at all today. The
-    measurement is the input to section 9 decision A, so it is unconditional in
-    P1 regardless of how that decision goes.
+    `known-issues.md` contains no encryption entry at all today. P1b produces
+    the measurement (section 9, ruling A) as a committed table under
+    `docs/evidence/` whose tally a test asserts; the orchestrator lands the
+    ledger entry from it, and no package here edits that file.
 
 ---
 
-## 9. Two decisions for the user, with recommendations
+## 9. Two decisions, ruled
 
-Both are called out by PLAN.md or by M2's plan as due at M3 planning. Each is
-presented with a recommendation and the tradeoff; neither is decided here.
+Both were called out by PLAN.md or by M2's plan as due at M3 planning. Both were
+put to the user on 2026-09-02 with the recommendation and the tradeoff below, and
+both were ruled as recommended. The reasoning is kept because the tradeoffs are
+what a future reader will want, not the verdict alone.
 
-### Decision A. Pull empty-user-password decryption into `cos` at M3?
+### Ruling A. Empty-user-password decryption comes into `cos` at M3, read-only.
+
+**Ruled: take it, read-only, with editing disabled at open.** P1b is a definite
+package. The accepted residual is stated in P1b and again at the end of this
+subsection.
 
 **The reassessment PLAN.md's M2 paragraph scheduled for now.** M2 ships
 encrypted documents closed with a typed, fail-loud message naming the milestone.
+The question was whether to keep that through M3.
 
 **What it would cost.** One package, P1b, off the critical path and in a crate
 nothing else touches. `crates/crypto` is four lines of doc comment today, so
@@ -2225,20 +2307,33 @@ rather than a rendering artefact, and PLAN.md's risk list is unambiguous that
 the hole open through M3, M4 and M5, three milestones during which the parity
 scoreboard is public.
 
-**Recommendation: take it, as read-only, scoped to the standard security handler
-with an empty user password, with editing disabled at open.** M3 is the first
-release where refusing a document costs the user work rather than a view, and
-the read half sits inside the plan's own boundary (`crates/crypto`'s charter
-calls decryption handlers "a kernel concern from the start"; only the write path
-is M6). It is off the critical path, so taking it costs schedule only if it is
-allowed to block something, which it is not.
+**The recommendation, which was taken: read-only, scoped to the standard
+security handler with an empty user password, with editing disabled at open.**
+M3 is the first release where refusing a document costs the user work rather than
+a view, and the read half sits inside the plan's own boundary (`crates/crypto`'s
+charter calls decryption handlers "a kernel concern from the start"; only the
+write path is M6). It is off the critical path, so it costs schedule only if it
+is allowed to block something, which it is not.
 
-**Unconditional either way:** the class-split measurement. How many of the ~35
-refused files have an empty user password? m2-viewer assigned that to
-`known-issues.md` and it was never written. It is the input to this decision and
-to M6's sizing, and it is an afternoon.
+**The accepted residual, restated because it is the part that will be
+questioned later.** A document whose `/P` bits allow modification becomes
+readable, printable and exportable in M3, and stays uneditable until M6, which
+Acrobat would allow. That is a real regression against Acrobat. It was weighed
+against leaving the whole class refused, and refusing the whole class was judged
+worse. The open-time notice owes the user that sentence in plain words.
 
-### Decision B. How much Acrobat print-dialog parity does M3 need?
+**The measurement, which was the unconditional half and is now P1b's first
+deliverable.** Of the roughly 35 corpus files cos refuses, how many are
+permissions-only, and how many of those have `/P` bit 4 set? The second number
+sizes the residual above, and nobody has it. P1b emits it as a committed table
+under `docs/evidence/`, generated by a test that fails if the tally drifts, and
+**the orchestrator lands the `known-issues.md` entry from it**; no package in
+this plan edits that file.
+
+### Ruling B. M3 ships fourteen of the sixteen printing rows.
+
+**Ruled: booklet and poster / tile move to M4.** M3 ships the `Sheet` imposition
+model and the other fourteen rows.
 
 `crates/print`'s doc comment names page ranges, scaling, N-up, booklet and
 print-as-image. `ACROBAT-PARITY.md` puts sixteen printing rows in M3. Some of
@@ -2278,12 +2373,19 @@ Booklet is also the print feature Acrobat users name most often when comparing
 products, and leaving it out of "the identity release" is a visible gap in a
 way poster and tile is not.
 
-**Recommendation: defer both to M4, and take the plan edit rather than the
-silent cut.** If the user would rather keep booklet visible in M3, the honest
-shape is a fourth print package, P15b, delivering booklet imposition only,
-verified structurally against sheet order and placement transforms through the
-file backend, with creep compensation explicitly excluded and named; poster and
-tile alone would then slip. What this plan will not do is carry both outcomes.
+**The recommendation, which was taken: move both to M4, and take the plan edit
+rather than the silent cut.** PLAN.md decision 13 is corrected in this branch's
+PLAN.md commit so the deferral is recorded where the promise was made. The road
+not taken was a fourth print package delivering booklet imposition alone with
+creep compensation excluded; it is named here only so nobody re-derives it as a
+new idea.
+
+**What ruling B obliges P15 to do anyway.** M4 must be able to add both rows
+without reopening P15. So `Sheet` and `Placement` must already express a sheet
+whose placements are neither a uniform grid nor in page order, and P15 carries
+one test that composes a hand-built sheet of that shape. That is the whole cost
+of keeping the door open, and it is cheaper than the alternative of discovering
+at M4 that the model assumed a grid.
 
 ---
 
@@ -2333,10 +2435,14 @@ tile alone would then slip. What this plan will not do is carry both outcomes.
   dangling-reference entry (reassigned to `core::pages` and closed by P1's
   validator and P5's transformation), the Line Weights entry, the
   `Include Comments` entry, the `SearchResult::Unavailable::reason` widening;
-  plus the new entries M3 earns (the encryption class split, whatever decision A
-  settles into, the `/OC` annotation-visibility consequence, and any deferral
-  from section 7).
+  plus the new entries M3 earns (the encryption class split and ruling A's
+  accepted regression for documents whose `/P` bits allow modification, the
+  `/OC` annotation-visibility consequence, and any deferral from section 7).
+- P1b's measurement table is committed under `docs/evidence/` and its tally is
+  asserted by a test, so the orchestrator can land the `known-issues.md`
+  encryption entry from a number that cannot go stale silently.
 - The dogfood claim carries its caveats. "M3 edits PDFs non-destructively" is
   stated with what it cannot do attached: no text editing, no form filling, no
-  redaction, no signing, and, unless decision A is taken, no encrypted
-  documents. A claim that omits them is a defect, not a simplification.
+  redaction, no signing, no booklet or poster printing, and, on an encrypted
+  document, no editing at all even where its permission bits would allow it. A
+  claim that omits them is a defect, not a simplification.
