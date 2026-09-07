@@ -1646,6 +1646,13 @@ impl CanvasModel {
     /// needs and cannot disagree with the flag. It used to be a filter on the
     /// flag and an `expect` on the geometry, which is one invariant asserted
     /// twice.
+    ///
+    /// Claiming the raster is why this runs for every visible page and not
+    /// only the ones it goes on to ask for. The store is the canvas's only
+    /// raster owner, so a page's cache survives the frame only if the frame
+    /// claims it; a zoom change has no cache at the exact zoom, and asking
+    /// for one would claim nothing and let the close of the frame evict the
+    /// raster the paint was about to scale.
     fn schedule_visible_renders(
         &mut self,
         visible: &[PagePlacement],
@@ -1656,22 +1663,27 @@ impl CanvasModel {
             let Some(geometry) = self.viewport.page_geometry(placement.page) else {
                 continue;
             };
+            // Whatever this page will paint from, the cache at this zoom or
+            // the one the paint scales instead, is this frame's. It is also
+            // what the worker scales into the placeholder it answers with
+            // immediately.
+            let resident = self
+                .tiles
+                .paint_source(placement.page, zoom)
+                .map(TileCache::base);
             let request = RenderRequest {
                 page: placement.page,
                 zoom,
                 generation: self.generation,
             };
-            if self.tiles.get(placement.page, zoom).is_some()
+            if resident.is_some_and(|base| base.zoom().to_bits() == zoom.to_bits())
                 || self.requests.get(&placement.page) == Some(&request)
                 || self.failed_renders.contains(&placement.page)
             {
                 continue;
             }
-            // The raster the worker scales into the placeholder it answers
-            // with immediately, at whatever zoom the store still holds.
-            let source = self.tiles.base(placement.page);
             self.document
-                .request_render_with_geometry(request, geometry, source)?;
+                .request_render_with_geometry(request, geometry, resident)?;
             self.requests.insert(placement.page, request);
             queued += 1;
         }
@@ -3873,6 +3885,108 @@ mod tests {
         let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
         assert_eq!(tiles.len(), 2, "the store holds a raster two tiles wide");
         assert!(tiles.iter().all(|tile| tile.source_zoom == source_zoom));
+    }
+
+    /// The store is the only raster owner now, so the frame that is about to
+    /// paint has to claim what it will paint from. A zoom change misses the
+    /// exact-zoom cache, so nothing else does: the frame would close having
+    /// pinned nothing, eviction would run with nothing exempt, and the page
+    /// on screen would lose the raster it was about to be scaled from.
+    ///
+    /// The budget has to be small enough for eviction to actually run. At the
+    /// default 202 MiB nothing is ever evicted and this passes vacuously.
+    #[test]
+    fn a_zoom_change_keeps_the_raster_the_paint_will_scale() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        assert_eq!(
+            visible.iter().map(|page| page.page).collect::<Vec<_>>(),
+            [0],
+            "page zero alone is on screen"
+        );
+
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        // Room for one raster, so whatever the frame does not claim goes.
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        // Staged inside a frame so the setup does not evict one of them:
+        // page zero is on screen, page one is a page scrolled away.
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        assert_eq!(model.tiles.len(), 2, "both rasters are resident to start");
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        model.update().expect("the zoom-change frame runs");
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the frame evicted the raster the page on screen paints from"
+        );
+        let paint = model.paint_list().expect("the frame paints");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert!(
+            !tiles.is_empty(),
+            "the page on screen painted no tiles at the new zoom"
+        );
+        assert!(
+            tiles.iter().all(|tile| tile.source_zoom == 1.0),
+            "the resident 1x raster is what the 3x view scales"
+        );
+    }
+
+    /// The claim has to be made for every visible page, not only the ones the
+    /// frame goes on to ask for. A page whose render is already outstanding
+    /// takes an early exit on the next frame, and a claim made after that
+    /// exit would be skipped exactly when the page is still being scaled.
+    #[test]
+    fn a_page_already_awaiting_its_render_still_claims_its_raster() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            1,
+            "the new zoom is asked for"
+        );
+        model.tiles.end_frame();
+
+        // A raster for some other page lands between the frames, so the store
+        // has something newer than the one page zero is still scaling.
+        model.tiles.insert(2, raster());
+
+        // The next frame: same zoom and same generation, so the request
+        // stands and page zero takes the early exit.
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            0,
+            "the outstanding request is not made twice"
+        );
+        model.tiles.end_frame();
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the frame closed over the raster page zero is still being scaled from"
+        );
     }
 
     /// Decision 11 asks a page that comes back into view to be shown scaled
