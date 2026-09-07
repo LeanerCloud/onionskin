@@ -4011,6 +4011,53 @@ mod tests {
         );
     }
 
+    /// The claim buys a page the frame it is on screen for and the grace
+    /// window after it, and nothing more. A page scrolled away has to become
+    /// evictable again, or claiming would be a permanent pin and the store
+    /// would fill with every page ever looked at.
+    ///
+    /// The store is a byte budget, not a visible-set policy, so leaving the
+    /// visible set is not on its own a reason to drop a page: this asserts
+    /// that the page goes when the memory is actually wanted. That is the
+    /// distinction HARD-CAN-004 traded a second collection for.
+    #[test]
+    fn a_claim_expires_once_the_page_is_no_longer_on_screen() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        model.tiles.end_frame();
+
+        model.update().expect("the frame showing page zero runs");
+        assert!(
+            model.tiles.base(0).is_some(),
+            "page zero was on screen and should have been claimed"
+        );
+
+        // Page zero leaves, and two frames pass, which spends its grace
+        // window. It is still resident because the store fits its budget.
+        model.go_to_page(1).unwrap();
+        model.update().expect("the first frame away runs");
+        model.update().expect("the second frame away runs");
+
+        // Now the memory is wanted. An unclaimed page goes first.
+        model.tiles.insert(9, raster());
+        assert!(
+            model.tiles.base(0).is_none(),
+            "a page nothing is showing survived the pressure, so the claim never expires"
+        );
+        assert!(
+            model.tiles.base(9).is_some(),
+            "the raster that arrived should be the one kept"
+        );
+    }
+
     /// The claim has to be made for every visible page, not only the ones the
     /// frame goes on to ask for. A page whose render is already outstanding
     /// takes an early exit on the next frame, and a claim made after that
