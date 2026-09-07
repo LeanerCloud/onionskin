@@ -149,20 +149,24 @@ fn view_point(viewport: &Viewport, at: PagePoint) -> Option<ViewPoint> {
     viewport.view_point_for(at).ok().flatten()
 }
 
-/// The same, clamped to the viewport.
+/// A screen point pulled inside the viewport.
 ///
-/// Only for a zoom anchor: `Viewport` refuses one outside the view, and a
-/// pointer event can arrive a fraction outside the edge it started from.
-/// Measuring a drag uses [`view_point`] instead, because clamping there
-/// would stop counting the moment the pointer left the window while the
-/// button was still down.
+/// Only for a zoom anchor: `Viewport` refuses one outside the view, and
+/// answers `AnchorOutsideViewport` rather than zooming, which for a gesture
+/// that discards the error is a silent no-op for the whole drag. Measuring a
+/// drag never clamps, because clamping there would stop counting the moment
+/// the pointer left the window while the button was still down.
+fn clamped_to_view(point: ViewPoint, size: ViewSize) -> ViewPoint {
+    ViewPoint {
+        x: point.x.clamp(0.0, size.width),
+        y: point.y.clamp(0.0, size.height),
+    }
+}
+
+/// Where a page point sits on screen, pulled inside the viewport so it can
+/// be a zoom anchor. See [`clamped_to_view`].
 fn anchor_point(viewport: &Viewport, at: PagePoint) -> Option<ViewPoint> {
-    let at = view_point(viewport, at)?;
-    let size = viewport.size();
-    Some(ViewPoint {
-        x: at.x.clamp(0.0, size.width),
-        y: at.y.clamp(0.0, size.height),
-    })
+    view_point(viewport, at).map(|at| clamped_to_view(at, viewport.size()))
 }
 
 /// Press and drag up to zoom in, down to zoom out, continuously, about the
@@ -218,9 +222,13 @@ impl ToolPlugin for DynamicZoomTool {
     }
 
     fn on_pointer_down(&mut self, ctx: &mut ToolCtx, input: PointerInput) {
-        self.drag = anchor_point(ctx.viewport, input.at).map(|anchor| Drag {
-            anchor,
-            last_y: anchor.y,
+        // The two differ on a press the window edge cuts off: the anchor has
+        // to be inside the view or every later zoom is refused, while the
+        // measurement starts where the pointer really is or the first move
+        // is short by however far outside it was.
+        self.drag = view_point(ctx.viewport, input.at).map(|at| Drag {
+            anchor: clamped_to_view(at, ctx.viewport.size()),
+            last_y: at.y,
         });
     }
 

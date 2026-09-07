@@ -5149,6 +5149,126 @@ mod tests {
         model
     }
 
+    /// A tool that reports the capabilities it is given and records what the
+    /// canvas hands it, under an id of its own choosing.
+    struct CapabilityTool {
+        id: &'static str,
+        capabilities: &'static [onionskin_plugin_api::ToolCapability],
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl ToolPlugin for CapabilityTool {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn name(&self) -> &'static str {
+            self.id
+        }
+
+        fn icon(&self) -> &'static str {
+            self.id
+        }
+
+        fn capabilities(&self) -> &'static [onionskin_plugin_api::ToolCapability] {
+            self.capabilities
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("down");
+        }
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("move");
+        }
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("up");
+        }
+
+        fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
+            self.events.lock().unwrap().push("cancel");
+        }
+    }
+
+    /// The canvas keeps a pointer alive off the page for a tool that
+    /// declares `ToolCapability::DynamicZoom`, and for no other tool.
+    ///
+    /// This is a different lookup from the one the View menu entry runs, and
+    /// only the menu's was pinned. Resolving this one to `id() ==
+    /// "dynamic-zoom"` instead passes every other test in the workspace,
+    /// which makes it exactly the shortcut a conflict resolution reaches
+    /// for; it would give a third-party tool the menu entry and not the
+    /// exemption, putting the frozen-drag bug back silently. Both directions
+    /// are asserted here, so neither the id nor the capability can stand in
+    /// for the other.
+    #[test]
+    fn the_off_page_exemption_follows_the_capability_rather_than_a_tool_id() {
+        use onionskin_plugin_api::ToolCapability;
+
+        for (id, capabilities, exempt) in [
+            // The capability under an id the first-party tool does not use.
+            (
+                "third-party-magnifier",
+                &[ToolCapability::DynamicZoom][..],
+                true,
+            ),
+            // The first-party id without the capability behind it.
+            ("dynamic-zoom", &[][..], false),
+        ] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut registry = PluginRegistry::new();
+            registry.register_tool(Box::new(CapabilityTool {
+                id,
+                capabilities,
+                events: Arc::clone(&events),
+            }));
+            let mut model = model_with_registry(registry);
+            model.first_page().expect("the first page is reachable");
+            model.activate_tool(0).expect("the tool activates");
+
+            let page = model.viewport.visible_pages().unwrap()[0].rect;
+            let off_page = point(
+                px(page.origin.x + page.size.width / 2.0),
+                px(page.origin.y + page.size.height + 5.0),
+            );
+            assert!(
+                model
+                    .viewport
+                    .page_point_at(ViewPoint {
+                        x: f32::from(off_page.x),
+                        y: f32::from(off_page.y),
+                    })
+                    .expect("the point is mappable")
+                    .is_none(),
+                "{id}: the target is still on a page, so nothing is being tested"
+            );
+
+            model
+                .pointer_down(page_center(&model), 1.0, GpuiModifiers::default())
+                .expect("the press maps onto a page");
+            model
+                .pointer_move(off_page, 1.0, GpuiModifiers::default(), true)
+                .expect("the move is handled");
+
+            let seen = events.lock().unwrap().clone();
+            if exempt {
+                assert_eq!(
+                    seen,
+                    vec!["down", "move"],
+                    "{id} carries the capability and should have kept the pointer"
+                );
+                assert_eq!(model.active_tool(), Some(0), "{id} was cancelled");
+            } else {
+                assert_eq!(
+                    seen,
+                    vec!["down", "cancel"],
+                    "{id} carries no capability and should have been cancelled"
+                );
+            }
+        }
+    }
+
     /// Dragging down with the dynamic zoom tool shrinks the page under a
     /// pointer that is moving the other way, so the pointer leaves the page
     /// within a couple of events. That is the gesture working, not ending:

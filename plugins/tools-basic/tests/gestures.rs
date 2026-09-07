@@ -569,3 +569,52 @@ fn dynamic_zoom_only_zooms_between_a_press_and_the_end_of_its_gesture() {
         );
     }
 }
+
+/// A press the window edge cuts off still zooms.
+///
+/// `Viewport::dynamic_zoom` validates its anchor and answers
+/// `AnchorOutsideViewport` for one outside the view, which this tool
+/// discards, so an unclamped anchor makes the whole gesture a silent no-op
+/// rather than a wrong one. The measurement is the other half of that split
+/// and must not be clamped: the drag is counted from where the pointer
+/// really was, so the part of the press outside the window still counts.
+#[test]
+fn a_press_below_the_window_still_anchors_and_still_measures_from_there() {
+    let mut fixture = Fixture::open("hello.pdf");
+    let mut tool = DynamicZoomTool::new();
+    // Zoomed in far enough that the page runs off the bottom of the window,
+    // so a press below the window is still a press on the page.
+    fixture
+        .viewport
+        .zoom_to(12.0, ViewPoint { x: 400.0, y: 300.0 })
+        .expect("the zoom applies");
+    fixture
+        .viewport
+        .go_to_page(0, PageAlignment::Start)
+        .expect("the page is reachable");
+    let below = ViewPoint { x: 400.0, y: 650.0 };
+    assert!(
+        below.y > VIEWPORT.height,
+        "the press has to be outside the window for this to test anything"
+    );
+    let pressed = fixture.page_point_at(below);
+    let before = fixture.viewport.zoom();
+
+    press(&mut fixture, &mut tool, pressed, Modifiers::default());
+    move_to(&mut fixture, &mut tool, ViewPoint { x: 400.0, y: 500.0 });
+
+    let after = fixture.viewport.zoom();
+    assert!(
+        after > before,
+        "the gesture did nothing at all, which is what an anchor outside the \
+         viewport makes it: {before} to {after}"
+    );
+    // 150 pixels up, measured from the press at 650 rather than from the
+    // window edge the anchor was pulled back to.
+    let expected = before * 2.0_f32.powf(150.0 / 240.0);
+    assert!(
+        (after / expected - 1.0).abs() < 1e-3,
+        "{after} is not 2^(150/240) of {before}, so the drag was measured \
+         from the clamped anchor rather than from the press"
+    );
+}
