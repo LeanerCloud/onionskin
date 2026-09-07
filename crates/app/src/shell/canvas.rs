@@ -2320,6 +2320,13 @@ fn write_snapshot_png(
     Ok(())
 }
 
+/// Where one pixel of a `width` by `height` image lands after the turn.
+///
+/// This is `ViewRotation::rotate_rect_within` applied to a one-by-one rect,
+/// exactly, and deliberately not written as a call to it: both callers run it
+/// once per pixel inside a double loop over a whole tile or crop, so building
+/// a `ViewRect` and a `ViewSize` per pixel would be real work on the paint
+/// path for a result that is the same by construction.
 fn rotate_pixel(x: u32, y: u32, width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
     match rotation {
         ViewRotation::None => (x, y),

@@ -42,8 +42,10 @@ impl From<ViewportError> for InputError {
 /// The page point under `at`, or `None` when it lands on the background.
 ///
 /// `at` is already in canvas coordinates. Converting a window point is the
-/// canvas's job and happens in exactly one place there, so this module holds
-/// no float arithmetic at all, which is what P6b asked for.
+/// canvas's job and happens in exactly one place there, so no `Pixels`
+/// conversion is left in this module, which is what P6b asked for. The pan
+/// deltas in `InputState` are still `ViewPoint` subtraction; what left is the
+/// window-to-canvas mapping, not arithmetic as such.
 pub fn pointer_input(
     viewport: &Viewport,
     at: ViewPoint,
