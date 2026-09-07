@@ -1410,10 +1410,33 @@ impl CanvasModel {
         let rotation = self.viewport.rotation();
         let exact_zoom = self.viewport.zoom();
         let viewport_size = self.viewport.size();
-        let mut displayed_images = BTreeSet::new();
 
         self.tiles.begin_frame();
-        for placement in visible.into_iter().filter(|page| page.measured) {
+        let cut = self.cut_visible_tiles(&visible, rotation, exact_zoom, viewport_size);
+        self.tiles.end_frame();
+        paint.tiles = cut?;
+        paint.overlays = self.overlay_paints();
+        Ok(paint)
+    }
+
+    /// The tiles of every measured visible page, as images the window can
+    /// paint.
+    ///
+    /// Split out of [`Self::paint_list`] so the store frame it runs inside is
+    /// closed whatever this returns. The conversion below can fail on a tile
+    /// whose buffer disagrees with its own dimensions, and an error escaping
+    /// past the `end_frame` would leave the frame open, which is the state the
+    /// frame boundary exists to prevent.
+    fn cut_visible_tiles(
+        &mut self,
+        visible: &[PagePlacement],
+        rotation: ViewRotation,
+        exact_zoom: f32,
+        viewport_size: ViewSize,
+    ) -> Result<Vec<TilePaint>, CanvasError> {
+        let mut tiles = Vec::new();
+        let mut displayed_images = BTreeSet::new();
+        for placement in visible.iter().filter(|page| page.measured) {
             // One lookup, so the raster the tiles are cut from and the zoom
             // they are reported at cannot come from two places and disagree.
             let Some(cache) = self.tiles.paint_source(placement.page, exact_zoom) else {
@@ -1439,7 +1462,7 @@ impl CanvasModel {
                 displayed_images.insert(key);
                 let (content_width, content_height) =
                     rotated_size(raw.region.width, raw.region.height, rotation);
-                paint.tiles.push(TilePaint {
+                tiles.push(TilePaint {
                     page: placement.page,
                     rect: atlas_image_rect(raw.rect, content_width, content_height),
                     clip_rect: raw.rect,
@@ -1449,9 +1472,7 @@ impl CanvasModel {
             }
         }
         self.image_cache.retain_keys(&displayed_images);
-        self.tiles.end_frame();
-        paint.overlays = self.overlay_paints();
-        Ok(paint)
+        Ok(tiles)
     }
 
     /// Fulfil a pending snapshot request as owned pixels ready to encode, or
@@ -2399,6 +2420,50 @@ mod tests {
 
     fn model() -> CanvasModel {
         model_with_registry(PluginRegistry::new())
+    }
+
+    /// A scroll-zoom and a pinch both anchor on a point the platform reports
+    /// in window coordinates, so both have to subtract the canvas origin
+    /// before the viewport sees it. Anchoring on the raw window point zooms
+    /// about a place the chrome's width and height away from the pointer.
+    #[test]
+    fn zoom_anchors_are_read_in_canvas_coordinates() {
+        let origin = ViewPoint { x: 50.0, y: 40.0 };
+        let window = point(px(150.0), px(140.0));
+        let canvas_local = point(px(100.0), px(100.0));
+
+        let gestures: [fn(&mut CanvasModel, Point<Pixels>); 2] = [
+            |model, at| {
+                model
+                    .scroll(ViewPoint { x: 0.0, y: 30.0 }, true, at)
+                    .expect("the view zooms");
+            },
+            |model, at| {
+                assert!(model.pinch(1.4, at).expect("the view zooms"));
+            },
+        ];
+        for gesture in gestures {
+            let mut offset = model();
+            offset.resize(origin, VIEWPORT).expect("the canvas resizes");
+            gesture(&mut offset, window);
+
+            let mut flush = model();
+            flush
+                .resize(ViewPoint::default(), VIEWPORT)
+                .expect("the canvas resizes");
+            gesture(&mut flush, canvas_local);
+
+            assert_ne!(
+                offset.viewport.snapshot(),
+                model().viewport.snapshot(),
+                "the gesture did nothing, so it would prove nothing"
+            );
+            assert_eq!(
+                offset.viewport.snapshot(),
+                flush.viewport.snapshot(),
+                "the anchor was read in window coordinates, not canvas ones"
+            );
+        }
     }
 
     /// The canvas origin moves whenever the chrome around it changes size,
@@ -4110,6 +4175,32 @@ mod tests {
         assert!(
             model.tiles.base(7).is_none(),
             "the update's frame is still open, so its pages cannot be evicted"
+        );
+        assert_eq!(model.tiles.len(), 1);
+    }
+
+    /// The paint opens a store frame, so it has to close one. A frame left
+    /// open goes on exempting whatever the store is handed next, which is the
+    /// unbounded case `TileStore::begin_frame` documents.
+    #[test]
+    fn the_paint_closes_the_frame_it_opened() {
+        let mut model = model();
+        model.tiles = TileStore::with_budget(1);
+        model.paint_list().expect("the frame paints");
+
+        // Two pages nothing is showing, so only an open frame could exempt
+        // them. The store never evicts the entry just handed to a caller, so
+        // the second survives either way and the first is the witness.
+        model
+            .tiles
+            .insert(7, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+        model
+            .tiles
+            .insert(8, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+
+        assert!(
+            model.tiles.base(7).is_none(),
+            "the paint's frame is still open, so its pages cannot be evicted"
         );
         assert_eq!(model.tiles.len(), 1);
     }
