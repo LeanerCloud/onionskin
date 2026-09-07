@@ -5281,23 +5281,62 @@ mod tests {
             }
         );
 
+        // A page whose axes scale differently, so an implementation that
+        // used one scale for both would place the box somewhere else.
+        let squat = ViewSize {
+            width: 250.0,
+            height: 50.0,
+        };
+        let stretched = content_rect(
+            0,
+            RasterBounds {
+                x: 40,
+                y: 20,
+                width: 80,
+                height: 40,
+            },
+            (200, 100),
+            squat,
+        )
+        .expect("a rectangle inside a page of another shape maps");
+        assert_eq!(stretched.origin(), ViewPoint { x: 50.0, y: 10.0 });
+        assert_eq!(
+            stretched.size(),
+            ViewSize {
+                width: 100.0,
+                height: 20.0
+            },
+            "the two axes scale by the page, not by one of them"
+        );
+
         // The renderer floors a page's pixel count, so a page whose size is
         // not a whole number of pixels scales back to a hair over its own
-        // width. The far edge has to land on the page, not past it, or
-        // `PageRenderRect::new` refuses the rectangle outright.
+        // edge in f32. The far edge has to land on the page, not past it, or
+        // `PageRenderRect::new` refuses the rectangle outright. These two
+        // numbers are chosen because they overshoot on both axes; a pair
+        // that round-trips exactly would leave the clamp dead code.
         let fractional = ViewSize {
-            width: 250.7,
-            height: 125.3,
+            width: 200.5,
+            height: 100.6,
         };
+        let raster = (200u32, 100u32);
+        assert!(
+            200.0 * (fractional.width / raster.0 as f32) > fractional.width,
+            "the width does not overshoot, so the clamp is not being tested"
+        );
+        assert!(
+            100.0 * (fractional.height / raster.1 as f32) > fractional.height,
+            "the height does not overshoot, so the clamp is not being tested"
+        );
         let whole = content_rect(
             0,
             RasterBounds {
                 x: 0,
                 y: 0,
-                width: 200,
-                height: 100,
+                width: raster.0,
+                height: raster.1,
             },
-            (200, 100),
+            raster,
             fractional,
         )
         .expect("a rectangle covering the raster maps");

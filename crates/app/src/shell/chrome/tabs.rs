@@ -4664,6 +4664,98 @@ mod tests {
             .unwrap();
     }
 
+    /// Leaving a chromeless mode is the LAST thing Escape does, so every
+    /// overlay above it still gets the key first.
+    ///
+    /// The ordering is load-bearing and nothing else pins it: moving the two
+    /// mode checks to the top of the dismissal chain leaves every other test
+    /// in this file passing while Escape stops closing the dialog, the
+    /// search panel, a context menu, a menu and the find bar. Each stage is
+    /// armed in turn, and the mode has to survive the key it did not get.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn escape_closes_an_overlay_before_it_leaves_a_chromeless_mode(cx: &mut TestAppContext) {
+        type Arm = fn(&mut ShellFrame, &mut Window, &mut Context<ShellFrame>);
+        type IsOpen = fn(&ShellFrame, &App) -> bool;
+        let stages: [(&str, Arm, IsOpen); 4] = [
+            (
+                "the Zoom To dialog",
+                |frame, _window, cx| frame.show_dialog(ShellDialog::ZoomTo, cx),
+                |frame, _cx| frame.dialog.is_some(),
+            ),
+            (
+                "the canvas context menu",
+                |frame, _window, cx| {
+                    frame.canvas_context_menu = Some(CanvasContextMenu {
+                        origin: gpui::point(px(300.0), px(300.0)),
+                    });
+                    cx.notify();
+                },
+                |frame, _cx| frame.canvas_context_menu.is_some(),
+            ),
+            (
+                "the main menu",
+                |frame, _window, cx| frame.toggle_main_menu(cx),
+                |frame, _cx| frame.main_menu_open,
+            ),
+            (
+                "the find bar",
+                |frame, window, cx| frame.open_find_bar(None, window, cx),
+                |frame, _cx| frame.find.is_open(),
+            ),
+        ];
+
+        // Read Mode first, then Full Screen: each mode's own check sits
+        // below every stage, and each has to stay put.
+        for (fullscreen, read_mode) in [(false, true), (true, false)] {
+            for (name, arm, is_open) in stages {
+                let (window, _) = bound_window(&["hello.pdf"], cx);
+                window
+                    .update(cx, |frame, window, cx| {
+                        if fullscreen {
+                            frame.shell_view_state.set_fullscreen(true);
+                        }
+                        if read_mode {
+                            frame.apply_shell_view_action(ShellViewAction::ToggleReadMode, cx);
+                        }
+                        // The fifth stage of the chain, the tool search
+                        // panel, cannot be one here: it belongs to the
+                        // global bar's field, which these modes hide, so it
+                        // does not open however much is typed into it.
+                        frame
+                            .search_input
+                            .update(cx, |input, cx| input.set_query("zoom", cx));
+                        assert!(
+                            !frame.search_panel_visible(cx),
+                            "the search panel opened with the global bar hidden"
+                        );
+                        arm(frame, window, cx);
+                        assert!(is_open(frame, cx), "{name} did not arm");
+                    })
+                    .unwrap();
+
+                cx.simulate_keystrokes(window.into(), "escape");
+                cx.run_until_parked();
+
+                window
+                    .update(cx, |frame, _window, cx| {
+                        assert!(!is_open(frame, cx), "escape did not close {name}");
+                        assert_eq!(
+                            frame.shell_view_state.fullscreen(),
+                            fullscreen,
+                            "escape left full screen while {name} was open"
+                        );
+                        assert_eq!(
+                            frame.shell_view_state.read_mode(),
+                            read_mode,
+                            "escape left read mode while {name} was open"
+                        );
+                    })
+                    .unwrap();
+            }
+        }
+    }
+
     /// Full Screen is the document and nothing else, and Escape answers it
     /// before Read Mode: a window in both comes back one step at a time.
     #[cfg(feature = "shell-test-support")]
