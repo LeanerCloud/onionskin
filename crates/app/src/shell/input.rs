@@ -46,13 +46,53 @@ pub fn pointer_input(
     pressure: f32,
     modifiers: GpuiModifiers,
 ) -> Result<Option<PointerInput>, InputError> {
+    map_pointer_with(
+        Viewport::page_point_at,
+        viewport,
+        window_point,
+        canvas_origin,
+        pressure,
+        modifiers,
+    )
+}
+
+/// Like [`pointer_input`], but for a pointer that has left every page:
+/// expressed against the nearest one rather than refused.
+///
+/// Only for a tool whose own gesture moves the page out from under the
+/// pointer; see [`Viewport::page_point_near`].
+pub fn pointer_input_near(
+    viewport: &Viewport,
+    window_point: Point<Pixels>,
+    canvas_origin: Point<Pixels>,
+    pressure: f32,
+    modifiers: GpuiModifiers,
+) -> Result<Option<PointerInput>, InputError> {
+    map_pointer_with(
+        Viewport::page_point_near,
+        viewport,
+        window_point,
+        canvas_origin,
+        pressure,
+        modifiers,
+    )
+}
+
+fn map_pointer_with(
+    to_page: fn(&Viewport, ViewPoint) -> Result<Option<onionskin_core::PagePoint>, ViewportError>,
+    viewport: &Viewport,
+    window_point: Point<Pixels>,
+    canvas_origin: Point<Pixels>,
+    pressure: f32,
+    modifiers: GpuiModifiers,
+) -> Result<Option<PointerInput>, InputError> {
     validate_pressure(pressure)?;
 
     let point = ViewPoint {
         x: f32::from(window_point.x) - f32::from(canvas_origin.x),
         y: f32::from(window_point.y) - f32::from(canvas_origin.y),
     };
-    Ok(viewport.page_point_at(point)?.map(|at| PointerInput {
+    Ok(to_page(viewport, point)?.map(|at| PointerInput {
         at,
         pressure,
         modifiers: Modifiers {

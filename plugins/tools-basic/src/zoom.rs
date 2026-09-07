@@ -143,13 +143,21 @@ fn zooms_out(modifiers: Modifiers) -> bool {
     modifiers.alt || modifiers.ctrl_or_cmd
 }
 
-/// Where a page point sits on screen, clamped to the viewport.
+/// Where a page point sits on screen. `None` means the point is on no page
+/// the layout currently places.
+fn view_point(viewport: &Viewport, at: PagePoint) -> Option<ViewPoint> {
+    viewport.view_point_for(at).ok().flatten()
+}
+
+/// The same, clamped to the viewport.
 ///
-/// A zoom anchor has to be inside the view or `Viewport` refuses it, and a
+/// Only for a zoom anchor: `Viewport` refuses one outside the view, and a
 /// pointer event can arrive a fraction outside the edge it started from.
-/// `None` means the point is on no page the layout currently places.
+/// Measuring a drag uses [`view_point`] instead, because clamping there
+/// would stop counting the moment the pointer left the window while the
+/// button was still down.
 fn anchor_point(viewport: &Viewport, at: PagePoint) -> Option<ViewPoint> {
-    let at = viewport.view_point_for(at).ok().flatten()?;
+    let at = view_point(viewport, at)?;
     let size = viewport.size();
     Some(ViewPoint {
         x: at.x.clamp(0.0, size.width),
@@ -223,8 +231,8 @@ impl ToolPlugin for DynamicZoomTool {
         // Read the pointer's screen height before zooming: `input.at` is the
         // page point under the pointer as of this event, so it maps back to
         // the true screen position only against the viewport that produced
-        // it.
-        let Some(at) = anchor_point(ctx.viewport, input.at) else {
+        // it. Unclamped, because a drag goes on past the window edge.
+        let Some(at) = view_point(ctx.viewport, input.at) else {
             return;
         };
         // Up the screen is a smaller y and is Acrobat's zoom-in direction.

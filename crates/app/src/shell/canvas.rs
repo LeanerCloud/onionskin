@@ -22,7 +22,8 @@ use onionskin_render::{BaseRaster, RasterBounds, Tile, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
 use super::input::{
-    pointer_input, validate_pressure, DragKind, DragUpdate, InputError, InputState,
+    pointer_input, pointer_input_near, validate_pressure, DragKind, DragUpdate, InputError,
+    InputState,
 };
 
 /// One visible page, as an accessibility tree sees it.
@@ -1298,11 +1299,14 @@ impl CanvasModel {
             Some(DragUpdate::ToolMove) => {
                 let input = match self.map_pointer(position, pressure, modifiers) {
                     Ok(Some(input)) => input,
-                    Ok(None) => {
-                        self.input.cancel();
-                        self.cancel_active_tool();
-                        return Ok(true);
-                    }
+                    Ok(None) => match self.map_pointer_off_page(position, pressure, modifiers)? {
+                        Some(input) => input,
+                        None => {
+                            self.input.cancel();
+                            self.cancel_active_tool();
+                            return Ok(true);
+                        }
+                    },
                     Err(error) => {
                         self.input.cancel();
                         self.cancel_active_tool();
@@ -1338,7 +1342,10 @@ impl CanvasModel {
             Some(DragKind::Tool) => {
                 match self.map_pointer(position, pressure, modifiers) {
                     Ok(Some(input)) => self.dispatch_tool(ToolPointerPhase::Up, input),
-                    Ok(None) => self.cancel_active_tool(),
+                    Ok(None) => match self.map_pointer_off_page(position, pressure, modifiers)? {
+                        Some(input) => self.dispatch_tool(ToolPointerPhase::Up, input),
+                        None => self.cancel_active_tool(),
+                    },
                     Err(error) => {
                         self.cancel_active_tool();
                         return Err(error);
@@ -1858,6 +1865,41 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
     ) -> Result<Option<PointerInput>, CanvasError> {
         Ok(pointer_input(
+            &self.viewport,
+            position,
+            point(px(self.canvas_origin.x), px(self.canvas_origin.y)),
+            pressure,
+            modifiers,
+        )?)
+    }
+
+    /// The pointer expressed against the nearest visible page, for a tool
+    /// that must keep hearing about it after it leaves the page.
+    ///
+    /// `None` for every other tool, which keeps the cancel-on-leave rule:
+    /// for a marquee or a text selection, the pointer leaving the page is
+    /// the user leaving the gesture. For a tool that zooms continuously it
+    /// is the gesture working, because zooming out shrinks the page away
+    /// from a pointer that is still on screen and still held down. Asked of
+    /// the tool's declared capability rather than its id, the way every
+    /// other shell surface finds a tool.
+    fn map_pointer_off_page(
+        &self,
+        position: Point<Pixels>,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+    ) -> Result<Option<PointerInput>, CanvasError> {
+        let follows_the_pointer_off_page = self
+            .active_tool
+            .and_then(|index| self.registry.tools().nth(index))
+            .is_some_and(|tool| {
+                tool.capabilities()
+                    .contains(&onionskin_plugin_api::ToolCapability::DynamicZoom)
+            });
+        if !follows_the_pointer_off_page {
+            return Ok(None);
+        }
+        Ok(pointer_input_near(
             &self.viewport,
             position,
             point(px(self.canvas_origin.x), px(self.canvas_origin.y)),
@@ -5105,6 +5147,70 @@ mod tests {
         assert!(model.viewport.page_geometry(0).is_some());
         assert_eq!(model.viewport.current_page(), 0);
         model
+    }
+
+    /// Dragging down with the dynamic zoom tool shrinks the page under a
+    /// pointer that is moving the other way, so the pointer leaves the page
+    /// within a couple of events. That is the gesture working, not ending:
+    /// the canvas used to answer an off-page pointer by cancelling the tool,
+    /// which froze the zoom-out half of the drag after about 80 pixels while
+    /// the button was still held.
+    #[cfg(feature = "tools-basic")]
+    #[test]
+    fn dragging_a_dynamic_zoom_off_the_page_keeps_zooming_out() {
+        let mut model = model_with_registry(crate::build_registry());
+        // Every page measured, so an off-page pointer is off a page the
+        // layout can still place rather than one it has never seen.
+        for page in 0..model.viewport.page_count() {
+            let geometry = model
+                .document
+                .page_geometry(page)
+                .expect("the seed measures")
+                .clone();
+            model.viewport.measure_page(geometry).expect("it applies");
+        }
+        model.viewport.fit(FitMode::Page).expect("the page fits");
+        let index = onionskin_plugin_api::PluginRegistry::tools(model.registry())
+            .position(|tool| {
+                tool.capabilities()
+                    .contains(&onionskin_plugin_api::ToolCapability::DynamicZoom)
+            })
+            .expect("tools-basic registers a dynamic zoom tool");
+        assert!(model.activate_tool(index).expect("the tool activates"));
+
+        let anchor = point(px(400.0), px(300.0));
+        model
+            .pointer_down(anchor, 1.0, GpuiModifiers::default())
+            .expect("the press maps onto a page");
+
+        let mut zooms = vec![model.viewport.zoom()];
+        for step in 1..=8u8 {
+            let at = point(anchor.x, anchor.y + px(40.0 * f32::from(step)));
+            model
+                .pointer_move(at, 1.0, GpuiModifiers::default(), true)
+                .expect("the move is handled");
+            zooms.push(model.viewport.zoom());
+        }
+
+        for pair in zooms.windows(2) {
+            assert!(
+                pair[1] < pair[0],
+                "the zoom stopped falling mid-drag: {zooms:?}"
+            );
+        }
+        // 320 pixels down is 2^(-320/240) of where it started.
+        let expected = zooms[0] * 2.0_f32.powf(-320.0 / 240.0);
+        let last = *zooms.last().expect("the drag reported zooms");
+        assert!(
+            (last / expected - 1.0).abs() < 1e-3,
+            "{last} is not 2^(-320/240) of {}: {zooms:?}",
+            zooms[0]
+        );
+        assert_eq!(
+            model.active_tool(),
+            Some(index),
+            "the drag cancelled the tool"
+        );
     }
 
     /// A raster of `page` at zoom 1, all paper except for `marks`.
