@@ -408,9 +408,9 @@ fn release_artifacts_build_the_windowed_viewer() {
         let Some(run) = field(step, "run") else {
             continue;
         };
-        for command in run.lines() {
+        for command in script_lines(&run) {
             assert!(
-                !builds_the_app(command) || command.contains("--features shell"),
+                !builds_the_app(&command) || command.contains("--features shell"),
                 "a release step builds the app without the shell feature, overwriting the binary the packaging scripts ship: {command}"
             );
         }
@@ -3499,11 +3499,37 @@ fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
 /// either overwrites the `target/release/onionskin` the packaging scripts
 /// ship.
 fn builds_the_app(command: &str) -> bool {
-    let words = command.split_whitespace().collect::<Vec<_>>();
+    let words = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(['"', '\'', '`']))
+        .collect::<Vec<_>>();
+    // `sh -c "cargo build ..."` makes the word `"cargo`, and a `$CARGO` or an
+    // absolute path reaches the same binary.
+    let cargo =
+        |word: &&str| matches!(*word, "cargo" | "$CARGO" | "${CARGO}") || word.ends_with("/cargo");
     words
         .iter()
-        .position(|word| *word == "cargo")
+        .position(cargo)
         .is_some_and(|at| words[at + 1..].iter().any(|w| matches!(*w, "build" | "b")))
+}
+
+/// A `run:` scalar's commands, with shell line continuations joined. Scanning
+/// the scalar a line at a time reads a continued `cargo \` and its arguments as
+/// two commands that each build nothing.
+fn script_lines(run: &str) -> Vec<String> {
+    let mut commands: Vec<String> = Vec::new();
+    for line in run.lines() {
+        let line = line.trim();
+        match commands.last_mut() {
+            Some(last) if last.ends_with('\\') => {
+                last.pop();
+                last.push(' ');
+                last.push_str(line);
+            }
+            _ => commands.push(line.to_owned()),
+        }
+    }
+    commands
 }
 
 /// Every string literal reachable from an expression.
@@ -3533,7 +3559,10 @@ struct Function {
     messages: Vec<String>,
     /// Method calls, as `.method` and as `receiver.method`.
     invocations: Vec<String>,
-    /// The names of the functions and methods this one calls.
+    /// The free functions this one calls. Method names stay out: reachability
+    /// resolves names against this file's top-level functions, so a
+    /// `tally.report()` in the live walk would otherwise reach a never-called
+    /// free `fn report()` and let its assertion answer for a deleted one.
     calls: Vec<String>,
 }
 
@@ -3575,7 +3604,6 @@ impl<'ast> Visit<'ast> for Function {
         if matches!(method.as_str(), "fail" | "record") {
             self.messages.extend(strings_in(&call.args));
         }
-        self.calls.push(method);
         syn::visit::visit_expr_method_call(self, call);
     }
 
@@ -3633,6 +3661,18 @@ impl Suite {
     }
 }
 
+/// What an attribute is called. The first path segment, not the last: a tool
+/// attribute such as `#[rustfmt::skip]` is named by its tool, and reading the
+/// last segment calls it `skip`, which no reviewed set would contain.
+fn attribute_name(attribute: &syn::Attribute) -> String {
+    attribute
+        .path()
+        .segments
+        .first()
+        .map(|segment| segment.ident.to_string())
+        .unwrap_or_default()
+}
+
 /// The inner doc comment of a parsed file, which is an attribute rather than a
 /// comment and so survives parsing.
 fn module_doc(file: &syn::File) -> String {
@@ -3684,6 +3724,17 @@ fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
         "{file} no longer claims guarantee {number}"
     );
 
+    // One scope up from the per-function pin: `#![cfg(any())]` under the `//!`
+    // header takes out every test in the file at once, and each of them still
+    // reads as a live `#[test]`.
+    for attribute in &parsed.attrs {
+        let name = attribute_name(attribute);
+        assert_eq!(
+            name, "doc",
+            "{file} carries a file-level `#![{name}]`, which can compile the whole suite away while every test in it still reads as live"
+        );
+    }
+
     let mut suite = Suite {
         file: file.to_owned(),
         ..Suite::default()
@@ -3697,7 +3748,7 @@ fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
                 let mut names = item
                     .attrs
                     .iter()
-                    .filter_map(|attr| Some(attr.path().segments.last()?.ident.to_string()))
+                    .map(attribute_name)
                     // A doc comment is an attribute too, and the one kind that
                     // cannot switch a test off.
                     .filter(|name| name != "doc")
@@ -3715,11 +3766,16 @@ fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
         let body = suite.functions.get(*name).unwrap_or_else(|| {
             panic!("{file} no longer defines {name}, so guarantee {number} is unchecked")
         });
-        assert_eq!(
-            body.attributes,
-            vec!["test"],
-            "{file}'s {name} carries attributes beyond #[test], which can ignore it or compile it away while still reading as a test"
+        assert!(
+            body.attributes.iter().any(|name| name == "test"),
+            "{file}'s {name} is no longer a #[test]"
         );
+        for attribute in &body.attributes {
+            assert!(
+                attribute == "test" || INERT_ATTRIBUTES.contains(&attribute.as_str()),
+                "{file}'s {name} carries `#[{attribute}]`, which is not one of the attributes reviewed as unable to change whether the test runs"
+            );
+        }
     }
 
     // Everything the named tests reach. The assertions themselves live in the
@@ -3888,6 +3944,10 @@ fn every_malformed_file_repairs_and_saves_over_intact_original_bytes() {
 }
 "#;
 
+/// Attributes reviewed as unable to change whether a test runs. `#[ignore]`,
+/// `#[cfg]`, `#[cfg_attr]` and `#[should_panic]` are all absent on purpose.
+const INERT_ATTRIBUTES: &[&str] = &["allow", "rustfmt"];
+
 const WHOLE_SET: &str = "guarantee test 6 requires the whole malformed set";
 
 /// The assertion as it appears in the decoy, so a seed can replace it whole.
@@ -3949,6 +4009,22 @@ fn an_assertion_that_only_looks_present_is_refused() {
     rejects("the assertion parked in an ignored test", || {
         read_decoy(&parked)
     });
+
+    // The live walk calls `tally.report()`. A free `fn report()` that nothing
+    // calls shares that name, so a call graph fed method names as well as
+    // function names reaches it and lets its assertion answer for the deleted
+    // one. The control below, identical but named so nothing collides, is
+    // refused either way; this pair isolates name resolution as the hole.
+    for name in ["report", "never_named_anywhere"] {
+        let colliding = format!(
+            "{}\nfn {name}() {{\n    assert_eq!(1, 1, \"{WHOLE_SET}\");\n}}\n",
+            DECOY_SUITE.replace(DECOY_ASSERTION, "    let _ = &tally;")
+        );
+        rejects(
+            &format!("the assertion moved to an uncalled fn {name}()"),
+            || read_decoy(&colliding),
+        );
+    }
 }
 
 #[test]
@@ -3966,6 +4042,23 @@ fn an_enforcing_test_switched_off_by_an_attribute_is_refused() {
         let seeded = DECOY_SUITE.replace("#[test]\n", &format!("#[test]\n{attribute}\n"));
         assert!(seeded != DECOY_SUITE, "the decoy for {what} did not apply");
         rejects(what, || read_decoy(&seeded));
+    }
+
+    // One scope up, and stronger: this compiles every test in the file away at
+    // once, and each of them still reads as a live `#[test]`.
+    let seeded = DECOY_SUITE.replace("\n#[test]", "\n#![cfg(any())]\n\n#[test]");
+    assert!(
+        seeded != DECOY_SUITE,
+        "the file-level cfg decoy did not apply"
+    );
+    rejects("the whole suite compiled away by a file-level cfg", || {
+        read_decoy(&seeded)
+    });
+
+    // Inert attributes are reviewed rather than merely tolerated, so a
+    // maintainer adding one does not hit a false failure.
+    for inert in ["#[allow(clippy::needless_range_loop)]", "#[rustfmt::skip]"] {
+        read_decoy(&DECOY_SUITE.replace("#[test]\n", &format!("#[test]\n{inert}\n")));
     }
 }
 
@@ -4061,6 +4154,10 @@ fn every_way_of_reaching_cargo_build_counts_as_building_the_app() {
         "RUSTFLAGS=-Awarnings cargo build --release -p onionskin-app",
         "cd . && cargo build --release -p onionskin-app",
         "cargo build --release --bin onionskin",
+        "sh -c \"cargo build --release -p onionskin-app\"",
+        "bash -lc 'cargo build --release -p onionskin-app'",
+        "$CARGO build --release -p onionskin-app",
+        "/usr/local/bin/cargo build --release -p onionskin-app",
     ] {
         assert!(
             builds_the_app(command),
@@ -4077,4 +4174,14 @@ fn every_way_of_reaching_cargo_build_counts_as_building_the_app() {
             "a command that builds nothing is treated as a rebuild: {command}"
         );
     }
+
+    // A continued command is one command. Scanned a line at a time, neither
+    // half builds anything and the rebuild goes unnoticed.
+    let continued = "cargo \\\n  build --release -p onionskin-app";
+    assert!(
+        script_lines(continued)
+            .iter()
+            .any(|command| builds_the_app(command)),
+        "a rebuild split across a line continuation would go unnoticed"
+    );
 }
