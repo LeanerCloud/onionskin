@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use gpui::{point, px, Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
+use gpui::{Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
@@ -18,7 +18,7 @@ use onionskin_plugin_api::{
 };
 #[cfg(test)]
 use onionskin_render::PageRender;
-use onionskin_render::{BaseRaster, Tile, TileStore, TILE_SIZE};
+use onionskin_render::{BaseRaster, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
 use super::input::{
@@ -57,6 +57,15 @@ pub struct TextOutline {
 const PAGE_GAP: f32 = 12.0;
 const VIEW_HISTORY_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 const RGBA_BYTES_PER_PIXEL: usize = 4;
+/// How far a tile's pixels are duplicated past its own edge in the atlas.
+///
+/// GPUI samples linearly right up to an atlas allocation's edge, so the
+/// outermost sample of one tile reads its neighbour unless a copy of the edge
+/// pixel sits between them. One is enough for linear sampling and is what
+/// `fdaf657` shipped to close the tile seams; the paint then has to place the
+/// image one gutter outside the clip on every side, so the duplicates land
+/// outside the visible rectangle.
+const ATLAS_GUTTER_PX: u32 = 1;
 pub(super) const SNAPSHOT_RGBA_BYTE_LIMIT: usize = 3840 * 2160 * RGBA_BYTES_PER_PIXEL;
 /// How long the canvas keeps polling a request nothing has answered.
 ///
@@ -350,13 +359,15 @@ pub struct CanvasModel {
     registry: PluginRegistry,
     active_tool: Option<usize>,
     input: InputState,
+    /// Every raster the canvas holds, and the only place it holds one. A
+    /// second collection beside this one carried the same base rasters under
+    /// its own eviction policy, so a page scrolled out of view lost the
+    /// raster it would have been scaled from while the store still had it.
     tiles: TileStore,
-    sources: BTreeMap<PageIndex, BaseRaster>,
     geometry_requests: BTreeSet<PageIndex>,
     failed_geometry: BTreeSet<PageIndex>,
     requests: BTreeMap<PageIndex, RenderRequest>,
     failed_renders: BTreeSet<PageIndex>,
-    placeholders: BTreeSet<PageIndex>,
     generation: u64,
     signature: Option<RenderSignature>,
     canvas_origin: ViewPoint,
@@ -430,12 +441,10 @@ impl CanvasModel {
             active_tool,
             input: InputState::default(),
             tiles: TileStore::new(),
-            sources: BTreeMap::new(),
             geometry_requests: BTreeSet::new(),
             failed_geometry: BTreeSet::new(),
             requests: BTreeMap::new(),
             failed_renders: BTreeSet::new(),
-            placeholders: BTreeSet::new(),
             generation: 0,
             signature: None,
             canvas_origin: ViewPoint::default(),
@@ -633,11 +642,9 @@ impl CanvasModel {
     ///
     /// The store is keyed by page and zoom, not by the options the raster was
     /// produced with, so nothing in it would be rebuilt on its own. Clearing
-    /// it is not enough either: `sources` holds the same rasters for
-    /// placeholders and would put the old layer state straight back on
-    /// screen, and the signature has not changed, so without resetting it the
-    /// generation would not advance and the visible pages would never be
-    /// asked for again.
+    /// it is not enough either: the signature has not changed, so without
+    /// resetting it the generation would not advance and the visible pages
+    /// would never be asked for again.
     pub fn set_layer_visible(&mut self, layer: ObjRef, visible: bool) -> Result<bool, CanvasError> {
         if !self.document.set_layer_visible(layer, visible)? {
             return Ok(false);
@@ -659,10 +666,8 @@ impl CanvasModel {
         self.pending_thumbnails.clear();
         self.ready_thumbnails.clear();
         self.tiles.clear();
-        self.sources.clear();
         self.requests.clear();
         self.failed_renders.clear();
-        self.placeholders.clear();
         // The next update compares the visible set against `None`, advances
         // the generation, and re-requests every page. The advance is also
         // what makes the answers already in flight, which were rendered with
@@ -1080,15 +1085,27 @@ impl CanvasModel {
         self.canvas_origin
     }
 
-    pub fn generation(&self) -> u64 {
-        self.generation
+    /// A window point in the canvas's own coordinates.
+    ///
+    /// The one place the canvas origin is subtracted. Hit testing, panning
+    /// and the zoom anchors used to do it in three places across two modules,
+    /// and one of the three left it out: a pan tracked raw window points,
+    /// which agree with these only while the origin holds still. When it
+    /// moves mid-drag, the canvas-local delta is the one that keeps the
+    /// content the pointer grabbed under the pointer, because the content
+    /// moved with the origin and the pointer did not.
+    fn canvas_point(&self, window: Point<Pixels>) -> ViewPoint {
+        ViewPoint {
+            x: f32::from(window.x) - self.canvas_origin.x,
+            y: f32::from(window.y) - self.canvas_origin.y,
+        }
     }
 
     pub fn status(&self) -> Option<&CanvasStatus> {
         self.status.as_ref()
     }
 
-    pub fn has_pending_render(&self) -> bool {
+    fn has_pending_render(&self) -> bool {
         !self.requests.is_empty()
     }
 
@@ -1171,12 +1188,15 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// `at` is the zoom anchor in window coordinates, as the platform
+    /// reports it; `delta` is a displacement, which no origin applies to.
     pub fn scroll(
         &mut self,
         delta: ViewPoint,
         zooming: bool,
-        at: ViewPoint,
+        at: Point<Pixels>,
     ) -> Result<(), CanvasError> {
+        let at = self.canvas_point(at);
         self.viewport.scroll(delta, zooming, at)?;
         Ok(())
     }
@@ -1185,10 +1205,11 @@ impl CanvasModel {
     /// anything else. The filter lives here, at the OS event boundary, rather
     /// than in the viewport, which treats a non-positive factor as the error
     /// it is.
-    pub fn pinch(&mut self, factor: f32, at: ViewPoint) -> Result<bool, CanvasError> {
+    pub fn pinch(&mut self, factor: f32, at: Point<Pixels>) -> Result<bool, CanvasError> {
         if !(factor.is_finite() && factor > 0.0) {
             return Ok(false);
         }
+        let at = self.canvas_point(at);
         self.viewport.pinch(factor, at)?;
         Ok(true)
     }
@@ -1200,12 +1221,13 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
     ) -> Result<bool, CanvasError> {
         validate_pressure(pressure)?;
+        let at = self.canvas_point(position);
         if self.active_tool.is_none() {
-            self.input.begin_pan(window_point(position));
+            self.input.begin_pan(at);
             return Ok(true);
         }
 
-        let Some(input) = self.map_pointer(position, pressure, modifiers)? else {
+        let Some(input) = self.map_pointer(at, pressure, modifiers)? else {
             return Ok(false);
         };
         self.input.begin_tool();
@@ -1220,9 +1242,8 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
         left_button_pressed: bool,
     ) -> Result<bool, CanvasError> {
-        let update = self
-            .input
-            .move_to(window_point(position), left_button_pressed);
+        let at = self.canvas_point(position);
+        let update = self.input.move_to(at, left_button_pressed);
         if let Err(error) = validate_pressure(pressure) {
             let cancelled_tool = matches!(update, Some(DragUpdate::CancelTool))
                 || matches!(self.input.cancel(), Some(DragUpdate::CancelTool));
@@ -1237,7 +1258,7 @@ impl CanvasModel {
                 Ok(true)
             }
             Some(DragUpdate::ToolMove) => {
-                let input = match self.map_pointer(position, pressure, modifiers) {
+                let input = match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => input,
                     Ok(None) => {
                         self.input.cancel();
@@ -1267,6 +1288,7 @@ impl CanvasModel {
         pressure: f32,
         modifiers: GpuiModifiers,
     ) -> Result<bool, CanvasError> {
+        let at = self.canvas_point(position);
         let drag = self.input.end();
         if let Err(error) = validate_pressure(pressure) {
             if drag == Some(DragKind::Tool) {
@@ -1277,7 +1299,7 @@ impl CanvasModel {
         match drag {
             Some(DragKind::Pan) => Ok(true),
             Some(DragKind::Tool) => {
-                match self.map_pointer(position, pressure, modifiers) {
+                match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => self.dispatch_tool(ToolPointerPhase::Up, input),
                     Ok(None) => self.cancel_active_tool(),
                     Err(error) => {
@@ -1312,21 +1334,35 @@ impl CanvasModel {
 
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
-        self.retain_visible_state(&visible);
-        // Everything the store hands out from here until `paint_list` ends is
-        // this frame's, and exempt from eviction: the exact-zoom cache, and
-        // the other-zoom cache a rescaled placeholder paints from. Draining
-        // inside the frame matters when several rasters land at once: four of
-        // them at 6x are 266 MiB against a 202 MiB budget, and unframed they
-        // would evict each other as they arrived.
+        // The rasters this drains are exempt from eviction until the frame
+        // closes below. That matters when several land at once: four of them
+        // at 6x are 266 MiB against a 202 MiB budget, and unframed they would
+        // evict each other as they arrived.
+        //
+        // The frame closes here rather than in `paint_list`, so an update
+        // that is not followed by a paint, which is every pointer move and
+        // every poll tick, leaves nothing open behind it, on the error path
+        // as well. Its pages stay exempt for one more frame, which is what
+        // carries them into the paint.
         self.tiles.begin_frame();
+        let framed = self.drain_and_schedule(&visible);
+        self.tiles.end_frame();
+        framed
+    }
+
+    /// The part of an update that has to run inside a store frame: applying
+    /// the rasters that have arrived and asking for the ones that have not.
+    ///
+    /// Split out so its errors cannot escape past the `end_frame` that
+    /// matches this frame's `begin_frame`.
+    fn drain_and_schedule(&mut self, visible: &[PagePlacement]) -> Result<(), CanvasError> {
         self.drain_render_responses()?;
-        self.schedule_visible_renders(&visible)?;
+        self.schedule_visible_renders(visible)?;
         self.drain_render_responses()?;
         Ok(())
     }
 
-    pub fn drain_geometry_responses(&mut self) -> Result<usize, CanvasError> {
+    fn drain_geometry_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
         while let Some(response) = self.document.try_page_geometry_response()? {
             drained += 1;
@@ -1335,8 +1371,13 @@ impl CanvasModel {
         Ok(drained)
     }
 
-    pub fn drain_render_responses(&mut self) -> Result<usize, CanvasError> {
-        self.sync_signature()?;
+    /// Apply every render answer waiting, dropping the ones whose generation
+    /// the current signature has moved past.
+    ///
+    /// The signature is the caller's to refresh. This used to re-derive it
+    /// per drain, which re-walked the layout for a visible set `update` had
+    /// computed moments earlier and could not have changed since.
+    fn drain_render_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
         while let Some(response) = self.document.try_render_response()? {
             drained += usize::from(self.apply_render_response(response));
@@ -1344,6 +1385,14 @@ impl CanvasModel {
         Ok(drained)
     }
 
+    /// What to draw this frame, in canvas coordinates.
+    ///
+    /// Opens a store frame of its own. `update` pins the cache each visible
+    /// page has at the exact zoom; the paint may instead fall back to a cache
+    /// at another zoom, and that one has to be exempt from eviction too while
+    /// the rest of the frame is cut. Everything that can fail before a page
+    /// is asked for happens first, so a frame that opens here also closes
+    /// here.
     pub fn paint_list(&mut self) -> Result<PaintList, CanvasError> {
         let visible = self.viewport.visible_pages()?;
         let mut paint = PaintList {
@@ -1361,19 +1410,40 @@ impl CanvasModel {
         let rotation = self.viewport.rotation();
         let exact_zoom = self.viewport.zoom();
         let viewport_size = self.viewport.size();
-        let mut displayed_images = BTreeSet::new();
 
-        for placement in visible.into_iter().filter(|page| page.measured) {
-            let Some(source_zoom) = self.paint_source(placement.page, exact_zoom)? else {
+        self.tiles.begin_frame();
+        let cut = self.cut_visible_tiles(&visible, rotation, exact_zoom, viewport_size);
+        self.tiles.end_frame();
+        paint.tiles = cut?;
+        paint.overlays = self.overlay_paints();
+        Ok(paint)
+    }
+
+    /// The tiles of every measured visible page, as images the window can
+    /// paint.
+    ///
+    /// Split out of [`Self::paint_list`] so the store frame it runs inside is
+    /// closed whatever this returns. The conversion below can fail on a tile
+    /// whose buffer disagrees with its own dimensions, and an error escaping
+    /// past the `end_frame` would leave the frame open, which is the state the
+    /// frame boundary exists to prevent.
+    fn cut_visible_tiles(
+        &mut self,
+        visible: &[PagePlacement],
+        rotation: ViewRotation,
+        exact_zoom: f32,
+        viewport_size: ViewSize,
+    ) -> Result<Vec<TilePaint>, CanvasError> {
+        let mut tiles = Vec::new();
+        let mut displayed_images = BTreeSet::new();
+        for placement in visible.iter().filter(|page| page.measured) {
+            // One lookup, so the raster the tiles are cut from and the zoom
+            // they are reported at cannot come from two places and disagree.
+            let Some(cache) = self.tiles.paint_source(placement.page, exact_zoom) else {
                 continue;
             };
-            let source = RasterPaintSource {
-                page: placement.page,
-                zoom: source_zoom,
-                rect: placement.rect,
-                rotation,
-            };
-            let raw_tiles = collect_tiles(&mut self.tiles, source, viewport_size);
+            let source_zoom = cache.base().zoom();
+            let raw_tiles = collect_tiles(cache, placement.rect, rotation, viewport_size);
             for raw in raw_tiles {
                 let key = TileImageKey::new(
                     placement.page,
@@ -1392,7 +1462,7 @@ impl CanvasModel {
                 displayed_images.insert(key);
                 let (content_width, content_height) =
                     rotated_size(raw.region.width, raw.region.height, rotation);
-                paint.tiles.push(TilePaint {
+                tiles.push(TilePaint {
                     page: placement.page,
                     rect: atlas_image_rect(raw.rect, content_width, content_height),
                     clip_rect: raw.rect,
@@ -1402,9 +1472,7 @@ impl CanvasModel {
             }
         }
         self.image_cache.retain_keys(&displayed_images);
-        self.tiles.end_frame();
-        paint.overlays = self.overlay_paints();
-        Ok(paint)
+        Ok(tiles)
     }
 
     /// Fulfil a pending snapshot request as owned pixels ready to encode, or
@@ -1423,7 +1491,7 @@ impl CanvasModel {
         };
         let page = request.region.page;
         let (Some(source), Some(geometry)) =
-            (self.sources.get(&page), self.viewport.page_geometry(page))
+            (self.tiles.base(page), self.viewport.page_geometry(page))
         else {
             return Err(CanvasError::SnapshotUnrendered { page });
         };
@@ -1587,46 +1655,56 @@ impl CanvasModel {
         // it never arrives, and a page that failed once stayed blank for the
         // life of the process.
         self.failed_geometry.clear();
-        self.placeholders.clear();
         Ok(true)
     }
 
-    fn sync_signature(&mut self) -> Result<bool, CanvasError> {
-        let visible = self.viewport.visible_pages()?;
-        self.update_signature(&visible)
-    }
-
-    fn retain_visible_state(&mut self, visible: &[PagePlacement]) {
-        let pages: BTreeSet<_> = visible.iter().map(|page| page.page).collect();
-        self.sources.retain(|page, _| pages.contains(page));
-    }
-
+    /// Ask for a render of every visible page that has no raster at the
+    /// current zoom yet.
+    ///
+    /// An unmeasured page is skipped by having no geometry rather than by
+    /// reading `PagePlacement::measured`: the layout answers both from the
+    /// same map, so asking for the geometry directly says what the render
+    /// needs and cannot disagree with the flag. It used to be a filter on the
+    /// flag and an `expect` on the geometry, which is one invariant asserted
+    /// twice.
+    ///
+    /// Claiming the raster is why this runs for every visible page and not
+    /// only the ones it goes on to ask for. The store is the canvas's only
+    /// raster owner, so a page's cache survives the frame only if the frame
+    /// claims it; a zoom change has no cache at the exact zoom, and asking
+    /// for one would claim nothing and let the close of the frame evict the
+    /// raster the paint was about to scale.
     fn schedule_visible_renders(
         &mut self,
         visible: &[PagePlacement],
     ) -> Result<usize, CanvasError> {
         let zoom = self.viewport.zoom();
         let mut queued = 0;
-        for placement in visible.iter().filter(|page| page.measured) {
+        for placement in visible {
+            let Some(geometry) = self.viewport.page_geometry(placement.page) else {
+                continue;
+            };
+            // Whatever this page will paint from, the cache at this zoom or
+            // the one the paint scales instead, is this frame's. It is also
+            // what the worker scales into the placeholder it answers with
+            // immediately.
+            let resident = self
+                .tiles
+                .paint_source(placement.page, zoom)
+                .map(TileCache::base);
             let request = RenderRequest {
                 page: placement.page,
                 zoom,
                 generation: self.generation,
             };
-            if self.tiles.get(placement.page, zoom).is_some()
+            if resident.is_some_and(|base| base.zoom().to_bits() == zoom.to_bits())
                 || self.requests.get(&placement.page) == Some(&request)
                 || self.failed_renders.contains(&placement.page)
             {
                 continue;
             }
-            let geometry = self
-                .viewport
-                .page_geometry(placement.page)
-                .expect("a measured placement retains geometry")
-                .clone();
-            let source = self.sources.get(&placement.page);
             self.document
-                .request_render_with_geometry(request, &geometry, source)?;
+                .request_render_with_geometry(request, geometry, resident)?;
             self.requests.insert(placement.page, request);
             queued += 1;
         }
@@ -1641,21 +1719,16 @@ impl CanvasModel {
         self.responses += 1;
 
         match response {
-            RenderResponse::Placeholder(placeholder) => {
-                if let Some(source) = placeholder.source() {
-                    self.sources
-                        .entry(request.page)
-                        .or_insert_with(|| source.clone());
-                }
-                self.placeholders.insert(request.page);
-            }
+            // Nothing to record. The worker echoes back the raster the
+            // request carried, which is the one the store already holds and
+            // the one the placeholder is drawn by scaling, and the page stays
+            // in `requests`, which is what keeps the poll armed until a
+            // terminal answer arrives.
+            RenderResponse::Placeholder(_) => {}
             RenderResponse::Raster { render, .. } => {
                 self.requests.remove(&request.page);
                 self.failed_renders.remove(&request.page);
-                self.placeholders.remove(&request.page);
-                let raster = render.raster;
-                self.sources.insert(request.page, raster.clone());
-                self.tiles.insert(request.page, raster);
+                self.tiles.insert(request.page, render.raster);
                 if render.warnings.is_empty() {
                     if matches!(
                         self.status.as_ref(),
@@ -1676,7 +1749,6 @@ impl CanvasModel {
             RenderResponse::Failed { error, .. } => {
                 self.requests.remove(&request.page);
                 self.failed_renders.insert(request.page);
-                self.placeholders.remove(&request.page);
                 self.status = Some(CanvasStatus::Error {
                     page: Some(request.page),
                     message: format!("page {} at {}x: {error}", request.page, request.zoom),
@@ -1684,34 +1756,6 @@ impl CanvasModel {
             }
         }
         true
-    }
-
-    /// The zoom whose cached raster this page paints from, or `None` when it
-    /// has none yet.
-    ///
-    /// Only the zoom, because that plus the page is the store's key and the
-    /// store owns the raster's dimensions. Reporting a size here as well gave
-    /// the paint two sources for one fact, and the one it reported came from
-    /// `sources` while the tiles it cut came from the store.
-    fn paint_source(
-        &mut self,
-        page: PageIndex,
-        exact_zoom: f32,
-    ) -> Result<Option<f32>, CanvasError> {
-        if let Some(cache) = self.tiles.get(page, exact_zoom) {
-            let source = cache.base().clone();
-            self.sources.insert(page, source);
-            return Ok(Some(exact_zoom));
-        }
-
-        let Some(source) = self.sources.get(&page).cloned() else {
-            return Ok(None);
-        };
-        let source_zoom = source.zoom();
-        if self.tiles.get(page, source_zoom).is_none() {
-            self.tiles.insert(page, source);
-        }
-        Ok(Some(source_zoom))
     }
 
     /// What the active tool wants drawn this frame, in canvas coordinates.
@@ -1784,17 +1828,11 @@ impl CanvasModel {
 
     fn map_pointer(
         &self,
-        position: Point<Pixels>,
+        at: ViewPoint,
         pressure: f32,
         modifiers: GpuiModifiers,
     ) -> Result<Option<PointerInput>, CanvasError> {
-        Ok(pointer_input(
-            &self.viewport,
-            position,
-            point(px(self.canvas_origin.x), px(self.canvas_origin.y)),
-            pressure,
-            modifiers,
-        )?)
+        Ok(pointer_input(&self.viewport, at, pressure, modifiers)?)
     }
 
     fn dispatch_tool(&mut self, phase: ToolPointerPhase, input: PointerInput) {
@@ -1875,13 +1913,6 @@ fn axis_delta(origin: f32, extent: f32, viewport: f32) -> f32 {
     (viewport - extent) / 2.0 - origin
 }
 
-fn window_point(point: Point<Pixels>) -> ViewPoint {
-    ViewPoint {
-        x: f32::from(point.x),
-        y: f32::from(point.y),
-    }
-}
-
 /// The axis-aligned extent of four mapped corners. A marquee is dragged
 /// axis-aligned in the viewport, but it is carried as a page rectangle, so
 /// under a rotated view its corners come back in a different order than
@@ -1910,7 +1941,7 @@ struct TileImageKey {
     zoom_bits: u32,
     col: u32,
     row: u32,
-    rotation: u8,
+    rotation: ViewRotation,
 }
 
 impl TileImageKey {
@@ -1920,7 +1951,7 @@ impl TileImageKey {
             zoom_bits: zoom.to_bits(),
             col,
             row,
-            rotation: rotation_code(rotation),
+            rotation,
         }
     }
 }
@@ -1998,14 +2029,6 @@ struct RasterCrop {
     height: u32,
 }
 
-#[derive(Clone, Copy)]
-struct RasterPaintSource {
-    page: PageIndex,
-    zoom: f32,
-    rect: ViewRect,
-    rotation: ViewRotation,
-}
-
 /// The visible tiles of one page's cached raster.
 ///
 /// The raster's dimensions come from the cache being cut, never from the
@@ -2014,13 +2037,11 @@ struct RasterPaintSource {
 /// underflow. A caller that passed its own size could disagree with the store
 /// and did not have to be right.
 fn collect_tiles(
-    store: &mut TileStore,
-    source: RasterPaintSource,
+    cache: &TileCache,
+    page_rect: ViewRect,
+    rotation: ViewRotation,
     viewport_size: ViewSize,
 ) -> Vec<RawTile> {
-    let cache = store
-        .get(source.page, source.zoom)
-        .expect("the selected paint source has a tile cache");
     let (raster_width, raster_height) = (cache.base().width(), cache.base().height());
     let mut tiles = Vec::with_capacity((cache.cols() * cache.rows()) as usize);
     for row in 0..cache.rows() {
@@ -2031,12 +2052,7 @@ fn collect_tiles(
                 width: TILE_SIZE.min(raster_width - col * TILE_SIZE),
                 height: TILE_SIZE.min(raster_height - row * TILE_SIZE),
             };
-            let rect = tile_rect(
-                source.rect,
-                region,
-                (raster_width, raster_height),
-                source.rotation,
-            );
+            let rect = tile_rect(page_rect, region, (raster_width, raster_height), rotation);
             if !rect_intersects_viewport(rect, viewport_size) {
                 continue;
             }
@@ -2150,16 +2166,16 @@ fn atlas_tile_bgra(
         crop_height,
         rotation,
     )?;
-    let output_width = width + 2;
-    let output_height = height + 2;
+    let output_width = width + 2 * ATLAS_GUTTER_PX;
+    let output_height = height + 2 * ATLAS_GUTTER_PX;
     let mut output = vec![0; output_width as usize * output_height as usize * 4];
 
-    // GPUI linearly samples to exact atlas-allocation edges. Keep visible
-    // samples inside duplicate pixels so adjacent atlas entries cannot bleed.
+    // Every gutter pixel repeats the tile edge nearest to it, so a sample that
+    // runs past the tile reads the tile's own colour instead of a neighbour's.
     for y in 0..output_height {
-        let source_y = y.saturating_sub(1).min(height - 1);
+        let source_y = y.saturating_sub(ATLAS_GUTTER_PX).min(height - 1);
         for x in 0..output_width {
-            let source_x = x.saturating_sub(1).min(width - 1);
+            let source_x = x.saturating_sub(ATLAS_GUTTER_PX).min(width - 1);
             let source = (source_y as usize * width as usize + source_x as usize) * 4;
             let destination = (y as usize * output_width as usize + x as usize) * 4;
             output[destination..destination + 4].copy_from_slice(&pixels[source..source + 4]);
@@ -2304,6 +2320,13 @@ fn write_snapshot_png(
     Ok(())
 }
 
+/// Where one pixel of a `width` by `height` image lands after the turn.
+///
+/// This is `ViewRotation::rotate_rect_within` applied to a one-by-one rect,
+/// exactly, and deliberately not written as a call to it: both callers run it
+/// once per pixel inside a double loop over a whole tile or crop, so building
+/// a `ViewRect` and a `ViewSize` per pixel would be real work on the paint
+/// path for a result that is the same by construction.
 fn rotate_pixel(x: u32, y: u32, width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
     match rotation {
         ViewRotation::None => (x, y),
@@ -2320,6 +2343,12 @@ fn rotated_size(width: u32, height: u32, rotation: ViewRotation) -> (u32, u32) {
     }
 }
 
+/// Where one tile of a page's raster lands on screen.
+///
+/// The turn is `ViewRotation`'s own: a tile inside its raster turns exactly
+/// as a rectangle inside a page does, and the app had written those four arms
+/// out a second time. What is left here is the part core cannot know, scaling
+/// the turned raster onto the rectangle the layout gave the page.
 fn tile_rect(
     page: ViewRect,
     tile: TileRegion,
@@ -2327,43 +2356,46 @@ fn tile_rect(
     rotation: ViewRotation,
 ) -> ViewRect {
     let (raster_width, raster_height) = raster;
-    let TileRegion {
-        col,
-        row,
-        width,
-        height,
-    } = tile;
-    let x = col * TILE_SIZE;
-    let y = row * TILE_SIZE;
-    let (x, y, width, height) = match rotation {
-        ViewRotation::None => (x, y, width, height),
-        ViewRotation::Clockwise90 => (raster_height - y - height, x, height, width),
-        ViewRotation::HalfTurn => (
-            raster_width - x - width,
-            raster_height - y - height,
-            width,
-            height,
-        ),
-        ViewRotation::Clockwise270 => (y, raster_width - x - width, height, width),
-    };
+    let turned = rotation.rotate_rect_within(
+        ViewRect {
+            origin: ViewPoint {
+                x: (tile.col * TILE_SIZE) as f32,
+                y: (tile.row * TILE_SIZE) as f32,
+            },
+            size: ViewSize {
+                width: tile.width as f32,
+                height: tile.height as f32,
+            },
+        },
+        ViewSize {
+            width: raster_width as f32,
+            height: raster_height as f32,
+        },
+    );
     let (output_width, output_height) = rotated_size(raster_width, raster_height, rotation);
     let scale_x = page.size.width / output_width as f32;
     let scale_y = page.size.height / output_height as f32;
     ViewRect {
         origin: ViewPoint {
-            x: page.origin.x + x as f32 * scale_x,
-            y: page.origin.y + y as f32 * scale_y,
+            x: page.origin.x + turned.origin.x * scale_x,
+            y: page.origin.y + turned.origin.y * scale_y,
         },
         size: ViewSize {
-            width: width as f32 * scale_x,
-            height: height as f32 * scale_y,
+            width: turned.size.width * scale_x,
+            height: turned.size.height * scale_y,
         },
     }
 }
 
+/// Where to paint a guttered tile image so its content lands exactly on
+/// `clip`, which is the rectangle the content alone occupies.
+///
+/// `content_width` and `content_height` are the tile without its gutter, so
+/// the ratio is what one gutter pixel is worth on screen at this zoom.
 fn atlas_image_rect(clip: ViewRect, content_width: u32, content_height: u32) -> ViewRect {
-    let gutter_width = clip.size.width / content_width as f32;
-    let gutter_height = clip.size.height / content_height as f32;
+    let gutter = ATLAS_GUTTER_PX as f32;
+    let gutter_width = gutter * clip.size.width / content_width as f32;
+    let gutter_height = gutter * clip.size.height / content_height as f32;
     ViewRect {
         origin: ViewPoint {
             x: clip.origin.x - gutter_width,
@@ -2376,20 +2408,12 @@ fn atlas_image_rect(clip: ViewRect, content_width: u32, content_height: u32) -> 
     }
 }
 
-fn rotation_code(rotation: ViewRotation) -> u8 {
-    match rotation {
-        ViewRotation::None => 0,
-        ViewRotation::Clockwise90 => 1,
-        ViewRotation::HalfTurn => 2,
-        ViewRotation::Clockwise270 => 3,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
+    use gpui::{point, px};
     use onionskin_core::{Error as CoreError, PageAlignment, PageLayoutMode};
     use onionskin_plugin_api::{ToolCtx, ToolPlugin};
     use onionskin_render::{InterpreterWarning, PageRender, RenderError};
@@ -2403,6 +2427,100 @@ mod tests {
 
     fn model() -> CanvasModel {
         model_with_registry(PluginRegistry::new())
+    }
+
+    /// A scroll-zoom and a pinch both anchor on a point the platform reports
+    /// in window coordinates, so both have to subtract the canvas origin
+    /// before the viewport sees it. Anchoring on the raw window point zooms
+    /// about a place the chrome's width and height away from the pointer.
+    #[test]
+    fn zoom_anchors_are_read_in_canvas_coordinates() {
+        let origin = ViewPoint { x: 50.0, y: 40.0 };
+        let window = point(px(150.0), px(140.0));
+        let canvas_local = point(px(100.0), px(100.0));
+
+        let gestures: [fn(&mut CanvasModel, Point<Pixels>); 2] = [
+            |model, at| {
+                model
+                    .scroll(ViewPoint { x: 0.0, y: 30.0 }, true, at)
+                    .expect("the view zooms");
+            },
+            |model, at| {
+                assert!(model.pinch(1.4, at).expect("the view zooms"));
+            },
+        ];
+        for gesture in gestures {
+            let mut offset = model();
+            offset.resize(origin, VIEWPORT).expect("the canvas resizes");
+            gesture(&mut offset, window);
+
+            let mut flush = model();
+            flush
+                .resize(ViewPoint::default(), VIEWPORT)
+                .expect("the canvas resizes");
+            gesture(&mut flush, canvas_local);
+
+            assert_ne!(
+                offset.viewport.snapshot(),
+                model().viewport.snapshot(),
+                "the gesture did nothing, so it would prove nothing"
+            );
+            assert_eq!(
+                offset.viewport.snapshot(),
+                flush.viewport.snapshot(),
+                "the anchor was read in window coordinates, not canvas ones"
+            );
+        }
+    }
+
+    /// The canvas origin moves whenever the chrome around it changes size,
+    /// and a pan can be in progress across that move. The grabbed content
+    /// moves with the origin while the pointer does not, so the viewport has
+    /// to follow by the same amount to keep the two together. Tracking raw
+    /// window points instead reports no movement at all, and the page stays
+    /// where the origin left it.
+    #[test]
+    fn a_pan_follows_the_canvas_origin_when_it_moves_mid_drag() {
+        let mut model = model();
+        assert!(
+            model.active_tool.is_none(),
+            "a pointer press pans only when no tool has it"
+        );
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        // Zoomed in and away from the ends, so the pan has room in both
+        // directions and cannot be clamped into looking like a no-op.
+        model
+            .viewport
+            .zoom_to(4.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        model.go_to_page(1).unwrap();
+        model.resize(ViewPoint::default(), VIEWPORT).unwrap();
+
+        let grab = point(px(100.0), px(100.0));
+        assert!(model
+            .pointer_down(grab, 1.0, GpuiModifiers::default())
+            .unwrap());
+        let before = model.viewport.offset();
+
+        // The chrome above the canvas grows by 50px. The pointer has not
+        // moved; the document under it has.
+        model
+            .resize(ViewPoint { x: 0.0, y: 50.0 }, VIEWPORT)
+            .unwrap();
+        assert!(model
+            .pointer_move(grab, 1.0, GpuiModifiers::default(), true)
+            .unwrap());
+
+        assert_eq!(
+            model.viewport.offset(),
+            ViewPoint {
+                x: before.x,
+                y: before.y + 50.0
+            },
+            "the view did not follow the origin, so the grabbed content slid \
+             out from under the pointer"
+        );
     }
 
     fn model_with_registry(registry: PluginRegistry) -> CanvasModel {
@@ -2582,8 +2700,8 @@ mod tests {
 
     /// The canvas half of the P4 review's layer note. The store is keyed by
     /// page and zoom, not by the render options, so nothing in it would be
-    /// rebuilt on its own; and `sources` holds the same rasters for
-    /// placeholders, so leaving them would put the old layer state back on
+    /// rebuilt on its own; and it is also what the next placeholder is scaled
+    /// from, so a raster left in it would put the old layer state back on
     /// screen the moment the page was scrolled.
     #[test]
     fn toggling_a_layer_drops_every_cached_pixel_and_asks_for_the_pages_again() {
@@ -2597,7 +2715,7 @@ mod tests {
             },
         }));
         assert_eq!(model.tiles.len(), 1, "there is a cached raster to lose");
-        assert!(!model.sources.is_empty());
+        assert!(model.tiles.base(0).is_some());
         let generation = model.generation;
         let layer = model.layers().expect("the layers read")[0].clone();
 
@@ -2607,8 +2725,8 @@ mod tests {
 
         assert_eq!(model.tiles.len(), 0, "the cached composites are stale");
         assert!(
-            model.sources.is_empty(),
-            "a placeholder built from the old raster would show the old layers again"
+            model.tiles.base(0).is_none(),
+            "a placeholder scaled from the old raster would show the old layers again"
         );
         assert!(model.requests.is_empty());
         assert!(
@@ -2960,7 +3078,7 @@ mod tests {
     }
 
     /// A model with page zero rendered and painted once, which is what puts
-    /// a raster in `sources` for the snapshot path to crop.
+    /// a raster in the store for the snapshot path to crop.
     fn painted_model(rgba: [u8; 4]) -> CanvasModel {
         let mut model = model();
         let request = prepare_request(&mut model);
@@ -3004,9 +3122,9 @@ mod tests {
             .expect("the snapshot is produced")
             .expect("a request was pending");
 
-        let source = model.sources.get(&0).expect("page zero is rendered");
+        let source = model.tiles.base(0).expect("page zero is rendered").clone();
         let geometry = model.viewport.page_geometry(0).unwrap().clone();
-        let expected = raster_crop(&geometry, snapshot_region(), source).unwrap();
+        let expected = raster_crop(&geometry, snapshot_region(), &source).unwrap();
         let decoded = decode(&png);
         assert_eq!(decoded.dimensions(), (expected.width, expected.height));
         // The rasters are premultiplied and PNG is not, so a half-opaque
@@ -3218,8 +3336,10 @@ mod tests {
         let expected: [PointerInput; 3] = std::array::from_fn(|index| {
             pointer_input(
                 model.viewport(),
-                positions[index],
-                point(px(origin.x), px(origin.y)),
+                ViewPoint {
+                    x: f32::from(positions[index].x) - origin.x,
+                    y: f32::from(positions[index].y) - origin.y,
+                },
                 pressures[index],
                 modifiers[index],
             )
@@ -3627,12 +3747,12 @@ mod tests {
     fn successful_view_commands_reuse_render_generation_scheduling() {
         let mut model = model();
         model.update().unwrap();
-        let generation = model.generation();
+        let generation = model.generation;
 
         assert!(model.zoom_to(2.0).unwrap());
         model.update().unwrap();
 
-        assert!(model.generation() > generation);
+        assert!(model.generation > generation);
         assert!(model.has_pending_render());
     }
 
@@ -3808,14 +3928,12 @@ mod tests {
         ));
     }
 
-    /// `paint_source` and `collect_tiles` used to take the raster's size from
-    /// different places for the same `(page, zoom)`: the first from `sources`,
-    /// the second from the tile store. The store's `cols` and `rows` come from
-    /// its own base raster, so a disagreement made `raster_width - col *
-    /// TILE_SIZE` underflow and took the window down.
-    ///
-    /// No reachable sequence produces the disagreement in the current code, so
-    /// it is constructed here directly.
+    /// The paint used to read the raster's size from a collection beside the
+    /// store while cutting its tiles from the store's own cache. The store's
+    /// `cols` and `rows` come from its base raster, so a disagreement made
+    /// `raster_width - col * TILE_SIZE` underflow and took the window down.
+    /// One lookup makes the disagreement unconstructible; what is left to pin
+    /// is that the tile count follows the raster the store holds.
     #[test]
     fn the_tiles_of_a_page_are_cut_to_the_raster_the_store_holds() {
         let mut model = model();
@@ -3833,15 +3951,249 @@ mod tests {
                 vec![255; (TILE_SIZE * 2 * 4) as usize],
             ),
         );
-        // A stale raster of a different size under the same key.
-        model
-            .sources
-            .insert(0, BaseRaster::new(8, 1, source_zoom, vec![255; 32]));
 
         let paint = model.paint_list().expect("the page paints");
 
-        let tiles = paint.tiles.iter().filter(|tile| tile.page == 0).count();
-        assert_eq!(tiles, 2, "the store holds a raster two tiles wide");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert_eq!(tiles.len(), 2, "the store holds a raster two tiles wide");
+        assert!(tiles.iter().all(|tile| tile.source_zoom == source_zoom));
+    }
+
+    /// The store is the only raster owner now, so the frame that is about to
+    /// paint has to claim what it will paint from. A zoom change misses the
+    /// exact-zoom cache, so nothing else does: the frame would close having
+    /// pinned nothing, eviction would run with nothing exempt, and the page
+    /// on screen would lose the raster it was about to be scaled from.
+    ///
+    /// The budget has to be small enough for eviction to actually run. At the
+    /// default 202 MiB nothing is ever evicted and this passes vacuously.
+    #[test]
+    fn a_zoom_change_keeps_the_raster_the_paint_will_scale() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        assert_eq!(
+            visible.iter().map(|page| page.page).collect::<Vec<_>>(),
+            [0],
+            "page zero alone is on screen"
+        );
+
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        // Room for one raster, so whatever the frame does not claim goes.
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        // Staged inside a frame so the setup does not evict one of them:
+        // page zero is on screen, page one is a page scrolled away.
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        assert_eq!(model.tiles.len(), 2, "both rasters are resident to start");
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        model.update().expect("the zoom-change frame runs");
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the frame evicted the raster the page on screen paints from"
+        );
+        let paint = model.paint_list().expect("the frame paints");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert!(
+            !tiles.is_empty(),
+            "the page on screen painted no tiles at the new zoom"
+        );
+        assert!(
+            tiles.iter().all(|tile| tile.source_zoom == 1.0),
+            "the resident 1x raster is what the 3x view scales"
+        );
+    }
+
+    /// The third of the three early exits. A page whose render has failed is
+    /// never asked for again under this signature, but it goes on painting
+    /// whatever raster it has, so it has to keep claiming it.
+    ///
+    /// Driven through `schedule_visible_renders` rather than `update`,
+    /// because `update_signature` clears `failed_renders` whenever the
+    /// signature moves: the exit is only reachable while the view holds
+    /// still, which is exactly when a render fails under it.
+    #[test]
+    fn a_page_whose_render_failed_still_claims_the_raster_it_paints() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        model.tiles.end_frame();
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+        model.failed_renders.insert(0);
+
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            0,
+            "a page whose render failed is not asked for again"
+        );
+        model.tiles.end_frame();
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "a failed page lost the raster it was still painting"
+        );
+    }
+
+    /// The claim buys a page the frame it is on screen for and the grace
+    /// window after it, and nothing more. A page scrolled away has to become
+    /// evictable again, or claiming would be a permanent pin and the store
+    /// would fill with every page ever looked at.
+    ///
+    /// The store is a byte budget, not a visible-set policy, so leaving the
+    /// visible set is not on its own a reason to drop a page: this asserts
+    /// that the page goes when the memory is actually wanted. That is the
+    /// distinction HARD-CAN-004 traded a second collection for.
+    #[test]
+    fn a_claim_expires_once_the_page_is_no_longer_on_screen() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        model.tiles.end_frame();
+
+        model.update().expect("the frame showing page zero runs");
+        assert!(
+            model.tiles.base(0).is_some(),
+            "page zero was on screen and should have been claimed"
+        );
+
+        // Page zero leaves, and two frames pass, which spends its grace
+        // window. It is still resident because the store fits its budget.
+        model.go_to_page(1).unwrap();
+        model.update().expect("the first frame away runs");
+        model.update().expect("the second frame away runs");
+
+        // Now the memory is wanted. An unclaimed page goes first.
+        model.tiles.insert(9, raster());
+        assert!(
+            model.tiles.base(0).is_none(),
+            "a page nothing is showing survived the pressure, so the claim never expires"
+        );
+        assert!(
+            model.tiles.base(9).is_some(),
+            "the raster that arrived should be the one kept"
+        );
+    }
+
+    /// The claim has to be made for every visible page, not only the ones the
+    /// frame goes on to ask for. A page whose render is already outstanding
+    /// takes an early exit on the next frame, and a claim made after that
+    /// exit would be skipped exactly when the page is still being scaled.
+    #[test]
+    fn a_page_already_awaiting_its_render_still_claims_its_raster() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            1,
+            "the new zoom is asked for"
+        );
+        model.tiles.end_frame();
+
+        // A raster for some other page lands between the frames, so the store
+        // has something newer than the one page zero is still scaling.
+        model.tiles.insert(2, raster());
+
+        // The next frame: same zoom and same generation, so the request
+        // stands and page zero takes the early exit.
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            0,
+            "the outstanding request is not made twice"
+        );
+        model.tiles.end_frame();
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the frame closed over the raster page zero is still being scaled from"
+        );
+    }
+
+    /// Decision 11 asks a page that comes back into view to be shown scaled
+    /// from whatever raster is still resident, rather than blank until the
+    /// re-render lands. A collection beside the store used to drop the page's
+    /// raster the moment it left the visible set, so the return trip found
+    /// nothing to scale even though the store still held the raster.
+    #[test]
+    fn a_page_returning_to_view_at_a_new_zoom_paints_the_resident_raster() {
+        let mut model = model();
+        let anchor = ViewPoint { x: 400.0, y: 300.0 };
+        // One page on screen at a time, so leaving page zero really leaves it.
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        let second = model.document.page_geometry(1).unwrap().clone();
+        model.viewport.measure_page(second).unwrap();
+        model.viewport.zoom_to(1.0, anchor).unwrap();
+        model.first_page().unwrap();
+        assert_eq!(
+            model.viewport.visible_pages().unwrap().len(),
+            1,
+            "single-page layout shows one page"
+        );
+        let request = prepare_request(&mut model);
+        let rendered = raster(&model, request.page, request.zoom, [40, 40, 40, 255]);
+        assert!(model.apply_render_response(raster_response(request, rendered)));
+
+        // Page zero leaves the visible set, and the zoom moves while it is
+        // away, so it comes back needing a raster it was never rendered at.
+        model.go_to_page(1).unwrap();
+        let away = model.viewport.visible_pages().unwrap();
+        assert!(away.iter().all(|placement| placement.page != 0));
+        model.update().expect("the frame away from page zero runs");
+        model.viewport.zoom_to(3.0, anchor).unwrap();
+        model.go_to_page(0).unwrap();
+        model.update().expect("the returning frame runs");
+
+        let paint = model.paint_list().expect("the returning frame paints");
+        let tiles: Vec<_> = paint.tiles.iter().filter(|tile| tile.page == 0).collect();
+        assert!(
+            !tiles.is_empty(),
+            "page zero came back to a resident raster and still painted nothing"
+        );
+        assert!(
+            tiles.iter().all(|tile| tile.source_zoom == 1.0),
+            "the resident raster is the 1x one, scaled to the 3x view"
+        );
     }
 
     #[test]
@@ -3870,7 +4222,7 @@ mod tests {
 
         let old_raster = raster(&model, stale.page, stale.zoom, [255, 0, 0, 255]);
         assert!(!model.apply_render_response(raster_response(stale, old_raster)));
-        assert!(model.sources.is_empty());
+        assert!(model.tiles.is_empty());
     }
 
     #[test]
@@ -3882,10 +4234,106 @@ mod tests {
             .zoom_to(2.0, ViewPoint { x: 400.0, y: 300.0 })
             .unwrap();
 
-        assert_eq!(model.drain_render_responses().unwrap(), 0);
-        assert!(model.sources.is_empty());
-        assert!(!model.requests.contains_key(&stale.page));
+        model.update().expect("the frame runs");
+        assert!(
+            model.tiles.is_empty(),
+            "the raster answering the pre-zoom request was accepted"
+        );
+        assert_ne!(
+            model.requests.get(&stale.page),
+            Some(&stale),
+            "the pre-zoom request is still the one outstanding"
+        );
         assert_ne!(model.generation, stale.generation);
+    }
+
+    /// Every pointer move and every poll tick runs an update that no paint
+    /// follows. The store exempts a frame's pages from eviction, so an update
+    /// that left its frame open would keep exempting whatever arrived next:
+    /// the store's own note calls that a document delivering pages faster
+    /// than it repaints filling memory with caches eviction may not take.
+    #[test]
+    fn an_update_that_paints_nothing_leaves_no_frame_open() {
+        let mut model = model();
+        model.tiles = TileStore::with_budget(1);
+        model.update().expect("the frame runs");
+
+        // Two pages nothing is showing, so only an open frame could exempt
+        // them. The store never evicts the entry a caller just asked for, so
+        // the second survives either way and the first is the witness.
+        model
+            .tiles
+            .insert(7, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+        model
+            .tiles
+            .insert(8, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+
+        assert!(
+            model.tiles.base(7).is_none(),
+            "the update's frame is still open, so its pages cannot be evicted"
+        );
+        assert_eq!(model.tiles.len(), 1);
+    }
+
+    /// The paint opens a store frame, so it has to close one. A frame left
+    /// open goes on exempting whatever the store is handed next, which is the
+    /// unbounded case `TileStore::begin_frame` documents.
+    #[test]
+    fn the_paint_closes_the_frame_it_opened() {
+        let mut model = model();
+        model.tiles = TileStore::with_budget(1);
+        model.paint_list().expect("the frame paints");
+
+        // Two pages nothing is showing, so only an open frame could exempt
+        // them. The store never evicts the entry just handed to a caller, so
+        // the second survives either way and the first is the witness.
+        model
+            .tiles
+            .insert(7, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+        model
+            .tiles
+            .insert(8, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
+
+        assert!(
+            model.tiles.base(7).is_none(),
+            "the paint's frame is still open, so its pages cannot be evicted"
+        );
+        assert_eq!(model.tiles.len(), 1);
+    }
+
+    /// `update` pins the cache each visible page has at the exact zoom. A
+    /// page painting from a scaled raster instead, because its exact-zoom
+    /// render has not landed, is pinned by nothing that update did, so the
+    /// paint has to declare its own frame: compositing the page's tiles is
+    /// what puts the store over its budget, and the next thing to ask it for
+    /// anything would otherwise take the cache the frame just painted from.
+    #[test]
+    fn the_paint_declares_the_pages_it_painted() {
+        let mut model = model();
+        let source_zoom = 0.5_f32;
+        assert_ne!(model.viewport.zoom().to_bits(), source_zoom.to_bits());
+        let raster = || BaseRaster::new(1, 1, source_zoom, vec![255, 255, 255, 255]);
+        // Room for the base raster and nothing more, so the tile the paint
+        // composites is what carries the store over.
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.insert(0, raster());
+        assert_eq!(
+            model.tiles.over_budget(),
+            0,
+            "the setup starts under budget"
+        );
+
+        let paint = model.paint_list().expect("the frame paints");
+
+        assert!(
+            !paint.tiles.is_empty(),
+            "page zero painted from the scaled raster"
+        );
+        model.tiles.insert(9, raster());
+        assert!(
+            model.tiles.base(0).is_some(),
+            "the raster the frame painted from was evicted by the next insert"
+        );
     }
 
     #[test]
@@ -3900,7 +4348,6 @@ mod tests {
         assert!(matches!(placeholder, RenderResponse::Placeholder(_)));
         assert!(model.apply_render_response(placeholder));
         assert!(model.has_pending_render());
-        assert!(model.placeholders.contains(&request.page));
 
         assert!(model.apply_render_response(RenderResponse::Failed {
             request,
@@ -3910,7 +4357,6 @@ mod tests {
             },
         }));
         assert!(!model.has_pending_render());
-        assert!(!model.placeholders.contains(&request.page));
     }
 
     #[test]
@@ -4008,7 +4454,7 @@ mod tests {
         model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 0);
         assert!(!model.paint_list().unwrap().tiles.is_empty());
-        assert_eq!(model.sources.get(&0).map(BaseRaster::zoom), Some(1.0));
+        assert_eq!(model.tiles.base(0).map(BaseRaster::zoom), Some(1.0));
 
         model.viewport.zoom_to(3.0, anchor).unwrap();
         let visible = model.viewport.visible_pages().unwrap();
@@ -4090,11 +4536,6 @@ mod tests {
         let visible = model.viewport.visible_pages().unwrap();
         assert_eq!(visible.len(), 2);
         model.tiles = TileStore::with_budget(1);
-        for page in 0..2 {
-            model
-                .sources
-                .insert(page, BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]));
-        }
         model.tiles.begin_frame();
         for page in 0..2 {
             model
@@ -4114,10 +4555,6 @@ mod tests {
         let exact_zoom = model.viewport.zoom();
         let source_zoom = 1.0_f32;
         assert_ne!(exact_zoom.to_bits(), source_zoom.to_bits());
-        model.sources.insert(
-            0,
-            BaseRaster::new(1, 1, source_zoom, vec![200, 200, 200, 255]),
-        );
         model.tiles = TileStore::with_budget(1);
         model.tiles.begin_frame();
         model.tiles.insert(
@@ -4240,6 +4677,49 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert_eq!(first.as_bytes(0).unwrap(), [0, 0, 255, 255].repeat(9));
         assert_eq!(second.as_bytes(0).unwrap(), [255, 0, 0, 255].repeat(9));
+    }
+
+    /// The pixels are turned on the way into the image, so the view rotation
+    /// is part of what identifies one. Keying without it would hand a rotated
+    /// frame the image built for the upright one, because the tile behind it
+    /// is the same `Arc` and nothing else about the key has changed.
+    #[test]
+    fn the_same_tile_under_two_rotations_gets_two_images() {
+        let mut store = TileStore::new();
+        let mut images = TileImageCache::default();
+        let tile = store
+            .insert(
+                0,
+                BaseRaster::new(2, 1, 1.0, vec![255, 0, 0, 255, 0, 0, 255, 255]),
+            )
+            .tile(0, 0);
+
+        let upright = images
+            .image_for(
+                TileImageKey::new(0, 1.0, 0, 0, ViewRotation::None),
+                &tile,
+                2,
+                1,
+                ViewRotation::None,
+            )
+            .unwrap();
+        let turned = images
+            .image_for(
+                TileImageKey::new(0, 1.0, 0, 0, ViewRotation::Clockwise90),
+                &tile,
+                2,
+                1,
+                ViewRotation::Clockwise90,
+            )
+            .unwrap();
+
+        assert_eq!(images.entries.len(), 2, "one image per rotation");
+        assert_ne!(upright.id, turned.id);
+        assert_ne!(
+            upright.as_bytes(0).unwrap(),
+            turned.as_bytes(0).unwrap(),
+            "the turned image is the upright one over again"
+        );
     }
 
     #[test]

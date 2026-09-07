@@ -6767,10 +6767,14 @@ mod tests {
                     let was = canvas.model.viewport().offset();
                     canvas
                         .model
+                        // A pan ignores the anchor, so any window point does.
                         .scroll(
                             ViewPoint { x: 0.0, y: -40.0 },
                             false,
-                            ViewPoint { x: 1.0, y: 1.0 },
+                            Point {
+                                x: px(1.0),
+                                y: px(1.0),
+                            },
                         )
                         .expect("the view scrolls");
                     cx.notify();

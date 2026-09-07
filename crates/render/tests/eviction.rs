@@ -497,3 +497,107 @@ fn clearing_drops_rasters_a_changed_render_option_has_invalidated() {
     assert_eq!(store.resident_bytes(), 0);
     assert!(store.get(1, ZOOM).is_none());
 }
+
+/// A page asked for at a zoom it was not rendered at is what every zoom
+/// produces, and what a page coming back into view after the zoom moved
+/// produces too. The raster the store still holds is scaled rather than
+/// dropped, so the page is not blank until the re-render lands.
+#[test]
+fn a_paint_falls_back_to_the_zoom_the_store_used_last() {
+    let mut store = TileStore::new();
+    store.insert(0, page_at(1.0));
+    store.insert(0, page_at(2.0));
+
+    assert_eq!(
+        store
+            .paint_source(0, 4.0)
+            .expect("the store holds this page at another zoom")
+            .base()
+            .zoom(),
+        2.0
+    );
+
+    store.get(0, 1.0).expect("the 1x raster is still resident");
+    assert_eq!(
+        store
+            .paint_source(0, 4.0)
+            .expect("the store holds this page at another zoom")
+            .base()
+            .zoom(),
+        1.0
+    );
+}
+
+/// The exact zoom wins when the store has it, so a page that has just been
+/// re-rendered stops painting the older raster it also still holds.
+#[test]
+fn a_paint_prefers_the_exact_zoom_over_a_resident_one() {
+    let mut store = TileStore::new();
+    store.insert(0, page_at(1.0));
+    store.insert(0, page_at(4.0));
+
+    assert_eq!(
+        store
+            .paint_source(0, 1.0)
+            .expect("the 1x raster is resident")
+            .base()
+            .zoom(),
+        1.0
+    );
+    assert_eq!(
+        store
+            .paint_source(0, 4.0)
+            .expect("the 4x raster is resident")
+            .base()
+            .zoom(),
+        4.0
+    );
+}
+
+/// The fallback has to pin what it picked, or the next page of the same frame
+/// evicts the raster the frame is painting from.
+#[test]
+fn a_paint_fallback_pins_the_raster_it_picked() {
+    let mut store = TileStore::with_budget(base_bytes(1.0) + 1);
+    store.insert(0, page_at(1.0));
+
+    store.begin_frame();
+    assert!(store.paint_source(0, 4.0).is_some(), "page 0 is resident");
+    store.insert(1, page_at(1.0));
+
+    assert!(
+        store.base(0).is_some(),
+        "the raster the frame is painting was evicted under it"
+    );
+}
+
+/// Asking what a page holds must not reorder the store, or a render request
+/// choosing its scaling source would decide which page eviction takes next.
+#[test]
+fn reading_a_page_base_does_not_touch_recency() {
+    let mut store = TileStore::with_budget(2 * base_bytes(1.0) + 1);
+    store.insert(0, page_at(1.0));
+    store.insert(1, page_at(1.0));
+
+    assert_eq!(store.base(0).map(BaseRaster::zoom), Some(1.0));
+
+    store.insert(2, page_at(1.0));
+    assert!(
+        store.base(0).is_none(),
+        "page 0 was the oldest and had to go first"
+    );
+    assert!(store.base(1).is_some(), "page 1 was newer than page 0");
+}
+
+/// `base` reports the zoom the store used last, which is the one a re-render
+/// scales from and the one a snapshot crops.
+#[test]
+fn a_page_base_is_the_zoom_most_recently_used() {
+    let mut store = TileStore::new();
+    store.insert(0, page_at(1.0));
+    store.insert(0, page_at(4.0));
+    assert_eq!(store.base(0).map(BaseRaster::zoom), Some(4.0));
+
+    store.get(0, 1.0).expect("the 1x raster is still resident");
+    assert_eq!(store.base(0).map(BaseRaster::zoom), Some(1.0));
+}

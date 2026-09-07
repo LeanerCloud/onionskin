@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gpui::{Modifiers as GpuiModifiers, Pixels, Point};
+use gpui::Modifiers as GpuiModifiers;
 use onionskin_core::{Modifiers, ViewPoint, Viewport, ViewportError};
 use onionskin_plugin_api::PointerInput;
 
@@ -39,20 +39,22 @@ impl From<ViewportError> for InputError {
     }
 }
 
+/// The page point under `at`, or `None` when it lands on the background.
+///
+/// `at` is already in canvas coordinates. Converting a window point is the
+/// canvas's job and happens in exactly one place there, so no `Pixels`
+/// conversion is left in this module, which is what P6b asked for. The pan
+/// deltas in `InputState` are still `ViewPoint` subtraction; what left is the
+/// window-to-canvas mapping, not arithmetic as such.
 pub fn pointer_input(
     viewport: &Viewport,
-    window_point: Point<Pixels>,
-    canvas_origin: Point<Pixels>,
+    at: ViewPoint,
     pressure: f32,
     modifiers: GpuiModifiers,
 ) -> Result<Option<PointerInput>, InputError> {
     validate_pressure(pressure)?;
 
-    let point = ViewPoint {
-        x: f32::from(window_point.x) - f32::from(canvas_origin.x),
-        y: f32::from(window_point.y) - f32::from(canvas_origin.y),
-    };
-    Ok(viewport.page_point_at(point)?.map(|at| PointerInput {
+    Ok(viewport.page_point_at(at)?.map(|at| PointerInput {
         at,
         pressure,
         modifiers: Modifiers {
@@ -141,7 +143,6 @@ impl InputState {
 mod tests {
     use std::path::PathBuf;
 
-    use gpui::{point, px};
     use onionskin_core::{Document, FitMode, PageAlignment, PageGeometry, ViewRotation, ViewSize};
 
     use super::*;
@@ -199,11 +200,9 @@ mod tests {
             x: page.origin.x + rotated.x * viewport.zoom(),
             y: page.origin.y + rotated.y * viewport.zoom(),
         };
-        let origin = point(px(50.0), px(40.0));
         let input = pointer_input(
             &viewport,
-            point(px(local.x + 50.0), px(local.y + 40.0)),
-            origin,
+            local,
             0.42,
             GpuiModifiers {
                 control: true,
@@ -243,8 +242,7 @@ mod tests {
         let (viewport, _) = measured_viewport();
         assert!(pointer_input(
             &viewport,
-            point(px(51.0), px(41.0)),
-            point(px(50.0), px(40.0)),
+            ViewPoint { x: 1.0, y: 1.0 },
             1.0,
             GpuiModifiers::default(),
         )
@@ -259,8 +257,7 @@ mod tests {
             assert!(matches!(
                 pointer_input(
                     &viewport,
-                    point(px(0.0), px(0.0)),
-                    point(px(0.0), px(0.0)),
+                    ViewPoint::default(),
                     pressure,
                     GpuiModifiers::default(),
                 ),
