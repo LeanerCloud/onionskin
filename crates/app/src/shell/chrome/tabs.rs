@@ -7162,6 +7162,33 @@ mod tests {
             Some(row[0].as_str()),
             "the arrow ran off the end of the page controls instead of wrapping in them"
         );
+
+        // Right stops at the page number field, because Right is that field's
+        // own caret key from there on. Down is what walks the whole row. The
+        // acceptance script tells a tester exactly this, so it is pinned here
+        // rather than left as folklore.
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(frame.a11y.focus_key(&PAGE_ENTRY_ID.into()));
+                frame.focus_ring_target(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "right");
+        cx.run_until_parked();
+        assert_eq!(
+            focused_key(window, cx).as_deref(),
+            Some(PAGE_ENTRY_ID),
+            "Right moved the ring out of the page number field instead of the caret"
+        );
+
+        cx.simulate_keystrokes(window.into(), "down");
+        cx.run_until_parked();
+        assert_ne!(
+            focused_key(window, cx).as_deref(),
+            Some(PAGE_ENTRY_ID),
+            "Down did not carry the ring out of the page number field"
+        );
     }
 
     /// The defect in the ledger: with a pane open, every row was a tab stop,
@@ -7362,11 +7389,15 @@ mod tests {
 
     /// A keymap that binds a bare arrow still gets it.
     ///
-    /// The focus ring binds the four arrows in the shell's own key context,
-    /// which GPUI prefers over the context-less bindings the keymap installs,
-    /// so a user who binds Up to Previous Page could lose it to the ring.
-    /// Driven through a real keymap file and a real keystroke, because which
-    /// of two bindings wins is a question only dispatch can answer.
+    /// The keymap installs its bindings with no key context, and a binding
+    /// with no context matches at the full depth of the context stack
+    /// (`keymap.rs`, `binding_enabled`), which is deeper than the shell's own
+    /// `OnionskinShell`. Ties at equal depth go to whichever was installed
+    /// later, and `shell::run` installs the keymap's after the ring's. So the
+    /// user's binding wins twice over, and reordering the two installs is
+    /// what this test is here to catch. Driven through a real keymap file and
+    /// a real keystroke, because which of two bindings wins is a question
+    /// only dispatch can answer.
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
     fn a_keymap_binding_on_a_bare_arrow_still_runs(cx: &mut TestAppContext) {

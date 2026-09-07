@@ -166,8 +166,10 @@ Turn VoiceOver off (Cmd-F5) and drive the app with the keyboard only.
   that are not are skipped rather than being silent stops. Each surface is
   entered at its first control, so Shift-Tab undoes Tab.
 - The arrow keys move inside the surface you are in, in both axes, and wrap
-  there rather than leaving it. Right or Down along the page controls reaches
-  Zoom In; from the last control it comes back to the first.
+  there rather than leaving it. Down along the page controls reaches Zoom In;
+  from the last control it comes back to the first. Right does the same until
+  it reaches the page number field, where Right becomes that field's own key
+  and moves the caret, so use Down to walk a row all the way.
 - A surface whose first control is a text field, which the find bar is, is
   still one Tab to enter and one Tab to leave, and Up and Down carry you from
   the field to the buttons beside it. Left and Right in a field move the
