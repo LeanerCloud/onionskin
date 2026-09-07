@@ -4011,6 +4011,48 @@ mod tests {
         );
     }
 
+    /// The third of the three early exits. A page whose render has failed is
+    /// never asked for again under this signature, but it goes on painting
+    /// whatever raster it has, so it has to keep claiming it.
+    ///
+    /// Driven through `schedule_visible_renders` rather than `update`,
+    /// because `update_signature` clears `failed_renders` whenever the
+    /// signature moves: the exit is only reachable while the view holds
+    /// still, which is exactly when a render fails under it.
+    #[test]
+    fn a_page_whose_render_failed_still_claims_the_raster_it_paints() {
+        let mut model = model();
+        model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
+        model.first_page().unwrap();
+        let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
+        model.tiles = TileStore::with_budget(raster().rgba().len());
+        model.tiles.begin_frame();
+        model.tiles.insert(0, raster());
+        model.tiles.insert(1, raster());
+        model.tiles.end_frame();
+
+        model
+            .viewport
+            .zoom_to(3.0, ViewPoint { x: 400.0, y: 300.0 })
+            .unwrap();
+        let visible = model.viewport.visible_pages().unwrap();
+        model.update_signature(&visible).unwrap();
+        model.failed_renders.insert(0);
+
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            0,
+            "a page whose render failed is not asked for again"
+        );
+        model.tiles.end_frame();
+
+        assert!(
+            model.tiles.base(0).is_some(),
+            "a failed page lost the raster it was still painting"
+        );
+    }
+
     /// The claim buys a page the frame it is on screen for and the grace
     /// window after it, and nothing more. A page scrolled away has to become
     /// evictable again, or claiming would be a permanent pin and the store
