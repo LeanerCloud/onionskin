@@ -278,6 +278,29 @@ Resolved and superseded bullets stay in this table to preserve why they no longe
 justify code changes. B2/B3 plans must use these current lines and reject the broad
 comment/literal refactors that would add churn without behavior.
 
+### What the P14 benches do not say about B2
+
+`cargo bench -p onionskin-core` reports the same six counters before and after B2
+(71281 bytes to open, 15570 tile fetches, 8394 tiles composited, 4 pages laid out
+in one frame, 213674496 peak resident bytes while painting, 211577344 resident
+after two hundred pages). That agreement is **not** evidence that HARD-CAN-004's
+change of raster ownership is memory-safe, and must not be cited as such.
+`crates/render/src/store.rs` is +51 -0 across the package, purely additive, and
+the benches drive `TileStore` through their own harness: no bench constructs a
+`CanvasModel`, and none calls `paint_source` or `base`. The counters match because
+the code they exercise did not change. The raster-ownership change is unmeasured,
+not measured-and-unchanged.
+
+What can be said is reasoning rather than measurement. `BaseRaster` holds its
+pixels in an `Arc<[u8]>` (`crates/render/src/base.rs:257`), so the deleted
+`CanvasModel::sources` never duplicated a raster's bytes; it duplicated a handle
+and, with it, a second lifetime. Removing it makes resident bytes track
+`TileStore::resident_bytes` more honestly, which is neutral to better. Measuring
+it would need a bench that drives the canvas, which does not exist.
+
+`benches/paint.rs` skips for a missing `corpus/external/hayro-corpus/0041790.pdf`
+and reported nothing either side.
+
 ## Previously encountered resolved defects
 
 - The content oracle previously inferred extraction errors from a hand-maintained

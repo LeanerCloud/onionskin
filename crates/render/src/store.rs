@@ -227,7 +227,15 @@ impl TileStore {
     /// whatever zoom that was, or `None` when the store holds none.
     ///
     /// A pure read: it neither touches recency nor pins, so asking what a
-    /// page has does not change what eviction may take.
+    /// page has does not change what eviction may take. That is what a layout
+    /// query wants, and why such a query should not reach for [`Self::get`],
+    /// which would reorder eviction and claim the page into whatever frame is
+    /// open.
+    ///
+    /// A caller measuring page content off these pixels inherits the raster's
+    /// own grid: a bounding box read from a 1x raster quantizes to about one
+    /// page point, against about 0.25 at 4x. Invisible for a fit-to-content
+    /// zoom, which is what asks; worth knowing before anything finer does.
     pub fn base(&self, page: usize) -> Option<&BaseRaster> {
         Some(self.entries[self.newest_for_page(page)?].cache.base())
     }
