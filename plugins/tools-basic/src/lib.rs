@@ -1,4 +1,5 @@
-//! Basic tools: hand, select (text and region), zoom, snapshot. The
+//! Basic tools: hand, select (text and region), the two zoom tools, and
+//! snapshot. The
 //! viewer's own toolset, and the first plugin the shell exercises.
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
@@ -14,7 +15,7 @@ pub use hand::HandTool;
 pub use select_region::SelectRegionTool;
 pub use select_text::SelectTextTool;
 pub use snapshot::SnapshotTool;
-pub use zoom::ZoomTool;
+pub use zoom::{DynamicZoomTool, ZoomTool};
 
 pub struct BasicToolsPlugin;
 
@@ -34,6 +35,7 @@ impl PluginManifest for BasicToolsPlugin {
         registry.register_tool(Box::new(SelectTextTool::new()));
         registry.register_tool(Box::new(SelectRegionTool::new()));
         registry.register_tool(Box::new(ZoomTool::new()));
+        registry.register_tool(Box::new(DynamicZoomTool::new()));
         registry.register_tool(Box::new(SnapshotTool::new()));
     }
 }

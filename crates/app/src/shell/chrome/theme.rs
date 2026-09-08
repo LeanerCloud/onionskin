@@ -21,6 +21,7 @@ pub(super) enum ShellViewAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SurfaceVisibility {
     pub(super) global_bar: bool,
+    pub(super) tab_bar: bool,
     pub(super) rail: bool,
     pub(super) navigation_pane: bool,
     pub(super) quick_actions: bool,
@@ -121,14 +122,37 @@ impl ShellViewState {
         }
     }
 
+    /// Which surfaces this state puts on screen.
+    ///
+    /// Two modes take chrome away, and they take different amounts.
+    ///
+    /// Full Screen shows the document and nothing around it, which is what
+    /// Acrobat's Full Screen mode is for. Read Mode keeps reading controls
+    /// and drops everything that is about the application rather than the
+    /// page: the top bars, the tool rail, the panes, the quick actions. What
+    /// is left is the page controls, which already carry Acrobat's Read Mode
+    /// toolbar - page back and forward, the page number, zoom out and in,
+    /// and the fit buttons - so the mode needs no second toolbar of its own.
     pub(super) fn visibility(self) -> SurfaceVisibility {
+        if self.fullscreen {
+            return SurfaceVisibility {
+                global_bar: false,
+                tab_bar: false,
+                rail: false,
+                navigation_pane: false,
+                quick_actions: false,
+                side_panel: false,
+                page_controls: false,
+            };
+        }
         SurfaceVisibility {
-            global_bar: true,
+            global_bar: !self.read_mode,
+            tab_bar: !self.read_mode,
             rail: !self.read_mode,
             navigation_pane: !self.read_mode && self.navigation_pane_visible,
             quick_actions: !self.read_mode,
             side_panel: !self.read_mode,
-            page_controls: !self.read_mode && self.page_controls_visible,
+            page_controls: self.page_controls_visible,
         }
     }
 }
@@ -270,18 +294,51 @@ mod tests {
         assert!(state.read_mode());
     }
 
+    /// Read Mode leaves the page and the controls that move through it, and
+    /// takes everything else. The page controls are its toolbar, so they
+    /// stay unless the user turned them off themselves.
     #[test]
-    fn read_mode_hides_document_chrome_but_keeps_the_global_bar() {
+    fn read_mode_hides_the_chrome_and_keeps_the_page_controls() {
         let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
         assert!(state.apply(ShellViewAction::ToggleReadMode));
 
         let visibility = state.visibility();
-        assert!(visibility.global_bar);
+        assert!(!visibility.global_bar);
+        assert!(!visibility.tab_bar);
+        assert!(!visibility.rail);
+        assert!(!visibility.navigation_pane);
+        assert!(!visibility.quick_actions);
+        assert!(!visibility.side_panel);
+        assert!(visibility.page_controls, "read mode has no toolbar left");
+
+        assert!(state.apply(ShellViewAction::TogglePageControls));
+        assert!(
+            !state.visibility().page_controls,
+            "read mode overrode the user's own show/hide choice"
+        );
+    }
+
+    /// Full Screen is the document and nothing else, including the toolbar
+    /// Read Mode keeps.
+    #[test]
+    fn full_screen_hides_every_surface() {
+        let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
+        assert!(state.set_fullscreen(true));
+
+        let visibility = state.visibility();
+        assert!(!visibility.global_bar);
+        assert!(!visibility.tab_bar);
         assert!(!visibility.rail);
         assert!(!visibility.navigation_pane);
         assert!(!visibility.quick_actions);
         assert!(!visibility.side_panel);
         assert!(!visibility.page_controls);
+
+        assert!(state.set_fullscreen(false));
+        assert!(
+            state.visibility().global_bar,
+            "leaving full screen left the chrome hidden"
+        );
     }
 
     #[test]
@@ -289,6 +346,7 @@ mod tests {
         let mut state = ShellViewState::new(WindowAppearance::Dark, ThemePreference::System);
 
         let before = state.visibility();
+        assert!(before.global_bar && before.tab_bar);
         assert!(state.apply(ShellViewAction::ToggleNavigationPane));
         let navigation_hidden = state.visibility();
         assert_ne!(navigation_hidden.navigation_pane, before.navigation_pane);

@@ -666,6 +666,7 @@ mod tests {
             ToolCapability::FillTextFields => &[ToolCapability::FillTextFields],
             ToolCapability::AddSignature => &[ToolCapability::AddSignature],
             ToolCapability::Snapshot => &[ToolCapability::Snapshot],
+            ToolCapability::DynamicZoom => &[ToolCapability::DynamicZoom],
         }
     }
 

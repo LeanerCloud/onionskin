@@ -308,6 +308,64 @@ impl BaseRaster {
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
     }
+
+    /// The smallest rectangle holding every mark on the page, in this
+    /// raster's own pixels, or `None` for a page nothing drew on.
+    ///
+    /// [`RenderSession::render_page`] rasterizes onto opaque white, so a
+    /// pixel still opaque white is a pixel no operator touched. That makes
+    /// this the bounding box of what the page draws rather than of what it
+    /// declares: an image, a rule and a glyph all count, which is what
+    /// separates fitting the visible content from fitting the media box.
+    ///
+    /// A mark painted in white on white is invisible and does not count. It
+    /// is also invisible on screen, so fitting it would scroll the user to
+    /// an empty part of the page.
+    pub fn content_bounds(&self) -> Option<RasterBounds> {
+        let width = self.width as usize;
+        let mut left = width;
+        let mut right = 0usize;
+        let mut top = None;
+        let mut bottom = 0usize;
+        for (y, row) in self.rgba.chunks_exact(width * 4).enumerate() {
+            let mut row_left = None;
+            let mut row_right = 0usize;
+            let (pixels, _) = row.as_chunks::<4>();
+            for (x, pixel) in pixels.iter().enumerate() {
+                if *pixel != PAPER {
+                    row_left.get_or_insert(x);
+                    row_right = x;
+                }
+            }
+            let Some(row_left) = row_left else {
+                continue;
+            };
+            left = left.min(row_left);
+            right = right.max(row_right);
+            top.get_or_insert(y);
+            bottom = y;
+        }
+        let top = top?;
+        Some(RasterBounds {
+            x: left as u32,
+            y: top as u32,
+            width: (right - left + 1) as u32,
+            height: (bottom - top + 1) as u32,
+        })
+    }
+}
+
+/// The unmarked page: opaque white, the background
+/// [`RenderSession::render_page`] rasterizes onto.
+const PAPER: [u8; 4] = [255, 255, 255, 255];
+
+/// A rectangle of a [`BaseRaster`], in its own pixels, top-left origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterBounds {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -401,6 +459,104 @@ mod tests {
     #[should_panic(expected = "positive finite scale")]
     fn a_base_raster_refuses_a_zoom_that_places_nothing() {
         BaseRaster::new(2, 2, 0.0, vec![255; 16]);
+    }
+
+    /// A raster of `width` by `height` paper with `marks` painted black.
+    fn marked(width: u32, height: u32, marks: &[(u32, u32)]) -> BaseRaster {
+        let mut rgba = vec![255u8; width as usize * height as usize * 4];
+        for (x, y) in marks {
+            let start = (*y as usize * width as usize + *x as usize) * 4;
+            rgba[start..start + 4].copy_from_slice(&[0, 0, 0, 255]);
+        }
+        BaseRaster::new(width, height, 1.0, rgba)
+    }
+
+    /// The box is the extent of the marks, not of the page, and it includes
+    /// the pixels at its own edges: this is what Fit Visible zooms to, and an
+    /// exclusive edge would clip the last column of a glyph.
+    #[test]
+    fn content_bounds_span_every_marked_pixel_and_no_paper() {
+        let raster = marked(8, 6, &[(2, 1), (5, 4), (3, 3)]);
+
+        assert_eq!(
+            raster.content_bounds(),
+            Some(RasterBounds {
+                x: 2,
+                y: 1,
+                width: 4,
+                height: 4
+            })
+        );
+    }
+
+    #[test]
+    fn one_mark_bounds_one_pixel() {
+        let raster = marked(4, 4, &[(3, 0)]);
+
+        assert_eq!(
+            raster.content_bounds(),
+            Some(RasterBounds {
+                x: 3,
+                y: 0,
+                width: 1,
+                height: 1
+            })
+        );
+    }
+
+    /// A page nothing drew on has no content to fit, and answering with the
+    /// whole page would make Fit Visible a second Fit Page that lied about
+    /// what it found.
+    #[test]
+    fn a_page_with_no_marks_has_no_content_bounds() {
+        assert_eq!(marked(4, 4, &[]).content_bounds(), None);
+    }
+
+    /// The rendered-content claim, on a page that really is mostly paper:
+    /// the box has to be strictly smaller than the page on both axes and sit
+    /// inside it, or Fit Visible is only Fit Page under another name.
+    #[test]
+    fn a_seed_pages_content_is_a_strict_subset_of_its_paper() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let bytes = std::fs::read(&path).expect("the seed is readable");
+        let document = Document::open(bytes).expect("the seed opens");
+
+        let render = document
+            .render_page(0, 1.0, &RenderOptions::default())
+            .expect("the seed page renders");
+        let raster = render.raster;
+        let bounds = raster.content_bounds().expect("the seed page draws text");
+
+        assert!(bounds.x + bounds.width <= raster.width());
+        assert!(bounds.y + bounds.height <= raster.height());
+        assert!(
+            bounds.width < raster.width() && bounds.height < raster.height(),
+            "{bounds:?} covers the whole {}x{} page",
+            raster.width(),
+            raster.height()
+        );
+    }
+
+    /// Paper is opaque white because that is what the page is rasterized
+    /// onto. A pixel that differs in any channel, including a white one the
+    /// interpreter left partly transparent, is a mark.
+    #[test]
+    fn a_pixel_that_is_not_opaque_white_counts_as_a_mark() {
+        let mut rgba = vec![255u8; 4 * 4 * 4];
+        rgba[(2 * 4 + 1) * 4 + 3] = 254;
+
+        let raster = BaseRaster::new(4, 4, 1.0, rgba);
+
+        assert_eq!(
+            raster.content_bounds(),
+            Some(RasterBounds {
+                x: 1,
+                y: 2,
+                width: 1,
+                height: 1
+            })
+        );
     }
 
     #[test]

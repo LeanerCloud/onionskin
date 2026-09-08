@@ -55,9 +55,12 @@ impl MenuCommand {
             MenuCommand::ActualSize,
             MenuCommand::ZoomOut,
             MenuCommand::ZoomIn,
+            MenuCommand::ZoomTo,
+            MenuCommand::DynamicZoom,
             MenuCommand::FitPage,
             MenuCommand::FitWidth,
             MenuCommand::FitHeight,
+            MenuCommand::FitVisible,
             MenuCommand::SinglePage,
             MenuCommand::SinglePageContinuous,
             MenuCommand::TwoPage,
@@ -113,9 +116,12 @@ impl MenuCommand {
             Self::ActualSize => "view.actual-size",
             Self::ZoomOut => "view.zoom-out",
             Self::ZoomIn => "view.zoom-in",
+            Self::ZoomTo => "view.zoom-to",
+            Self::DynamicZoom => "view.dynamic-zoom",
             Self::FitPage => "view.fit-page",
             Self::FitWidth => "view.fit-width",
             Self::FitHeight => "view.fit-height",
+            Self::FitVisible => "view.fit-visible",
             Self::SinglePage => "view.single-page",
             Self::SinglePageContinuous => "view.single-page-continuous",
             Self::TwoPage => "view.two-page",
@@ -165,12 +171,19 @@ impl MenuCommand {
             Self::ZoomIn => "cmd-=",
             Self::FitPage => "cmd-0",
             Self::FitWidth => "cmd-2",
+            Self::FitVisible => "cmd-3",
             Self::ToggleNavigationPane => "f4",
             Self::FullScreen => "cmd-l",
             // Read Mode's Acrobat default is Ctrl+H, and cmd-h is Hide on
             // macOS. Taking Hide from the user is worse than shipping this
             // one unbound; keymap.json can bind it.
-            Self::ReadMode
+            // Acrobat's Zoom To is Ctrl+M, and cmd-m is Minimize on macOS.
+            // Same call as Read Mode below: keymap.json can bind it.
+            // Acrobat gives Dynamic Zoom no default key either; the tool
+            // rail and this entry are how it is reached.
+            Self::DynamicZoom
+            | Self::ZoomTo
+            | Self::ReadMode
             | Self::OpenRecent
             | Self::CloseOtherTabs
             | Self::SaveAs

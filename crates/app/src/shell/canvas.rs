@@ -8,9 +8,9 @@ use gpui::{Modifiers as GpuiModifiers, Pixels, Point, RenderImage};
 use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
-    PagePoint, PageQuad, PageRect, Provenance, RenderRequest, RenderResponse, SearchOptions,
-    SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
-    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    PagePoint, PageQuad, PageRect, PageRenderRect, Provenance, RenderRequest, RenderResponse,
+    SearchOptions, SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory,
+    ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
     CodecPlugin, CommandCtx, CommandError, ExportError, ExportOutputKind, ExportRequest, Overlay,
@@ -18,11 +18,12 @@ use onionskin_plugin_api::{
 };
 #[cfg(test)]
 use onionskin_render::PageRender;
-use onionskin_render::{BaseRaster, Tile, TileCache, TileStore, TILE_SIZE};
+use onionskin_render::{BaseRaster, RasterBounds, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
 use super::input::{
-    pointer_input, validate_pressure, DragKind, DragUpdate, InputError, InputState,
+    pointer_input, pointer_input_near, validate_pressure, DragKind, DragUpdate, InputError,
+    InputState,
 };
 
 /// One visible page, as an accessibility tree sees it.
@@ -116,7 +117,14 @@ pub(super) enum ViewAction {
     ActualSize,
     ZoomOut,
     ZoomIn,
+    /// An explicit magnification, 1.0 being actual size. Clamped to what the
+    /// current page can be rasterized at, the way every other zoom is.
+    ZoomTo(f32),
     Fit(FitMode),
+    /// Fit the page's marks rather than its media box. The rectangle is not
+    /// carried here because only the canvas can read it off the rendered
+    /// page; the menu asks for the mode and the canvas supplies the bounds.
+    FitVisible,
     SetLayout(PageLayoutMode),
     SetShowCover(bool),
 }
@@ -164,6 +172,15 @@ pub enum CanvasError {
         limit: usize,
     },
     SnapshotEncode(String),
+    /// Fit Visible reads the page's marks off its rendered pixels, and this
+    /// page has none yet.
+    FitVisibleUnrendered {
+        page: PageIndex,
+    },
+    /// The page draws nothing, so there is no visible content to fit.
+    FitVisibleBlank {
+        page: PageIndex,
+    },
     WorkerSilent {
         pages: Vec<PageIndex>,
         waited: Duration,
@@ -210,6 +227,13 @@ impl fmt::Display for CanvasError {
                 "snapshot {width}x{height} exceeds the {limit}-byte RGBA clipboard limit"
             ),
             Self::SnapshotEncode(error) => write!(f, "cannot encode the snapshot: {error}"),
+            Self::FitVisibleUnrendered { page } => write!(
+                f,
+                "page {page} has not been rendered yet, so its visible content is not known"
+            ),
+            Self::FitVisibleBlank { page } => {
+                write!(f, "page {page} draws nothing, so it has no content to fit")
+            }
             Self::ToolOutOfRange { index, count } => {
                 write!(f, "tool {index} is outside a {count}-tool registry")
             }
@@ -247,6 +271,8 @@ impl std::error::Error for CanvasError {
             | Self::SnapshotEmpty { .. }
             | Self::SnapshotTooLarge { .. }
             | Self::SnapshotEncode(_)
+            | Self::FitVisibleUnrendered { .. }
+            | Self::FitVisibleBlank { .. }
             | Self::WorkerSilent { .. } => None,
         }
     }
@@ -835,6 +861,40 @@ impl CanvasModel {
         self.apply_view_change(|viewport| viewport.fit(mode))
     }
 
+    pub fn fit_visible(&mut self) -> Result<bool, CanvasError> {
+        let bounds = self.visible_content_bounds()?;
+        self.fit(FitMode::Visible(bounds))
+    }
+
+    /// The rectangle around everything the current page draws, in the page's
+    /// unrotated render space, which is what [`FitMode::Visible`] is
+    /// expressed in.
+    ///
+    /// Read off the raster the canvas already holds for the page, so it
+    /// covers whatever the renderer put on the paper: images and vector art
+    /// as well as text. There is no cheaper source that is not also a
+    /// narrower one.
+    fn visible_content_bounds(&self) -> Result<PageRenderRect, CanvasError> {
+        let page = self.viewport.current_page();
+        let (Some(source), Some(geometry)) =
+            (self.tiles.base(page), self.viewport.page_geometry(page))
+        else {
+            return Err(CanvasError::FitVisibleUnrendered { page });
+        };
+        let marks = source
+            .content_bounds()
+            .ok_or(CanvasError::FitVisibleBlank { page })?;
+        content_rect(
+            page,
+            marks,
+            (source.width(), source.height()),
+            ViewSize {
+                width: geometry.render_size.0 as f32,
+                height: geometry.render_size.1 as f32,
+            },
+        )
+    }
+
     pub fn actual_size(&mut self) -> Result<bool, CanvasError> {
         self.apply_view_change(Viewport::actual_size)
     }
@@ -1272,11 +1332,14 @@ impl CanvasModel {
             Some(DragUpdate::ToolMove) => {
                 let input = match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => input,
-                    Ok(None) => {
-                        self.input.cancel();
-                        self.cancel_active_tool();
-                        return Ok(true);
-                    }
+                    Ok(None) => match self.map_pointer_off_page(at, pressure, modifiers)? {
+                        Some(input) => input,
+                        None => {
+                            self.input.cancel();
+                            self.cancel_active_tool();
+                            return Ok(true);
+                        }
+                    },
                     Err(error) => {
                         self.input.cancel();
                         self.cancel_active_tool();
@@ -1313,7 +1376,10 @@ impl CanvasModel {
             Some(DragKind::Tool) => {
                 match self.map_pointer(at, pressure, modifiers) {
                     Ok(Some(input)) => self.dispatch_tool(ToolPointerPhase::Up, input),
-                    Ok(None) => self.cancel_active_tool(),
+                    Ok(None) => match self.map_pointer_off_page(at, pressure, modifiers)? {
+                        Some(input) => self.dispatch_tool(ToolPointerPhase::Up, input),
+                        None => self.cancel_active_tool(),
+                    },
                     Err(error) => {
                         self.cancel_active_tool();
                         return Err(error);
@@ -1514,6 +1580,16 @@ impl CanvasModel {
     #[cfg(test)]
     pub(in crate::shell) fn request_snapshot_for_test(&mut self, region: PageRect) {
         self.document.request_snapshot(region);
+    }
+
+    /// Whether the current page already has a rendered raster.
+    ///
+    /// The render worker runs in a test too, so a test that needs a raster
+    /// has to say "seed one unless the real one already arrived" rather than
+    /// race the worker for the right to supply it.
+    #[cfg(test)]
+    pub(in crate::shell) fn has_rendered_current_page_for_test(&self) -> bool {
+        self.tiles.base(self.viewport.current_page()).is_some()
     }
 
     #[cfg(test)]
@@ -1845,6 +1921,35 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
     ) -> Result<Option<PointerInput>, CanvasError> {
         Ok(pointer_input(&self.viewport, at, pressure, modifiers)?)
+    }
+
+    /// The pointer expressed against the nearest visible page, for a tool
+    /// that must keep hearing about it after it leaves the page.
+    ///
+    /// `None` for every other tool, which keeps the cancel-on-leave rule:
+    /// for a marquee or a text selection, the pointer leaving the page is
+    /// the user leaving the gesture. For a tool that zooms continuously it
+    /// is the gesture working, because zooming out shrinks the page away
+    /// from a pointer that is still on screen and still held down. Asked of
+    /// the tool's declared capability rather than its id, the way every
+    /// other shell surface finds a tool.
+    fn map_pointer_off_page(
+        &self,
+        at: ViewPoint,
+        pressure: f32,
+        modifiers: GpuiModifiers,
+    ) -> Result<Option<PointerInput>, CanvasError> {
+        let follows_the_pointer_off_page = self
+            .active_tool
+            .and_then(|index| self.registry.tools().nth(index))
+            .is_some_and(|tool| {
+                tool.capabilities()
+                    .contains(&onionskin_plugin_api::ToolCapability::DynamicZoom)
+            });
+        if !follows_the_pointer_off_page {
+            return Ok(None);
+        }
+        Ok(pointer_input_near(&self.viewport, at, pressure, modifiers)?)
     }
 
     fn dispatch_tool(&mut self, phase: ToolPointerPhase, input: PointerInput) {
@@ -2223,6 +2328,33 @@ fn unpremultiplied_rgba(rgba: &[u8]) -> [u8; 4] {
 /// The transform is exact but the drag is not, so a corner may sit a
 /// fraction outside the page; the region is rounded outwards first so a
 /// thin selection still covers the pixels it touches.
+/// A rectangle of raster pixels as a rectangle of the page's unrotated
+/// render space.
+///
+/// Scaled by the raster's own pixel count rather than by its zoom: the
+/// renderer floors the pixel count, so dividing by the zoom can place the far
+/// edge a fraction outside the page, and `PageRenderRect::new` refuses that
+/// rather than fitting a rectangle the page does not contain.
+fn content_rect(
+    page: PageIndex,
+    marks: RasterBounds,
+    raster: (u32, u32),
+    page_size: ViewSize,
+) -> Result<PageRenderRect, CanvasError> {
+    let scale_x = page_size.width / raster.0 as f32;
+    let scale_y = page_size.height / raster.1 as f32;
+    let origin = ViewPoint {
+        x: marks.x as f32 * scale_x,
+        y: marks.y as f32 * scale_y,
+    };
+    let size = ViewSize {
+        width: (marks.width as f32 * scale_x).min(page_size.width - origin.x),
+        height: (marks.height as f32 * scale_y).min(page_size.height - origin.y),
+    };
+    PageRenderRect::new(page, origin, size, page_size)
+        .map_err(|error| ViewportError::from(error).into())
+}
+
 fn raster_crop(
     geometry: &PageGeometry,
     region: PageRect,
@@ -5491,5 +5623,403 @@ mod tests {
             .expect_err("a page the document does not have has no text");
 
         assert!(!refused.is_empty());
+    }
+
+    /// A model showing the one page a fresh canvas has measured, which is
+    /// the only page a raster can be built for without a render worker.
+    fn model_on_a_measured_page() -> CanvasModel {
+        let mut model = model();
+        model.first_page().expect("the first page is reachable");
+        assert!(model.viewport.page_geometry(0).is_some());
+        assert_eq!(model.viewport.current_page(), 0);
+        model
+    }
+
+    /// A tool that reports the capabilities it is given and records what the
+    /// canvas hands it, under an id of its own choosing.
+    struct CapabilityTool {
+        id: &'static str,
+        capabilities: &'static [onionskin_plugin_api::ToolCapability],
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl ToolPlugin for CapabilityTool {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn name(&self) -> &'static str {
+            self.id
+        }
+
+        fn icon(&self) -> &'static str {
+            self.id
+        }
+
+        fn capabilities(&self) -> &'static [onionskin_plugin_api::ToolCapability] {
+            self.capabilities
+        }
+
+        fn on_pointer_down(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("down");
+        }
+
+        fn on_pointer_move(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("move");
+        }
+
+        fn on_pointer_up(&mut self, _ctx: &mut ToolCtx, _input: PointerInput) {
+            self.events.lock().unwrap().push("up");
+        }
+
+        fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
+            self.events.lock().unwrap().push("cancel");
+        }
+    }
+
+    /// The canvas keeps a pointer alive off the page for a tool that
+    /// declares `ToolCapability::DynamicZoom`, and for no other tool.
+    ///
+    /// This is a different lookup from the one the View menu entry runs, and
+    /// only the menu's was pinned. Resolving this one to `id() ==
+    /// "dynamic-zoom"` instead passes every other test in the workspace,
+    /// which makes it exactly the shortcut a conflict resolution reaches
+    /// for; it would give a third-party tool the menu entry and not the
+    /// exemption, putting the frozen-drag bug back silently. Both directions
+    /// are asserted here, so neither the id nor the capability can stand in
+    /// for the other.
+    #[test]
+    fn the_off_page_exemption_follows_the_capability_rather_than_a_tool_id() {
+        use onionskin_plugin_api::ToolCapability;
+
+        for (id, capabilities, exempt) in [
+            // The capability under an id the first-party tool does not use.
+            (
+                "third-party-magnifier",
+                &[ToolCapability::DynamicZoom][..],
+                true,
+            ),
+            // The first-party id without the capability behind it.
+            ("dynamic-zoom", &[][..], false),
+        ] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut registry = PluginRegistry::new();
+            registry.register_tool(Box::new(CapabilityTool {
+                id,
+                capabilities,
+                events: Arc::clone(&events),
+            }));
+            let mut model = model_with_registry(registry);
+            model.first_page().expect("the first page is reachable");
+            model.activate_tool(0).expect("the tool activates");
+
+            let page = model.viewport.visible_pages().unwrap()[0].rect;
+            let off_page = point(
+                px(page.origin.x + page.size.width / 2.0),
+                px(page.origin.y + page.size.height + 5.0),
+            );
+            assert!(
+                model
+                    .viewport
+                    .page_point_at(ViewPoint {
+                        x: f32::from(off_page.x),
+                        y: f32::from(off_page.y),
+                    })
+                    .expect("the point is mappable")
+                    .is_none(),
+                "{id}: the target is still on a page, so nothing is being tested"
+            );
+
+            model
+                .pointer_down(page_center(&model), 1.0, GpuiModifiers::default())
+                .expect("the press maps onto a page");
+            model
+                .pointer_move(off_page, 1.0, GpuiModifiers::default(), true)
+                .expect("the move is handled");
+
+            let seen = events.lock().unwrap().clone();
+            if exempt {
+                assert_eq!(
+                    seen,
+                    vec!["down", "move"],
+                    "{id} carries the capability and should have kept the pointer"
+                );
+                assert_eq!(model.active_tool(), Some(0), "{id} was cancelled");
+            } else {
+                assert_eq!(
+                    seen,
+                    vec!["down", "cancel"],
+                    "{id} carries no capability and should have been cancelled"
+                );
+            }
+        }
+    }
+
+    /// Dragging down with the dynamic zoom tool shrinks the page under a
+    /// pointer that is moving the other way, so the pointer leaves the page
+    /// within a couple of events. That is the gesture working, not ending:
+    /// the canvas used to answer an off-page pointer by cancelling the tool,
+    /// which froze the zoom-out half of the drag after about 80 pixels while
+    /// the button was still held.
+    #[cfg(feature = "tools-basic")]
+    #[test]
+    fn dragging_a_dynamic_zoom_off_the_page_keeps_zooming_out() {
+        let mut model = model_with_registry(crate::build_registry());
+        // Every page measured, so an off-page pointer is off a page the
+        // layout can still place rather than one it has never seen.
+        for page in 0..model.viewport.page_count() {
+            let geometry = model
+                .document
+                .page_geometry(page)
+                .expect("the seed measures")
+                .clone();
+            model.viewport.measure_page(geometry).expect("it applies");
+        }
+        model.viewport.fit(FitMode::Page).expect("the page fits");
+        let index = onionskin_plugin_api::PluginRegistry::tools(model.registry())
+            .position(|tool| {
+                tool.capabilities()
+                    .contains(&onionskin_plugin_api::ToolCapability::DynamicZoom)
+            })
+            .expect("tools-basic registers a dynamic zoom tool");
+        assert!(model.activate_tool(index).expect("the tool activates"));
+
+        let anchor = point(px(400.0), px(300.0));
+        model
+            .pointer_down(anchor, 1.0, GpuiModifiers::default())
+            .expect("the press maps onto a page");
+
+        let mut zooms = vec![model.viewport.zoom()];
+        for step in 1..=8u8 {
+            let at = point(anchor.x, anchor.y + px(40.0 * f32::from(step)));
+            model
+                .pointer_move(at, 1.0, GpuiModifiers::default(), true)
+                .expect("the move is handled");
+            zooms.push(model.viewport.zoom());
+        }
+
+        for pair in zooms.windows(2) {
+            assert!(
+                pair[1] < pair[0],
+                "the zoom stopped falling mid-drag: {zooms:?}"
+            );
+        }
+        // 320 pixels down is 2^(-320/240) of where it started.
+        let expected = zooms[0] * 2.0_f32.powf(-320.0 / 240.0);
+        let last = *zooms.last().expect("the drag reported zooms");
+        assert!(
+            (last / expected - 1.0).abs() < 1e-3,
+            "{last} is not 2^(-320/240) of {}: {zooms:?}",
+            zooms[0]
+        );
+        assert_eq!(
+            model.active_tool(),
+            Some(index),
+            "the drag cancelled the tool"
+        );
+    }
+
+    /// A raster of `page` at zoom 1, all paper except for `marks`.
+    fn paper_with_marks(model: &CanvasModel, page: PageIndex, marks: RasterBounds) -> BaseRaster {
+        let geometry = model
+            .viewport
+            .page_geometry(page)
+            .expect("the page is measured");
+        let (width, height) = onionskin_render::raster_size(
+            geometry.render_size.0 as f32,
+            geometry.render_size.1 as f32,
+            1.0,
+        )
+        .expect("the page raster fits");
+        let (width, height) = (u32::from(width), u32::from(height));
+        let mut rgba = vec![255u8; width as usize * height as usize * 4];
+        for y in marks.y..marks.y + marks.height {
+            for x in marks.x..marks.x + marks.width {
+                let start = (y as usize * width as usize + x as usize) * 4;
+                rgba[start..start + 4].copy_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+        BaseRaster::new(width, height, 1.0, rgba)
+    }
+
+    fn page_render_size(model: &CanvasModel, page: PageIndex) -> ViewSize {
+        let geometry = model
+            .viewport
+            .page_geometry(page)
+            .expect("the page is measured");
+        ViewSize {
+            width: geometry.render_size.0 as f32,
+            height: geometry.render_size.1 as f32,
+        }
+    }
+
+    /// The arithmetic Fit Visible rests on, including the far edge: the
+    /// renderer floors a page's pixel count, so a box that reaches the last
+    /// pixel has to land on the page edge and not past it.
+    #[test]
+    fn content_rect_maps_raster_pixels_onto_the_page() {
+        // A page 1.25 points to the raster pixel, so the scale is exact and
+        // the expected numbers are the arithmetic rather than its rounding.
+        let page_size = ViewSize {
+            width: 250.0,
+            height: 125.0,
+        };
+
+        let quarter = content_rect(
+            3,
+            RasterBounds {
+                x: 40,
+                y: 20,
+                width: 80,
+                height: 40,
+            },
+            (200, 100),
+            page_size,
+        )
+        .expect("a rectangle inside the page maps");
+        assert_eq!(quarter.page(), 3);
+        assert_eq!(quarter.origin(), ViewPoint { x: 50.0, y: 25.0 });
+        assert_eq!(
+            quarter.size(),
+            ViewSize {
+                width: 100.0,
+                height: 50.0
+            }
+        );
+
+        // A page whose axes scale differently, so an implementation that
+        // used one scale for both would place the box somewhere else.
+        let squat = ViewSize {
+            width: 250.0,
+            height: 50.0,
+        };
+        let stretched = content_rect(
+            0,
+            RasterBounds {
+                x: 40,
+                y: 20,
+                width: 80,
+                height: 40,
+            },
+            (200, 100),
+            squat,
+        )
+        .expect("a rectangle inside a page of another shape maps");
+        assert_eq!(stretched.origin(), ViewPoint { x: 50.0, y: 10.0 });
+        assert_eq!(
+            stretched.size(),
+            ViewSize {
+                width: 100.0,
+                height: 20.0
+            },
+            "the two axes scale by the page, not by one of them"
+        );
+
+        // The renderer floors a page's pixel count, so a page whose size is
+        // not a whole number of pixels scales back to a hair over its own
+        // edge in f32. The far edge has to land on the page, not past it, or
+        // `PageRenderRect::new` refuses the rectangle outright. These two
+        // numbers are chosen because they overshoot on both axes; a pair
+        // that round-trips exactly would leave the clamp dead code.
+        let fractional = ViewSize {
+            width: 200.5,
+            height: 100.6,
+        };
+        let raster = (200u32, 100u32);
+        assert!(
+            200.0 * (fractional.width / raster.0 as f32) > fractional.width,
+            "the width does not overshoot, so the clamp is not being tested"
+        );
+        assert!(
+            100.0 * (fractional.height / raster.1 as f32) > fractional.height,
+            "the height does not overshoot, so the clamp is not being tested"
+        );
+        let whole = content_rect(
+            0,
+            RasterBounds {
+                x: 0,
+                y: 0,
+                width: raster.0,
+                height: raster.1,
+            },
+            raster,
+            fractional,
+        )
+        .expect("a rectangle covering the raster maps");
+        assert_eq!(whole.origin(), ViewPoint { x: 0.0, y: 0.0 });
+        assert_eq!(whole.size(), fractional, "the far edge is the page edge");
+    }
+
+    /// The whole point of the row: Fit Visible fits the marks, so a page that
+    /// draws in one corner ends up zoomed further in than Fit Page, and the
+    /// policy it holds names the rectangle the raster reported.
+    #[test]
+    fn fit_visible_fits_the_marks_rather_than_the_media_box() {
+        let mut model = model_on_a_measured_page();
+        let page = model.viewport.current_page();
+        let marks = RasterBounds {
+            x: 10,
+            y: 20,
+            width: 60,
+            height: 40,
+        };
+        let raster = paper_with_marks(&model, page, marks);
+        let expected = content_rect(
+            page,
+            marks,
+            (raster.width(), raster.height()),
+            page_render_size(&model, page),
+        )
+        .expect("the marks map onto the page");
+        model.tiles.insert(page, raster);
+
+        model.fit(FitMode::Page).expect("the page fits");
+        let page_zoom = model.viewport.zoom();
+        assert!(model.fit_visible().expect("the marks fit"));
+
+        assert_eq!(
+            model.viewport.zoom_policy(),
+            onionskin_core::ZoomPolicy::Fit(FitMode::Visible(expected))
+        );
+        assert!(
+            model.viewport.zoom() > page_zoom,
+            "fitting a corner of the page should zoom past fitting all of it: {} is not more than {page_zoom}",
+            model.viewport.zoom()
+        );
+    }
+
+    /// Both refusals are named rather than silently doing nothing: a page
+    /// still rendering and a page that draws nothing are different answers,
+    /// and neither may be reported as a fit that happened.
+    #[test]
+    fn fit_visible_says_why_it_has_no_content_to_fit() {
+        let mut model = model_on_a_measured_page();
+        let page = model.viewport.current_page();
+
+        let unrendered = model.fit_visible().expect_err("no raster has arrived");
+        assert!(
+            matches!(unrendered, CanvasError::FitVisibleUnrendered { page: p } if p == page),
+            "{unrendered:?}"
+        );
+        assert!(unrendered.to_string().contains("has not been rendered"));
+
+        let blank = paper_with_marks(
+            &model,
+            page,
+            RasterBounds {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        );
+        model.tiles.insert(page, blank);
+
+        let empty = model.fit_visible().expect_err("the page draws nothing");
+        assert!(
+            matches!(empty, CanvasError::FitVisibleBlank { page: p } if p == page),
+            "{empty:?}"
+        );
+        assert!(empty.to_string().contains("draws nothing"));
     }
 }

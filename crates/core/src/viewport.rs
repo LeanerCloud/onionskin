@@ -423,6 +423,46 @@ impl Viewport {
         else {
             return Ok(None);
         };
+        self.map_into_page(&placement, point).map(Some)
+    }
+
+    /// The page point at `point`, falling back to the nearest visible page
+    /// when the point is off all of them.
+    ///
+    /// The placement transform is affine, so a page's coordinates extend
+    /// past its own edges and this stays the exact inverse of
+    /// [`Viewport::view_point_for`] out there: a caller can round-trip a
+    /// screen position through it whichever page turns out to be nearest.
+    ///
+    /// That is what a continuously zooming tool needs. Zooming out shrinks
+    /// the page away from a pointer that has not moved, so the pointer
+    /// leaving the page is the ordinary consequence of the gesture rather
+    /// than the end of it, and the gesture still has to know where the
+    /// pointer is. [`Viewport::page_point_at`] stays the one to ask when
+    /// "off the page" means "not on anything", which is what a marquee or a
+    /// text selection wants.
+    pub fn page_point_near(&self, point: ViewPoint) -> Result<Option<PagePoint>, ViewportError> {
+        validate_point(point)?;
+        let placements = self.visible_pages()?;
+        let Some(placement) = placements
+            .iter()
+            .find(|placement| contains(placement.rect, point))
+            .or_else(|| {
+                placements.iter().min_by(|left, right| {
+                    distance_to(left.rect, point).total_cmp(&distance_to(right.rect, point))
+                })
+            })
+        else {
+            return Ok(None);
+        };
+        self.map_into_page(placement, point).map(Some)
+    }
+
+    fn map_into_page(
+        &self,
+        placement: &PagePlacement,
+        point: ViewPoint,
+    ) -> Result<PagePoint, ViewportError> {
         let geometry = self
             .layout
             .geometry(placement.page)
@@ -439,11 +479,7 @@ impl Viewport {
             height: page_size.height * self.zoom,
         };
         let unrotated = self.rotation.unrotate_point(rotated, device_size);
-        Ok(Some(geometry.device_to_user(
-            f64::from(unrotated.x),
-            f64::from(unrotated.y),
-            self.zoom,
-        )?))
+        Ok(geometry.device_to_user(f64::from(unrotated.x), f64::from(unrotated.y), self.zoom)?)
     }
 
     /// Where a page point sits in the viewport, the forward direction of
@@ -935,6 +971,17 @@ fn contains(rect: ViewRect, point: ViewPoint) -> bool {
         && point.x <= rect.right()
         && point.y >= rect.origin.y
         && point.y <= rect.bottom()
+}
+
+/// How far `point` is from `rect`, and zero inside it.
+fn distance_to(rect: ViewRect, point: ViewPoint) -> f32 {
+    let x = (rect.origin.x - point.x)
+        .max(point.x - rect.right())
+        .max(0.0);
+    let y = (rect.origin.y - point.y)
+        .max(point.y - rect.bottom())
+        .max(0.0);
+    x.hypot(y)
 }
 
 fn rect_center(rect: ViewRect) -> ViewPoint {

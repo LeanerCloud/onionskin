@@ -38,7 +38,7 @@ use super::accessible::{
 };
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
-    RegistryFacts, NO_SNAPSHOT_TOOL,
+    RegistryFacts, NO_DYNAMIC_ZOOM_TOOL, NO_SNAPSHOT_TOOL,
 };
 use super::page_controls::{
     self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
@@ -49,7 +49,7 @@ use super::quick_actions::{
 };
 use super::rail::{self, apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
 use super::side_panel::{self, render_side_panel, SidePanelState};
-use super::theme::{ShellViewAction, ShellViewState};
+use super::theme::{ShellViewAction, ShellViewState, SurfaceVisibility};
 use super::tool_search::{
     document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
 };
@@ -473,7 +473,10 @@ impl ShellFrame {
             return root.child(crate::shell::dialog::accessible(self, dialog, cx));
         }
 
-        root = root.child(self.accessible_global_bar(cx));
+        let visibility = self.shell_view_state.visibility();
+        if visibility.global_bar {
+            root = root.child(self.accessible_global_bar(cx));
+        }
         if !self.notices.is_empty() {
             root = root.child(
                 A11yElement::new("notices", Role::List, "Notices").with_children(
@@ -495,7 +498,9 @@ impl ShellFrame {
                 ),
             );
         }
-        root = root.child(self.accessible_tabs());
+        if visibility.tab_bar {
+            root = root.child(self.accessible_tabs());
+        }
         if let Some(job) = &self.export_job {
             let can_cancel = job.phase.load() == ExportPhaseValue::Running;
             root = root.child(
@@ -512,7 +517,6 @@ impl ShellFrame {
             );
         }
 
-        let visibility = self.shell_view_state.visibility();
         if visibility.rail {
             let mut described =
                 rail::accessible(&self.rail_entries(cx), self.rail_state.expanded());
@@ -802,6 +806,13 @@ impl ShellFrame {
                 self.toggle_quick_action_visibility(action, cx);
             }
             Activation::ToggleSidePanel => self.toggle_side_panel(cx),
+            // A magnification is only offered by the Zoom To dialog, so
+            // choosing one dismisses it. Every other view action reaches
+            // here from a surface that stays where it is.
+            Activation::View(action @ ViewAction::ZoomTo(_)) => {
+                self.close_dialog(cx);
+                self.run_view_action(action, cx);
+            }
             Activation::View(action) => self.run_view_action(action, cx),
             Activation::SubmitPageEntry => self.submit_page_entry(cx),
             Activation::Pane(action) => self.run_pane_action(action, cx),
@@ -1009,7 +1020,7 @@ impl ShellFrame {
     pub(in crate::shell) fn dismiss_overlay(
         &mut self,
         _: &Dismiss,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // In the order the frame stacks them, topmost first, so Escape always
@@ -1041,6 +1052,18 @@ impl ShellFrame {
         }
         if self.find.is_open() {
             self.dismiss_find_bar(cx);
+            return;
+        }
+        // The two modes that hide the chrome are the last thing Escape
+        // closes, innermost first. Without this a window in Full Screen has
+        // no chrome to leave it from, and Read Mode ships unbound because
+        // Acrobat's Ctrl+H is Hide on macOS.
+        if self.shell_view_state.fullscreen() {
+            self.toggle_fullscreen(window, cx);
+            return;
+        }
+        if self.shell_view_state.read_mode() {
+            self.run_shell_view_action(ShellViewAction::ToggleReadMode, cx);
             return;
         }
         cx.propagate();
@@ -1136,6 +1159,23 @@ impl ShellFrame {
                 self.show_dialog(ShellDialog::KeyboardShortcuts, cx);
                 Ok(())
             }
+            MenuCommand::ZoomTo => {
+                self.main_menu_open = false;
+                self.show_dialog(ShellDialog::ZoomTo, cx);
+                Ok(())
+            }
+            // A drag, not a command: the entry selects the tool, which is
+            // what Acrobat's View > Zoom > Dynamic Zoom does too.
+            MenuCommand::DynamicZoom => {
+                self.dismiss_menus(cx);
+                self.activate_tool_with(
+                    ToolCapability::DynamicZoom,
+                    "Dynamic Zoom",
+                    NO_DYNAMIC_ZOOM_TOOL,
+                    cx,
+                );
+                Ok(())
+            }
             MenuCommand::Tools => {
                 self.dismiss_menus(cx);
                 self.toggle_rail_expanded(cx);
@@ -1179,6 +1219,7 @@ impl ShellFrame {
             | MenuCommand::FitPage
             | MenuCommand::FitWidth
             | MenuCommand::FitHeight
+            | MenuCommand::FitVisible
             | MenuCommand::SinglePage
             | MenuCommand::SinglePageContinuous
             | MenuCommand::TwoPage
@@ -1408,24 +1449,42 @@ impl ShellFrame {
         cx.notify();
     }
 
-    /// Activate whichever installed tool carries [`ToolCapability::Snapshot`].
+    /// Activate whichever installed tool carries `capability`.
     ///
     /// The menu entry asked the same question before it went live, so a
     /// miss here means the registry changed underneath it. Reported rather
     /// than returned quietly: the user clicked something that did nothing.
-    fn take_a_snapshot(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.tabs.active().and_then(|tab| {
-            tool_with(
-                tab.canvas.read(cx).model.registry(),
-                ToolCapability::Snapshot,
-            )
-        }) else {
-            self.notices.push(NO_SNAPSHOT_TOOL.to_owned());
+    ///
+    /// The rail entry goes along so a tool sharing a rail slot with another
+    /// leaves that slot showing the one now active, exactly as a click on
+    /// the slot would.
+    fn activate_tool_with(
+        &mut self,
+        capability: ToolCapability,
+        label: &str,
+        missing: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .tabs
+            .active()
+            .and_then(|tab| tool_with(tab.canvas.read(cx).model.registry(), capability))
+        else {
+            self.notices.push(missing.to_owned());
             cx.notify();
             return;
         };
         let entry = self.active_rail_entry(index, cx);
-        self.activate_canvas_tool(index, "Take a Snapshot", entry, cx);
+        self.activate_canvas_tool(index, label, entry, cx);
+    }
+
+    fn take_a_snapshot(&mut self, cx: &mut Context<Self>) {
+        self.activate_tool_with(
+            ToolCapability::Snapshot,
+            "Take a Snapshot",
+            NO_SNAPSHOT_TOOL,
+            cx,
+        );
     }
 
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
@@ -2499,12 +2558,10 @@ impl ShellFrame {
         let visibility = self.shell_view_state.visibility();
         let document = document_view_bounds(
             viewport,
-            visibility.rail,
+            visibility,
             self.rail_state.expanded(),
             self.navigation_width(visibility.navigation_pane),
-            visibility.side_panel,
             self.side_panel_state,
-            visibility.page_controls,
         );
         let bounds = gpui::Bounds {
             origin: Point::default(),
@@ -2580,8 +2637,12 @@ impl ShellFrame {
         cx.notify();
     }
 
+    /// The panel belongs to the global bar's search field, so it goes when
+    /// the bar does: a query typed before Read Mode was entered would
+    /// otherwise leave results hanging under a bar that is no longer there.
     fn search_panel_visible(&self, cx: &App) -> bool {
-        !self.main_menu_open
+        self.shell_view_state.visibility().global_bar
+            && !self.main_menu_open
             && self.tab_context_menu.is_none()
             && !self.search_input.read(cx).query().trim().is_empty()
     }
@@ -2876,12 +2937,10 @@ impl Render for ShellFrame {
         let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
             window.viewport_size(),
-            visibility.rail,
+            visibility,
             self.rail_state.expanded(),
             self.navigation_width(visibility.navigation_pane),
-            visibility.side_panel,
             self.side_panel_state,
-            visibility.page_controls,
         );
         self.quick_actions_state.constrain_to(document_bounds.size);
         let rects = self.a11y.rects.clone();
@@ -2934,8 +2993,7 @@ impl Render for ShellFrame {
             // The column is as tall as the body it sits in, which is the one
             // thing the panes cannot work out for themselves and the one
             // thing the thumbnails pane needs to know how many rows to show.
-            let height = (window.viewport_size().height - px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT))
-                .max(px(0.0));
+            let height = (window.viewport_size().height - header_height(visibility)).max(px(0.0));
             let active_canvas = self.tabs.active().map(|tab| tab.canvas.clone());
             body = body.child(panes::render_navigation_panes(
                 &mut self.navigation,
@@ -3073,14 +3131,21 @@ impl Render for ShellFrame {
             body.child(render_side_panel(self.side_panel_state, theme, cx))
         });
 
+        // Read Mode and Full Screen take the top bars away, and what is left
+        // is the page. Notices stay in both: a message the user has to see
+        // is not chrome.
+        let global_bar = visibility
+            .global_bar
+            .then(|| self.render_global_bar(cx))
+            .map(IntoElement::into_any_element);
         let frame = div()
             .size_full()
             .relative()
             .flex()
             .flex_col()
-            .child(self.render_global_bar(cx))
+            .when_some(global_bar, |frame, bar| frame.child(bar))
             .child(self.render_notices(cx))
-            .child(tab_bar)
+            .when(visibility.tab_bar, |frame| frame.child(tab_bar))
             .child(body);
 
         let mut root = div()
@@ -3175,29 +3240,27 @@ fn cancel_find_on(canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) {
 
 fn document_view_bounds(
     viewport: gpui::Size<Pixels>,
-    rail_visible: bool,
+    visibility: SurfaceVisibility,
     rail_expanded: bool,
     navigation_width: Pixels,
-    side_panel_visible: bool,
-    side_panel: SidePanelState,
-    page_controls_visible: bool,
+    side_panel_state: SidePanelState,
 ) -> gpui::Bounds<Pixels> {
-    let rail = if rail_visible {
+    let header = header_height(visibility);
+    let rail = if visibility.rail {
         rail_width(rail_expanded)
     } else {
         px(0.0)
     };
-    let side_panel = if side_panel_visible {
-        side_panel.width()
+    let side_panel = if visibility.side_panel {
+        side_panel_state.width()
     } else {
         px(0.0)
     };
-    let page_controls = if page_controls_visible {
+    let page_controls = if visibility.page_controls {
         px(PAGE_CONTROLS_HEIGHT)
     } else {
         px(0.0)
     };
-    let header = px(GLOBAL_BAR_HEIGHT + TAB_BAR_HEIGHT);
     gpui::Bounds {
         // The navigation column sits between the rail and the document, so
         // it moves the document's left edge as well as narrowing it.
@@ -3210,6 +3273,23 @@ fn document_view_bounds(
             (viewport.height - header - page_controls).max(px(0.0)),
         ),
     }
+}
+
+/// How much chrome sits above the document: whichever of the two top bars is
+/// on screen. Read Mode and Full Screen take them away, and the space has to
+/// go back to the page rather than stay reserved.
+fn header_height(visibility: SurfaceVisibility) -> Pixels {
+    let global_bar = if visibility.global_bar {
+        GLOBAL_BAR_HEIGHT
+    } else {
+        0.0
+    };
+    let tab_bar = if visibility.tab_bar {
+        TAB_BAR_HEIGHT
+    } else {
+        0.0
+    };
+    px(global_bar + tab_bar)
 }
 
 /// Where a context menu panel of `size` may sit after a click at `click`.
@@ -3815,6 +3895,21 @@ mod tests {
     #[cfg(feature = "shell-test-support")]
     use crate::shell::panes::NavigationPane;
 
+    /// A window with both top bars on screen, which is what every layout
+    /// case below is measured against, with the three surfaces those cases
+    /// vary.
+    fn chrome(rail: bool, side_panel: bool, page_controls: bool) -> SurfaceVisibility {
+        SurfaceVisibility {
+            global_bar: true,
+            tab_bar: true,
+            rail,
+            navigation_pane: true,
+            quick_actions: true,
+            side_panel,
+            page_controls,
+        }
+    }
+
     #[cfg(feature = "shell-test-support")]
     fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &mut App) {
         let prepared = canvas.update(cx, |canvas, _cx| {
@@ -4026,12 +4121,10 @@ mod tests {
 
         let collapsed_closed = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             false,
             px(0.0),
-            true,
             SidePanelState::Closed,
-            true,
         );
         assert_eq!(
             collapsed_closed.origin,
@@ -4044,12 +4137,10 @@ mod tests {
 
         let expanded_closed = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             true,
             px(0.0),
-            true,
             SidePanelState::Closed,
-            true,
         );
         assert_eq!(
             expanded_closed.origin,
@@ -4062,24 +4153,20 @@ mod tests {
 
         let collapsed_open = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             false,
             px(0.0),
-            true,
             SidePanelState::OpenEmpty,
-            true,
         );
         assert_eq!(collapsed_open.origin, collapsed_closed.origin);
         assert_eq!(collapsed_open.size, gpui::size(px(732.0), px(736.0)));
 
         let expanded_open = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             true,
             px(0.0),
-            true,
             SidePanelState::OpenEmpty,
-            true,
         );
         assert_eq!(expanded_open.origin, expanded_closed.origin);
         assert_eq!(expanded_open.size, gpui::size(px(580.0), px(736.0)));
@@ -4102,21 +4189,17 @@ mod tests {
 
         let without = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             false,
             px(0.0),
-            true,
             SidePanelState::Closed,
-            true,
         );
         let with_strip = document_view_bounds(
             viewport,
-            true,
+            chrome(true, true, true),
             false,
             closed,
-            true,
             SidePanelState::Closed,
-            true,
         );
 
         assert!(closed > px(0.0), "the button strip is always on screen");
@@ -4129,12 +4212,10 @@ mod tests {
     fn hidden_document_chrome_returns_its_space_to_the_canvas() {
         let bounds = document_view_bounds(
             gpui::size(px(1_100.0), px(860.0)),
-            false,
+            chrome(false, false, false),
             true,
             px(0.0),
-            false,
             SidePanelState::OpenEmpty,
-            false,
         );
 
         assert_eq!(
@@ -4322,12 +4403,10 @@ mod tests {
                 let visibility = frame.shell_view_state.visibility();
                 assert!(!document_view_bounds(
                     window.viewport_size(),
-                    visibility.rail,
+                    visibility,
                     frame.rail_state.expanded(),
                     frame.navigation_width(visibility.navigation_pane),
-                    visibility.side_panel,
                     frame.side_panel_state,
-                    visibility.page_controls,
                 )
                 .contains(&outside));
             })
@@ -4563,6 +4642,385 @@ mod tests {
                     frame.active_view_state(cx).unwrap().is_actual_size(),
                     "the zoom keystroke did not reach the canvas"
                 );
+            })
+            .unwrap();
+    }
+
+    /// Fit Visible is the one zoom command that needs something from the
+    /// rendered page, so its route runs further than the others': keystroke,
+    /// action listener, deferred window update, canvas, raster. Pressed
+    /// rather than called, for the same reason every other route here is.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_fit_visible_keystroke_fits_the_pages_marks(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .update(cx, |canvas, _cx| {
+                        // The worker may already have answered the visible
+                        // page; only stand in for it when it has not.
+                        if !canvas.model.has_rendered_current_page_for_test() {
+                            canvas
+                                .model
+                                .seed_visible_raster_for_test([0, 0, 0, 255])
+                                .expect("the visible page takes a raster");
+                        }
+                    });
+                assert!(frame.active_view_state(cx).unwrap().fit_mode().is_some());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.fit-visible"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let fit = frame.active_view_state(cx).unwrap().fit_mode();
+                assert!(
+                    matches!(fit, Some(onionskin_core::FitMode::Visible(_))),
+                    "the fit visible keystroke did not reach the canvas: {fit:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Read Mode hides the top bars, and hiding a control means taking it
+    /// out of the accessibility tree: a surface that is off screen but still
+    /// described is an invisible tab stop the ring lands on.
+    ///
+    /// Pressed rather than called, through the binding `keymap.json` gives
+    /// it, because Acrobat's Ctrl+H is Hide on macOS and the command ships
+    /// unbound.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn read_mode_takes_the_top_bars_out_of_the_tree_and_keeps_the_page_controls(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = crate::config::test_dir("read-mode-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            "{\"view.read-mode\": \"cmd-shift-h\"}",
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        window
+            .update(cx, |frame, window, cx| {
+                // A query left in the global bar's field, so the panel it
+                // opens has to go with the bar rather than hang under it.
+                frame
+                    .search_input
+                    .update(cx, |input, cx| input.set_query("zoom", cx));
+                let tree = frame.accessible(window, cx);
+                assert!(tree.find(&"global-bar".into()).is_some());
+                assert!(tree.find(&"tab-bar".into()).is_some());
+                assert!(tree.find(&"tool-rail".into()).is_some());
+                assert!(tree.find(&"global-search-results".into()).is_some());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.read-mode"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(frame.shell_view_state.read_mode(), "the keystroke missed");
+                let tree = frame.accessible(window, cx);
+                for gone in [
+                    "global-bar",
+                    "tab-bar",
+                    "tool-rail",
+                    "quick-actions",
+                    "global-search-results",
+                ] {
+                    assert!(
+                        tree.find(&gone.into()).is_none(),
+                        "{gone} is hidden but still described"
+                    );
+                }
+                assert!(
+                    tree.find(&"page-controls".into()).is_some(),
+                    "read mode left no toolbar to read with"
+                );
+            })
+            .unwrap();
+
+        // Escape is the way out, because there is no chrome left to click.
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(!frame.shell_view_state.read_mode(), "escape did not exit");
+                assert!(frame
+                    .accessible(window, cx)
+                    .find(&"global-bar".into())
+                    .is_some());
+            })
+            .unwrap();
+    }
+
+    /// Leaving a chromeless mode is the LAST thing Escape does, so every
+    /// overlay above it still gets the key first.
+    ///
+    /// The ordering is load-bearing and nothing else pins it: moving the two
+    /// mode checks to the top of the dismissal chain leaves every other test
+    /// in this file passing while Escape stops closing the dialog, the
+    /// search panel, a context menu, a menu and the find bar. Each stage is
+    /// armed in turn, and the mode has to survive the key it did not get.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn escape_closes_an_overlay_before_it_leaves_a_chromeless_mode(cx: &mut TestAppContext) {
+        type Arm = fn(&mut ShellFrame, &mut Window, &mut Context<ShellFrame>);
+        type IsOpen = fn(&ShellFrame, &App) -> bool;
+        let stages: [(&str, Arm, IsOpen); 4] = [
+            (
+                "the Zoom To dialog",
+                |frame, _window, cx| frame.show_dialog(ShellDialog::ZoomTo, cx),
+                |frame, _cx| frame.dialog.is_some(),
+            ),
+            (
+                "the canvas context menu",
+                |frame, _window, cx| {
+                    frame.canvas_context_menu = Some(CanvasContextMenu {
+                        origin: gpui::point(px(300.0), px(300.0)),
+                    });
+                    cx.notify();
+                },
+                |frame, _cx| frame.canvas_context_menu.is_some(),
+            ),
+            (
+                "the main menu",
+                |frame, _window, cx| frame.toggle_main_menu(cx),
+                |frame, _cx| frame.main_menu_open,
+            ),
+            (
+                "the find bar",
+                |frame, window, cx| frame.open_find_bar(None, window, cx),
+                |frame, _cx| frame.find.is_open(),
+            ),
+        ];
+
+        // Read Mode first, then Full Screen: each mode's own check sits
+        // below every stage, and each has to stay put.
+        for (fullscreen, read_mode) in [(false, true), (true, false)] {
+            for (name, arm, is_open) in stages {
+                let (window, _) = bound_window(&["hello.pdf"], cx);
+                window
+                    .update(cx, |frame, window, cx| {
+                        if fullscreen {
+                            frame.shell_view_state.set_fullscreen(true);
+                        }
+                        if read_mode {
+                            frame.apply_shell_view_action(ShellViewAction::ToggleReadMode, cx);
+                        }
+                        // The fifth stage of the chain, the tool search
+                        // panel, cannot be one here: it belongs to the
+                        // global bar's field, which these modes hide, so it
+                        // does not open however much is typed into it.
+                        frame
+                            .search_input
+                            .update(cx, |input, cx| input.set_query("zoom", cx));
+                        assert!(
+                            !frame.search_panel_visible(cx),
+                            "the search panel opened with the global bar hidden"
+                        );
+                        arm(frame, window, cx);
+                        assert!(is_open(frame, cx), "{name} did not arm");
+                    })
+                    .unwrap();
+
+                cx.simulate_keystrokes(window.into(), "escape");
+                cx.run_until_parked();
+
+                window
+                    .update(cx, |frame, _window, cx| {
+                        assert!(!is_open(frame, cx), "escape did not close {name}");
+                        assert_eq!(
+                            frame.shell_view_state.fullscreen(),
+                            fullscreen,
+                            "escape left full screen while {name} was open"
+                        );
+                        assert_eq!(
+                            frame.shell_view_state.read_mode(),
+                            read_mode,
+                            "escape left read mode while {name} was open"
+                        );
+                    })
+                    .unwrap();
+            }
+        }
+    }
+
+    /// Full Screen is the document and nothing else, and Escape answers it
+    /// before Read Mode: a window in both comes back one step at a time.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn full_screen_leaves_no_chrome_described_and_escape_answers_it_first(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        window
+            .update(cx, |frame, window, cx| {
+                assert!(frame.shell_view_state.set_fullscreen(true));
+                assert!(frame.apply_shell_view_action(ShellViewAction::ToggleReadMode, cx));
+
+                let tree = frame.accessible(window, cx);
+                for gone in [
+                    "global-bar",
+                    "tab-bar",
+                    "tool-rail",
+                    "quick-actions",
+                    "page-controls",
+                ] {
+                    assert!(
+                        tree.find(&gone.into()).is_none(),
+                        "{gone} is hidden but still described"
+                    );
+                }
+                let visibility = frame.shell_view_state.visibility();
+                assert_eq!(header_height(visibility), px(0.0));
+                assert_eq!(
+                    document_view_bounds(
+                        window.viewport_size(),
+                        visibility,
+                        frame.rail_state.expanded(),
+                        frame.navigation_width(visibility.navigation_pane),
+                        frame.side_panel_state,
+                    )
+                    .size,
+                    window.viewport_size(),
+                    "the hidden chrome kept its space"
+                );
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.shell_view_state.read_mode(),
+                    "escape left read mode while full screen was still on"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Dynamic Zoom is a drag, so its menu entry selects a tool rather than
+    /// changing the view. Pressed on a real window through the binding a
+    /// user would give it, and asserted on the tool the canvas ends up with.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    #[gpui::test]
+    fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("dynamic-zoom-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            "{\"view.dynamic-zoom\": \"cmd-shift-z\"}",
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let dynamic_zoom = window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                let index = tool_with(canvas.model.registry(), ToolCapability::DynamicZoom)
+                    .expect("tools-basic registers a dynamic zoom tool");
+                assert_ne!(canvas.model.active_tool(), Some(index));
+                index
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(
+            window.into(),
+            &keystroke_for(&bindings, "view.dynamic-zoom"),
+        );
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                assert_eq!(
+                    canvas.model.active_tool(),
+                    Some(dynamic_zoom),
+                    "the dynamic zoom keystroke did not select the tool"
+                );
+                assert!(frame.notices.is_empty(), "{:?}", frame.notices);
+            })
+            .unwrap();
+    }
+
+    /// Zoom To ships unbound because Acrobat's Ctrl+M is Minimize on macOS,
+    /// so its keystroke route is the one `keymap.json` gives it. Pressed on a
+    /// real window, which proves both halves at once: the file's binding
+    /// reaches the command, and the command reaches the dialog.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keymap_binding_opens_the_zoom_to_dialog(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("zoom-to-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            r#"{"view.zoom-to": "cmd-m"}"#,
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        window
+            .update(cx, |frame, _window, _cx| assert!(frame.dialog.is_none()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.zoom-to"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame.dialog,
+                    Some(ShellDialog::ZoomTo),
+                    "the bound keystroke did not open the magnification chooser"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The dialog is a chooser, so picking a magnification has to both apply
+    /// it and put the dialog away. Driven through `run_activation`, which is
+    /// the one route a click and a screen reader share.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn choosing_a_magnification_applies_it_and_closes_the_chooser(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::MainMenu(MenuCommand::ZoomTo), window, cx);
+                assert_eq!(frame.dialog, Some(ShellDialog::ZoomTo));
+                frame.run_activation(Activation::View(ViewAction::ZoomTo(2.0)), window, cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(frame.dialog.is_none(), "the chooser stayed up");
+                let view = frame.active_view_state(cx).expect("the seed is open");
+                assert!((view.zoom - 2.0).abs() < 1e-4, "{}", view.zoom);
+                assert_eq!(view.zoom_policy, onionskin_core::ZoomPolicy::Fixed);
             })
             .unwrap();
     }
@@ -5221,12 +5679,10 @@ mod tests {
     fn composite_layout_origin_reaches_canvas_pointer_mapping() {
         let bounds = document_view_bounds(
             gpui::size(px(1_100.0), px(860.0)),
-            true,
+            chrome(true, true, true),
             false,
             px(0.0),
-            true,
             SidePanelState::OpenEmpty,
-            true,
         );
         let inputs = Arc::new(Mutex::new(Vec::new()));
         let mut registry = PluginRegistry::new();

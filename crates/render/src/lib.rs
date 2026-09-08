@@ -44,8 +44,8 @@ pub use hayro::hayro_interpret::InterpreterWarning;
 pub use hayro::hayro_syntax::object::ObjectIdentifier;
 
 pub use base::{
-    raster_size, BaseRaster, Document, PageRender, PageRenderGeometry, PageTransform, RenderError,
-    RenderOptions, RenderSession, TransformError, MAX_RASTER_AXIS,
+    raster_size, BaseRaster, Document, PageRender, PageRenderGeometry, PageTransform, RasterBounds,
+    RenderError, RenderOptions, RenderSession, TransformError, MAX_RASTER_AXIS,
 };
 pub use overlay::{Overlay, OverlayError, Rgba};
 pub use store::TileStore;

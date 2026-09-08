@@ -67,6 +67,9 @@ pub enum ToolCapability {
     /// Copies a page region as an image. The canvas context menu's Take A
     /// Snapshot entry finds its tool through this rather than by id.
     Snapshot,
+    /// Zooms continuously while the pointer is dragged. The View menu's
+    /// Dynamic Zoom entry selects its tool through this rather than by id.
+    DynamicZoom,
 }
 
 /// Everything a tool may touch while handling input.

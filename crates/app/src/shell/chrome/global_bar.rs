@@ -114,9 +114,12 @@ pub(in crate::shell) enum MenuCommand {
     ActualSize,
     ZoomOut,
     ZoomIn,
+    ZoomTo,
+    DynamicZoom,
     FitPage,
     FitWidth,
     FitHeight,
+    FitVisible,
     SinglePage,
     SinglePageContinuous,
     TwoPage,
@@ -141,6 +144,10 @@ pub(in crate::shell) enum MenuCommand {
 /// capability, and what the frame says if one disappears between the menu
 /// being built and the entry being chosen.
 pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
+
+/// The same, for Dynamic Zoom, which is likewise an entry that selects a
+/// tool the registry may not have.
+pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
 const REGISTRY_BACKED: [MenuCommand; 2] = [MenuCommand::SelectAll, MenuCommand::DeselectAll];
@@ -177,6 +184,7 @@ pub(in crate::shell) struct RegistryFacts {
     codecs: ExportCodecs,
     commands: RegisteredCommands,
     snapshot_tool: bool,
+    dynamic_zoom_tool: bool,
     any_tool: bool,
 }
 
@@ -188,6 +196,7 @@ impl RegistryFacts {
                 registry.commands().iter().any(|command| command.id == id)
             }),
             snapshot_tool: tool_with(registry, ToolCapability::Snapshot).is_some(),
+            dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
         }
     }
@@ -385,6 +394,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 state.shell_view,
                 state.quick_actions_visible,
                 state.registry.any_tool,
+                state.registry.dynamic_zoom_tool,
             ),
         },
         MenuSection {
@@ -452,6 +462,7 @@ fn view_menu_entries(
     shell_view: ShellViewState,
     quick_actions_visible: [bool; QuickAction::ALL.len()],
     any_tool: bool,
+    dynamic_zoom_tool: bool,
 ) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -548,6 +559,17 @@ fn view_menu_entries(
         ),
         entry(MenuCommand::ZoomOut, "Zoom Out", availability, false),
         entry(MenuCommand::ZoomIn, "Zoom In", availability, false),
+        entry(MenuCommand::ZoomTo, "Zoom To…", availability, false),
+        entry(
+            MenuCommand::DynamicZoom,
+            "Dynamic Zoom",
+            match (dynamic_zoom_tool, view.is_some()) {
+                (false, _) => Disabled(NO_DYNAMIC_ZOOM_TOOL),
+                (true, false) => Disabled("No document is open"),
+                (true, true) => Enabled,
+            },
+            false,
+        ),
         entry(
             MenuCommand::FitPage,
             "Fit Page",
@@ -565,6 +587,12 @@ fn view_menu_entries(
             "Fit Height",
             availability,
             fit_mode == Some(FitMode::Height),
+        ),
+        entry(
+            MenuCommand::FitVisible,
+            "Fit Visible",
+            availability,
+            matches!(fit_mode, Some(FitMode::Visible(_))),
         ),
         entry(
             MenuCommand::SinglePage,
@@ -684,6 +712,7 @@ impl MenuCommand {
             Self::FitPage => ViewAction::Fit(FitMode::Page),
             Self::FitWidth => ViewAction::Fit(FitMode::Width),
             Self::FitHeight => ViewAction::Fit(FitMode::Height),
+            Self::FitVisible => ViewAction::FitVisible,
             Self::SinglePage => ViewAction::SetLayout(PageLayoutMode::SinglePage),
             Self::SinglePageContinuous => {
                 ViewAction::SetLayout(PageLayoutMode::SinglePageContinuous)
@@ -691,7 +720,11 @@ impl MenuCommand {
             Self::TwoPage => ViewAction::SetLayout(PageLayoutMode::TwoPage),
             Self::TwoPageContinuous => ViewAction::SetLayout(PageLayoutMode::TwoPageContinuous),
             Self::ToggleCover => ViewAction::SetShowCover(!view.show_cover),
-            Self::Open
+            // Opens the magnification chooser rather than changing the view
+            // itself; the dialog's rows carry the view actions.
+            Self::ZoomTo
+            | Self::DynamicZoom
+            | Self::Open
             | Self::OpenRecent
             | Self::Quit
             | Self::SaveAs
@@ -756,9 +789,12 @@ impl MenuCommand {
             | Self::ActualSize
             | Self::ZoomOut
             | Self::ZoomIn
+            | Self::ZoomTo
+            | Self::DynamicZoom
             | Self::FitPage
             | Self::FitWidth
             | Self::FitHeight
+            | Self::FitVisible
             | Self::SinglePage
             | Self::SinglePageContinuous
             | Self::TwoPage
@@ -895,9 +931,12 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ActualSize
         | MenuCommand::ZoomOut
         | MenuCommand::ZoomIn
+        | MenuCommand::ZoomTo
+        | MenuCommand::DynamicZoom
         | MenuCommand::FitPage
         | MenuCommand::FitWidth
         | MenuCommand::FitHeight
+        | MenuCommand::FitVisible
         | MenuCommand::SinglePage
         | MenuCommand::SinglePageContinuous
         | MenuCommand::TwoPage
@@ -947,6 +986,7 @@ mod tests {
             codecs: ExportCodecs::installed(|_| true),
             commands: RegisteredCommands([true; REGISTRY_BACKED.len()]),
             snapshot_tool: true,
+            dynamic_zoom_tool: true,
             any_tool: true,
         }
     }
@@ -975,6 +1015,7 @@ mod tests {
             view,
             ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
+            true,
             true,
         )
     }
@@ -1169,6 +1210,57 @@ mod tests {
         );
     }
 
+    /// Dynamic Zoom asks the same way, for the same reason: the entry
+    /// selects a tool, so a build without that tool has to say so rather
+    /// than offer an entry that reaches nothing.
+    #[test]
+    fn dynamic_zoom_follows_the_capability_rather_than_a_tool_id() {
+        let without = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
+            [true; QuickAction::ALL.len()],
+            RegistryFacts {
+                dynamic_zoom_tool: false,
+                ..everything_installed()
+            },
+            0,
+        );
+
+        assert_eq!(
+            entry(without, MenuCommand::DynamicZoom).availability,
+            MenuAvailability::Disabled(NO_DYNAMIC_ZOOM_TOOL)
+        );
+        assert_eq!(
+            entry(menu_state(1, Some(view())), MenuCommand::DynamicZoom).availability,
+            MenuAvailability::Enabled
+        );
+        // The tool is installed but there is nothing to zoom.
+        assert_eq!(
+            entry(menu_state(0, None), MenuCommand::DynamicZoom).availability,
+            MenuAvailability::Disabled("No document is open")
+        );
+    }
+
+    /// What the entries added for the zoom rows are called. The labels are
+    /// what the user reads and what the accessibility tree announces, and
+    /// nothing else pins them.
+    #[test]
+    fn the_zoom_entries_carry_acrobats_names() {
+        let entries = view_entries(Some(view()));
+        let label = |command| {
+            entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .unwrap_or_else(|| panic!("{command:?} has a view menu entry"))
+                .label
+        };
+
+        assert_eq!(label(MenuCommand::ZoomTo), "Zoom To…");
+        assert_eq!(label(MenuCommand::FitVisible), "Fit Visible");
+        assert_eq!(label(MenuCommand::DynamicZoom), "Dynamic Zoom");
+    }
+
     /// The installed build answers the same way: this is the query the
     /// chrome runs, against the registry the app assembles.
     #[test]
@@ -1180,6 +1272,7 @@ mod tests {
             cfg!(feature = "commands-core")
         );
         assert_eq!(facts.snapshot_tool, cfg!(feature = "tools-basic"));
+        assert_eq!(facts.dynamic_zoom_tool, cfg!(feature = "tools-basic"));
         assert_eq!(facts.any_tool, cfg!(feature = "tools-basic"));
     }
 
@@ -1551,6 +1644,49 @@ mod tests {
                 .unwrap()
                 .selected
         );
+
+        // Fit Visible carries a rectangle, so its tick is a match on the
+        // variant rather than on the whole value: comparing values would
+        // leave the entry never ticked, whatever the viewport is fitting.
+        let mut visible = view();
+        visible.zoom_policy = ZoomPolicy::Fit(FitMode::Visible(
+            onionskin_core::PageRenderRect::new(
+                visible.current_page,
+                onionskin_core::ViewPoint { x: 10.0, y: 20.0 },
+                onionskin_core::ViewSize {
+                    width: 30.0,
+                    height: 40.0,
+                },
+                onionskin_core::ViewSize {
+                    width: 200.0,
+                    height: 100.0,
+                },
+            )
+            .expect("the rectangle is inside the page"),
+        ));
+        let visible_entries = view_entries(Some(visible));
+        assert!(
+            visible_entries
+                .iter()
+                .find(|entry| entry.command == MenuCommand::FitVisible)
+                .unwrap()
+                .selected
+        );
+        for other in [
+            MenuCommand::FitPage,
+            MenuCommand::FitWidth,
+            MenuCommand::FitHeight,
+            MenuCommand::ActualSize,
+        ] {
+            assert!(
+                !visible_entries
+                    .iter()
+                    .find(|entry| entry.command == other)
+                    .unwrap()
+                    .selected,
+                "{other:?} is ticked while Fit Visible holds"
+            );
+        }
     }
 
     #[test]

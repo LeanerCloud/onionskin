@@ -154,6 +154,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "select-text" => "T",
         "select-region" => "□",
         "zoom" => "⌕",
+        "dynamic-zoom" => "⇕",
         "snapshot" => "▣",
         _ => "?",
     }
@@ -491,6 +492,7 @@ mod tests {
         assert_eq!(icon_glyph("select-text"), "T");
         assert_eq!(icon_glyph("select-region"), "□");
         assert_eq!(icon_glyph("zoom"), "⌕");
+        assert_eq!(icon_glyph("dynamic-zoom"), "⇕");
         assert_eq!(icon_glyph("snapshot"), "▣");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }
@@ -513,6 +515,46 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
+    }
+
+    /// Acrobat keeps marquee zoom and dynamic zoom in one Zoom flyout, and
+    /// that is a `group()` on the tools rather than anything the rail knows.
+    /// Collapsed, they take one slot between them; nothing else asserts the
+    /// group id, so either tool could drift out of the pair unnoticed.
+    #[cfg(feature = "tools-basic")]
+    #[test]
+    fn the_two_zoom_tools_collapse_into_one_rail_slot() {
+        let registry = crate::build_registry();
+        let zoom_tools: Vec<_> = registry
+            .tools()
+            .filter(|tool| tool.id() == "zoom" || tool.id() == "dynamic-zoom")
+            .map(|tool| (tool.id(), tool.group()))
+            .collect();
+        assert_eq!(
+            zoom_tools,
+            vec![("zoom", "zoom"), ("dynamic-zoom", "zoom")],
+            "the two zoom tools no longer share a group"
+        );
+
+        let collapsed = RailState::default();
+        let slots = collapsed.entries(&registry, None);
+        assert_eq!(
+            slots.iter().filter(|entry| entry.group == "zoom").count(),
+            1,
+            "the zoom flyout took more than one slot"
+        );
+
+        let mut expanded = RailState::default();
+        expanded.toggle_expanded();
+        assert_eq!(
+            expanded
+                .entries(&registry, None)
+                .iter()
+                .filter(|entry| entry.group == "zoom")
+                .count(),
+            2,
+            "the flyout does not list both tools when opened"
+        );
     }
 
     #[test]
