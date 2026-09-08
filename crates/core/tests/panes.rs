@@ -76,11 +76,19 @@ fn real_layer_lists_follow_each_files_own_default_configuration() {
         let layers = doc.layers().expect("the layers read");
 
         assert_eq!(layers.len(), 7);
-        assert_eq!(layers[0].name, "Visible");
+        // The pane lists groups in the file's /D /Order, not in /OCGs order,
+        // so this file leads with BORDER rather than the Visible group that
+        // /OCGs happens to name first. Asserting the /OCGs order is what this
+        // test did until layer display order started being honoured, and it
+        // kept passing because CI never fetches this corpus.
+        assert_eq!(layers[0].name, "BORDER");
         // The file's /OFF list is empty, so every group is on, including the
         // one whose name says otherwise. Reading the name instead of the
         // configuration is the mistake this pins.
-        assert_eq!(layers[1].name, "Hidden");
+        assert!(
+            layers.iter().any(|layer| layer.name == "Hidden"),
+            "the group named Hidden is listed like any other"
+        );
         assert!(
             layers.iter().all(|layer| layer.visible),
             "an empty /OFF list turns nothing off"
