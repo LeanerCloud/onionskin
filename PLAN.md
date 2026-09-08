@@ -25,6 +25,23 @@ N times produces a file that still contains the byte-exact original, recoverable
 by truncation. Flattening (a full rewrite that discards history) is a separate,
 explicit export operation, never the default save path.
 
+Three things the model has to be precise about before anything writes:
+
+- **One section per save, not per edit.** A save materializes the net effect of
+  every edit since the last one, so ten edits and one save append one section.
+  An edit undone before the save appends nothing: a save with nothing to write
+  writes nothing.
+- **Undo is not truncation.** Truncation rolls a *generation* back and is an
+  explicit command (the skins panel, `File > Revert`). Undo is a session-scoped
+  edit stack held above the document and never touches disk. Undoing past the
+  last save makes the document dirty again and the next save appends a section
+  expressing the reversal. Truncation as undo is wrong whenever the section is
+  not the file's last, and wrong after a Save As.
+- **A document we author has nothing beneath it.** Combining, splitting,
+  extracting and creating from images produce new files, so their first save is
+  a complete write and the invariant applies from there: the file we wrote is
+  the base sheet. This is not an exception, because nothing existed to preserve.
+
 This is not a self-imposed handicap; it is what the PDF spec itself provides
 for, and it buys three things outright:
 
@@ -34,7 +51,8 @@ for, and it buys three things outright:
    therefore mean *untouched*, never *corrupted*." For PDF, incremental updates
    make that rule structural rather than disciplinary.
 2. **Free versioning.** Each incremental section is a document generation. The
-   UI shows generations as sheets ("skins") and rolls back by truncation.
+   UI shows generations as sheets ("skins") and rolls one back by truncating to
+   it, which is a named command rather than the undo key.
 3. **Signature compatibility.** An incremental update is the *only* legal way to
    annotate or counter-sign an already-signed PDF without invalidating its
    signature. Editors that rewrite on save break signatures; Onionskin can't.
@@ -194,12 +212,23 @@ onionskin/
 │   │                       #   while the corrupt original stays byte-intact
 │   │                       #   beneath. Every object retains its source byte
 │   │                       #   span. Writer emits incremental-update
-│   │                       #   sections; full rewrite exists only behind an
-│   │                       #   explicit `flatten` API.
+│   │                       #   sections and enumerates the section chain, so
+│   │                       #   generations are addressable and truncatable.
+│   │                       #   Deleting an object must not leave a dangling
+│   │                       #   reference: the writer validates what a section
+│   │                       #   points at before emitting it. A full write from
+│   │                       #   scratch exists only behind an explicit `flatten`
+│   │                       #   API, used by authored documents, compression
+│   │                       #   and redaction.
 │   ├── core                # Kernel: document model over cos - page tree, the
 │   │                       #   edit graph (base nodes = original objects,
 │   │                       #   overlay nodes = pending edits), history,
-│   │                       #   selection, save. Owns the tagged-PDF structure
+│   │                       #   selection, save. Owns every page-set mutation
+│   │                       #   and the fix-ups one forces (page tree, page
+│   │                       #   labels, destinations, annotations): organize,
+│   │                       #   combine, split and redact all need the same
+│   │                       #   repairs, so no plugin owns them. Also owns the
+│   │                       #   tagged-PDF structure
 │   │                       #   tree: every edit that touches tagged content
 │   │                       #   must keep the tree valid (accessible documents
 │   │                       #   stay accessible through edits). Contains no
@@ -225,12 +254,18 @@ onionskin/
 │   │                       #   they are filled wrong; this is not optional
 │   │                       #   for a drop-in claim.
 │   ├── print               # Printing. GPUI has none (Zed never prints), so
-│   │                       #   this is ours end to end: render pages via
-│   │                       #   `render`, hand off to NSPrintOperation (macOS),
-│   │                       #   CUPS (Linux), the Windows print pipeline.
+│   │                       #   this is ours end to end, in five parts: a page
+│   │                       #   selection model, an imposition engine turning
+│   │                       #   settings into sheets, a sheet renderer over
+│   │                       #   `render`, a backend trait, and the dialog. Only
+│   │                       #   the dialog is app work. Backends: print-to-file
+│   │                       #   first, because it is the only one CI can check,
+│   │                       #   then NSPrintOperation (macOS), CUPS (Linux), the
+│   │                       #   Windows print pipeline.
 │   │                       #   Acrobat print-dialog parity: page ranges,
-│   │                       #   scaling, N-up, booklet, poster/tile,
-│   │                       #   print-as-image.
+│   │                       #   scaling, N-up, print-as-image; booklet and
+│   │                       #   poster/tile are imposition over the same sheet
+│   │                       #   model and ship with the later backends.
 │   │                       #   GPUI-free; `app` supplies only the dialog UI.
 │   ├── render              # The trait seam. CPU reference: hayro renders
 │   │                       #   the base raster per (page, zoom) whole-page
@@ -268,7 +303,8 @@ onionskin/
 │   │                       #   watermark, background, Bates numbering, crop
 │   │                       #   (advanced page boxes in M5)
 │   ├── tools-organize      # Organize Pages: rotate, reorder, insert, delete,
-│   │                       #   extract, split, replace pages, page labels
+│   │                       #   extract, split, replace pages, page labels.
+│   │                       #   The page-tree repairs live in `core`, not here
 │   ├── tools-fill-sign     # Fill & Sign
 │   ├── tools-form          # Prepare Form: AcroForm fields, appearances,
 │   │                       #   scripting-driven calculate/validate/format.
@@ -325,8 +361,8 @@ product in itself); it gets a scoreboard row saying so.
 | 9 | PDF JavaScript ships, via Boa | Real AcroForms compute; ignoring JS fills them wrong, silently. Scope: the Acrobat forms API subset (calculate, validate, format), sandboxed with no I/O and a fuel budget. Document-level and interactive JS beyond forms: out of scope, surfaced as a visible notice. A user-facing preference disables document JavaScript entirely, mirroring Acrobat's. |
 | 10 | Repair-on-open, Acrobat-grade | A large share of real PDFs are invalid; a drop-in replacement opens them. Recovery is a scan-and-rebuild path in `cos`; repaired structures are written into the first incremental section so the corrupt original survives byte-intact underneath. |
 | 11 | Lazy, xref-driven parsing with pinned budgets | Acrobat opens 2000-page files instantly because it never parses ahead of need. Two budgets, enforced by benches: (1) lazy open - time-to-first-page under 200 ms on the 1000-page bench file (the corpus has none; synthesize one), guarding xref-driven laziness; (2) first paint - something visible under 200 ms on ANY page, with the full raster completing on a background thread, because a correct transparency-heavy page can cost 700+ ms in the CPU interpreter (spike-measured). Plus: memory proportional to viewed pages (tile eviction policy lands M2), 60 fps scroll on the M2 viewer. |
-| 12 | Accessibility is first-class, both senses | App side: AccessKit wired into the GPUI fork so the shell exposes a real accessibility tree (Section 508 / European Accessibility Act buyers are exactly Acrobat's institutional base). Document side: `core` owns the tagged-PDF structure tree and every edit keeps it valid. |
-| 13 | Printing is our own pipeline | GPUI has none, so `crates/print` renders pages and drives NSPrintOperation / CUPS / Windows print APIs directly, with Acrobat print-dialog parity. Treated as a milestone deliverable, not a stretch goal. |
+| 12 | Accessibility is first-class, both senses | App side: AccessKit wired into the GPUI fork so the shell exposes a real accessibility tree (Section 508 / European Accessibility Act buyers are exactly Acrobat's institutional base). Document side: `core` owns the tagged-PDF structure tree and every edit keeps it valid. That obligation starts at the first edit, not at guarantee 8: M3 builds the reader, the per-edit maintenance hook and an invariant (the `/ParentTree` resolves, no `/K` names a removed page, annotations get a `/StructParent`). Retrofitting it at M5 would mean revisiting every M3 tool and repairing documents our own earlier builds broke. M5 adds the checker on top; M3 owes the tree, not the checker. |
+| 13 | Printing is our own pipeline | GPUI has none, so `crates/print` renders pages and drives NSPrintOperation / CUPS / Windows print APIs directly, with Acrobat print-dialog parity. Imposition is a pure function producing sheets, and every backend consumes those sheets, so print behaviour is checkable without a printer. Treated as a milestone deliverable, not a stretch goal. Booklet and poster/tile are imposition over the same sheet model and ship with the later backends, not with the first one. |
 
 ## What does not transfer from Schist
 
@@ -335,8 +371,13 @@ Choices that are right for a raster editor and would be cargo-culting here:
 1. **COW tiles as the document substrate.** Schist's document *is* pixels;
    tiles are the data. Onionskin's document is an object graph and content
    streams; pixels exist only in the render cache. Tiles and damage tracking
-   apply there, and undo is dropping edit-graph overlay nodes, not restoring
-   tile snapshots - strictly cheaper.
+   apply there, and undo restores an object's previous overlay state rather
+   than a tile snapshot, so it costs memory proportional to changed objects,
+   strictly cheaper. Dropping the overlay node is the common case, not the
+   rule: an edit that overwrites an already-overlaid object has to put back
+   what was there, and an edit that deletes an object present in the original
+   has no node to drop. The stack holds a before and an after per changed
+   object.
 2. **The renderer as semantic contract.** In Schist, compositing is the
    product: the composited pixels are what gets saved, so `pixel-ops` must be
    the spec and the GPU must be parity-tested against it. In Onionskin,
@@ -374,7 +415,9 @@ Choices that are right for a raster editor and would be cargo-culting here:
    deliberately broken files (the malformed set, hayro's fuzzed crash
    regressions) are excluded here; they exercise test 6 instead.
 2. **Onionskin:** open → edit → save produces `original bytes ++ one incremental
-   section`; truncating the section yields the byte-exact original.
+   section`; truncating the section yields the byte-exact original. One section
+   per save however many edits it carries, and an edit undone before the save
+   appends nothing.
 3. **Redaction:** redact text T → verifier extracts all text and images from the
    output and finds no trace of T; a raw byte scan finds no trace of the
    original object bytes.
@@ -394,10 +437,19 @@ Choices that are right for a raster editor and would be cargo-culting here:
 9. **Performance:** the decision-11 budgets run as benches in CI; a regression
    past budget fails the build like any other test.
 
+Each guarantee is proved at the layer that owns the behaviour, and its test
+says which layer that is; a guarantee named at one layer and proved at another
+is a guarantee nobody is checking. Every guarantee whose corpus is generated or
+fetched rather than tracked owes CI two steps, not one: a step that produces the
+set, and a step that re-runs the enforcing test with the corpus made mandatory.
+A suite that skips a missing corpus is green and measuring nothing, which is
+what guarantee 6 was until the malformed set got both steps.
+
 Corpus: hayro's regression corpus, the PDF Association sample set, veraPDF
 test files, a malformed set (broken xref, junk header, truncation), a
-JS-forms set with Acrobat-verified expected values, and tagged-PDF
-accessibility samples. No public corpus of validly signed PDFs exists, so the
+JS-forms set with Acrobat-verified expected values, and a tagged-PDF
+accessibility set derived in-repo from veraPDF's PDF/UA files, since no
+ready-made one exists. No public corpus of validly signed PDFs exists, so the
 test-4 set is generated in-repo: sign fixture documents with our own test CA
 (M6), which also gives the verifier known-good and known-tampered cases.
 `cos` gets cargo-fuzz targets from M1 onward.
@@ -491,18 +543,48 @@ what-does-not-transfer section demands:
   the tile eviction policy. Encrypted documents stay closed with a typed,
   fail-loud message naming the milestone; every "usable viewer" claim
   carries that caveat; reassess pulling empty-user-password decryption into
-  `cos` at M3 planning. Line-weights view toggle moved to M3 (its fork
+  `cos` at M3 planning (reassessed and taken, read side only; see M3).
+  Line-weights view toggle moved to M3 (its fork
   patch was cut in plan review; correct semantics are constant hairline
   width, not a width floor). Ships as the first dogfoodable artifact, with
   the first parity screenshot comparison and the registry's proof of shape.
-- **M3 - First edits, first print.** `tools-comment`, `tools-organize`,
-  `commands-core` (Combine files, split), incremental save, undo/redo, the
-  skins panel. `crates/print` lands with the macOS backend and the Acrobat
-  print dialog. Guarantee tests 1–2 and 6 pass. This is the identity release.
+- **M3 - First edits, first print.** Authoritative decomposition:
+  docs/plans/m3-edits-and-print.md (24 packages, reviewed). This is the
+  identity release: the first milestone that writes a byte, and the largest by
+  scoreboard weight at 99 rows. Scope, matching those rows. In `core`: the edit
+  graph, transactions and a session-scoped undo stack; incremental save with
+  one section per save, Save As, Revert, generations and the skins panel; a
+  preview buffer, so the canvas renders committed edits from the bytes a save
+  would write and the preview cannot disagree with the output; page-set
+  mutation with the page-tree, page-label, destination and annotation fix-ups
+  it forces. Tools and commands: `tools-organize` (rotate, reorder, insert,
+  delete, extract, replace, blank pages, page labels, copy between documents);
+  `tools-comment` (text markup, sticky notes, free text and callouts, ink with
+  stylus pressure, shapes, stamps including dynamic ones drawn in-house,
+  attach-as-comment, comment summaries); `commands-core` (Combine files and its
+  file list, split by count, size or bookmark, document properties, bookmark
+  and attachment authoring, and the compress/flatten export, which is the one
+  deliberately destructive path M3 ships and says so in the UI);
+  `codecs-common` gains image import and JPEG/TIFF export. `crates/print`
+  lands in the five parts its crate entry names, with the print-to-file backend
+  first and the macOS NSPrintOperation backend and dialog on top; booklet and
+  poster/tile move to M4. Shell: undo/redo and save on the global bar, autosave
+  and crash recovery, the Comments pane, the Organize Pages grid, Manage Tools,
+  the Window menu, Line Weights, and the Advanced Search extensions. `cos`
+  gains empty-user-password decryption, read-only: those documents open,
+  render, print and export but stay uneditable until M6, a stated regression
+  against Acrobat for files whose permission bits would allow editing, accepted
+  in exchange for no longer refusing the class outright. Guarantee tests 1, 2
+  and 6 pass at the layer that owns them, with guarantee 2 driven by an edit a
+  tool made through `core` rather than by a synthetic object write, and every
+  guarantee M3 switches on carries the two CI steps the guarantee section
+  requires. M3 also owes the tagged structure tree its reader, its maintenance
+  hook and its invariant (decision 12), three milestones before guarantee 8.
 - **M4 - MCP server, print everywhere.** Sessions, `describe`, generic
   invokers over the registry - Schist's `mcp` crate as the template.
   Everything M3 can do, agent-driven, plus `render` returning inline PNG.
-  `print` gains the CUPS and Windows backends.
+  `print` gains the CUPS and Windows backends, plus booklet and poster/tile
+  imposition over M3's sheet model.
 - **M5 - Forms, text edit, redaction.** `tools-fill-sign` and `tools-form`
   with `scripting` live (guarantee test 7: forms compute like Acrobat),
   including form auto-complete and the JS-disable preference; `tools-edit`
@@ -536,7 +618,8 @@ what-does-not-transfer section demands:
   Watch for the fork lagging upstream gpui.
 - **Encryption × incremental updates.** Appending to an encrypted file requires
   encrypting new objects with the existing key material - handled in `cos` from
-  the start (M1 parses encryption; M6 writes it), not bolted on.
+  the start (M1 parses encryption, M3 decrypts empty-user-password files for
+  reading, M6 writes it), not bolted on.
 - **The parity target moves.** Adobe reshapes Acrobat's UI continuously (and
   ships two coexisting interfaces already). Pin each release cycle to a dated
   `parity/reference/` screenshot set from a named Acrobat version rather than
