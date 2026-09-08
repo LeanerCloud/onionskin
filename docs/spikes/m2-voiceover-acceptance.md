@@ -45,6 +45,8 @@ automated can tell you what a user hears**. That is this session.
    | Cmd-F5 | VoiceOver on and off |
    | Ctrl-Option-Right / Left | Next / previous element |
    | Ctrl-Option-Shift-Down | Move into a group |
+   | Ctrl-Option-Space | Press what the cursor is on |
+   | Ctrl-Option-F1 F1 | Choose another application |
    | Ctrl-Option-A | Read continuously from here |
 
    Ctrl-Option is "VO" in Apple's documentation.
@@ -156,8 +158,28 @@ check that moving between pages announces the new page number.
 
 Turn VoiceOver off (Cmd-F5) and drive the app with the keyboard only.
 
-- Tab and Shift-Tab move through the chrome in reading order and wrap at both
-  ends.
+- Tab and Shift-Tab move between surfaces, not between controls: one press
+  goes from the global bar to the tab strip, to the tool rail, to the pane
+  strip, to an open pane, to the document, to the quick actions, to the find
+  bar, to the page controls, to the side panel toggle, and wraps at both ends.
+  Which of those are on screen depends on what you have open, and the ones
+  that are not are skipped rather than being silent stops. Each surface is
+  entered at its first control, so Shift-Tab undoes Tab.
+- The arrow keys move inside the surface you are in, in both axes, and wrap
+  there rather than leaving it. Down along the page controls reaches Zoom In;
+  from the last control it comes back to the first. Right does the same until
+  it reaches the page number field, where Right becomes that field's own key
+  and moves the caret, so use Down to walk a row all the way.
+- A surface whose first control is a text field, which the find bar is, is
+  still one Tab to enter and one Tab to leave, and Up and Down carry you from
+  the field to the buttons beside it. Left and Right in a field move the
+  caret, because the field keeps those two for itself.
+- **Failure**: Tab that steps one control at a time, so that crossing an open
+  Page Thumbnails pane takes one press per page; an arrow that leaves the
+  surface it started in; a surface Tab cannot reach at all.
+- Open the Page Thumbnails pane and check this specifically: Tab reaches the
+  pane, one more Tab leaves it whatever its length, and the arrows walk its
+  rows.
 - Enter or Space runs the focused control.
 - Escape closes whatever is on top, in the order the window stacks them: a
   dialog, then the global search panel, then a context menu, then the main
@@ -165,11 +187,33 @@ Turn VoiceOver off (Cmd-F5) and drive the app with the keyboard only.
   press, and with none of them open it does nothing rather than swallowing
   the key.
 - Typing in the find field still gets its own keys: Enter finds the next match
-  rather than re-running the focused button.
+  rather than re-running the focused button, and Left and Right move the caret
+  rather than the focus ring.
 
 - **Failure**: focus that jumps somewhere unrelated, a Tab that does nothing, a
   control that focuses but does not run, or an Escape that closes the wrong
   thing.
+
+Turn VoiceOver back on for the next steps.
+
+### Step 7b: the reader's cursor and the keyboard agree
+
+The screen reader's cursor and the keyboard's focus are one thing, and this is
+where they used to come apart.
+
+- Move VoiceOver's cursor onto a button in the page controls
+  (Ctrl-Option-Right), then press Return without moving anything else.
+  **Pass**: the button runs. **Failure**: nothing happens, or something else
+  runs.
+- Now click into the Find field, type a letter, and then move VoiceOver's
+  cursor onto a button with Ctrl-Option-Right and press Return.
+  **Pass**: the button runs. **Failure**: the letter goes into the find field,
+  or the find bar acts on Return, which means the field kept the keyboard
+  after the reader moved off it.
+- The other direction: click into the Find field with the mouse.
+  **Pass**: VoiceOver announces the find field, because the reader's cursor
+  followed the keyboard into it. **Failure**: VoiceOver stays on whatever it
+  was reading.
 
 ### Step 8: the window that is not in front
 
@@ -180,6 +224,33 @@ Open a second application over Onionskin and interact with it.
 - **Failure**: Onionskin keeps claiming focus. That would mean the adapter is
   being told the view is focused when the window is not key, which is the
   specific thing M1's spike could not test.
+
+### Step 9: operating the window that is not in front
+
+The window has to be **fully** covered for this step to test anything: macOS
+only clears `NSWindowOcclusionStateVisible` when an opaque window covers the
+Onionskin window completely, and while any sliver of it shows, gpui keeps
+drawing frames and the old frame-driven code would pass this step too. Put the
+other application full screen on the same display as Onionskin, or size and
+position it so that no part of the Onionskin window is visible.
+
+Remember that the document opened fitted to the page, so it is not at 100 per
+cent.
+
+Move VoiceOver into Onionskin without bringing it forward: press
+Ctrl-Option-F1 twice for the application chooser and pick Onionskin, or use
+Ctrl-Option-F2 twice for the window chooser. Navigate to "Actual Size" and
+press Ctrl-Option-Space.
+
+- **Pass**: VoiceOver announces the control as checked straight away, and the
+  document is at 100 per cent when you bring the window forward.
+- **Failure**: nothing is announced until you bring the window forward, and
+  then the press takes effect all at once. That is the defect this step
+  exists for: gpui draws a window only while macOS reports it visible, so a
+  press that waited for a frame waited for the user.
+
+This is the step no automated test on this machine can stand in for. The probe
+and the shell tests both drive a window the test itself owns.
 
 ## What to record
 
@@ -199,7 +270,9 @@ Step 4 disabled controls say why:          pass / fail
 Step 5 the document is a document:         pass / fail
 Step 6 the page text reads:                pass / fail
 Step 7 keyboard only:                      pass / fail
+Step 7b cursor and keyboard agree:          pass / fail
 Step 8 background window stays quiet:      pass / fail
+Step 9 background window can be operated:   pass / fail
 
 What failed, exactly as it sounded:
 

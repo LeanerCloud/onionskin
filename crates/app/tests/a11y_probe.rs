@@ -386,12 +386,9 @@ fn a_control_that_cannot_be_used_says_why_instead_of_disappearing() {
 /// `accessibilityPerformPress` selector, through AccessKit's action handler,
 /// and arrives at the shell's own queue.
 ///
-/// What this does not assert is the control running, because running it takes
-/// a frame and gpui stops drawing a window macOS reports as not visible, which
-/// is any run on a machine with something else in front. The request is not
-/// lost there, it waits for the window to draw. That the shell runs what it
-/// drains is `a_screen_reader_press_runs_the_control_it_named`, in a window
-/// the test owns.
+/// That the shell then runs it is
+/// `a_press_through_the_platform_runs_the_control_it_named`, which reads the
+/// result back out of the same tree.
 #[test]
 fn a_press_through_the_platform_reaches_the_shell() {
     let before = probe("hello.pdf");
@@ -410,6 +407,44 @@ fn a_press_through_the_platform_reaches_the_shell() {
         after.delivered, 1,
         "the press did not reach the shell's queue"
     );
+}
+
+/// The press, run and reported back through the platform.
+///
+/// This is the half that used to wait: the shell drained its queue on the next
+/// frame, and gpui runs a window's display link only while macOS reports the
+/// window visible, so on a machine with something else in front the press was
+/// accepted, delivered and never run. The adapter now wakes the shell on the
+/// main queue, which macOS runs either way, and it publishes what the press
+/// changed without a frame.
+///
+/// Read back twice over, because a checkbox that reports itself checked while
+/// nothing moved would satisfy the first assertion on its own: the toggle's
+/// own state, and the zoom the toggle sets, which is a different node built
+/// from the same view.
+#[test]
+fn a_press_through_the_platform_runs_the_control_it_named() {
+    let before = probe("hello.pdf");
+    let after = probe_pressing("hello.pdf", "actual-size");
+
+    assert_eq!(
+        before.field(before.by_id("actual-size"), "value"),
+        "0",
+        "the seed opens at Actual Size, so pressing it would prove nothing"
+    );
+    assert_eq!(
+        after.field(after.by_id("actual-size"), "value"),
+        "1",
+        "the platform accepted the press and the shell never ran it"
+    );
+
+    let zoom = |tree: &Tree| tree.field(tree.by_id("zoom-level"), "title").to_owned();
+    assert_ne!(
+        zoom(&before),
+        zoom(&after),
+        "the toggle reported itself checked while the view did not move"
+    );
+    assert_eq!(zoom(&after), "Zoom 100 percent");
 }
 
 /// The rail draws each tool's icon as a compact mark. A screen reader has to

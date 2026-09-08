@@ -72,12 +72,11 @@ const PRESS: &str = "ONIONSKIN_A11Y_PRESS";
 ///
 /// A press leaves through AccessKit and arrives at the shell's own queue, and
 /// nothing outside the process can see that it did. Counting it here is what
-/// lets a test tell "the press reached the shell" from "AccessKit refused it",
-/// without waiting for the frame that runs it: gpui stops drawing a window
-/// macOS reports as not visible, so on a machine where something else is in
-/// front the request is queued and stays queued until the window draws again.
-/// What running it does is `crates/app/src/shell/chrome/tabs.rs`, in a window
-/// the test owns.
+/// lets a test tell "the press reached the shell" from "AccessKit refused it"
+/// without reading the shell's own state. The request no longer waits for a
+/// frame to be run: the handler wakes the shell on the main queue, which macOS
+/// runs whether or not the window is visible. What running it does is
+/// `crates/app/src/shell/chrome/tabs.rs`, in a window the test owns.
 static DELIVERED: AtomicUsize = AtomicUsize::new(0);
 
 /// Count one delivery. Called by the platform adapter's action handler.
@@ -94,19 +93,21 @@ pub(crate) fn arm(cx: &mut App) {
         let started = Instant::now();
         loop {
             Timer::after(POLL).await;
-            // The wait is for the layout and for the attach, not for the
-            // extraction: the shell extracts every visible page's text on
-            // every frame, and only the push to the platform is gated on a
-            // client being attached (`update_if_active`). A page has to be
-            // measured before its words have anywhere to be, and reading the
-            // tree at all is what attaches this probe as that client, so the
-            // first read is also the request and the text arrives later.
+            // The wait is for the layout and for the attach. A page has
+            // to be measured before its words have anywhere to be, and the
+            // shell extracts them only once a client has asked for the tree,
+            // which is what reading it here does. So the first read is also
+            // the request: it attaches this probe, the shell is woken to
+            // publish again with the words in it, and a later read is the one
+            // that finds them.
             let settled = cx
                 .update(|cx| {
                     let Some(view) = view_pointer(cx) else {
                         return false;
                     };
-                    // Ask for the frame that will carry the text.
+                    // The attach wakes the shell on the main queue, which is
+                    // what publishes the text. This asks for the drawn frame
+                    // as well, which is what puts the rectangles on it.
                     cx.refresh_windows();
                     unsafe { has_page_text(view) }
                 })
@@ -153,8 +154,8 @@ const PAGE_TEXT: &str = "-text-";
 /// Whether the tree carries a page's own words yet.
 ///
 /// The last thing to arrive: a page has to be laid out before its words have
-/// anywhere to be, and the text is only extracted once a client has asked.
-/// When this is true everything else already is.
+/// anywhere to be, and the text is only extracted once a client has asked,
+/// which this call is. When this is true everything else already is.
 ///
 /// Matched on the identifier rather than on the role, because the chrome's
 /// own labels are static text too and would end the wait early.

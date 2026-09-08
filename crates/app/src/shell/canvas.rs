@@ -543,7 +543,12 @@ impl CanvasModel {
     /// rather than once per frame, and only the pages on screen are parsed at
     /// all. An unmeasured page has no layout to place its words in yet, so it
     /// is described without them and picks them up when it is measured.
-    pub fn accessible_pages(&mut self) -> Result<Vec<PageOutline>, CanvasError> {
+    ///
+    /// `with_text` false leaves every page's `text` empty and parses nothing:
+    /// the caller knows nothing is listening, and the first frame each page
+    /// is visible for is otherwise the one that pays for its content stream,
+    /// on the thread that draws.
+    pub fn accessible_pages(&mut self, with_text: bool) -> Result<Vec<PageOutline>, CanvasError> {
         let placements = self.viewport.visible_pages()?;
         // Bounded to what is on screen: a long scroll would otherwise keep
         // every page it passed for the life of the process.
@@ -551,7 +556,7 @@ impl CanvasModel {
             .retain(|page, _| placements.iter().any(|placement| placement.page == *page));
         let mut pages = Vec::with_capacity(placements.len());
         for placement in placements {
-            let text = if placement.measured {
+            let text = if with_text && placement.measured {
                 self.page_runs(placement.page)
             } else {
                 Ok(Vec::new())
@@ -606,6 +611,13 @@ impl CanvasModel {
                 })
             })
             .collect()
+    }
+
+    /// How many pages this session has parsed the text of, for the test that
+    /// the shell parses none of them while nothing is listening.
+    #[cfg(all(test, feature = "shell-test-support"))]
+    pub(in crate::shell) fn extracted_pages(&self) -> usize {
+        self.page_words.len()
     }
 
     pub fn active_tool(&self) -> Option<usize> {
@@ -5407,7 +5419,7 @@ mod tests {
         let mut model = seed_model("two-page.pdf");
 
         let painted = model.paint_list().expect("the frame paints").pages;
-        let described = model.accessible_pages().expect("the pages describe");
+        let described = model.accessible_pages(true).expect("the pages describe");
 
         assert!(!painted.is_empty());
         for page in &painted {
@@ -5429,7 +5441,7 @@ mod tests {
     fn an_unmeasured_page_is_described_without_words_and_says_so() {
         let mut model = seed_model("two-page.pdf");
 
-        let described = model.accessible_pages().expect("the pages describe");
+        let described = model.accessible_pages(true).expect("the pages describe");
 
         let measured = described
             .iter()
@@ -5451,7 +5463,7 @@ mod tests {
     fn a_page_reports_its_text_as_runs_with_the_rectangles_they_occupy() {
         let mut model = seed_model("hello.pdf");
 
-        let described = model.accessible_pages().expect("the pages describe");
+        let described = model.accessible_pages(true).expect("the pages describe");
         let runs = described[0].text.as_ref().expect("the text reads");
 
         assert!(!runs.is_empty(), "the page reported no text");
