@@ -1,18 +1,54 @@
+# Supply-chain policy. CI's supply-chain job runs `cargo deny check` over this
+# file, so an unreviewed advisory, license, banned crate or unknown source
+# fails the build instead of landing quietly.
+
 [graph]
+# Every triple release.yml publishes an artifact for. Scanning all four here
+# means a platform-only dependency cannot slip past on the runner that does not
+# build it.
 targets = [
     { triple = "aarch64-apple-darwin" },
     { triple = "x86_64-pc-windows-msvc" },
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "aarch64-unknown-linux-gnu" },
 ]
+# The shell, the retained spikes and every plugin feature, so nothing hides
+# behind an off-by-default flag.
 all-features = true
 
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# Reviewed exceptions, each pinned to one advisory ID rather than to a crate
+# name: a bare crate name would mute every future advisory against that crate
+# too. Every entry below is an `unmaintained` advisory whose upstream published
+# no safe upgrade. None is a vulnerability, and a vulnerability gets no
+# exception here - it fails the job and blocks the release.
+ignore = [
+    # gpui's HTTP client, which the viewer never reaches: Onionskin opens local
+    # files. Both drop when the gpui fork moves off zed-reqwest/zed-async-tar.
+    { id = "RUSTSEC-2025-0052", reason = "async-std, via zed-async-tar -> gpui_http_client -> gpui" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile, via zed-reqwest -> gpui_http_client -> gpui" },
+    # Build-time proc macros. They emit code and are not linked into the shipped
+    # binary, so an unmaintained one is a maintenance risk rather than runtime
+    # attack surface.
+    { id = "RUSTSEC-2024-0436", reason = "paste, via metal -> gpui and via pulp -> exr -> image" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via stacksafe-macro -> stacksafe -> gpui" },
+    # gpui's own text shaping and SVG stack. Swapping rustybuzz for harfrust is
+    # a change to make in the fork, not one Onionskin can make from here.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via cosmic-text -> gpui and usvg -> gpui/resvg" },
+    # The one exception Onionskin owns directly: crates/content pins ttf-parser
+    # to read embedded font tables, which is document-controlled input, and gpui
+    # pulls two more copies through cosmic-text and fontdb. The advisory reports
+    # no defect, only that upstream stopped; the fix is migrating the content
+    # crate to skrifa, which belongs with the text engine and not to M2.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser, direct in crates/content and via cosmic-text/fontdb -> gpui" },
+]
 
 [licenses]
+# Permissive only. Every license listed is one a crate in the current graph
+# actually carries; cargo-deny warns on an allowance nothing matches, so the
+# list cannot quietly widen into a grant the tree does not need.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -23,15 +59,19 @@ allow = [
     "MIT",
     "MPL-2.0",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
 ]
 confidence-threshold = 0.8
 exceptions = []
 
 [bans]
+# gpui carries two versions of a good many small crates. That is bloat to work
+# down, not a reason to fail a build today.
 multiple-versions = "warn"
 wildcards = "deny"
+# The workspace's own crates are path dependencies with no version, which cargo
+# renders as `*`. Wildcards on anything published stay denied.
+allow-wildcard-paths = true
 highlight = "all"
 allow = []
 deny = []
@@ -41,8 +81,12 @@ skip-tree = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# A git dependency must name a commit. A branch would let an upstream
+# force-push silently change what a release builds from.
 required-git-spec = "rev"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The gpui fork PLAN.md decision 5 pins, the hayro fork crates/render pins, and
+# vello at the revision hayro itself pins ahead of its registry release.
 allow-git = [
     "https://github.com/IAmJSD/gpui",
     "https://github.com/cristim/hayro",

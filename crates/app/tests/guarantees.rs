@@ -1,13 +1,20 @@
-//! PLAN.md's guarantee tests, the spec as executable checks. Guarantee 5
-//! runs today (see `kernel_emptiness.rs`); the rest are named here so the
-//! suite has its final shape from day one and each one lands by deleting
-//! an `#[ignore]`.
+//! PLAN.md's guarantee tests, the spec as executable checks. A guarantee whose
+//! capability has landed either runs here or names the test that enforces it
+//! (guarantee 5 in `kernel_emptiness.rs`, 9 in `crates/core/benches/`, 1, 2 and
+//! 6 in `crates/cos/tests/`). One whose capability has not landed stays
+//! `#[ignore]`d, and its reason names the milestone PLAN.md gives it.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{env, fs, process};
+
+use syn::punctuated::Punctuated;
+use syn::visit::Visit;
+use syn::{Expr, Token};
+use yaml_rust2::{Yaml, YamlLoader};
 
 const ALPHA_SHA256: &str = "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060";
 const REPLACEMENT_SHA256: &str = "1d054714357ce5ee01723ed91fcaa69206e221faaf9c1fad64f73be2e5d051da";
@@ -15,19 +22,94 @@ const TINY_PDF_SHA256: &str = "98704aee8801c3738f9b38577f4c7917b82da5d770a8f4c1c
 
 /// Guarantee 1, round-trip: for every corpus file, open then save with no
 /// edit produces byte-identical output. A no-op save appends nothing.
+///
+/// Proved in `crates/cos/tests/roundtrip.rs`, where the parser and the writer
+/// are. `onionskin-app` neither depends on `cos` nor has a save path of its
+/// own: PLAN.md puts the app-level save at M3, so running the round-trip from
+/// here would mean a dependency and a second corpus walk added for a test that
+/// already exists. What this guarantee owns until M3 is that the enforcing
+/// test is still there, still switched on, still states both halves of the
+/// sentence, and is still reached by CI. Any of those quietly going away would
+/// otherwise leave guarantee 1 green and unmeasured.
 #[test]
-#[ignore = "lands with cos parse/save in M1"]
 fn a_save_with_no_edit_is_byte_identical_to_the_original() {
-    unimplemented!("needs cos open/save and the corpus fetch")
+    // Every test in roundtrip.rs, so the sentence's "for every corpus file" is
+    // not carried by the seeds alone: the external-corpus walks have pass
+    // floors of their own and could otherwise be deleted with this green.
+    let suite = enforcing_suite(
+        "roundtrip.rs",
+        1,
+        &[
+            "seeds_round_trip_exactly",
+            "pdf20examples_corpus_round_trips",
+            "pdf_association_corpus_round_trips",
+            "verapdf_corpus_round_trips",
+            "hayro_custom_corpus_round_trips",
+            "hayro_other_corpus_round_trips",
+            "hayro_regression_corpus_round_trips",
+        ],
+    );
+    suite.invokes(
+        "document.incremental_section",
+        "a no-op save is no longer asked what it appended",
+    );
+    suite.asserts(
+        "non-empty-noop-save",
+        "a no-op save that appended bytes no longer fails",
+    );
+    suite.invokes(
+        ".save_to_vec",
+        "nothing is saved, so byte-identity is no longer compared",
+    );
+    // The floors are what stops an external corpus walk reporting a pass for
+    // a set it silently stopped covering.
+    suite.asserts(
+        "below the {floor_percent}% floor",
+        "the external corpus walks no longer hold a floor on their pass counts",
+    );
+    assert_ci_reaches_the_cos_suite();
 }
 
 /// Guarantee 2, onionskin: open, edit, save produces the original bytes
 /// followed by exactly one incremental section, and truncating that
 /// section yields the byte-exact original back.
+///
+/// Proved in `crates/cos/tests/incremental.rs` over the tracked seeds, for the
+/// same reason guarantee 1 is proved in `roundtrip.rs`. This checks that the
+/// enforcing test still asserts each clause: the original prefix survives, the
+/// append is exactly one section, and the document's own `original_len` is the
+/// cut that undoes the edit.
 #[test]
-#[ignore = "lands with the incremental writer in M1"]
 fn an_edit_appends_one_incremental_section_that_truncates_away() {
-    unimplemented!("needs cos incremental save and core's edit graph")
+    let suite = enforcing_suite(
+        "incremental.rs",
+        2,
+        &[
+            "editing_a_seed_appends_exactly_one_section",
+            "a_second_edit_appends_a_second_section",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "the original bytes must survive an edit untouched",
+            "the original prefix is no longer compared",
+        ),
+        (
+            "an edit must append exactly one incremental section",
+            "the section count is no longer pinned to one",
+        ),
+        (
+            "truncating the section must undo the edit",
+            "the roll-back half of the sentence is no longer checked",
+        ),
+    ] {
+        suite.asserts(marker, missing);
+    }
+    suite.invokes(
+        "document.original_len",
+        "the truncation point is no longer the one the document reports",
+    );
+    assert_ci_reaches_the_cos_suite();
 }
 
 /// Guarantee 3, redaction: after redacting text T, the verifier extracts
@@ -50,10 +132,84 @@ fn annotating_a_signed_document_keeps_its_signature_valid() {
 /// Guarantee 6, repair: every file in the malformed corpus set opens;
 /// saving appends an incremental section carrying the repaired
 /// structures; the corrupt original bytes stay byte-intact beneath.
+///
+/// Proved in `crates/cos/tests/repair.rs`. That test needs `corpus/malformed`,
+/// which is gitignored, and a corpus-less run of it returns early and passes -
+/// so this guarantee also owns the CI step that generates the set. Without it
+/// the enforcing test is present, green, and measuring nothing.
 #[test]
-#[ignore = "lands with the cos scan-and-rebuild path in M1"]
 fn every_malformed_file_opens_and_repairs_into_a_new_section() {
-    unimplemented!("needs the cos repair path and the malformed corpus")
+    // "Opens" and "repairs" are two clauses and two tests. Naming only the
+    // repair walk would let the refusal case be deleted with this green.
+    let suite = enforcing_suite(
+        "repair.rs",
+        6,
+        &[
+            "open_refuses_a_damaged_file_instead_of_opening_it_quietly",
+            "every_malformed_file_repairs_and_saves_over_intact_original_bytes",
+            "damaged_files_in_the_external_corpora_repair_the_same_way",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "guarantee test 6 requires the whole malformed set",
+            "a subset of the malformed files may now pass for the whole set",
+        ),
+        (
+            "the corrupt original bytes were not preserved",
+            "the original bytes beneath the section are no longer compared",
+        ),
+        (
+            "the appended section holds no cross-reference table",
+            "the appended section is no longer required to carry the repair",
+        ),
+    ] {
+        suite.asserts(marker, missing);
+    }
+    assert_ci_reaches_the_cos_suite();
+
+    // repair.rs returns early when corpus/malformed is absent, and the set is
+    // gitignored, so the enforcing test is only worth anything on a runner
+    // that generated it. Generating it is not enough either: with
+    // ONIONSKIN_CORPUS_REQUIRED the rerun turns a skip into a failure, which
+    // is what makes disabling the generation step above visible.
+    let ci = workflow("ci.yml");
+    let steps = job_steps(&ci, "test");
+    let one = |command: &str, absent: &str| {
+        let found = steps
+            .iter()
+            .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
+            .collect::<Vec<_>>();
+        assert_eq!(found.len(), 1, "{absent}");
+        assert_reviewed_keys(
+            found[0],
+            &["name", "if", "run", "env"],
+            &format!("the `{command}` step"),
+        );
+        // Both are pinned to Linux, and the guarantee says so: the repair path
+        // is byte manipulation with no platform dimension, and the generator
+        // wants bash and perl. Pinned to the value rather than merely allowed,
+        // so `if: false` is not a way to switch either one off.
+        assert_eq!(
+            field(found[0], "if").as_deref(),
+            Some("runner.os == 'Linux'"),
+            "the `{command}` step runs on a different set of runners than the other half of this gate"
+        );
+        found[0]
+    };
+    one(
+        "./corpus/make-malformed.sh",
+        "CI never generates corpus/malformed, so repair.rs skips it and guarantee 6 passes unmeasured",
+    );
+    let prove = one(
+        "cargo test -p onionskin-cos --test repair",
+        "CI never reruns the repair suite with the corpus made mandatory, so a skipped guarantee 6 still reports a pass",
+    );
+    assert_eq!(
+        field(&prove["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
+        Some("1"),
+        "the repair rerun still lets an absent corpus report a pass"
+    );
 }
 
 /// Guarantee 7, forms compute: every file in the JS-forms corpus set
@@ -136,121 +292,199 @@ fn open_and_scroll_stay_within_the_performance_budgets() {
         "the bench harness no longer fails a run that misses a budget"
     );
 
-    let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
+    let ci_text = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
         .expect("the workflow is readable");
     assert!(
-        ci.contains("pull_request"),
+        ci_text.contains("pull_request"),
         "CI does not run on pull requests, so no budget is checked before a merge"
     );
-    let bench_job = job(&ci, "bench");
-    assert!(
-        !bench_job.is_empty(),
-        "the workflow has no bench job, so nothing runs the budgets"
-    );
-    assert!(
-        bench_job.contains("cargo bench -p onionskin-core"),
-        "the bench job does not run the benches, so a regression past budget fails nothing"
-    );
-    assert!(
-        bench_job.contains("ONIONSKIN_CORPUS_REQUIRED: 1"),
+    let ci = workflow("ci.yml");
+    let bench = job_of(&ci, "bench");
+    let bench_steps = job_steps(&ci, "bench");
+    // The whole script, so `cargo bench -p onionskin-core || true` is not the
+    // gate it reads as.
+    gate_step(&bench_steps, "cargo bench -p onionskin-core");
+    assert_eq!(
+        field(&bench["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
+        Some("1"),
         "the bench job does not require its corpus, so it would skip every budget and pass"
     );
-    assert!(
-        !bench_job.contains("continue-on-error"),
+    assert_eq!(
+        field(bench, "continue-on-error"),
+        None,
         "a job allowed to fail is not a gate"
     );
-    assert!(
-        bench_job.contains("actions/setup-python"),
-        "the bench job runs corpus fetch validation but does not install Python"
-    );
-    assert!(
-        bench_job.contains("hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"),
-        "the bench corpus cache key does not include the fetch helpers and checksum manifest"
-    );
-    // A job-level condition sits at four spaces, a step's at eight. A gate that
-    // only runs on some events is not a gate on the others.
-    assert!(
-        !bench_job.lines().any(|line| line.starts_with("    if:")),
+    assert_eq!(
+        field(bench, "if"),
+        None,
         "the bench job is conditional, so there are pushes it does not gate"
     );
+    let cache = bench_steps
+        .iter()
+        .find(|step| action_of(step).is_some_and(|action| action.starts_with("actions/cache@")))
+        .expect("the bench job does not cache the corpus");
+    assert!(
+        field(&cache["with"], "key").is_some_and(|key| key.contains(
+            "hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"
+        )),
+        "the bench corpus cache key does not include the fetch helpers and checksum manifest"
+    );
 
-    for name in ["test", "shell"] {
+    for name in ["bench", "test", "shell"] {
         assert!(
-            job(&ci, name).contains("actions/setup-python"),
-            "the {name} job runs app guarantees but does not install Python"
+            job_steps(&ci, name).iter().any(|step| action_of(step)
+                .is_some_and(|action| action.starts_with("actions/setup-python@"))),
+            "the {name} job runs corpus or guarantee work but does not install Python"
         );
     }
 }
 
 #[test]
 fn release_artifacts_build_the_windowed_viewer() {
-    let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
-        .expect("the CI workflow is readable");
-    let release = std::fs::read_to_string(workspace_root().join(".github/workflows/release.yml"))
-        .expect("the release workflow is readable");
-    let ci_shell = job(&ci, "shell");
-    let build = job(&release, "build");
-    assert!(
-        !build.is_empty(),
-        "the release workflow has no build job, so it publishes nothing testable"
-    );
-    assert!(
-        build.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
+    let ci = workflow("ci.yml");
+    let release = workflow("release.yml");
+    let build = job_of(&release, "build");
+    assert_eq!(
+        field(&build["env"], "CARGO_NET_GIT_FETCH_WITH_CLI").as_deref(),
+        Some("true"),
         "release builds fetch git dependencies differently from CI"
     );
+
+    // Every platform the release publishes for. Deleting a leg stops shipping
+    // it silently, while deny.toml goes on scanning four triples.
+    let matrix = build["strategy"]["matrix"]["include"]
+        .as_vec()
+        .expect("the release build job declares no matrix");
+    let legs = matrix
+        .iter()
+        .map(|leg| {
+            (
+                field(leg, "os").unwrap_or_default(),
+                field(leg, "artifact").unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        legs,
+        vec![
+            (
+                "ubuntu-latest".to_owned(),
+                "onionskin-linux-x86_64".to_owned()
+            ),
+            (
+                "ubuntu-24.04-arm".to_owned(),
+                "onionskin-linux-aarch64".to_owned()
+            ),
+            (
+                "macos-latest".to_owned(),
+                "onionskin-macos-arm64".to_owned()
+            ),
+            (
+                "windows-latest".to_owned(),
+                "onionskin-windows-x86_64".to_owned()
+            ),
+        ],
+        "the set of platforms the release publishes for changed"
+    );
+
+    let build_steps = job_steps(&release, "build");
+    let shell_steps = job_steps(&ci, "shell");
+
+    // The one step that makes the artifact a viewer. `gate_step` refuses a
+    // conditioned, wrapped or redirected version of it: the script has to be
+    // that command and nothing else, on every leg of the matrix, or some
+    // platform publishes an artifact it never built.
+    gate_step(
+        &build_steps,
+        "cargo build --release -p onionskin-app --features shell",
+    );
+
+    // ...and no other step may build the app without the feature. Both
+    // packaging scripts ship whatever sits at target/release/onionskin, so a
+    // second build anywhere in this job replaces the viewer with a binary that
+    // opens no window while the step above still reads correctly. Word-wise,
+    // because `cargo b` and `--bin onionskin` reach the same path.
+    for step in &build_steps {
+        let Some(run) = field(step, "run") else {
+            continue;
+        };
+        for command in script_lines(&run) {
+            assert!(
+                !builds_the_app(&command) || command.contains("--features shell"),
+                "a release step builds the app without the shell feature, overwriting the binary the packaging scripts ship: {command}"
+            );
+        }
+    }
+
     assert!(
-        build.contains("actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c"),
+        build_steps.iter().any(|step| action_of(step).as_deref()
+            == Some("actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c")),
         "release builds do not install the reviewed Python setup action even though the packaging version gate uses shell helpers"
     );
-    for step in [
-        "      - name: Update Linux package index\n        if: runner.os == 'Linux'\n        run: sudo apt-get update",
-        "      - name: Install GPUI Linux dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get install -y libfontconfig1-dev libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev",
-        "      - name: Install macOS Metal toolchain\n        if: runner.os == 'macOS'\n        run: xcodebuild -downloadComponent MetalToolchain",
+
+    // Every prerequisite the shell build needs, mirrored from the job known to
+    // build it. Compared as whole steps, so a mirrored step that grew an `if:`
+    // or lost half its command no longer counts as mirrored.
+    for name in [
+        "Update Linux package index",
+        "Install GPUI Linux dependencies",
+        "Install macOS Metal toolchain",
     ] {
-        assert!(
-            ci_shell.contains(step),
-            "the CI shell job no longer contains the expected prerequisite step:\n{step}"
-        );
-        assert!(
-            build.contains(step),
-            "the release build job does not mirror the CI shell prerequisite step:\n{step}"
+        let named = |steps: &[&Yaml], job: &str| {
+            let found = steps
+                .iter()
+                .filter(|step| field(step, "name").as_deref() == Some(name))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                found.len(),
+                1,
+                "the {job} job does not have exactly one {name} step"
+            );
+            (
+                field(found[0], "run"),
+                field(found[0], "if"),
+                field(found[0], "continue-on-error"),
+            )
+        };
+        assert_eq!(
+            named(&shell_steps, "CI shell"),
+            named(&build_steps, "release build"),
+            "the release build job does not mirror the CI shell prerequisite step {name}"
         );
     }
-    assert!(
-        build.contains("cargo build --release -p onionskin-app --features shell"),
-        "release artifacts are not built with the windowed shell feature"
-    );
 }
 
 #[test]
 fn accessibility_probe_is_a_required_ci_gate() {
-    let ci = std::fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
-        .expect("the CI workflow is readable");
-    let shell = job(&ci, "shell");
-    assert!(!shell.is_empty(), "CI has no shell job");
-    assert!(
-        shell.contains("run: cargo test -p onionskin-app --features a11y-probe --test a11y_probe"),
-        "the shell job does not run the macOS accessibility probe"
+    let ci = workflow("ci.yml");
+    let shell = job_steps(&ci, "shell");
+    let probe = shell
+        .iter()
+        .filter(|step| {
+            field(step, "run").as_deref().map(str::trim)
+                == Some("cargo test -p onionskin-app --features a11y-probe --test a11y_probe")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        probe.len(),
+        1,
+        "the shell job does not run the macOS accessibility probe as a step of its own"
     );
-    let probe_step = shell
-        .split("      - name: Accessibility probe")
-        .nth(1)
-        .and_then(|rest| rest.split("\n      - ").next())
-        .expect("the shell job has no named Accessibility probe step");
-    assert!(
-        probe_step.contains("if: runner.os == 'macOS'"),
+    // Scoped to macOS on purpose: it opens a real window and reads the tree
+    // back off an NSView. That is the one `if:` a gate here is allowed, so it
+    // is pinned to the value rather than merely permitted.
+    assert_eq!(
+        field(probe[0], "if").as_deref(),
+        Some("runner.os == 'macOS'"),
         "the accessibility probe is not scoped to macOS"
     );
-    assert!(
-        !probe_step.contains("continue-on-error"),
-        "the accessibility probe is advisory instead of gating"
-    );
+    assert_reviewed_keys(probe[0], &["name", "if", "run"], "the accessibility probe");
 }
 
 #[test]
 fn supply_chain_policy_is_checked_in_and_gated() {
     let workspace = workspace_root();
-    let ci = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
+    let ci_text = std::fs::read_to_string(workspace.join(".github/workflows/ci.yml"))
         .expect("the CI workflow is readable");
     let dependabot = std::fs::read_to_string(workspace.join(".github/dependabot.yml"))
         .expect("Dependabot policy is readable");
@@ -276,122 +510,298 @@ fn supply_chain_policy_is_checked_in_and_gated() {
         "Dependabot has no predictable update cadence"
     );
 
-    for section in ["[advisories]", "[licenses]", "[bans]", "[sources]"] {
-        assert!(
-            deny.contains(section),
-            "cargo-deny policy is missing {section}"
-        );
-    }
-    let graph = toml_section(&deny, "graph");
-    assert!(
-        graph.contains("all-features = true"),
-        "cargo-deny does not scan the full feature graph"
+    // The exact set of tables the policy declares. `toml_section` stops at the
+    // next `[`, so a sub-table such as `[[licenses.clarify]]` would be
+    // invisible to the key-set pins below while cargo-deny obeys it, which is
+    // enough to relabel a crate's license past the allow-list with the
+    // guarantee and cargo-deny both green.
+    assert_eq!(
+        policy_sections(&deny),
+        vec![
+            "[advisories]",
+            "[bans]",
+            "[graph]",
+            "[licenses]",
+            "[sources]"
+        ],
+        "the set of tables the cargo-deny policy declares changed"
     );
-    for target in [
-        "aarch64-apple-darwin",
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
+
+    // The exact set of keys each section declares. Pinning values alone leaves
+    // every knob nobody named invisible, and cargo-deny has plenty: a
+    // `[graph] exclude` mutes a crate out of the scan so its advisory can be
+    // deleted with nothing failing, `disable-yank-checking` sits beside an
+    // untouched `yanked = "deny"`, `[sources] allow-org` trusts a whole GitHub
+    // organisation, and a quoted `"unmaintained"` key defeats an
+    // absent-key assertion while deserializing normally. cargo-deny rejects
+    // keys it does not know, so pinning the set closes all of them at once.
+    for (section, keys) in [
+        ("graph", &["all-features", "targets"][..]),
+        ("advisories", &["ignore", "version", "yanked"][..]),
+        (
+            "licenses",
+            &["allow", "confidence-threshold", "exceptions"][..],
+        ),
+        (
+            "bans",
+            &[
+                "allow",
+                "allow-wildcard-paths",
+                "deny",
+                "highlight",
+                "multiple-versions",
+                "skip",
+                "skip-tree",
+                "wildcards",
+            ][..],
+        ),
+        (
+            "sources",
+            &[
+                "allow-git",
+                "allow-registry",
+                "required-git-spec",
+                "unknown-git",
+                "unknown-registry",
+            ][..],
+        ),
     ] {
-        assert!(
-            graph.contains(target),
-            "cargo-deny does not scan the release target {target}"
-        );
-    }
-    assert!(
-        !graph.contains("feature-depth"),
-        "feature-depth belongs to cargo-deny's output config, not its graph config"
-    );
-    assert!(
-        deny.contains("yanked = \"deny\""),
-        "yanked crates are not denied"
-    );
-    assert!(
-        deny.contains("wildcards = \"deny\""),
-        "wildcard dependency requirements are not denied"
-    );
-    assert!(
-        deny.contains("required-git-spec = \"rev\""),
-        "allowed git sources can be branch-based or unpinned"
-    );
-    for source in [
-        "https://github.com/IAmJSD/gpui",
-        "https://github.com/cristim/hayro",
-        "https://github.com/linebender/vello",
-    ] {
-        assert!(
-            deny.contains(source),
-            "cargo-deny does not allow the reviewed git source {source}"
+        assert_eq!(
+            policy_keys(&deny, section),
+            keys,
+            "the set of settings [{section}] declares changed"
         );
     }
 
-    let supply_chain = job(&ci, "supply-chain");
-    assert!(!supply_chain.is_empty(), "CI has no supply-chain job");
-    assert!(
-        supply_chain.contains("CARGO_NET_GIT_FETCH_WITH_CLI: true"),
-        "the supply-chain job fetches git dependencies differently from the rest of CI"
-    );
-    assert!(
-        supply_chain.contains("fetch-depth: 0"),
-        "the secret scanner cannot inspect git history from a shallow checkout"
-    );
-    assert!(
-        supply_chain.contains("actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"),
-        "CI does not use the reviewed checkout v6 pin"
-    );
-    assert!(
-        supply_chain.contains("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c"),
-        "CI does not use the reviewed rust-toolchain stable pin"
-    );
-    assert!(
-        supply_chain.contains("Swatinem/rust-cache@e172ef532f714507ca8b9ce7978a442736438fc1"),
-        "CI does not use the reviewed rust-cache pin"
-    );
-    assert!(
-        supply_chain
-            .contains("EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25"),
-        "CI does not run cargo-deny"
-    );
-    assert!(
-        supply_chain.contains("https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz"),
-        "CI does not install the reviewed Gitleaks release"
-    );
-    assert!(
-        supply_chain.contains(
-            "echo \"a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  gitleaks.tar.gz\" | sha256sum -c -"
-        ),
-        "CI does not verify the reviewed Gitleaks release checksum against the downloaded tarball"
-    );
-    assert!(
-        supply_chain.contains("./gitleaks detect --redact --source ."),
-        "CI does not run Gitleaks"
-    );
-    assert!(
-        !supply_chain.contains("GITLEAKS_LICENSE"),
-        "the secret scan must not depend on an organization-only action license secret"
-    );
-    for line in supply_chain
-        .lines()
-        .filter(|line| line.trim_start().starts_with("- uses: "))
-    {
-        let Some((_, reference)) = line.split_once('@') else {
-            panic!("action is not pinned to a reviewed ref: {line}");
-        };
-        let sha = reference.split_whitespace().next().unwrap_or_default();
-        assert!(
-            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "supply-chain action is not pinned to a full commit SHA: {line}"
+    // Every setting cargo-deny would have to be told to stop enforcing. Read
+    // as values rather than as text: `cargo deny check` reports all four
+    // sections green against a policy that ignores every advisory, permits
+    // every license and trusts every source, so "the file mentions the right
+    // words somewhere" is not evidence of anything.
+    for (section, key, required) in [
+        ("graph", "all-features", "true"),
+        ("advisories", "yanked", "\"deny\""),
+        ("licenses", "exceptions", "[]"),
+        ("bans", "wildcards", "\"deny\""),
+        // The wildcard ban only means anything once the workspace's own path
+        // dependencies stop reading as wildcards, which is what `publish =
+        // false` buys. Without it the check fails on our own crates, and the
+        // way out of that is to stop denying wildcards at all.
+        ("bans", "allow-wildcard-paths", "true"),
+        ("bans", "allow", "[]"),
+        ("bans", "skip", "[]"),
+        ("bans", "skip-tree", "[]"),
+        ("sources", "unknown-registry", "\"deny\""),
+        ("sources", "unknown-git", "\"deny\""),
+        ("sources", "required-git-spec", "\"rev\""),
+    ] {
+        let setting = policy_setting(&deny, section, key);
+        assert_eq!(
+            setting.as_deref(),
+            Some(required),
+            "cargo-deny policy weakened: [{section}] {key} must be {required}"
         );
     }
+    // Floors rather than equalities, so tightening the policy later is not a
+    // test failure. Duplicate versions are a warning today because gpui brings
+    // 66 of them; the day they are cleaned up, "deny" must not fail here.
     assert!(
-        !supply_chain.contains("continue-on-error"),
-        "supply-chain policy is advisory instead of gating"
+        matches!(
+            policy_setting(&deny, "bans", "multiple-versions").as_deref(),
+            Some("\"warn\"") | Some("\"deny\"")
+        ),
+        "duplicate crate versions are not reported at all"
     );
+    let confidence = policy_setting(&deny, "licenses", "confidence-threshold")
+        .and_then(|value| value.parse::<f64>().ok())
+        .expect("the policy states a license confidence threshold");
     assert!(
-        !supply_chain.lines().any(|line| line.starts_with("    if:")),
+        confidence >= 0.8,
+        "license detection confidence is below the reviewed floor: {confidence}"
+    );
+    assert_eq!(
+        policy_setting(&deny, "graph", "targets").as_deref(),
+        Some(
+            "[{ triple = \"aarch64-apple-darwin\" }, { triple = \"x86_64-pc-windows-msvc\" }, \
+             { triple = \"x86_64-unknown-linux-gnu\" }, { triple = \"aarch64-unknown-linux-gnu\" }]"
+        ),
+        "cargo-deny no longer scans exactly the triples release.yml publishes"
+    );
+
+    // Allow-lists are pinned whole. Asserting only that the reviewed entries
+    // are present would let a fourth git source or a copyleft license be added
+    // beside them without failing anything.
+    assert_eq!(
+        policy_setting(&deny, "sources", "allow-registry").as_deref(),
+        Some("[\"https://github.com/rust-lang/crates.io-index\"]"),
+        "cargo-deny trusts a registry other than crates.io"
+    );
+    assert_eq!(
+        policy_setting(&deny, "sources", "allow-git").as_deref(),
+        Some(
+            "[\"https://github.com/IAmJSD/gpui\", \"https://github.com/cristim/hayro\", \
+             \"https://github.com/linebender/vello\"]"
+        ),
+        "the reviewed set of git sources changed"
+    );
+    assert_eq!(
+        policy_setting(&deny, "licenses", "allow").as_deref(),
+        Some(
+            "[\"Apache-2.0\", \"Apache-2.0 WITH LLVM-exception\", \"BSD-2-Clause\", \
+             \"BSD-3-Clause\", \"CC0-1.0\", \"ISC\", \"MIT\", \"MPL-2.0\", \"Unicode-3.0\", \
+             \"Zlib\"]"
+        ),
+        "the reviewed set of permitted licenses changed"
+    );
+
+    let manifest = std::fs::read_to_string(workspace.join("Cargo.toml"))
+        .expect("the workspace manifest is readable");
+    assert_eq!(
+        policy_setting(&manifest, "workspace.package", "publish").as_deref(),
+        Some("false"),
+        "the workspace is not marked unpublished, so allow-wildcard-paths does not apply to it"
+    );
+
+    // Exceptions are the part of a policy that rots. Every one has to name a
+    // single advisory and say why it is tolerated: a bare string would mute an
+    // advisory with no stated reason, and a crate name would mute every future
+    // advisory against that crate, which is a blanket allow wearing an
+    // exception's clothes.
+    let ignored = policy_setting(&deny, "advisories", "ignore")
+        .expect("the policy declares an advisory exception list");
+    for entry in ignored
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split("}, ")
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        assert!(
+            entry.starts_with("{ id = \"RUSTSEC-"),
+            "an advisory exception is not a table pinned to one advisory ID: {entry}"
+        );
+        let reason = entry
+            .split_once("reason = \"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(reason, _)| reason)
+            .unwrap_or_default();
+        assert!(
+            reason.len() > 20,
+            "an advisory exception carries no reviewed reason: {entry}"
+        );
+    }
+
+    let ci = workflow("ci.yml");
+    let supply_chain = job_of(&ci, "supply-chain");
+    let steps = job_steps(&ci, "supply-chain");
+    assert_eq!(
+        field(&supply_chain["env"], "CARGO_NET_GIT_FETCH_WITH_CLI").as_deref(),
+        Some("true"),
+        "the supply-chain job fetches git dependencies differently from the rest of CI"
+    );
+    assert_eq!(
+        field(supply_chain, "if"),
+        None,
         "the supply-chain job is conditional, so some events skip it"
     );
+    assert_eq!(
+        field(supply_chain, "continue-on-error"),
+        None,
+        "supply-chain policy is advisory instead of gating"
+    );
+
+    // The job's steps, pinned whole and in order. Pinning only the steps that
+    // must be present leaves room for ones that must not: a step that rewrites
+    // deny.toml before cargo-deny reads it and restores it after, and nothing
+    // named here would notice.
+    assert_eq!(
+        steps
+            .iter()
+            .map(|step| action_of(step)
+                .or_else(|| field(step, "run"))
+                .unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec![
+            "actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3".to_owned(),
+            "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c".to_owned(),
+            "Swatinem/rust-cache@e172ef532f714507ca8b9ce7978a442736438fc1".to_owned(),
+            "EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25".to_owned(),
+            "cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated".to_owned(),
+            GITLEAKS_INSTALL.to_owned(),
+            "./gitleaks detect --redact --source .".to_owned(),
+        ],
+        "the supply-chain job's steps are no longer exactly the reviewed ones, in the reviewed order"
+    );
+    for step in &steps {
+        let Some(action) = action_of(step) else {
+            continue;
+        };
+        let sha = action
+            .split_once('@')
+            .map(|(_, pin)| pin)
+            .unwrap_or_default();
+        assert!(
+            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "supply-chain action is not pinned to a full commit SHA: {action}"
+        );
+    }
+
+    // The cargo-deny invocation itself. The action builds its command line as
+    // `cargo-deny --manifest-path X <arguments> <command> <command-arguments>`,
+    // so `arguments: --config other.toml` points it at a policy this test never
+    // reads and `command: check bans` narrows it to one section of four. Both
+    // leave the action pin untouched and both stay green. Pinning the whole
+    // `with:` block is the only way to say "this policy, all four sections".
+    let deny_action = steps
+        .iter()
+        .find(|step| {
+            action_of(step)
+                .is_some_and(|action| action.starts_with("EmbarkStudios/cargo-deny-action@"))
+        })
+        .expect("CI does not run cargo-deny");
+    assert_eq!(
+        keys_of(&deny_action["with"]),
+        vec!["command"],
+        "the cargo-deny step passes more than `command`, which can point it at another policy file or narrow it to one section"
+    );
+    assert_eq!(
+        field(&deny_action["with"], "command"),
+        Some("check".to_owned()),
+        "cargo-deny does not check all four sections"
+    );
+    for (key, why) in [
+        ("if", "is conditional, so some event skips the whole policy"),
+        ("continue-on-error", "cannot fail the job"),
+        ("working-directory", "reads another tree"),
+    ] {
+        assert_eq!(field(deny_action, key), None, "the cargo-deny step {why}");
+    }
+
+    let checkout = steps
+        .iter()
+        .find(|step| action_of(step).is_some_and(|action| action.starts_with("actions/checkout@")))
+        .expect("the supply-chain job does not check the repository out");
+    assert_eq!(
+        field(&checkout["with"], "fetch-depth").as_deref(),
+        Some("0"),
+        "the secret scanner cannot inspect git history from a shallow checkout"
+    );
+
+    gate_step(&steps, "./gitleaks detect --redact --source .");
+    gate_step(
+        &steps,
+        "cargo test -p onionskin-app --test guarantees -- --exact supply_chain_policy_is_checked_in_and_gated",
+    );
+    assert!(
+        !ci_text.contains("GITLEAKS_LICENSE"),
+        "the secret scan must not depend on an organization-only action license secret"
+    );
 }
+
+/// The reviewed Gitleaks install script, checksum and all. Pinned as one
+/// scalar because the download and the hash that vouches for it only mean
+/// anything together.
+const GITLEAKS_INSTALL: &str = "curl -fsSLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz\necho \"a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  gitleaks.tar.gz\" | sha256sum -c -\ntar -xzf gitleaks.tar.gz gitleaks\n./gitleaks version\n";
 
 #[test]
 fn checksum_verifier_accepts_a_complete_matching_corpus_root() {
@@ -2959,26 +3369,819 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-/// One top-level job of a workflow: its header line and everything indented
-/// under it. Scoped, so that what another job is allowed to do stays that
-/// job's business.
-fn job(workflow: &str, name: &str) -> String {
-    let header = format!("  {name}:");
-    workflow
-        .lines()
-        .skip_while(|line| *line != header)
-        .take_while(|line| *line == header || line.starts_with("   ") || line.trim().is_empty())
+/// The parsed workflow, proved to declare no `defaults`.
+fn workflow(file: &str) -> Yaml {
+    let path = workspace_root().join(".github/workflows").join(file);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
+    parse_workflow(&text, file)
+}
+
+/// `defaults` is checked here because it is the one key that reaches every
+/// gate in a file at once: a workflow-level `defaults.run.shell` stops every
+/// `run:` step being the command it reads as, and a job-level
+/// `defaults.run.working-directory` points them all at another tree. Neither
+/// file needs the key, so the reviewed answer is that it is absent everywhere.
+fn parse_workflow(text: &str, file: &str) -> Yaml {
+    let mut documents = YamlLoader::load_from_str(text)
+        .unwrap_or_else(|error| panic!("{file} is not valid YAML ({error})"));
+    assert_eq!(
+        documents.len(),
+        1,
+        "{file} holds more than one YAML document"
+    );
+    let document = documents.remove(0);
+    assert!(
+        document["defaults"].is_badvalue(),
+        "{file} declares workflow-level defaults, which rewrite how every run: step in it is executed"
+    );
+    let jobs = document["jobs"]
+        .as_hash()
+        .unwrap_or_else(|| panic!("{file} declares no jobs"));
+    for (name, job) in jobs {
+        assert!(
+            job["defaults"].is_badvalue(),
+            "{file}'s {} job declares defaults, which rewrite how its run: steps are executed",
+            scalar(name).unwrap_or_default()
+        );
+    }
+    document
+}
+
+/// A scalar rendered as the text the workflow means. YAML types `1` as an
+/// integer and `true` as a boolean, and a gate cares about the value rather
+/// than which of those the parser chose.
+fn scalar(node: &Yaml) -> Option<String> {
+    match node {
+        Yaml::String(text) => Some(text.clone()),
+        Yaml::Integer(number) => Some(number.to_string()),
+        Yaml::Real(number) => Some(number.clone()),
+        Yaml::Boolean(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+fn field(node: &Yaml, key: &str) -> Option<String> {
+    scalar(&node[key])
+}
+
+/// The keys of a mapping, sorted, so a step or a `with:` block can be pinned
+/// whole rather than one key at a time.
+fn keys_of(node: &Yaml) -> Vec<String> {
+    let mut keys = node
+        .as_hash()
+        .map(|map| map.keys().filter_map(scalar).collect::<Vec<_>>())
+        .unwrap_or_default();
+    keys.sort();
+    keys
+}
+
+/// A step's keys, proved to be drawn only from the reviewed set. Listing the
+/// keys that must *not* appear is how `shell:` went unnoticed: `shell: cat`
+/// leaves the command byte-exact and stops it being a command at all, and
+/// `shell: python` reinterprets it just as thoroughly. Every step this suite
+/// calls a gate goes through here, conditional ones included.
+fn assert_reviewed_keys(step: &Yaml, allowed: &[&str], what: &str) {
+    for key in keys_of(step) {
+        assert!(
+            allowed.contains(&key.as_str()),
+            "{what} declares `{key}:`, which is not one of the reviewed keys {allowed:?}"
+        );
+    }
+}
+
+fn job_of<'a>(workflow: &'a Yaml, name: &str) -> &'a Yaml {
+    let job = &workflow["jobs"][name];
+    assert!(!job.is_badvalue(), "the workflow has no {name} job");
+    job
+}
+
+fn job_steps<'a>(workflow: &'a Yaml, name: &str) -> Vec<&'a Yaml> {
+    job_of(workflow, name)["steps"]
+        .as_vec()
+        .unwrap_or_else(|| panic!("the {name} job declares no steps"))
+        .iter()
+        .collect()
+}
+
+/// The action a step runs, without the `# vN` note a commit pin carries.
+fn action_of(step: &Yaml) -> Option<String> {
+    Some(field(step, "uses")?.split_whitespace().next()?.to_owned())
+}
+
+/// The one step whose whole script is `command`, declaring nothing beyond a
+/// name and that script. Not "a step one of whose lines is `command`": a
+/// script of `set +e`, the gate, `exit 0` runs the gate and still succeeds
+/// with every line reading correctly.
+fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
+    let matching = steps
+        .iter()
+        .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one step whose whole script is `{command}`, found {}",
+        matching.len()
+    );
+    let step = matching[0];
+    assert_reviewed_keys(
+        step,
+        &["name", "run"],
+        &format!("the step running `{command}`"),
+    );
+    step
+}
+
+/// Whether a command builds the app binary. The word `cargo` anywhere, then
+/// `build` or `b`: anchoring on the first word caught `cargo +stable build`
+/// but let `RUSTFLAGS=... cargo build` and `cd . && cargo build` through, and
+/// either overwrites the `target/release/onionskin` the packaging scripts
+/// ship.
+fn builds_the_app(command: &str) -> bool {
+    let words = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(['"', '\'', '`']))
+        .collect::<Vec<_>>();
+    // `sh -c "cargo build ..."` makes the word `"cargo`, and a `$CARGO` or an
+    // absolute path reaches the same binary.
+    let cargo =
+        |word: &&str| matches!(*word, "cargo" | "$CARGO" | "${CARGO}") || word.ends_with("/cargo");
+    words
+        .iter()
+        .position(cargo)
+        .is_some_and(|at| words[at + 1..].iter().any(|w| matches!(*w, "build" | "b")))
+}
+
+/// A `run:` scalar's commands, with shell line continuations joined. Scanning
+/// the scalar a line at a time reads a continued `cargo \` and its arguments as
+/// two commands that each build nothing.
+fn script_lines(run: &str) -> Vec<String> {
+    let mut commands: Vec<String> = Vec::new();
+    for line in run.lines() {
+        let line = line.trim();
+        match commands.last_mut() {
+            Some(last) if last.ends_with('\\') => {
+                last.pop();
+                last.push(' ');
+                last.push_str(line);
+            }
+            _ => commands.push(line.to_owned()),
+        }
+    }
+    commands
+}
+
+/// Every string literal reachable from an expression.
+#[derive(Default)]
+struct Strings(Vec<String>);
+
+impl<'ast> Visit<'ast> for Strings {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.0.push(literal.value());
+    }
+}
+
+fn strings_in<'ast>(args: impl IntoIterator<Item = &'ast Expr>) -> Vec<String> {
+    let mut found = Strings::default();
+    for arg in args {
+        found.visit_expr(arg);
+    }
+    found.0
+}
+
+/// What one function's body says.
+#[derive(Default)]
+struct Function {
+    /// The attribute names the function carries, sorted.
+    attributes: Vec<String>,
+    /// String literals inside an assertion or a failure report.
+    messages: Vec<String>,
+    /// Method calls, as `.method` and as `receiver.method`.
+    invocations: Vec<String>,
+    /// The free functions this one calls. Method names stay out: reachability
+    /// resolves names against this file's top-level functions, so a
+    /// `tally.report()` in the live walk would otherwise reach a never-called
+    /// free `fn report()` and let its assertion answer for a deleted one.
+    calls: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Function {
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // syn leaves a macro's tokens unparsed, so its arguments are walked
+        // here or not at all.
+        if let Ok(args) = mac.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated) {
+            let name = mac
+                .path
+                .segments
+                .last()
+                .map(|segment| segment.ident.to_string())
+                .unwrap_or_default();
+            if matches!(
+                name.as_str(),
+                "assert" | "assert_eq" | "assert_ne" | "panic"
+            ) {
+                self.messages.extend(strings_in(&args));
+            }
+            for arg in &args {
+                self.visit_expr(arg);
+            }
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        self.invocations.push(format!(".{method}"));
+        if let Expr::Path(path) = &*call.receiver {
+            if let Some(receiver) = path.path.get_ident() {
+                self.invocations.push(format!("{receiver}.{method}"));
+            }
+        }
+        // The corpus walks fail a file through their tally rather than through
+        // an assert; the pass-count floor is then asserted against that tally,
+        // so it is the same thing said in the harness's own terms.
+        if matches!(method.as_str(), "fail" | "record") {
+            self.messages.extend(strings_in(&call.args));
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Expr::Path(path) = &*call.func {
+            if let Some(last) = path.path.segments.last() {
+                if last.ident == "Err" {
+                    self.messages.extend(strings_in(&call.args));
+                }
+                self.calls.push(last.ident.to_string());
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// What a `crates/cos` test file says, read from its syntax tree. Four
+/// hand-written readers in a row were each defeated by something they did not
+/// model - a trailing `//`, an unbalanced quote, a `/* */` wrapper, then a
+/// `#[cfg]` - so a comment is not a token here and an attribute is not an
+/// ident lookup. Bodies are kept per function because a file-global bag of
+/// assertions lets one parked in a dead test answer for one deleted from a
+/// live one.
+#[derive(Default)]
+struct Suite {
+    file: String,
+    functions: BTreeMap<String, Function>,
+    /// The named enforcing tests, and everything reachable from them.
+    reachable: BTreeSet<String>,
+}
+
+impl Suite {
+    fn asserts(&self, marker: &str, missing: &str) {
+        assert!(
+            self.reached()
+                .any(|body| body.messages.iter().any(|line| line.contains(marker))),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+
+    fn invokes(&self, call: &str, missing: &str) {
+        assert!(
+            self.reached()
+                .any(|body| body.invocations.iter().any(|found| found == call)),
+            "{} no longer proves its guarantee: {missing}",
+            self.file
+        );
+    }
+
+    fn reached(&self) -> impl Iterator<Item = &Function> {
+        self.reachable
+            .iter()
+            .filter_map(|name| self.functions.get(name))
+    }
+}
+
+/// What an attribute is called. The first path segment, not the last: a tool
+/// attribute such as `#[rustfmt::skip]` is named by its tool, and reading the
+/// last segment calls it `skip`, which no reviewed set would contain.
+fn attribute_name(attribute: &syn::Attribute) -> String {
+    attribute
+        .path()
+        .segments
+        .first()
+        .map(|segment| segment.ident.to_string())
+        .unwrap_or_default()
+}
+
+/// The inner doc comment of a parsed file, which is an attribute rather than a
+/// comment and so survives parsing.
+fn module_doc(file: &syn::File) -> String {
+    file.attrs
+        .iter()
+        .filter_map(|attr| {
+            let syn::Meta::NameValue(pair) = &attr.meta else {
+                return None;
+            };
+            if !attr.path().is_ident("doc") {
+                return None;
+            }
+            let Expr::Lit(literal) = &pair.value else {
+                return None;
+            };
+            let syn::Lit::Str(text) = &literal.lit else {
+                return None;
+            };
+            Some(text.value())
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn toml_section(document: &str, name: &str) -> String {
+/// The `crates/cos` test file that enforces guarantee `number`.
+fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> Suite {
+    let path = workspace_root().join("crates/cos/tests").join(file);
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "{} is unreadable ({error}), so guarantee {number} is unchecked",
+            path.display()
+        )
+    });
+    read_suite(&source, file, number, tests)
+}
+
+/// Reads one suite and proves each named test is a plain, live `#[test]`. The
+/// attribute set is pinned exactly, the same allowlist move as a step's keys:
+/// `#[cfg_attr(all(), ignore)]` and `#[cfg(any())]` both leave `#[test]`
+/// present while the test is respectively ignored and compiled away.
+fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
+    let parsed = syn::parse_file(source).unwrap_or_else(|error| {
+        panic!("{file} does not parse ({error}), so guarantee {number} cannot be read")
+    });
+    assert!(
+        module_doc(&parsed)
+            .trim_start()
+            .starts_with(&format!("Guarantee test {number}:")),
+        "{file} no longer claims guarantee {number}"
+    );
+
+    // One scope up from the per-function pin: `#![cfg(any())]` under the `//!`
+    // header takes out every test in the file at once, and each of them still
+    // reads as a live `#[test]`.
+    for attribute in &parsed.attrs {
+        let name = attribute_name(attribute);
+        assert_eq!(
+            name, "doc",
+            "{file} carries a file-level `#![{name}]`, which can compile the whole suite away while every test in it still reads as live"
+        );
+    }
+
+    let mut suite = Suite {
+        file: file.to_owned(),
+        ..Suite::default()
+    };
+    for item in &parsed.items {
+        let syn::Item::Fn(item) = item else {
+            continue;
+        };
+        let mut body = Function {
+            attributes: {
+                let mut names = item
+                    .attrs
+                    .iter()
+                    .map(attribute_name)
+                    // A doc comment is an attribute too, and the one kind that
+                    // cannot switch a test off.
+                    .filter(|name| name != "doc")
+                    .collect::<Vec<_>>();
+                names.sort();
+                names
+            },
+            ..Function::default()
+        };
+        body.visit_block(&item.block);
+        suite.functions.insert(item.sig.ident.to_string(), body);
+    }
+
+    for name in tests {
+        let body = suite.functions.get(*name).unwrap_or_else(|| {
+            panic!("{file} no longer defines {name}, so guarantee {number} is unchecked")
+        });
+        assert!(
+            body.attributes.iter().any(|name| name == "test"),
+            "{file}'s {name} is no longer a #[test]"
+        );
+        for attribute in &body.attributes {
+            assert!(
+                attribute == "test" || INERT_ATTRIBUTES.contains(&attribute.as_str()),
+                "{file}'s {name} carries `#[{attribute}]`, which is not one of the attributes reviewed as unable to change whether the test runs"
+            );
+        }
+    }
+
+    // Everything the named tests reach. The assertions themselves live in the
+    // walk helpers those tests call, so a marker found anywhere else in the
+    // file - a parked test, a dead helper - does not count.
+    let mut frontier = tests
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    while let Some(name) = frontier.pop() {
+        if !suite.reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(body) = suite.functions.get(&name) {
+            frontier.extend(body.calls.iter().cloned());
+        }
+    }
+    suite
+}
+
+/// Guarantees 1, 2 and 6 are enforced in `crates/cos`, which only helps if CI
+/// runs that crate's tests. It reaches them through the workspace suite, so
+/// both the command and the membership have to hold.
+fn assert_ci_reaches_the_cos_suite() {
+    let ci = workflow("ci.yml");
+    gate_step(&job_steps(&ci, "test"), "cargo test --workspace");
+    let manifest = std::fs::read_to_string(workspace_root().join("Cargo.toml"))
+        .expect("the workspace manifest is readable");
+    assert!(
+        manifest.contains("\"crates/cos\","),
+        "crates/cos is not a workspace member, so `cargo test --workspace` does not reach it"
+    );
+}
+
+/// One section of a TOML document, verbatim apart from its whole-line
+/// comments. Those go because cargo-deny does not read them and a reviewed
+/// setting parked in one reads exactly like the setting itself; nothing else
+/// is stripped, so a value that grew a trailing comment stops comparing equal
+/// rather than being quietly trimmed back into shape.
+fn toml_section(document: &str, name: &str) -> Vec<String> {
     let header = format!("[{name}]");
     document
         .lines()
         .skip_while(|line| line.trim() != header)
         .skip(1)
         .take_while(|line| !line.trim_start().starts_with('['))
-        .collect::<Vec<_>>()
-        .join("\n")
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every table header the document declares, sorted. `toml_section` stops at
+/// the next `[`, so a sub-table such as `[[licenses.clarify]]` would otherwise
+/// stay invisible to the key-set pins while cargo-deny obeys it, which is
+/// enough to relabel a crate's license past the allow-list with everything
+/// green.
+fn policy_sections(document: &str) -> Vec<String> {
+    let mut headers = document
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('['))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    headers.sort();
+    headers
+}
+
+/// Every key `section` declares, sorted, with a quoted key read as the key it
+/// is. Pinning the set is what stops a knob nobody thought to name - a
+/// `[graph] exclude` that mutes a crate out of the scan, or a
+/// `disable-yank-checking` beside an untouched `yanked = "deny"` - from
+/// disarming the policy while every pinned value still reads correctly.
+fn policy_keys(document: &str, section: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut depth = 0usize;
+    for line in toml_section(document, section) {
+        let trimmed = line.trim();
+        if depth == 0 {
+            if let Some((key, _)) = trimmed.split_once('=') {
+                keys.push(key.trim().trim_matches('"').trim_matches('\'').to_owned());
+            }
+        }
+        depth = (depth + opens(trimmed)).saturating_sub(closes(trimmed));
+    }
+    keys.sort();
+    keys
+}
+
+/// The value of `key` in `section`, as cargo-deny would read it: a value
+/// spread over several lines is joined onto one so an array can be compared
+/// whole. `None` when the key is absent, which is a distinct answer from an
+/// empty value.
+fn policy_setting(document: &str, section: &str, key: &str) -> Option<String> {
+    let body = toml_section(document, section);
+    let mut lines = body.iter().map(|line| line.trim());
+    let mut value = lines
+        .find_map(|line| {
+            Some(
+                line.strip_prefix(key)?
+                    .trim_start()
+                    .strip_prefix('=')?
+                    .trim(),
+            )
+        })?
+        .to_owned();
+
+    while opens(&value) > closes(&value) {
+        let next = lines.next()?;
+        if next.is_empty() {
+            continue;
+        }
+        if next.starts_with(']') {
+            // TOML allows a trailing comma before the bracket; a joined value
+            // that kept it would not compare equal to the array it means.
+            while value.ends_with(',') {
+                value.pop();
+            }
+        } else if !value.ends_with('[') {
+            value.push(' ');
+        }
+        value.push_str(next);
+    }
+    Some(value)
+}
+
+fn opens(value: &str) -> usize {
+    value.chars().filter(|c| *c == '[' || *c == '{').count()
+}
+
+fn closes(value: &str) -> usize {
+    value.chars().filter(|c| *c == ']' || *c == '}').count()
+}
+
+// Every decoy below reached the tree at some point during this package's
+// review, and each was found by a person rather than by a test. Four are the
+// same class returning - "the check reads what is written, not what runs" - so
+// the class is guarded here now. A note recording a past failure is not a
+// seed; this is.
+
+/// Runs a reader against a seeded decoy and proves it refuses.
+fn rejects(what: &str, check: impl FnOnce()) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+    std::panic::set_hook(previous);
+    assert!(
+        outcome.is_err(),
+        "the reader accepted a decoy it must refuse: {what}"
+    );
+}
+
+/// A stand-in for `crates/cos/tests/repair.rs`, shaped like the real one.
+const DECOY_SUITE: &str = r#"//! Guarantee test 6: every file in the malformed corpus opens, saving appends
+//! an incremental section holding the repaired structures, and the corrupt
+//! original bytes survive beneath it byte-intact.
+
+#[test]
+fn every_malformed_file_repairs_and_saves_over_intact_original_bytes() {
+    let tally = walk();
+    tally.report();
+    assert_eq!(
+        tally.passed.len(),
+        files.len(),
+        "guarantee test 6 requires the whole malformed set"
+    );
+}
+"#;
+
+/// Attributes reviewed as unable to change whether a test runs. `#[ignore]`,
+/// `#[cfg]`, `#[cfg_attr]` and `#[should_panic]` are all absent on purpose.
+const INERT_ATTRIBUTES: &[&str] = &["allow", "rustfmt"];
+
+const WHOLE_SET: &str = "guarantee test 6 requires the whole malformed set";
+
+/// The assertion as it appears in the decoy, so a seed can replace it whole.
+const DECOY_ASSERTION: &str = "    assert_eq!(\n        tally.passed.len(),\n        files.len(),\n        \"guarantee test 6 requires the whole malformed set\"\n    );";
+
+fn read_decoy(source: &str) {
+    let suite = read_suite(
+        source,
+        "decoy.rs",
+        6,
+        &["every_malformed_file_repairs_and_saves_over_intact_original_bytes"],
+    );
+    suite.asserts(WHOLE_SET, "the whole-set clause is gone");
+}
+
+#[test]
+fn an_assertion_that_only_looks_present_is_refused() {
+    // The baseline has to pass, or the refusals below prove nothing.
+    read_decoy(DECOY_SUITE);
+    assert!(
+        DECOY_SUITE.contains(DECOY_ASSERTION),
+        "the decoy no longer states the clause the seeds replace"
+    );
+
+    // Commented out three ways, each of which defeated a hand-written reader
+    // in this package: a whole-line `//`, a trailing `//` on live code, and a
+    // `/* { ... } */` wrapper whose opening line ends in `{` so a statement
+    // scan starts inside it and finds the assertion's own text.
+    for (what, replacement) in [
+        (
+            "the assertion left as whole-line comments",
+            DECOY_ASSERTION
+                .lines()
+                .map(|line| format!("    // {}", line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (
+            "the assertion left as a trailing comment",
+            format!("    let _ = &tally; // \"{WHOLE_SET}\""),
+        ),
+        (
+            "the assertion wrapped in a block comment",
+            format!("    /* {{\n{DECOY_ASSERTION}\n    }} */"),
+        ),
+    ] {
+        let seeded = DECOY_SUITE.replace(DECOY_ASSERTION, &replacement);
+        assert!(seeded != DECOY_SUITE, "the decoy for {what} did not apply");
+        rejects(what, || read_decoy(&seeded));
+    }
+
+    // The assertion deleted from the live walk and parked in an ignored test.
+    // A file-global bag of assertions answers this one; a per-function one
+    // reachable from the named tests does not.
+    let parked = format!(
+        "{}\n#[test]\n#[ignore = \"parked\"]\nfn parked_expectation() {{\n    assert_eq!(1, 1, \"{WHOLE_SET}\");\n}}\n",
+        DECOY_SUITE.replace(DECOY_ASSERTION, "    let _ = &tally;")
+    );
+    rejects("the assertion parked in an ignored test", || {
+        read_decoy(&parked)
+    });
+
+    // The live walk calls `tally.report()`. A free `fn report()` that nothing
+    // calls shares that name, so a call graph fed method names as well as
+    // function names reaches it and lets its assertion answer for the deleted
+    // one. The control below, identical but named so nothing collides, is
+    // refused either way; this pair isolates name resolution as the hole.
+    for name in ["report", "never_named_anywhere"] {
+        let colliding = format!(
+            "{}\nfn {name}() {{\n    assert_eq!(1, 1, \"{WHOLE_SET}\");\n}}\n",
+            DECOY_SUITE.replace(DECOY_ASSERTION, "    let _ = &tally;")
+        );
+        rejects(
+            &format!("the assertion moved to an uncalled fn {name}()"),
+            || read_decoy(&colliding),
+        );
+    }
+}
+
+#[test]
+fn an_enforcing_test_switched_off_by_an_attribute_is_refused() {
+    // `#[test]` is present in all three. Only an exact attribute set can tell
+    // a live test from one that is ignored or compiled away.
+    for (what, attribute) in [
+        ("the test ignored outright", "#[ignore]"),
+        (
+            "the test ignored through cfg_attr",
+            "#[cfg_attr(all(), ignore)]",
+        ),
+        ("the test compiled away by cfg", "#[cfg(any())]"),
+    ] {
+        let seeded = DECOY_SUITE.replace("#[test]\n", &format!("#[test]\n{attribute}\n"));
+        assert!(seeded != DECOY_SUITE, "the decoy for {what} did not apply");
+        rejects(what, || read_decoy(&seeded));
+    }
+
+    // One scope up, and stronger: this compiles every test in the file away at
+    // once, and each of them still reads as a live `#[test]`.
+    let seeded = DECOY_SUITE.replace("\n#[test]", "\n#![cfg(any())]\n\n#[test]");
+    assert!(
+        seeded != DECOY_SUITE,
+        "the file-level cfg decoy did not apply"
+    );
+    rejects("the whole suite compiled away by a file-level cfg", || {
+        read_decoy(&seeded)
+    });
+
+    // Inert attributes are reviewed rather than merely tolerated, so a
+    // maintainer adding one does not hit a false failure.
+    for inert in ["#[allow(clippy::needless_range_loop)]", "#[rustfmt::skip]"] {
+        read_decoy(&DECOY_SUITE.replace("#[test]\n", &format!("#[test]\n{inert}\n")));
+    }
+}
+
+/// A stand-in workflow with one gate step, shaped like the real jobs.
+fn decoy_workflow(step: &str) -> String {
+    format!("name: CI\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n{step}")
+}
+
+fn read_gate(text: &str) {
+    let parsed = parse_workflow(text, "decoy.yml");
+    gate_step(&job_steps(&parsed, "check"), "cargo deny check");
+}
+
+#[test]
+fn a_step_that_would_not_run_the_command_is_refused() {
+    read_gate(&decoy_workflow("      - run: cargo deny check\n"));
+
+    for (what, step) in [
+        (
+            "a shell that never executes the command",
+            "      - run: cargo deny check\n        shell: cat\n",
+        ),
+        (
+            "a shell that reinterprets the command",
+            "      - run: cargo deny check\n        shell: python\n",
+        ),
+        (
+            "the command wrapped so its failure is swallowed",
+            "      - run: |\n          set +e\n          cargo deny check\n          exit 0\n",
+        ),
+        (
+            "a folded scalar splicing a suffix onto the command",
+            "      - run: >\n          cargo deny check\n\n          || true\n",
+        ),
+        (
+            "the step conditioned away",
+            "      - run: cargo deny check\n        if: false\n",
+        ),
+        (
+            "the step allowed to fail",
+            "      - run: cargo deny check\n        continue-on-error: true\n",
+        ),
+        (
+            "the step pointed at another tree",
+            "      - run: cargo deny check\n        working-directory: ./stale-copy\n",
+        ),
+    ] {
+        rejects(what, || read_gate(&decoy_workflow(step)));
+    }
+}
+
+#[test]
+fn a_conditional_gate_is_held_to_the_same_key_allowlist() {
+    // The accessibility probe and guarantee 6's two steps carry the one
+    // permitted `if:`, so they are not `gate_step`s and reach the allowlist
+    // through a separate call. `shell:` passed on REPO-002's required gate
+    // until that call existed.
+    let live = "      - name: Accessibility probe\n        if: runner.os == 'macOS'\n        run: cargo test --features a11y-probe\n";
+    let parsed = parse_workflow(&decoy_workflow(live), "decoy.yml");
+    let steps = job_steps(&parsed, "check");
+    assert_reviewed_keys(steps[0], &["name", "if", "run"], "the decoy probe");
+
+    let seeded = "      - name: Accessibility probe\n        if: runner.os == 'macOS'\n        shell: cat\n        run: cargo test --features a11y-probe\n";
+    let parsed = parse_workflow(&decoy_workflow(seeded), "decoy.yml");
+    let steps = job_steps(&parsed, "check");
+    rejects("a shell: on a conditional gate", || {
+        assert_reviewed_keys(steps[0], &["name", "if", "run"], "the decoy probe")
+    });
+}
+
+#[test]
+fn a_workflow_that_rewrites_how_every_step_runs_is_refused() {
+    // One key, three lines above `jobs:`, disarms every `run:` gate in the
+    // file at once while each command still reads correctly.
+    rejects("workflow-level defaults", || {
+        read_gate("name: CI\non: [push]\ndefaults:\n  run:\n    shell: cat\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo deny check\n")
+    });
+    rejects("job-level defaults", || {
+        read_gate("name: CI\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./stale-copy\n    steps:\n      - run: cargo deny check\n")
+    });
+}
+
+#[test]
+fn every_way_of_reaching_cargo_build_counts_as_building_the_app() {
+    // Each of these overwrites target/release/onionskin, which both packaging
+    // scripts ship. Three were live bypasses of earlier versions of this
+    // predicate: one anchored on adjacent words, one on the first word.
+    for command in [
+        "cargo build --release -p onionskin-app",
+        "cargo b --release -p onionskin-app",
+        "cargo +stable build --release -p onionskin-app",
+        "cargo --offline build --release -p onionskin-app",
+        "RUSTFLAGS=-Awarnings cargo build --release -p onionskin-app",
+        "cd . && cargo build --release -p onionskin-app",
+        "cargo build --release --bin onionskin",
+        "sh -c \"cargo build --release -p onionskin-app\"",
+        "bash -lc 'cargo build --release -p onionskin-app'",
+        "$CARGO build --release -p onionskin-app",
+        "/usr/local/bin/cargo build --release -p onionskin-app",
+    ] {
+        assert!(
+            builds_the_app(command),
+            "a featureless rebuild would go unnoticed: {command}"
+        );
+    }
+    for command in [
+        "cargo test --workspace",
+        "cargo deny check",
+        "./packaging/linux/package.sh",
+    ] {
+        assert!(
+            !builds_the_app(command),
+            "a command that builds nothing is treated as a rebuild: {command}"
+        );
+    }
+
+    // A continued command is one command. Scanned a line at a time, neither
+    // half builds anything and the rebuild goes unnoticed.
+    let continued = "cargo \\\n  build --release -p onionskin-app";
+    assert!(
+        script_lines(continued)
+            .iter()
+            .any(|command| builds_the_app(command)),
+        "a rebuild split across a line continuation would go unnoticed"
+    );
 }

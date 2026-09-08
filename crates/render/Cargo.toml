@@ -3,6 +3,7 @@ name = "onionskin-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Pinned here rather than in the workspace root while the M1 spikes run in
 # parallel; they move to `[workspace.dependencies]` once the seam is real.
