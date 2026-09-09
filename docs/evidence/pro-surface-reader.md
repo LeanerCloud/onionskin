@@ -108,6 +108,242 @@ this work.
 
 ---
 
-## E3. Rail and panel captures
+## E3. Audit of the existing private capture set
 
-Pending. See section 6 of the method document.
+`parity/reference/acrobat-reader-25.001.20438/pro-surface/` holds 26 PNG files
+dated 2026-09-07, produced by an earlier click-and-capture run on this machine.
+They were never measured and no committed artefact referenced them. Auditing
+them before using them turned out to matter.
+
+**26 files, 13 distinct frames.** Grouped by SHA-256 of the file bytes
+(`parity/tools/capture-audit.py`):
+
+| Frame | Files carrying it | What it actually shows |
+|---|---|---|
+| `650b2b0da68bc1ca` | 7 (`09-redact`, `12-fill-and-sign`, `13-add-comments`, `16-use-a-certificate`, `17-use-print-production`, `18-measure-objects`, `99-current-state`) | one E-Sign panel plus its recipients dialog |
+| `0f3d9662c96d2c99` | 6 (`07-scan-and-ocr`, `08-protect-a-pdf`, `10-compress-a-pdf`, `11-prepare-a-form`, `14-convert-to-pdf`, `15-add-a-stamp`) | the same E-Sign state, one caret-blink earlier |
+| `8d5d97144067677f` | 2 (`00-baseline`, `01-edit-a-pdf` at 15:50:05) | the All tools rail, no tool invoked |
+| `ff9627ad8b5bc274` | 2 (`30-test-w1`, `30-test-w2`) | rail in its truncated 13-entry state |
+| 9 more | 1 each | see E4 |
+
+**Conclusion: 13 of the 26 filenames cannot be what they say.**
+The earlier run clicked a rail entry, captured, and moved on. Once the E-Sign
+recipients dialog opened it swallowed every later click, so twelve consecutive
+captures recorded the same modal under twelve different toolset names, and the
+first `01-edit-a-pdf` frame is byte-identical to the baseline because that click
+never landed at all.
+
+Two rules for the method follow directly, and both are cheap:
+
+1. **A capture is invalid unless its frame differs from the frame before it.**
+   Byte equality with the previous capture means the click did not land or the
+   UI did not change; either way the file is not evidence of what its name says.
+2. **A capture is invalid unless something in the frame independently identifies
+   the state.** Here the panel header and the highlighted rail row do that. A
+   filename is a claim by the capture script, never evidence.
+
+Both are checks on the captured frames, not on the capture session, so they can
+run long after the session ends, which is what made this audit possible at all.
+
+---
+
+## E4. What the surviving distinct frames establish
+
+Thirteen frames are distinct. The states verified frame by frame are below;
+three distinct frames were not opened and are listed as unverified in E4.7. Measured with `parity/tools/measure-pane.py`
+against the source pixels. The captures are 2x; every number below is in logical
+points and every one is **relative to the window or the pane**, per the
+relative-measurement rule in `docs/plans/parity-goal.md` section 4.3. Window:
+1800 x 1057 pt. Theme: dark. Document open: `corpus/seeds/two-page.pdf`.
+
+### E4.1 The All tools rail, whole toolset panel, frame `8d5d971`
+
+Pane occupies x = 0 to 287.0 pt of the window. Twenty entries, in this order:
+
+| # | Label | # | Label |
+|---|---|---|---|
+| 1 | Export a PDF | 11 | Redact a PDF |
+| 2 | Edit a PDF | 12 | Compress a PDF |
+| 3 | Create a PDF | 13 | Prepare a form |
+| 4 | Combine files | 14 | Fill & Sign |
+| 5 | Organize pages | 15 | Add comments |
+| 6 | AI Assistant | 16 | Convert to PDF |
+| 7 | Generative summary | 17 | Add a stamp |
+| 8 | Request e-signatures | 18 | Use a certificate |
+| 9 | Scan & OCR | 19 | Use print production |
+| 10 | Protect a PDF | 20 | Measure objects |
+
+Geometry, measured as ink extents rather than control boxes, because a control
+box is only observable under hover and no hover state was captured:
+
+| What | Value | How |
+|---|---|---|
+| Pane width | 287.0 pt | first column whose colour leaves the pane background and stays away for 20 px |
+| Pane header baseline band | top 100.5 pt, 13.0 pt tall | ink band |
+| Header label left inset | 24.0 pt | ink |
+| Header close control | left 256.0 pt, 8.0 pt wide | ink; right inset 23.0 pt |
+| First entry ink top | 146.0 pt | ink band 4 |
+| Last entry ink top | 906.5 pt | ink band 23 |
+| Entry pitch | **40.03 pt** | (906.5 - 146.0) / 19 |
+| Entry icon left inset | 35.0 to 36.0 pt | ink, two rows sampled |
+| Entry icon optical width | 15.0 to 16.0 pt | ink, two rows sampled |
+| Entry label left inset | **65.0 pt**, both rows sampled | ink |
+| Icon-to-label gap | 13.0 to 14.0 pt | derived |
+| Separator rule above the footer | 936 pt | ink |
+
+Icon metaphors, in words, per Legal posture rule 2. Recorded because the
+metaphor is a fact about the interface and the artwork is not: a sheet with an
+outward arrow (Export), a sheet with a pencil (Edit), a sheet with a plus
+(Create), two overlapping sheets (Combine), a sheet with page markers (Organize),
+a speech bubble with a spark (AI Assistant), a sheet with lines and a spark
+(Generative summary), a person with a pen (Request e-signatures), a sheet with a
+scan frame (Scan and OCR), a shield (Protect), a sheet with a struck block
+(Redact), a sheet with a downward arrow (Compress), a sheet with a form field
+(Prepare a form), a pen nib (Fill and Sign), a speech bubble on a sheet (Add
+comments), a sheet with an inward arrow (Convert to PDF), a stamp (Add a stamp),
+a certificate rosette (Use a certificate), a printer sheet (Use print
+production), a ruler (Measure objects). Optical size 15 to 16 pt on a pitch of
+40 pt.
+
+**The two elements below the rule are the upsell and are explicitly excluded
+from what Onionskin reproduces**: a two-line caption and a filled pill button.
+They are recorded here only so a later reader can tell that the space below the
+rule is accounted for, and so nobody re-derives them as content.
+
+### E4.2 The truncated rail, frame `ff9627a`
+
+The same pane, same width, but only **13 entries** followed by a link-styled
+`View more`. The cut falls after `Prepare a form`, which is entry 13. So the
+rail has two states and the long list is not the default one. Neither the
+trigger nor the persistence of the state is established by these frames: the
+window height is identical in both, so it is not a height fit. Recorded as an
+open question rather than answered.
+
+### E4.3 Export a PDF: a dense panel that renders in full, frame `07ffb1d`
+
+Clicking `Export a PDF` switches the tab strip to `Convert` and replaces the
+rail with the Convert panel. **No upsell modal appears.** The whole panel
+renders, live, with its controls in their default states.
+
+Structure, in order:
+
+| # | Element | Kind | Detail |
+|---|---|---|---|
+| 1 | `Convert` | panel header | with a close control |
+| 2 | `EXPORT PDF TO` | section label | carries a Pro badge dot |
+| 3 | `Microsoft Word` | radio, **selected** | trailing format tag `DOCX`, trailing chevron |
+| 4 | `Microsoft PowerPoint` | radio | trailing format tag `PPTX`, no chevron |
+| 5 | `Microsoft Excel` | radio | trailing format tag `XLSX`, no chevron |
+| 6 | `Image format` | radio | trailing format tag `JPEG`, trailing chevron |
+| 7 | `Other format` | radio | trailing format tag `RTF`, no chevron |
+| 8 | `Recognized text language` | field label | |
+| 9 | `English US` | dropdown | trailing help control |
+| 10 | `Convert` | primary button | right-aligned |
+| 11 | `OTHER OPTIONS` | section label | |
+| 12 | `Convert to PDF` | navigation entry | icon plus label |
+| 13 | `Compress a PDF` | navigation entry | icon plus label |
+| 14 | `Scan & OCR` | navigation entry | icon plus label |
+
+Geometry:
+
+| What | Value |
+|---|---|
+| Pane width | 287.0 pt, identical to the rail |
+| Panel header ink top | 104.0 pt |
+| `EXPORT PDF TO` ink top | 155.0 pt |
+| Radio row pitch | **44.0 pt**, exactly, over five rows |
+| Radio glyph left inset | 35.0 pt, 14.0 pt wide |
+| Radio label left inset | 59.5 pt |
+| Selected row box left / right edge | 26.0 pt / 254.5 pt, so 228.5 pt wide |
+| `Recognized text language` ink top | 414.0 pt |
+| Language dropdown ink top | 438.5 pt, 17.5 pt tall |
+| `Convert` button | left 174.5 pt, width 79.5 pt, height 32.0 pt, right edge 254.0 pt |
+| `OTHER OPTIONS` ink top | 544.0 pt |
+| Other-option row pitch | 39.25 pt over three rows |
+| Content column | left 26.0 pt, right 254.5 pt, so a 32.5 pt right gutter against a 26.0 pt left inset |
+
+Two things worth naming. The content column is not centred in the pane: 26.0 pt
+on the left against 32.5 pt on the right. The most likely reason is a scrollbar
+gutter, and this frame cannot distinguish that from a deliberate asymmetry, so
+it is recorded as measured and flagged. And the primary button and the upsell
+button share a height of exactly 32.0 pt, which is evidence for one control-height
+token rather than two.
+
+**Where the wall is: on apply.** The panel is fully interactive up to the
+`Convert` button. Nothing in this frame establishes what happens after that
+click, because no frame captured it.
+
+### E4.4 Create a PDF: a multi-step flow whose first step renders, frame `592642c`
+
+Clicking `Create a PDF` opens a **new document tab** titled `New document` and
+replaces the whole window content with a task view:
+
+| Element | Detail |
+|---|---|
+| Task title | `Create a PDF`, top left of the task bar |
+| `Close` | outline button, top right of the task bar |
+| Empty-state line | `Create PDFs from images, Microsoft Office files, and more` |
+| Primary button | `Select Files`, centred below the empty-state line |
+
+Both the empty state and its call to action are centred horizontally in the
+window and sit in the upper third. The tab strip keeps the original document tab
+to the left of the new one, so the flow is tab-scoped rather than modal.
+
+**Where the wall is: step two.** Step one is fully capturable. What the picker
+returns to, and every step after it, is not in this capture set.
+
+### E4.5 Request e-signatures: a panel and a dense dialog, frame `650b2b0`
+
+The most complete Pro state in the whole set, and it arrived by accident.
+Clicking `Request e-signatures` switches the tab strip to `E-Sign`, renders a
+full panel, and opens a modal dialog over the document.
+
+Panel, in order: header `E-Sign` with a close control; section label
+`GET E-SIGNATURES FAST`; a bordered card `Request e-signatures` with the
+secondary line `Send this document to anyone to e-sign online in 3 easy steps`;
+section label `FILL AND SIGN YOURSELF`; a six-control icon strip (text field,
+cross, check, filled dot, rounded rectangle, horizontal rule); a dashed-border
+row `Add signature` with a trailing plus; a dashed-border row `Add initials`
+with a trailing plus; the sentence `After signing, you can create a read-only
+certified copy with an audit trail.`; an outline button `Save a certified copy`.
+
+Dialog, in order: a full-width banner `Send up to 2 documents for signature for
+free every 30 days on a rolling basis.` with an `Upgrade Now` link; a left
+column headed `Get e-signatures faster than email` with three icon-and-text
+rows and a `See how it works` external link; a right column headed `Add
+recipients to e-sign this document` over a single text field with the
+placeholder `Add People's names or email IDs`; a footer with `Cancel`
+(secondary, **disabled**) and `Specify where to sign` (primary, enabled).
+
+This is the only frame in the set where the gate is a **quota banner rather than
+a block**: the dialog is live and the feature is free up to two documents per 30
+days. That is a third gate shape, distinct from both the modal upsell and the
+apply-time wall, and the method has to be able to record it.
+
+### E4.6 Where the wall falls, for the toolsets the set does cover
+
+| Toolset | Rail entry | Menu entry | Tooltip | Panel renders | Dialog renders | Wall falls |
+|---|---|---|---|---|---|---|
+| Export a PDF | yes | `File > Convert to Word, Excel or PowerPoint` | not captured | **yes, in full** | n/a | on apply |
+| Edit a PDF | yes | `Edit > Edit a PDF` | `Modify or add text, images, pages, and more` | no | upsell modal | **at the click** |
+| Create a PDF | yes | `File > Create PDF` | not captured | **yes, task view** | n/a | at step two |
+| Combine files | yes | `File > Combine Files` | not captured | no | upsell modal | **at the click** |
+| Organize pages | yes | `Edit > Delete Pages`, `Edit > Rotate Pages` | not captured | no | upsell modal | **at the click** |
+| Request e-signatures | yes | `File > Request e-signatures` | not captured | **yes, in full** | **yes, in full** | quota, not a wall |
+| Scan & OCR | yes | `Edit > Scan and OCR` | not captured | not established | not established | not established |
+| Protect a PDF | yes | `File > Password Protect` | not captured | not established | not established | not established |
+| Redact a PDF | yes | `Edit > Redact a PDF` | not captured | not established | not established | not established |
+| Compress a PDF | yes | `File > Compress File` | not captured | not established | not established | not established |
+| Prepare a form | yes | `Edit > Prepare Form` | not captured | not established | not established | not established |
+| Convert to PDF | yes | none found | not captured | not established | not established | not established |
+| Add a stamp | yes | none found | not captured | not established | not established | not established |
+| Use a certificate | yes | none found | not captured | not established | not established | not established |
+| Use print production | yes | none found | not captured | not established | not established | not established |
+| Measure objects | yes | none found | not captured | not established | not established | not established |
+
+`not established` is doing real work in that table. Eleven of the sixteen
+toolsets have a rail entry and nothing past it, because the capture run that was
+supposed to open them recorded the E-Sign dialog eleven times instead. The upsell
+modal template, seen three times, is identical across toolsets except for its
+eyebrow, headline, bullet list and illustration, so it carries capability prose
+and no layout information Onionskin would use.
