@@ -35,7 +35,7 @@ use super::super::home::{render_home, HomeState, HomeView};
 use super::super::panes::{self, NavigationPanesState, PaneAction};
 use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
-use super::super::{record_opened, repair_notice, ShellSettings};
+use super::super::{record_opened, repair_notice, ShellSettings, POLL_INTERVAL};
 
 use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab, TabState};
 use super::accessible::{
@@ -1522,7 +1522,7 @@ impl ShellFrame {
 
     fn arm_export_poll(&mut self, id: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |frame, cx| loop {
-            Timer::after(super::super::POLL_INTERVAL).await;
+            Timer::after(POLL_INTERVAL).await;
             let keep_polling = frame
                 .update(cx, |frame, cx| {
                     let (keep_polling, changed) = frame.poll_export_progress(id);
