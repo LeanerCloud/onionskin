@@ -610,6 +610,19 @@ rather than repeated fourteen times:
   because it hand-rolled scanners instead of parsing. This applies to
   `guarantees.rs`'s workflow assertions too, which CR-005 already flagged as
   evadable tripwires.
+- **A verification bullet that names an `external/` fixture also names the CI
+  step that fetches it and the re-run that makes it mandatory.** `corpus/external`
+  is gitignored and `crates/cos/tests/common/mod.rs:30-47` turns an absent
+  directory into a printed `SKIPPED` and a pass, so a fixture CI never fetches is
+  a fixture the assertion never saw. P1c lands the fetch-and-re-run pair for the
+  three sets M3's fixtures come from; every package below that names one names
+  P1c. Guarantee 6 spent a milestone green and unmeasured on exactly this, and it
+  is the one M2 lesson this plan was in the middle of repeating.
+- **Every package's verification names the `cargo` invocations that run it.**
+  Not "the tests pass": the commands, with their feature flags, because the flags
+  are the part this project gets wrong (`cargo test --workspace` compiles no
+  shell code at all). A verification section with no command in it has not said
+  how it is run and cannot be reproduced by a reviewer.
 - **Accessibility is live and every new control joins the tree.** A control
   becomes a tab stop iff its role is focusable, it is enabled, and it carries an
   activation (`a11y/tree.rs:164`). Focus order is depth-first over the tree the
@@ -905,6 +918,8 @@ single guarded predicate, so the wiring surface in cos is small.
 - Known-answer tests against the ISO 32000-2 algorithm vectors for each of `/R` 2, 3, 4 and 6.
 - The measurement's tally is asserted, not printed: the test fails if the number of files in either class changes, so a corpus refresh that alters the picture is visible rather than silent.
 - The open-time notice appears for an encrypted document and names the editing restriction in words, asserted on the notice text; the edit tools report disabled through the same `Requirement` query P7 owns, not through a second flag.
+- **Runs.** `cargo test -p onionskin-crypto`; `cargo test -p onionskin-cos`; `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` for the open-time notice and the editing gate, plus the matching clippy.
+- **Corpus.** The class tally and every open-the-encrypted-file assertion walk `external/`, so they run behind P1c's fetch step and are re-run under `ONIONSKIN_CORPUS_REQUIRED=1`. Without that, the tally this package exists to keep from going stale is computed over an empty set and passes.
 
 **Review risk.** Whether AES-256 (`/R` 6) validation implements the full
 hardened hash iteration or the simplified `/R` 5 form that some producers
@@ -918,6 +933,99 @@ forget to set. **Mutation that must break its tests:** returning the file key
 unmodified as every object key must fail the RC4 and AES-128 fixtures while
 still passing AES-256, which is exactly why the fixtures must cover all four
 revisions.
+
+### P1c. CI: make the corpus this plan's fixtures come from reach CI
+
+**Goal.** Every assertion in this document over an `external/` fixture currently
+runs in CI over an empty file list and reports a pass. This package fixes that,
+once, for the whole milestone.
+
+**The measurement, before the fix.** `.github/workflows/ci.yml`'s `test` job
+fetches **nothing**. It generates `corpus/malformed`, runs `cargo test
+--workspace`, and re-runs `cargo test -p onionskin-cos --test repair` under
+`ONIONSKIN_CORPUS_REQUIRED: 1`. That is the whole two-step story and it covers
+one set. `corpus/external` is fetched only by the `bench` job, only the
+`hayro-corpus` set, only for `cargo bench -p onionskin-core`.
+`crates/cos/tests/common/mod.rs:30-47` returns `None` and prints `SKIPPED` when a
+directory is absent, so every walk over it passes having done nothing.
+
+What that means today, item by item, because "the corpus is not in CI" is easy to
+nod at and hard to feel:
+
+- **Guarantee 1 in CI means "three tracked seeds round-trip."** `roundtrip.rs`
+  has seven enforcing tests and six of them walk `external/`. All six skip.
+- **P1's `sections()` partition test never runs**, because its subject is "every
+  `external/` file with more than one `%%EOF`".
+- **P1b's encryption-class tally never runs**, so the number it exists to stop
+  going stale can go stale silently. That is the package's entire premise.
+- **P5's deep-page-tree, `/PageLabels`, `/AcroForm`, `/Threads` and `/Link`
+  fixtures never run**, and P5 is the highest-correctness-risk package in the
+  milestone.
+- **P11's importer render comparison, P12's combine fixtures and P14's compress
+  fixture never run.**
+
+The plan applies its own two-step rule to exactly one corpus, P4's tagged set,
+and asserts it everywhere else.
+
+**Deliverable: the same two steps guarantee 6 already has, for the sets M3 uses.**
+
+1. A cached fetch in the `test` job: `./corpus/fetch.sh` with no arguments, which
+   is `hayro`, `pdf-association` and `verapdf` (`corpus/fetch.sh:50`) and is where
+   every fixture this plan names comes from. Cached on the same key shape the
+   `bench` job already uses, over `corpus/fetch.sh`, its helper scripts and the
+   checksum manifests, so the cache invalidates when a pinned revision moves.
+   `hayro-corpus` stays opt-in and stays with the `bench` job: 159 MB for 41
+   files, and no fixture here needs it.
+2. A second step re-running the suites those fixtures live in under
+   `ONIONSKIN_CORPUS_REQUIRED: 1`: `cargo test -p onionskin-cos`, `cargo test -p
+   onionskin-core`, and, once P1b lands, its encryption suite. Generating or
+   fetching a set is not proof it was measured; only this step turns a silent
+   skip into a failure, which is what makes disabling step 1 visible.
+
+Both pinned to `runner.os == 'Linux'`, like the two that exist, and for the
+reason those give: corpus assertions are byte and structure work with no platform
+dimension, and running the fetch on the three-way matrix is three caches and
+three chances to flake for one claim.
+
+**The tripwire, or this package is itself deletable.**
+`crates/app/tests/guarantees.rs` asserts the pair the same way
+`every_malformed_file_opens_and_repairs_into_a_new_section` asserts its own:
+exactly one step per command, the allowed key set, `if` pinned to the value
+rather than merely present so `if: false` is not an off switch, and
+`ONIONSKIN_CORPUS_REQUIRED` asserted as `1` on the re-run. Reusing that test's
+existing helper rather than writing a second one, since it is already the shape.
+
+**Rows closed.** None. It is the reason the rest of the ledger's verification
+means anything.
+
+**Files.** `.github/workflows/ci.yml`, `crates/app/tests/guarantees.rs`,
+`corpus/README.md` (which sets CI fetches and why).
+
+**Depends on.** Nothing, and **it lands before P1**, because P1's own
+verification names an `external/` sweep. It is the fourth day-one root.
+
+**What exists to build on.** `corpus/fetch.sh` already skips a set already on
+disk, so a cache hit makes step 1 a no-op. The `bench` job already demonstrates
+the cache key. `guarantees.rs` already has the workflow-parsing helpers and the
+one-step-per-command assertion.
+
+**Verification.**
+- The re-run step **fails** when the fetch step is removed, demonstrated on a scratch branch and the failure output recorded in the PR. Without that demonstration this package is two YAML steps nobody has proven do anything, which is precisely guarantee 6's history.
+- `cargo test -p onionskin-app --test guarantees` asserts both steps and their pins; deleting either from `ci.yml` fails it.
+- A cache hit makes the fetch a no-op, asserted by the step's own log rather than by wall time.
+- **The `test` job's wall time before and after is recorded in the PR.** This is the step that makes CI slower, and not saying so is the same dishonesty pointing the other way.
+
+**Review risk.** Whether the re-run names every suite whose fixtures come from
+`external/` or only the ones somebody remembered, which would leave the same hole
+in a narrower place. Whether the re-run is a second full `cargo test --workspace`
+(wasteful, and it would re-run the shell suite for no reason) or the named
+suites. Whether the cache key covers the revisions `fetch.sh` pins, or a moved
+revision silently serves the old corpus forever. Whether putting the fetch on the
+matrix instead of one runner was considered and rejected with a stated reason
+rather than by default. **Mutation that must break its tests:** deleting the
+fetch step must fail the re-run step; deleting the re-run step must fail the
+`guarantees.rs` assertion; changing the re-run's `if` to `false` must fail it
+too.
 
 ### P2. `core::edit`: the edit graph, transactions and undo/redo
 
@@ -1085,6 +1193,8 @@ feeding it preview bytes is a new `Arc`, not a new threading model.
 - **The preview cache key includes the filter**, asserted directly: two `preview_bytes` calls at one overlay generation with two different `AnnotationFilter` modes return different bytes, and the same mode twice returns the cached buffer. Without the first half the print dialog shows the wrong Comments-and-Forms mode and every downstream filter test still passes, because none of them asks twice at one generation.
 - Bench, in `crates/core/benches/save.rs`, with a stated budget in the P14-era harness shape: preview rebuild after one edit on a clean 1000-page document, and on a **repaired** document, where `needs_full_table()` forces a full-table section. The repaired number is the one that decides whether preview rebuilds need debouncing, and this plan does not guess it.
 - `revert_to` on a document with unsaved edits is refused; on a non-trailing generation it is refused; on a trailing one it truncates and the reopened document matches the pre-save state.
+- **Runs.** `cargo test -p onionskin-core`; `cargo bench -p onionskin-core --bench save`; `cargo test -p onionskin-app --no-default-features` (guarantee 5 with a save path in the workspace); `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Corpus.** The guarantee-1 sweep and its repaired-document half walk `external/`, so both run behind P1c's fetch step and are re-run under `ONIONSKIN_CORPUS_REQUIRED=1`. Without it, guarantee 1 at the `core` level means three tracked seeds.
 
 **Review risk.** The highest-consequence package in M3. A reviewer will probe:
 whether "one section" is asserted by parsing or by counting `%%EOF` occurrences
@@ -1125,7 +1235,8 @@ M3 edit, and prove that with an invariant rather than with M5's checker.
   removed page or a freed object number.
 - `corpus/tagged/` gets populated, since it is a README today.
   `verapdf/PDF_UA-1` and `PDF_UA-2` are the raw material `corpus/README.md`
-  already names.
+  already names, and P1c already fetches the `verapdf` set, so this is a
+  derivation step rather than a second download.
 
 Not in M3: the rule-based checker, reading-order repair, autotagging, `/RoleMap`
 resolution beyond what the invariant needs.
@@ -1149,7 +1260,8 @@ depth-capped reader over a cos object graph reached through `catalog()` and
 - The invariant **fails** on a deliberately broken fixture: one built by deleting a page's objects without the hook. That is the test that proves the invariant is not vacuous, and it is the test the M2 audit's guarantee-6 lesson demands.
 - An untagged document: every maintenance operation is a no-op, the invariant passes trivially, and the code path is asserted to have been taken (not inferred from the result).
 - A document with a `/ParentTree` whose `/Nums` are not sorted, and one with a cyclic `/K`, both terminate.
-- `cargo test -p onionskin-core`; `ONIONSKIN_CORPUS_REQUIRED=1` for the tagged set, and the CI step that fetches it lands with this package, or the suite skips silently and measures nothing.
+- **Runs.** `cargo test -p onionskin-core --test structure`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Corpus.** `corpus/tagged/` is derived from the `verapdf` set, which P1c already fetches into the `test` job and already re-runs under `ONIONSKIN_CORPUS_REQUIRED=1`. This package adds the derivation step and adds `cargo test -p onionskin-core --test structure` to P1c's re-run list; it does not add a second fetch. If P1c has not landed, this package cannot be verified and must not merge, which is the one dependency that is about CI rather than code.
 
 **Review risk.** Whether the invariant can pass on a tree the edit destroyed,
 which is the whole guarantee-6 failure mode repeated: it must be run against a
@@ -1244,6 +1356,7 @@ does, which this package must not make worse.
 - P4's structure invariant passes after each operation on each tagged fixture, and the reading order matches the new page order for the reorder case.
 - Rotation: `/Rotate 90` inherited from a `/Pages` node survives the flatten, and a page whose own `/Rotate` overrode its ancestor's keeps its own.
 - Bench: rewriting the tree of the 1000-page bench file, with the section size reported. The number decides whether T5's fallback is needed and this plan does not guess it.
+- **Runs.** `cargo test -p onionskin-core --test pages`; `cargo bench -p onionskin-core`; `cargo clippy --workspace --all-targets -- -D warnings`.
 
 **Review risk.** The highest-correctness-risk package in M3, the way P3
 (geometry) was in M2. A reviewer will probe: whether inheritance is materialized
@@ -1313,6 +1426,8 @@ settings struct. `crates/render` already renders `/AP` (the hayro fork's
 - Round-trip through Acrobat's own reading of the file is not automatable; instead, assert that hayro and `pdftotext`/`pdfannots` agree on the annotation set, through the existing content-oracle pattern.
 - P4's invariant passes on a tagged fixture after annotation authoring, and the annotation is reachable from the page's structure element.
 - Undo of an annotation restores the page's `/Annots` to its exact original object, by value.
+- **Runs.** `cargo test -p onionskin-core --test annots`; `cargo test -p onionskin-app --no-default-features`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Corpus.** The tagged fixture comes from `corpus/tagged/`, which P4 populates from the `verapdf` set P1c fetches, and the invariant runs under `ONIONSKIN_CORPUS_REQUIRED=1` with it.
 
 **Review risk.** Whether the appearance stream's coordinate space is right: the
 `/AP` `/BBox` and `/Matrix` map into the annotation `/Rect`, and getting it
@@ -1420,6 +1535,7 @@ in-progress drag needs.
 - Saved output: the annotation's `/QuadPoints` count is four times the quad count, in the spec's vertex order, and the rendered result covers the glyphs (assert non-background pixels inside each quad and background outside, over the full region, not one pixel).
 - Undo restores the page's `/Annots` by value; redo re-adds the same object.
 - `cargo test -p onionskin-app --no-default-features --features tools-comment` and the P7 property suite.
+- **Corpus.** The real corpus document, the `/Rotate 90` fixture and the two-column fixture are all `external/`, so they run behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether the quad order convention is written down and matches
 what `pdfannots` and Acrobat read back. Whether a selection spanning a rotated
@@ -1467,6 +1583,7 @@ gesture these tools need, so nothing new is required on the overlay side.
 - Erase ink over the middle of a stroke splits it into two `/InkList` entries and leaves the annotation's `/Rect` correct for the remainder.
 - Cloud: the `/BE` border effect renders as a scalloped edge, asserted by comparing against a plain `/Polygon` render (they must differ) rather than by asserting an exact pixel pattern.
 - Every tool's edit passes P7's undoable-and-serializes property test, which is where the exhaustiveness lives; this package does not repeat it per tool.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment` and the P7 property suite; `cargo clippy -p onionskin-app --no-default-features --features tools-comment --all-targets -- -D warnings`.
 
 **Review risk.** Thirteen tools in one package is the sprawl risk, and the
 reviewer should check that the shared parts really are shared: one defaults
@@ -1521,6 +1638,7 @@ PNG, which is what a clipboard image stamp becomes.
 - Attach-as-comment: the saved file's embedded stream round-trips byte-identically to the input, and the attachment appears in `core::attachments` after a reopen. Path traversal in the file name is rejected, matching the existing `attachments.rs` rule.
 - Summary: the generated document opens through `cos::Document::open`, has the expected page count, and its extracted text contains every comment's contents and author.
 - Custom stamp creation from a PDF page and from an image both produce a `/Stamp` whose appearance renders.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo test -p onionskin-core` for the embedded-file writer; `cargo clippy --workspace --all-targets -- -D warnings`.
 
 **Review risk.** Whether any stamp resembles Adobe's artwork, which is a legal
 question the reviewer must actually look at rather than take on trust. Whether
@@ -1571,6 +1689,7 @@ translating a user's selection into an `order`. `cos::Document::get` and
 - Rotate composes: rotating a page that already has `/Rotate 270` by 90 gives 0, not 360.
 - P4's structure invariant clean after each operation on each tagged fixture, and reading order matches page order after a reorder.
 - `cargo test -p onionskin-app --no-default-features --features tools-organize`; the thumbnails context menu's M3 entries become enabled and their disabled reasons are gone, asserted in P21.
+- **Corpus.** The deep-tree fixtures, the flat ones and the embedded-font source document for the importer comparison are all `external/`, behind P1c's fetch step and its mandatory re-run. The importer render comparison is the assertion that catches a one-level-deep importer and it is the one CI currently never runs.
 
 **Review risk.** Whether the importer is transitive or one level deep, which is
 the single most likely defect and is invisible without the render comparison.
@@ -1621,6 +1740,8 @@ and reusing it rather than writing a second one is the point.
 - Split by file size: the constraint is best-effort and the test asserts what it actually promises (no output exceeds the target unless a single page does), not an exact size.
 - Every output opens through `cos::Document::open` and satisfies P1's validator.
 - Outputs carry a structure tree if all inputs did, and P4's invariant is clean; if any input is untagged, the output is untagged and says so rather than producing a half-tagged document.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features commands-core`; `cargo test -p onionskin-core` for the assembly primitive; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Corpus.** The three named combine inputs, the 10-page split fixture and the bookmark-boundary fixture are `external/`, behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether combine holds every input document in memory at once (a
 100-file combine is the natural worst case) or streams. Whether the output's
@@ -1682,6 +1803,7 @@ follows it exactly.
 - Initial View: setting "open at page 5, fit width" writes `/OpenAction` and reopening in Onionskin honours it, asserted through the session, not through the dialog's own state.
 - Every new dialog control is in the AccessKit tree with a real label and state, and the dialog's controls leave the tree when it closes, asserted by the probe.
 - `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` plus the matching clippy.
+- **Corpus.** The properties and Initial View round-trips run on tracked seeds; the bookmark-destination fixtures are `external/` and run behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether `/Info` and XMP are both written or only one, and
 whether they can disagree. Whether bookmark destinations are written as explicit
@@ -1739,6 +1861,8 @@ and the encoder belongs in `codecs-common`, per M2's P13 decision.
 - Export all images: on a fixture with a known image count, the count matches and each output decodes; an inline image (`BI`/`ID`/`EI`) is either included or explicitly out of scope and stated.
 - Compress: output opens through `cos::Document::open`, page count and extracted text unchanged, every page renders within tolerance of the source render, and the file is smaller on a fixture chosen because it has recompressible images. **Also**: the output has no incremental sections, and the UI string for this command contains the word that tells the user history is discarded, asserted.
 - `CodecPlugin`'s import half is shaped by its three real consumers and no more.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features codecs-common,commands-core`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Corpus.** The recompressible-images fixture, the known-image-count fixture and the CMYK fixture are `external/`, behind P1c's fetch step and its mandatory re-run. Compress is the one destructive path M3 ships and its only correctness evidence is a fixture CI currently never fetches.
 
 **Review risk.** Whether compress silently degrades a document that had nothing
 to compress (it must report that it saved nothing rather than write a
@@ -1862,6 +1986,7 @@ exercising an AppKit API without a window. Nothing in `crates/print` yet.
 - **Stated honestly: this backend cannot be proven in CI.** No hosted runner has a printer, and `NSPrintOperation` without one is a dialog. What CI can and does check: the crate compiles on macOS, the `NSPrintInfo` population is a pure function from `PrintJob` and is unit-tested against expected key-value pairs, and the sheet renderer is P15's and already tested.
 - **Manual acceptance, scripted like M2's VoiceOver session**: print a three-page seed to the macOS "Print to PDF" destination and to a real printer if one is available; two-up a ten-page document; print a document with comments in each of the four Comments and Forms modes. The script, the expected result per step and the observed result are recorded in this package. **M3 is not done until it has run**, and its result is recorded here including what it failed at.
 - A test that the backend is not reachable from a non-macOS build, so a Linux CI job cannot silently compile a stub that claims to print.
+- **Runs.** `cargo test -p onionskin-print` on macOS, plus `cargo clippy -p onionskin-print --all-targets -- -D warnings` on every runner, which is what proves the target gating rather than the backend.
 
 **Review risk.** Whether the `NSPrintInfo` mapping is a pure function or reaches
 into global state. Whether a print job that fails reports the failure or leaves
@@ -1974,6 +2099,7 @@ known 0755-preexisting-directory residual.
 - Closing a dirty tab prompts; the prompt retains the originating canvas identity, which is B4.2's rule for every async prompt in this shell and applies here unchanged.
 - Crash recovery: a recovery file written for document A is offered when A is next opened and not when B is, ranked most-recent-first, asserted as a unit test on the ranking with no window.
 - Every new control is in the AccessKit tree with a state that reflects enablement (Undo is disabled with a reason when the stack is empty, not absent).
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-app --features shell`.
 
 **Review risk.** Whether the global action listeners defer (a listener body
 calling `window_handle.update()` fails with "window not found" and drops the
@@ -2027,6 +2153,8 @@ is the data.
 - Rollback is refused with a visible reason when there are unsaved edits, and when the selected generation is not trailing.
 - Preview of an older generation does not modify the file, asserted by hashing before and after.
 - Every row and control is in the accessibility tree, and the panel's contents leave it when the panel closes.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy.
+- **Corpus.** The three-generation file is built by the test; the file Onionskin never wrote is an `external/` file with a pre-existing incremental section, so that case runs behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether "preview a generation" opens a second document or
 mutates the current one. Whether rollback is reachable without a confirmation.
@@ -2082,6 +2210,8 @@ updates while work continues. `quick_actions.rs` resolves availability through
 - The quick action toolbar's Comment, Highlight and Draw are enabled and carry no reason string, asserted, and the assertion reads the registry rather than a list.
 - Find with Include Comments finds text that exists only in an annotation's `/Contents`.
 - Pane rows and menu entries are in the accessibility tree; the pane's rows leave it when the pane closes.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-core` for the widened reason type.
+- **Corpus.** The fixture carrying comments Onionskin did not author is `external/`, behind P1c's fetch step and its mandatory re-run. It is the fixture that distinguishes a Comments pane from a view of the edit graph, so a skipped run leaves the package's central claim unmeasured.
 
 **Review risk.** Whether the pane reads annotations through `core::annots` or
 grows its own parser. Whether status is written as `/State` on a reply
@@ -2129,6 +2259,7 @@ second path would reintroduce both fixed bugs.
 - Thumbnails in the grid are requested lazily: a 1000-page document requests only the visible band, which is the existing pane's assertion applied to the new layout.
 - After a reorder, the grid and the canvas agree on page order without a manual refresh.
 - Grid rows are in the accessibility tree with page numbers as labels and selection as state.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy. The 1000-page lazy-request assertion uses the generated bench file, which CI's `bench` job builds and the `test` job does not, so it is generated by the test rather than assumed present.
 
 **Review risk.** Whether the grid duplicates `ThumbnailsState` instead of
 sharing it, which would give the two surfaces different eviction and reintroduce
@@ -2196,6 +2327,7 @@ naming M3.
 - Line Weights: if the fork commit lands, a fixture with strokes of three different widths renders with three widths on and one width off; if it does not, the menu item is still disabled and its reason names M4, asserted. Exactly one of those tests exists.
 - Advanced Search: a term present only in an attached PDF is found with the option on and not with it off; a document-property query matches on `/Info` and XMP.
 - Export Selection As writes RTF whose text matches the selection and whose runs carry the selection's fonts.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-core` for the search criteria and the viewport timing.
 
 **Review risk.** Whether nine small changes got nine tests or three. Whether New
 Window shares the session or opens the file twice, which would give two edit
@@ -2292,10 +2424,13 @@ Whoever rebases re-runs `cargo test -p onionskin-app --no-default-features
 --features shell,shell-test-support` rather than trusting the merge, which is
 the same rule M2's plan set and for the same reason.
 
-**One split for ordering.** P4 needs `corpus/tagged/` to exist, and populating it
-is a `corpus/fetch.sh` change plus a CI step. Both ship **with P4**, not with a
-later package, because a suite that skips its corpus silently is exactly how
-guarantee 6 stayed green and unmeasured for a milestone (section 8, item 2).
+**One split for ordering.** The corpus reaching CI is P1c's, and it is a day-one
+root that lands **before P1**, because P1's own verification sweeps `external/`.
+P4 then adds the `corpus/tagged/` derivation on top of the `verapdf` set P1c
+already fetches, and adds its own suite to P1c's mandatory re-run list. Neither
+is a "later package" problem: a suite that skips its corpus silently is exactly
+how guarantee 6 stayed green and unmeasured for a milestone (section 8, item 2),
+and this plan was in the middle of repeating it for eleven packages.
 
 ---
 
