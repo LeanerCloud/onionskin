@@ -213,11 +213,17 @@ rule is accounted for, and so nobody re-derives them as content.
 ### E4.2 The truncated rail, frame `ff9627a`
 
 The same pane, same width, but only **13 entries** followed by a link-styled
-`View more`. The cut falls after `Prepare a form`, which is entry 13. So the
-rail has two states and the long list is not the default one. Neither the
-trigger nor the persistence of the state is established by these frames: the
-window height is identical in both, so it is not a height fit. Recorded as an
-open question rather than answered.
+`View more`. The cut falls after `Prepare a form`, which is entry 13, so the
+seven entries hidden by default are `Fill & Sign`, `Add comments`,
+`Convert to PDF`, `Add a stamp`, `Use a certificate`, `Use print production` and
+`Measure objects`.
+
+Frame `210fc67` settles which state is the default. It was captured immediately
+after Reader was restarted, carries Reader's own `Reopen closed PDFs` recovery
+toast, and shows the 13-entry state. So **the truncated rail is what a launched
+Reader shows and the 20-entry list is the expanded state**, not the reverse. The
+window height is identical across all three frames, so the cut is not a height
+fit. Whether the expansion persists across launches is not established.
 
 ### E4.3 Export a PDF: a dense panel that renders in full, frame `07ffb1d`
 
@@ -347,3 +353,26 @@ supposed to open them recorded the E-Sign dialog eleven times instead. The upsel
 modal template, seen three times, is identical across toolsets except for its
 eyebrow, headline, bullet list and illustration, so it carries capability prose
 and no layout information Onionskin would use.
+
+### E4.7 The remaining distinct frames
+
+| Frame | What it shows | Why it is recorded |
+|---|---|---|
+| `7333d42` | The rail **closed**. Only the floating quick-tools strip (six controls, vertical, upper left of the canvas) and the right-hand pane switcher (four controls) remain, with the Pages pane still open. | Establishes that dismissing the tool pane is a distinct layout, not a width change: the canvas takes the pane's 287 pt and the quick-tools strip moves to the canvas edge. |
+| `a8a380b` | The E-Sign panel and recipients dialog, one caret-blink apart from `0f3d966` and `650b2b0`. | Confirms all three E-Sign frames are one state, so the set contains one E-Sign capture, not three. |
+| `210fc67` | The 13-entry rail plus Reader's `Reopen closed PDFs` recovery toast. | Dates the earlier run's force-quit and, as E4.2 says, settles which rail state is the default. |
+| `7a5d8a0` | A 260 x 192 px thumbnail, the only capture in the set that is not a full window. | Not usable. Recorded so the count reconciles. |
+
+### E4.8 Facts the capture set does not establish, listed so nobody assumes them
+
+- No hover state was captured anywhere, so no control's hit box is known. Every
+  geometry number in E4 is an ink extent.
+- No focus ring was captured, so focus treatment is unknown.
+- No light-theme frame exists. Every number is from the dark theme.
+- No frame captures a tooltip except `Edit a PDF`'s.
+- No frame captures a context menu.
+- No frame captures a second step of any multi-step flow.
+- No frame captures the state after a `Convert`, `Select Files` or
+  `Specify where to sign` click, so "the wall falls on apply" for
+  `Export a PDF` is an inference from the absence of an upsell before that
+  point, not an observation of the wall itself.
