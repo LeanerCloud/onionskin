@@ -137,20 +137,120 @@ new section that expresses the reversal. That is one section per save, still,
 and it keeps the on-disk history append-only, which is the entire point of the
 invariant. The user who wants the bytes gone uses the skins panel.
 
+**Undoing past the saved mark has to resurrect object numbers, and the plan says
+how.** This is the clause that makes the paragraph above executable rather than
+aspirational, and it was missing. Delete a page, save, undo: the save has already
+written a free entry for the page's object number, T3's reopen means the base
+document's xref now marks it `Free`, and `cos::Document::set_object` **refuses a
+freed number outright** (`Error::FreedObject`, `document.rs:836-838`). Without a
+rule, the second save fails and `Ctrl+Z` after a save is a broken promise.
+
+The rule, in three parts:
+
+1. **The section, not the edit map, decides.** T2's `section_for` builds a whole
+   section from an overlay handed to it, including that section's free-list rows,
+   so it is the only place that can both write an in-use row for a number and
+   splice that number back out of the free chain. `set_object` keeps its refusal
+   unchanged, because it mutates an edit map with no section in view and its
+   caller cannot see the free-list consequence; the existing test
+   `rewriting_a_freed_object_does_not_corrupt_the_free_list`
+   (`crates/cos/tests/delete.rs:198`) stays green and untouched. P1 adds the
+   counterpart test on `section_for`.
+2. **The generation is the bumped one, and references to it do not break.**
+   `delete_object` bumps the generation (`document.rs:906`), which is what the
+   spec's free entry prescribes, so the resurrected object is written at that
+   bumped generation and `ObjectState::Written` carries a generation to say
+   which. Every surviving reference to it still names the *old* generation, and
+   that resolves: `cos` matches an xref entry on the object number alone and
+   treats the recorded generation as advisory, with the reason written out at
+   `document.rs:1235-1239`, as does every reader. This is worth stating because
+   the opposite reading, "undo leaves a file full of stale references", is the
+   one an adversarial reviewer reaches for first and it is wrong.
+3. **One typed refusal survives.** `delete_object` saturates the bump at 65535,
+   the spec's never-reuse generation, so a number deleted at 65534 cannot come
+   back. `core::edit::Error::GenerationExhausted` is user-visible and names the
+   object. It is unreachable in practice; it is stated so that it is a typed
+   error rather than a panic when it is not.
+
+Cost: splicing means rewriting the free rows that named the resurrected number,
+so a resurrection walks the base file's free chain once. That is bounded by the
+number of free objects in the file and is paid only when a resurrection happens.
+
+**The road not taken**, named so nobody re-derives it: undo could re-create the
+object at a *fresh* number and rewrite its referrers, which needs no free-list
+surgery at all. It is rejected because the file it produces is isomorphic to the
+pre-edit file rather than equal to it, and P3's "edit, save, undo, save" test
+compares the object graph by value. Undo that restores something that renders
+the same is not the promise this project made.
+
 **T2. What an edit is, and where the object numbers come from.**
 
 `cos::Document` already accumulates `Edit::Set` and `Edit::Delete` and already
 emits all of them as one section. What it cannot do is withdraw one. So cos is
-**not** where the edit graph lives: `core` owns the authoritative overlay and
-projects it onto cos only at save time.
+**not** where the edit graph lives: `core` owns the authoritative overlay, and
+**cos's own edit map is never populated by Onionskin at all.**
+
+That last clause is the fix for a contradiction the first draft carried. It said
+in one breath that nothing reaches cos until save, and in the next that preview
+bytes come from `incremental_section()`, which is a method reading `self.edits`.
+Both cannot be true. Getting preview bytes out of the old API would mean writing
+the overlay into cos's edit map on every commit and having no way to take it
+back; `cos::Document` is not `Clone` and owns a `Reader`, four `RefCell` caches
+and `Rc<ObjectStream>` values, so there is no cheap scratch copy to write into;
+and each `set_object` calls `forget_parsed_objects()`, so projecting N edits
+drops the parsed-object cache and the object-stream cache N times.
+
+**Resolution: the overlay is an argument, not state.** P1 gives cos a section
+builder that takes the overlay instead of reading its own:
+
+```rust
+// cos, public
+pub enum PendingEdit {
+    Set { generation: u16, object: Object },
+    Delete { generation: u16 },
+}
+
+impl Document {
+    /// The bytes a save of `overlay` would append, or `None` when it would
+    /// append nothing. Takes `&self`: no cache is dropped, and the document's
+    /// own edit map is neither read nor written.
+    pub fn section_for(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &Dict,
+    ) -> Result<Option<Vec<u8>>>;
+
+    pub fn save_overlay_to_path(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &Dict,
+        path: &Path,
+    ) -> Result<()>;
+}
+```
+
+`incremental_section()` becomes `self.section_for(&self.edits, &self.trailer_edits)`
+and keeps its behaviour, so nothing that exists changes. A method rather than a
+free function because every input it needs is private to `Document` (`reader`,
+`xref`, `provenance`, `prev_startxref`, `trailer`, `original_len`, `locate`,
+`get`), and a free function would have to make all of them public to save one
+`self`. With this, T2 and T4 stop contradicting: save and preview are the same
+call with the same argument, so they cannot disagree by construction, and no
+scratch document exists.
 
 ```
 core::edit::Overlay  =  BTreeMap<u32, ObjectState>       // net state, per object number
-core::edit::ObjectState = Written(cos::Object) | Deleted
+core::edit::ObjectState = Written { generation: u16, object: cos::Object }
+                        | Deleted { generation: u16 }
 core::edit::Change   = { number, before: Option<ObjectState>, after: Option<ObjectState> }
 core::edit::Entry    = { label: &'static str, changes: Vec<Change> }
 core::edit::History  = { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 ```
+
+`ObjectState` carries a generation because T1's resurrection needs to say which
+one, and because `Deleted` without one cannot round-trip through
+`delete_object`'s bump. Projecting `Overlay` to `BTreeMap<u32, PendingEdit>` is
+then a one-to-one map with nothing to decide.
 
 Undo applies each `Change`'s `before`; redo applies each `after`. **This is
 deliberately more than "dropping overlay nodes"**, and PLAN.md's phrasing is
@@ -160,11 +260,43 @@ overlay state rather than drop the node, and an edit that deletes an object that
 existed in the original has no node to drop. Memory stays proportional to
 changed objects, which is what PLAN.md actually cares about.
 
+**What `before: None` means, and the rebasing that keeps it meaning one thing.**
+`Option<ObjectState>` over an `ObjectState` that already has a `Deleted` variant
+gives three states, and the first draft never said what the third one was. Left
+undefined it produces two silent no-ops on opposite sides of the same boundary:
+undoing an edit to an object that existed in the file restores nothing, and
+undoing an object creation after a save leaves the created annotation in place.
+Both are data loss with a green test suite.
+
+The rule, and it is an invariant rather than a convention:
+
+> **`before: None` means the object number was free immediately before this
+> change, so undoing the change frees it again. Nothing else is ever `None`.**
+
+Two capture rules make that total, and they are the ones the tests name:
+
+1. **At edit time, `before` for an object that exists in the base document is
+   read out of the base and stored concretely** as `Some(Written { generation,
+   object })`, through `cos::Document::get`. It is never left `None` on the
+   grounds that "the overlay has no node for it yet". `None` is reserved for
+   numbers the reservation counter has just handed out.
+2. **At save time, after T3's reopen, every entry below the saved mark is
+   rebased.** A number the save created is no longer free in the reopened
+   document, so its `before: None` is rewritten to `Some(Deleted { generation })`
+   at the generation `delete_object` would bump to. Undoing it now frees the
+   number, which is what the user asked for, instead of dropping a node that is
+   no longer the whole story.
+
+Both are one function, `History::rebase_on_save(&mut self, reopened:
+&cos::Document)`, called by P3's save immediately after the reopen. It also
+asserts, in debug, that no surviving `before: None` names a number the reopened
+document has, which is the invariant stated as a check rather than a comment.
+
 Object numbers: `core` allocates from its own reservation counter, seeded from a
 new `cos::Document::next_object_number()`. An undo that drops an allocation
-simply leaves a gap; PDF object numbers need not be dense. Nothing is handed to
-cos until save, so cos's `add_object` is never called speculatively and its
-unwithdrawable edit list is never polluted.
+simply leaves a gap; PDF object numbers need not be dense. `add_object` is never
+called at all, speculatively or otherwise, so cos's unwithdrawable edit list
+stays empty for the whole session.
 
 A **transaction** groups a gesture into one stack entry: an ink stroke is
 hundreds of pointer events, one annotation, one `Ctrl+Z`. An annotation is
@@ -180,20 +312,38 @@ Ten edits then one save is one section carrying the net object writes of all ten
 
 Three consequences the plan states rather than discovers:
 
-- **Edit, then undo, then save writes nothing at all.** The net overlay is
-  empty, `has_pending_changes()` is false, and `save_to_writer` copies the
+- **Edit, then undo, then save writes nothing at all** on a clean document. The
+  net overlay is empty, `section_for` returns `None`, and the save copies the
   original bytes with no appended section. That is guarantee 1's no-op rule
   applied to a document the user did edit, and it is a real test.
+
+  **The exception, which the first draft got wrong:** `has_pending_changes()` is
+  `!edits.is_empty() || !trailer_edits.is_empty() || !provenance.is_clean()`
+  (`document.rs:961-963`), so it is **true on every repaired document even with
+  an empty overlay**, and `section_for` must keep that behaviour or a repair
+  would stop being written. So "a save with an empty overlay writes nothing" is
+  true for a clean document and false for a repaired one, where the save writes
+  the repair and nothing else. Every test that asserts byte-identity on a no-op
+  save has to carve repaired documents out and assert the positive case for them
+  instead: a repaired document's no-op save appends exactly the repair section
+  and the corrupt original bytes survive underneath. That is the same split
+  `PLAN.md`'s "for every well-formed corpus file" already makes, and P3's
+  guarantee-1 test as first drafted would have failed on every repaired file in
+  `external/`.
 - **The net overlay collapses.** Adding an annotation and then deleting it in
   the same session leaves the page's `/Annots` back at its original value, so
   the page object is not in the overlay either, and the save writes nothing.
   Collapsing has to be by value comparison against the original object, not by
   a dirty flag, or the file grows a section that changes nothing.
-- **After a save, `core` reopens the `cos::Document` from the written bytes.**
-  This is cheaper than adding a `clear_edits` to cos, it makes the `/Prev`
-  chain correct by construction for the second save, and it matches the
-  existing `ExportSnapshot::open` reopen pattern. The caches keyed on edited
-  pages are invalidated; the rest survive.
+- **After a save, `core` reopens the `cos::Document` from the written bytes,
+  clears the overlay, and rebases the history.** The reopen makes the `/Prev`
+  chain correct by construction for the second save and matches the existing
+  `ExportSnapshot::open` pattern. The overlay clears because the reopened
+  document now *is* the state it described. The rebase is T2's
+  `History::rebase_on_save`, and skipping it is the defect that makes undoing a
+  creation across a save a silent no-op. The caches keyed on edited pages are
+  invalidated; the rest survive. Nothing has to be cleared inside cos, because
+  nothing was ever put there.
 
 **T4. What the canvas shows before a save: preview bytes, not a second renderer.**
 
@@ -202,11 +352,13 @@ buffer, so there are two ways: composite the pending edits as `render::Overlay`
 primitives, or hand hayro `original ++ pending section`.
 
 **The preview buffer wins, and it is the strongest single decision in this
-plan.** `incremental_section()` already builds exactly those bytes. Rendering
-from them means hayro draws every M3 annotation through its own appearance
-stream path, with no second renderer to keep in agreement, and it means what
-the user sees is byte-for-byte what a save would produce. A whole class of
-"the preview disagrees with the saved file" bugs cannot exist.
+plan.** T2's `section_for(overlay, trailer_edits)` builds exactly those bytes,
+and it is the same call the save makes with the same argument. Rendering from
+them means hayro draws every M3 annotation through its own appearance stream
+path, with no second renderer to keep in agreement, and it means what the user
+sees is byte-for-byte what a save would produce. A whole class of "the preview
+disagrees with the saved file" bugs cannot exist, and it cannot exist *by
+construction* rather than by two code paths being kept in step.
 
 The split with overlays is clean: `Overlay` covers the **in-progress gesture**
 (the rubber band, the ink stroke still under the stylus, the marquee), which is
@@ -214,14 +366,25 @@ what `ToolPlugin::overlays` already returns and what tools-basic already uses.
 Committed edits go through the preview buffer. A tool never draws its own
 committed result.
 
-Cost, stated up front: a committed edit rebuilds the section, allocates a new
-`Arc<Vec<u8>>`, and the render worker builds a new hayro `Pdf` from it. `Pdf::new`
-was measured at about 1.4 microseconds per page in the M1 spike, so a
-1000-page document is about 1.4 ms per commit. **The real risk is a repaired
-document**, where `needs_full_table()` forces a section that walks every live
-object and materializes every compressed one. That is per commit, not per save.
-P3 benches it and, if it misses budget, debounces preview rebuilds on repaired
-documents behind a named constant rather than pretending the cost is not there.
+Cost, stated in terms of `section_for` because that is what runs: a committed
+edit calls `section_for(&overlay, &trailer_edits)`, which serializes the changed
+objects, builds the table rows, allocates a new `Arc<Vec<u8>>` for
+`original ++ section`, and the render worker builds a new hayro `Pdf` from it.
+`Pdf::new` was measured at about 1.4 microseconds per page in the M1 spike, so a
+1000-page document is about 1.4 ms per commit.
+
+Two costs the naive design would have added and this one does not: `section_for`
+takes `&self`, so **neither cos cache is dropped** (the old projection called
+`forget_parsed_objects()` once per edit, clearing both the parsed-object cache
+and the object-stream cache), and there is **no scratch `cos::Document`**, which
+is fortunate because `Document` is not `Clone`.
+
+**The real risk that remains is a repaired document**, where
+`needs_full_table()` forces a section that walks every live object and
+materializes every compressed one. That is per commit, not per save, and it is
+unchanged by any of the above. P3 benches it and, if it misses budget, debounces
+preview rebuilds on repaired documents behind a named constant rather than
+pretending the cost is not there.
 
 **T5. Page organisation: rewrite the tree, do not surgically edit it.**
 
@@ -479,31 +642,52 @@ PR alongside the inventory's output.
 
 ### P1. cos: the edit surface M3 needs
 
-**Goal.** Four cos additions, landed together and reviewed once, that every
+**Goal.** Five cos additions, landed together and reviewed once, that every
 kernel package above depends on.
 
 1. `Document::next_object_number(&self) -> u32`, so `core` can reserve numbers
    without calling `add_object` speculatively (T2). Trivial accessor, no new
    state.
 2. `Document::sections(&self) -> Result<Vec<Section>>` where
-   `Section { start: u64, end: u64, startxref: u64, prev: Option<u64> }`,
+   `Section { start: u64, end: u64, startxref: u64 }`,
    walking the `/Prev` chain from `startxref` back to the first table. This is
    the skins panel's data source and there is nothing today: `original_len()`
    gives one boundary, not a chain. Must terminate on a cyclic `/Prev` (hostile
    documents do this) and must report a chain it cannot follow as a repaired
-   document rather than silently truncating the list.
+   document rather than silently truncating the list. There is deliberately **no
+   `prev` field**: the returned `Vec` is the chain, in order, so a section's
+   predecessor is the element before it and a stored `prev` is a second copy of
+   that fact that can disagree with the first.
 3. `Document::write_new(objects, trailer) -> Result<Vec<u8>>`: a complete
    document serialization, for the documents Onionskin authors (T8). Named
    consumers in M3: P12 (combine, split, extract), P14 (create from image,
    compress/flatten), P10 (the comment summary). This is the `flatten`
    primitive the crate's charter names; it lands now because it has three real
-   callers, and M5's `redact` inherits it.
-4. **A save-time reference validator.** `incremental_section` refuses to emit a
-   section in which a written object references an object number the section or
-   the file marks free. This is the standing "cos leaves dangling references"
-   debt turned from a silent corruption into a typed error, and it makes P5's
-   mistakes loud instead of latent. It walks only the objects the section
-   writes, so it is proportional to the edit, not to the file.
+   callers, and M5's `redact` inherits it. Its serializer is `writer.rs`'s
+   classic-table path; **it does not gain object streams or a cross-reference
+   stream**, which are scoped in P14's entry and are not an implicit clause of
+   any word in this plan.
+4. **The overlay-taking section builder and save**, per T2: `pub enum
+   PendingEdit`, `Document::section_for(&self, overlay, trailer_edits)` and
+   `Document::save_overlay_to_path(&self, overlay, trailer_edits, path)`.
+   `incremental_section()` and `save_to_path()` are re-expressed as calls to
+   them with `self.edits`, so their behaviour and their tests are unchanged.
+   This is the single piece that lets `core` own the overlay outright and lets
+   save and preview share one path; without it T2 and T4 contradict each other.
+
+   It carries one behaviour the old path could not have: **resurrection**, per
+   T1. `section_for` accepts an overlay entry whose number the base xref marks
+   `Free`, writes an in-use row for it at the generation carried on the entry,
+   and rewrites the free rows that named it so the chain skips it. `set_object`
+   keeps its refusal and its test (`delete.rs:198`) unchanged: it mutates an
+   edit map with no section in view and cannot make that splice.
+   `section_for` builds the section including its own free-list rows and can.
+   The generation-65535 case is a typed refusal, not a panic.
+5. **A save-time reference validator.** `section_for` refuses to emit a section
+   that would leave a dangling reference, over a scope defined in P1's own
+   contract rather than by what is convenient. See "the validator's scope" below;
+   the first draft's "walks only the objects the section writes" cannot see the
+   dangling class it exists to catch.
 
 **Rows closed.** None. Backs every row in P3, P5, P11, P12, P14 and P19.
 
@@ -515,17 +699,22 @@ kernel package above depends on.
 **Depends on.** Nothing. Day-one root.
 
 **What exists to build on.** `prev_startxref` is already a field
-(`document.rs:103`). `writer::incremental_section` already builds classic xref
-tables and already strips xref-stream-only trailer keys. The full-table path in
-`incremental_section` (`document.rs:1055-1086`) already enumerates every live
-object, which is most of `write_new`. `free_list_rows` already knows which
-numbers a section frees.
+(`document.rs:106`). `writer::incremental_section` (`writer.rs:168`) already
+builds classic xref tables and `trailer_for_new_section` (`writer.rs:157`)
+already strips xref-stream-only trailer keys. The full-table path in
+`incremental_section` (`document.rs:1053-1085`) already enumerates every live
+object, which is most of `write_new`. `free_list_rows` (`document.rs:995`)
+already splices at the head, which is the mechanism resurrection reuses.
+`incremental_section` is already `&self` and already reads `self.edits` in one
+place, so item 4 is a parameter change, not a rewrite.
 
 **Verification.**
-- `sections()` over every `external/` corpus file that has more than one `%%EOF`: the reported chain's byte ranges partition the file with no gap and no overlap, and the last section's `end` equals the file length. Name the fixtures; a file set chosen by "some corpus file" is not a proof.
+- `sections()` over every `external/` corpus file that has more than one `%%EOF`: the reported chain's byte ranges partition the file with no gap and no overlap, and the last section's `end` equals the file length. Name the fixtures; a file set chosen by "some corpus file" is not a proof. This walk is one of the suites P1c's CI step makes mandatory, or it reports a pass over an empty file list.
 - A hand-built fixture with a cyclic `/Prev` terminates and reports the cycle rather than looping.
 - `write_new` output reopens through `Document::open` (not `open_repairing`), has the stated page count, and round-trips: `write_new` then `open` then `save_to_vec` with no edit is byte-identical.
-- The validator: a test that deletes an object still referenced by a page dict and asserts `incremental_section` returns the typed error, plus a test that the *legal* case (deleting an object nothing references) still succeeds. Both are needed, or the validator could be a constant `Err`.
+- **`section_for` and `incremental_section` agree.** For every existing edit test, `section_for(&document.edits_for_test(), &trailer_edits)` returns the same bytes as `incremental_section()`. This is what makes item 4 a refactor rather than a second serializer, and it is asserted rather than argued.
+- **Resurrection, both directions.** Delete an object, save, reopen, and hand `section_for` an overlay that writes that number back at the bumped generation: the section reopens through `Document::open`, resolves the number to the written object, and the free chain in the reopened file contains no entry naming it. Then the negative: an overlay writing it at generation 65535 is refused with the typed error. `set_object`'s own refusal test stays untouched, so the two contracts are pinned apart.
+- The validator: a test that deletes an object still referenced by a page dict **the same section rewrites**, one where the referrer is **not** rewritten and the caller did not declare it, and the legal case (deleting an object nothing references), which must still succeed. All three are needed: without the second the validator passes on exactly the shape P5 gets wrong, and without the third it could be a constant `Err`.
 - `cargo test -p onionskin-cos`, `ONIONSKIN_CORPUS_REQUIRED=1 cargo test -p onionskin-cos`, and `cargo clippy --workspace --all-targets -- -D warnings`.
 
 **Review risk.** Whether the validator's reference walk understands every place
@@ -635,13 +824,46 @@ can take it back, and one typed vocabulary of edits that every plugin speaks.
 Shapes, per T2:
 
 ```rust
-pub enum ObjectState { Written(cos::Object), Deleted }
+pub enum ObjectState {
+    Written { generation: u16, object: cos::Object },
+    Deleted { generation: u16 },
+}
+/// `before: None` means, and only ever means, "object `number` was free
+/// immediately before this change". See the base-rebasing rule below.
 pub struct Change { number: u32, before: Option<ObjectState>, after: Option<ObjectState> }
 pub struct Overlay { states: BTreeMap<u32, ObjectState>, next_number: u32 }
 pub struct Entry { label: &'static str, changes: Vec<Change> }
 pub struct History { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 pub enum DocumentEdit { /* the typed vocabulary, grown by P5 and P6 */ }
 ```
+
+**The base-rebasing rule, which is this package's sharpest correctness
+obligation** (T2). `Option<ObjectState>` over an `ObjectState` that already has
+`Deleted` is three states, and leaving the third undefined produces two silent
+no-ops on opposite sides of a save: undoing an edit to an object that existed in
+the file restores nothing, and undoing an object creation after a save leaves the
+created annotation on the page. Both lose data with a green suite. So:
+
+- **Capture at edit time.** `Change::before` for a number that exists in the base
+  document is read through `cos::Document::get` and stored as a concrete
+  `Some(Written { generation, object })`. It is never left `None` because "the
+  overlay has no node for it yet". `None` is only ever produced by the
+  reservation counter.
+- **Rebase at save time.** `History::rebase_on_save(&mut self, reopened:
+  &cos::Document)` walks every entry below the saved mark and rewrites
+  `before: None` to `Some(Deleted { generation })` at the generation
+  `delete_object` would bump to, because the reopened document now has that
+  number and undoing the creation must free it. P3's save calls this immediately
+  after its reopen; not calling it is the defect.
+- A debug assertion in `rebase_on_save` that no surviving `before: None` names a
+  number the reopened document has, so the invariant is checked rather than
+  commented.
+
+`ObjectState` carries a generation because T1's resurrection needs to name one
+and because `Deleted` without one cannot round-trip `delete_object`'s bump.
+Projecting `Overlay` onto `cos::PendingEdit` for `section_for` is then a
+one-to-one map with nothing to decide, and **nothing is ever written into cos's
+own edit map**.
 
 `DocumentEdit` is a **closed enum in `core`**, and that is deliberate. Plugins
 never write COS objects. Three reasons, each with a named beneficiary: it puts
@@ -678,6 +900,8 @@ says the edit history "will own its own undo stack").
 
 **Verification.**
 - Headless property test over a generated sequence of edits: apply N edits then undo N leaves the overlay byte-identical to empty, for N up to a few hundred, including sequences that overwrite the same object repeatedly and sequences that delete an original object. **This is the case PLAN.md's "drop the overlay node" phrasing gets wrong**, so it is the case the test must cover explicitly and by name.
+- **Capture rule 1, by name:** editing an object that exists in the base document records `before` as `Some(Written { .. })` holding the base object by value, asserted on the `Change` itself and not inferred from undo working. A test that only checks undo would pass against an implementation that happens to read the base at undo time, which stops working the moment the base is reopened.
+- **Capture rule 2, by name:** `rebase_on_save` rewrites `before: None` to `Some(Deleted { .. })` for every entry below the saved mark and for no entry above it, asserted on the entries. The end-to-end consequence is P3's `edit, save, undo, save` test; this is the unit that says which line is wrong when that one fails.
 - Redo after undo restores exactly; a new edit after an undo truncates the redo tail, asserted.
 - The saved mark: it survives undo and redo, and moves only when P3's save moves it.
 - An aborted transaction leaves both the overlay and the reservation counter unchanged, so an abort cannot leak an object number.
@@ -686,7 +910,10 @@ says the edit history "will own its own undo stack").
 **Review risk.** Whether `Change::before` is captured from the overlay or from
 the base document, which are different whenever an object has already been
 edited, and getting it wrong makes exactly the second edit of an object
-un-undoable. Whether the overlay collapses by value against the original (T3) or
+un-undoable. Whether `before: None` is ever produced for anything other than a
+freshly reserved number, which is the invariant the whole undo-across-a-save
+story rests on. Whether `rebase_on_save` is called on the `Save As` path as well
+as `Save`, since both reopen. Whether the overlay collapses by value against the original (T3) or
 by a dirty flag, which would make edit-then-undo-then-save append an empty
 section. Whether `DocumentEdit` grew a `Raw(Change)` escape hatch, which would
 delete the entire justification for the closed enum. Whether `History` is
@@ -694,7 +921,9 @@ unbounded (a 200-page ink session is a lot of `Entry`) and whether its bound, if
 any, is a named constant derived from something. **Mutation that must break its
 tests:** replacing undo with "drop the last overlay node" must fail the repeated-
 overwrite sequence; making the overlay collapse a no-op must fail the
-edit-then-undo-then-save test in P3.
+edit-then-undo-then-save test in P3; making `rebase_on_save` a no-op must fail
+P3's `edit, save, undo, save` object-graph comparison and nothing else, which is
+what proves that test is the one carrying it.
 
 ### P3. `core::save`: one section per save, generations, and the preview buffer
 
@@ -703,17 +932,29 @@ save writes.
 
 Four pieces:
 
-1. **Save.** Project the net overlay onto the `cos::Document` through
-   `set_object` / `add_object` / `delete_object`, call `save_to_path`, reopen
-   from the written bytes (T3), advance the saved mark, invalidate the caches
-   for edited pages. `Save As` is the same with a different destination and no
-   truncation relationship to the original. A save whose net overlay is empty
-   writes nothing at all.
+1. **Save.** Hand the net overlay to `cos::Document::save_overlay_to_path`
+   (P1 item 4), reopen from the written bytes, **clear the overlay**, call
+   `History::rebase_on_save` with the reopened document (P2), advance the saved
+   mark, invalidate the caches for edited pages. Nothing is ever written into
+   cos's own edit map, so nothing has to be withdrawn from it. `Save As` is the
+   same with a different destination and no truncation relationship to the
+   original, and it takes the same reopen and the same rebase. A save whose net
+   overlay is empty writes nothing at all **on a clean document**; on a repaired
+   one it writes the repair, per T3.
 2. **The preview buffer** (T4). `Document::preview_bytes(&mut self, filter:
-   AnnotationFilter) -> Result<Arc<Vec<u8>>>` returns `original ++
-   incremental_section()`, cached per overlay generation. The render worker
-   renders from it. The filter argument exists for T7's print path and for the
-   Comments pane's hide-all view, and has exactly those two consumers.
+   AnnotationFilter) -> Result<Arc<Vec<u8>>>` returns
+   `original ++ section_for(&overlay_with_filter_applied, &trailer_edits)`,
+   which is the same call the save makes, so preview and save cannot disagree.
+   The render worker renders from it.
+
+   **The cache key is `(overlay generation, filter)`, not the overlay generation
+   alone.** The filter changes the bytes (T7 sets `/F` bit 2 on the excluded
+   annotations), so keying on the generation alone returns one mode's bytes for
+   another mode's request: the print dialog would show Document-and-Markups
+   while the user has Document-Only selected, and the four-mode assertion in
+   P15's verification would pass because it never asks twice at one generation.
+   The cache holds at most one entry per live filter, which is bounded by the
+   four `AnnotationFilter` modes plus the canvas's unfiltered one.
 3. **Generations.** `Document::generations() -> &[Generation]` over P1's
    `sections()`, plus `revert_to(generation)`, which truncates and reopens.
    Reverting is refused, loudly, if the document has unsaved edits, or if the
@@ -736,19 +977,21 @@ preview bytes), `crates/core/benches/save.rs`.
 
 **Depends on.** P1, P2.
 
-**What exists to build on.** `cos::incremental_section`, `save_to_path` with its
-temp-file-and-rename and permission preservation, and `has_pending_changes` are
-all real and tested. `ExportSnapshot::open` is the reopen pattern. The render
-worker already builds its `render::Document` from an `Arc<Vec<u8>>` inside its
-own spawned closure, so feeding it preview bytes is a new `Arc`, not a new
-threading model.
+**What exists to build on.** P1's `section_for` and `save_overlay_to_path`,
+`save_to_path`'s temp-file-and-rename with permission preservation, and
+`has_pending_changes` are all real and tested. `ExportSnapshot::open`
+(`session.rs:163`) is the reopen pattern. The render worker already builds its
+`render::Document` from an `Arc<Vec<u8>>` inside its own spawned closure, so
+feeding it preview bytes is a new `Arc`, not a new threading model.
 
 **Verification.**
-- **Guarantee 1, at the level the guarantee means it.** Open every corpus seed and every `external/` file through `core::Document`, save with no edit, assert byte-identical output and that `sections()` reports the same count as before. The `#[ignore]` on `a_save_with_no_edit_is_byte_identical_to_the_original` is deleted here, and the app-level test drives `core`, not `cos` (see section 8, item 2).
-- **Guarantee 2, driven by a real edit.** Make an edit through `EditSession`, save, assert the output is `original bytes ++ exactly one section`, that truncating at `original_len()` yields the byte-exact original, and that the truncated file reopens with the pre-edit content. Then make ten edits and one save and assert it is still exactly one section, which is the clause PLAN.md leaves ambiguous.
-- **Edit, undo, save writes nothing.** Byte-identical output, zero appended sections. This is the test that catches a dirty-flag overlay.
+- **Guarantee 1, at the level the guarantee means it.** Open every corpus seed and every **well-formed** `external/` file through `core::Document`, save with no edit, assert byte-identical output and that `sections()` reports the same count as before. Well-formed is not a hedge: `has_pending_changes` is true on every repaired document (`document.rs:961-963`), so a repaired file's no-op save legitimately appends the repair and this assertion would fail on it. The partition is `Provenance`, read from the session, not a filename list. **The positive case is asserted too**, or the carve-out becomes a place to hide failures: for every repaired `external/` file, the no-op save appends exactly one section, the bytes beneath it are byte-identical to the original, and the result reopens through `Document::open`. PLAN.md's guarantee-1 sentence says "for every well-formed corpus file" and this is what that clause is for.
+- **Guarantee 2, driven by a real edit.** Make an edit through `EditSession`, save, assert the output is `original bytes ++ exactly one section`, that truncating at `original_len()` yields the byte-exact original, and that the truncated file reopens with the pre-edit content. Then make ten edits and one save and assert it is still exactly one section, which is the clause PLAN.md leaves ambiguous. Guarantee 2 driven by a **tool** rather than by `EditSession` directly is P7's test, not this one: `crates/core` cannot depend on a plugin, so the DoD's clause cannot be satisfied here and this package does not claim it.
+- **Edit, undo, save writes nothing.** Byte-identical output, zero appended sections, on a clean document. This is the test that catches a dirty-flag overlay.
+- **Edit, save, undo, save**, which is the test the first draft had no bullet for and the one that catches the whole save-boundary class. Three assertions on the second output: it reopens through `Document::open`; **object N equals its pre-edit value**, compared by parsed object rather than by bytes, because the resurrected object legitimately carries a bumped generation; and **the object graph equals the pre-edit graph**, walked from the catalog and compared node by node, which is what catches a reversal that restored the object and forgot the referrer. Run it in all four shapes: edit an existing object, create an object, delete an existing object, and delete an object this session created. The second and third are the two silent no-ops the base-rebasing rule exists to prevent, and the fourth is the one that exercises resurrection at a twice-bumped generation.
 - Two saves produce two sections and the second's `/Prev` points at the first, asserted by parsing the trailers, not by scanning for the string `/Prev`.
-- Preview: after a committed edit, `preview_bytes` parses as a valid PDF through `cos::Document::open` (not `open_repairing`), and its object graph equals what the subsequent save writes, compared object by object.
+- Preview: after a committed edit, `preview_bytes` parses as a valid PDF through `cos::Document::open` (not `open_repairing`), and its object graph equals what the subsequent save writes, compared object by object. Since both come from one `section_for` call with one argument, this is a regression test on the wiring rather than a check on two implementations agreeing.
+- **The preview cache key includes the filter**, asserted directly: two `preview_bytes` calls at one overlay generation with two different `AnnotationFilter` modes return different bytes, and the same mode twice returns the cached buffer. Without the first half the print dialog shows the wrong Comments-and-Forms mode and every downstream filter test still passes, because none of them asks twice at one generation.
 - Bench, in `crates/core/benches/save.rs`, with a stated budget in the P14-era harness shape: preview rebuild after one edit on a clean 1000-page document, and on a **repaired** document, where `needs_full_table()` forces a full-table section. The repaired number is the one that decides whether preview rebuilds need debouncing, and this plan does not guess it.
 - `revert_to` on a document with unsaved edits is refused; on a non-trailing generation it is refused; on a trailing one it truncates and the reopened document matches the pre-save state.
 
@@ -760,10 +1003,14 @@ preview cache is keyed on something that actually changes with every edit;
 whether `revert_to` can be reached with the render worker still holding the
 truncated bytes; whether autosave's recovery replay can double-apply an edit
 that was also saved; whether a `Save As` leaves the generations list describing
-the old file. **Mutation that must break its tests:** removing the empty-overlay
+the old file; whether the guarantee-1 carve-out for repaired documents is
+derived from `Provenance` or from a filename list somebody maintains.
+**Mutation that must break its tests:** removing the empty-overlay
 short circuit must fail the edit-undo-save test; emitting one section per edit
 instead of per save must fail the ten-edits test; skipping the reopen after save
-must fail the two-saves `/Prev` test.
+must fail the two-saves `/Prev` test; skipping `rebase_on_save` must fail the
+edit-save-undo-save test in its create-an-object shape; dropping the filter from
+the preview cache key must fail the two-filters-one-generation test.
 
 ### P4. `core::structure`: the tagged-PDF structure tree
 
@@ -1600,6 +1847,7 @@ known 0755-preexisting-directory residual.
 - Each of the four keystrokes proven with `cx.simulate_keystrokes` on a real window, per T9, in the shape of `the_find_keystroke_opens_the_find_bar`. This project shipped a dead Ctrl+F twice; four new global commands is four new chances.
 - Undo after an edit restores the canvas: the rendered page after edit-then-undo is pixel-identical to the render before the edit. Asserting the overlay is empty is P2's job; this asserts the user sees it.
 - The dirty indicator appears on the first edit, clears on save, and **reappears when the user undoes past the saved mark**, which is T1's behaviour and the one a naive dirty flag gets wrong.
+- **The user-visible half of T1's undo-across-a-save rule**, end to end through the shell rather than through `EditSession`: delete a page, `cmd-s`, `cmd-z`, `cmd-s`, and the page is back on the canvas, in the file on disk, and in the thumbnails pane. This is P3's `edit, save, undo, save` test driven by four keystrokes, and it exists separately because a green kernel test alongside a shell that never reaches it is exactly the failure §4 of the repository rules names. If `core::edit::Error::GenerationExhausted` is reachable at all, undo surfaces it as a visible refusal with a reason and not as a silently dropped command.
 - Closing a dirty tab prompts; the prompt retains the originating canvas identity, which is B4.2's rule for every async prompt in this shell and applies here unchanged.
 - Crash recovery: a recovery file written for document A is offered when A is next opened and not when B is, ranked most-recent-first, asserted as a unit test on the ranking with no window.
 - Every new control is in the AccessKit tree with a state that reflects enablement (Undo is disabled with a reason when the stack is empty, not absent).
@@ -2071,6 +2319,8 @@ Every abstraction M3 introduces names the caller that exists in M3.
 | `cos::Document::next_object_number` | `core::edit`'s reservation counter |
 | `cos::Document::sections` | P19's skins panel, P3's `revert_to` |
 | `cos::Document::write_new` | P12 combine and split, P14 create-from-image and compress, P10's comment summary |
+| `cos::{PendingEdit, Document::section_for, Document::save_overlay_to_path}` | P3's save and P3's `preview_bytes`, which are the same call with the same argument; `incremental_section` and `save_to_path` are re-expressed as callers so there is one serializer, not two |
+| cos's resurrection of a freed number inside `section_for` | T1's undo past the saved mark, reached by P18's `cmd-z` after `cmd-s` |
 | cos's save-time reference validator | P5's page-tree rewrite, and every test that asserts it is clean |
 | `core::edit::{Overlay, History, DocumentEdit}` | every tool and command in P8 through P14 |
 | `core::preview_bytes(filter)` | the canvas (committed edits), P15's print filter, P20's hide-all-comments view |
