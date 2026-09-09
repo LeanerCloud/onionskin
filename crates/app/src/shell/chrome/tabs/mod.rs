@@ -1,3 +1,5 @@
+mod frame_state;
+
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -18,6 +20,8 @@ use onionskin_core::{Document, ViewSize};
 use onionskin_plugin_api::{ExportOutputKind, PageIndex, ToolCapability};
 use tempfile::{NamedTempFile, TempDir};
 
+pub(in crate::shell) use self::frame_state::ShellFrame;
+pub(super) use self::frame_state::TabError;
 use super::super::canvas::{CanvasError, CanvasModel, CanvasViewState, PreparedExport, ViewAction};
 use super::super::context_menu::{
     canvas_context_entries, tool_with, CanvasContextCommand, CanvasContextEntry,
@@ -32,6 +36,8 @@ use super::super::panes::{self, NavigationPanesState, PaneAction};
 use super::super::preferences_dialog::PreferenceChange;
 use super::super::Canvas;
 use super::super::{record_opened, repair_notice, ShellSettings};
+
+use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab, TabState};
 use super::accessible::{
     ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusNextInGroup,
     FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
@@ -41,8 +47,8 @@ use super::global_bar::{
     RegistryFacts, NO_DYNAMIC_ZOOM_TOOL, NO_SNAPSHOT_TOOL,
 };
 use super::page_controls::{
-    self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
-    PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
+    self, parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
+    PAGE_ENTRY_ID,
 };
 use super::quick_actions::{
     self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
@@ -68,38 +74,6 @@ const TAB_CONTEXT_MENU_WIDTH: f32 = 230.0;
 /// made there needs a line of its own.
 const TOOL_ACTIVATION_FAILED: &str =
     "This tool did not activate; the canvas status line has the reason";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TabError {
-    OutOfRange {
-        index: usize,
-        count: usize,
-    },
-    CommandUnavailable,
-    /// The menus grey this command out right now, and a keystroke reaches
-    /// the same commands the menus do.
-    Unavailable(&'static str),
-}
-
-impl fmt::Display for TabError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::OutOfRange { index, count } => {
-                write!(f, "tab {index} is outside a {count}-tab window")
-            }
-            Self::CommandUnavailable => write!(f, "menu command is not available yet"),
-            Self::Unavailable(reason) => write!(f, "{reason}"),
-        }
-    }
-}
-
-impl std::error::Error for TabError {}
-
-struct DocumentTab {
-    source: PathBuf,
-    title: String,
-    canvas: Entity<Canvas>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum TabCommand {
@@ -128,139 +102,6 @@ struct TabContextMenu {
 #[derive(Debug, Clone, Copy)]
 struct CanvasContextMenu {
     origin: Point<Pixels>,
-}
-
-impl DocumentTab {
-    fn new(source: PathBuf, canvas: Entity<Canvas>) -> Self {
-        let title = tab_title(&source);
-        Self {
-            source,
-            title,
-            canvas,
-        }
-    }
-
-    fn title(&self) -> &str {
-        &self.title
-    }
-}
-
-struct TabState<T> {
-    tabs: Vec<T>,
-    active: Option<usize>,
-}
-
-impl<T> TabState<T> {
-    pub fn new(tabs: Vec<T>) -> Self {
-        let active = (!tabs.is_empty()).then_some(0);
-        Self { tabs, active }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
-    pub fn tabs(&self) -> &[T] {
-        &self.tabs
-    }
-
-    pub fn active_index(&self) -> Option<usize> {
-        self.active
-    }
-
-    pub fn active(&self) -> Option<&T> {
-        self.active.and_then(|index| self.tabs.get(index))
-    }
-
-    pub fn activate(&mut self, index: usize) -> Result<bool, TabError> {
-        if index >= self.tabs.len() {
-            return Err(TabError::OutOfRange {
-                index,
-                count: self.tabs.len(),
-            });
-        }
-        if self.active == Some(index) {
-            return Ok(false);
-        }
-        self.active = Some(index);
-        Ok(true)
-    }
-
-    /// Add a tab and make it the active one, the way opening a document
-    /// does. Returns its index.
-    pub fn push(&mut self, tab: T) -> usize {
-        self.tabs.push(tab);
-        let index = self.tabs.len() - 1;
-        self.active = Some(index);
-        index
-    }
-
-    pub fn close(&mut self, index: usize) -> Result<T, TabError> {
-        if index >= self.tabs.len() {
-            return Err(TabError::OutOfRange {
-                index,
-                count: self.tabs.len(),
-            });
-        }
-        let closed = self.tabs.remove(index);
-        self.active = match (self.active, self.tabs.is_empty()) {
-            (_, true) => None,
-            (Some(active), false) if active > index => Some(active - 1),
-            (Some(active), false) if active == index => Some(index.min(self.tabs.len() - 1)),
-            (active, false) => active,
-        };
-        Ok(closed)
-    }
-
-    pub fn close_others(&mut self, index: usize) -> Result<Vec<T>, TabError> {
-        if index >= self.tabs.len() {
-            return Err(TabError::OutOfRange {
-                index,
-                count: self.tabs.len(),
-            });
-        }
-        let kept = self.tabs.remove(index);
-        let closed = std::mem::replace(&mut self.tabs, vec![kept]);
-        self.active = Some(0);
-        Ok(closed)
-    }
-
-    pub fn close_all(&mut self) -> Vec<T> {
-        self.active = None;
-        std::mem::take(&mut self.tabs)
-    }
-}
-
-pub(in crate::shell) struct ShellFrame {
-    tabs: TabState<DocumentTab>,
-    main_menu_open: bool,
-    tab_context_menu: Option<TabContextMenu>,
-    canvas_context_menu: Option<CanvasContextMenu>,
-    search_input: Entity<SearchInput>,
-    search_feedback: Option<SearchResult>,
-    find: FindBarState,
-    find_input: Entity<SearchInput>,
-    page_input: Entity<SearchInput>,
-    page_entry_error: Option<PageEntryError>,
-    observed_view_state: Option<CanvasViewState>,
-    shell_view_state: ShellViewState,
-    rail_state: RailState,
-    quick_actions_state: QuickActionsState,
-    side_panel_state: SidePanelState,
-    navigation: NavigationPanesState,
-    settings: ShellSettings,
-    /// What the app has to tell the user: a file it repaired to open, a
-    /// config file it could not read, a document that would not open. Shown
-    /// in the window and dismissed there, not only printed to stderr.
-    notices: Vec<String>,
-    dialog: Option<ShellDialog>,
-    recent_menu_open: bool,
-    home: HomeState,
-    export_job: Option<ExportJob>,
-    next_export_id: u64,
-    /// The accessibility tree the window publishes, its tab order, and the
-    /// rectangles the last frame measured.
-    a11y: ShellAccessibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,38 +175,6 @@ fn export_progress_label(job: &ExportJob) -> String {
         ),
         ExportPhaseValue::Publishing => "Finishing export".to_owned(),
     }
-}
-
-fn activate_tab<T>(
-    tabs: &mut TabState<T>,
-    search_feedback: &mut Option<SearchResult>,
-    index: usize,
-) -> bool {
-    let activated = tabs.activate(index).unwrap_or(false);
-    if activated {
-        *search_feedback = None;
-    }
-    activated
-}
-
-fn close_tab<T>(
-    tabs: &mut TabState<T>,
-    search_feedback: &mut Option<SearchResult>,
-    index: usize,
-) -> Result<bool, TabError> {
-    tabs.close(index)?;
-    *search_feedback = None;
-    Ok(tabs.is_empty())
-}
-
-fn close_other_tabs<T>(
-    tabs: &mut TabState<T>,
-    search_feedback: &mut Option<SearchResult>,
-    index: usize,
-) -> Result<(), TabError> {
-    tabs.close_others(index)?;
-    *search_feedback = None;
-    Ok(())
 }
 
 impl ShellFrame {
