@@ -645,14 +645,26 @@ Stated so that the number cannot be read as more than it is.
 In the style of the M2 and M3 plans' candor lists. Each item is a thing a reader
 would otherwise reasonably assume.
 
-1. **No reference exists for most of the remaining work.** `parity/reference/`
-   contains captures from Acrobat Reader 25.001.20438 and nothing else. Every
-   Pro-only toolset (Edit a PDF, Organize, Redact, Forms, Protect, Measure,
-   Accessibility, Print Production) has no capture and no ledger row.
-   `PLAN.md` says "Acrobat Pro screenshots/trials cover the Pro-only toolsets";
-   nobody has done it, and it is a purchasing decision, not an engineering one.
-   The majority of surfaces M3 through M6 will build cannot currently be
-   measured at all.
+1. **No reference exists yet for most of the remaining work, but the material
+   is reachable.** `parity/reference/` contains captures from Acrobat Reader
+   25.001.20438 and nothing else, so every Pro-only toolset (Edit a PDF,
+   Organize, Redact, Forms, Protect, Measure, Accessibility, Print Production)
+   currently has no capture and no ledger row. This was originally written as a
+   purchasing decision blocking measurement of M3 through M6. That framing was
+   wrong. The free Reader exposes the Pro toolsets in its own interface as
+   entries carrying a purchase link: the rail lists them, the menus carry them,
+   and in many cases a panel or dialog renders before the upsell intervenes. So
+   most of that surface is capturable from the build already installed, using
+   the same private-capture method B7 built, and at higher confidence than any
+   documentation screenshot because it is the pinned version at known DPI,
+   uncropped and unannotated. Adobe's published documentation is the fallback
+   for the states that genuinely sit behind the paywall, where prose often
+   carries exact control labels and dialog field order independently of any
+   image. What remains unowned is the work of doing it, not a licence.
+   One rule for whoever does: Onionskin implements these features fully
+   functional with no gate, so a locked panel is captured for its structure,
+   naming, grouping and layout, and explicitly not for its lock affordance or
+   purchase call to action.
 2. **Capture cannot be automated into CI.** The assertion half of layer 2 runs
    in CI today. The capture half needs a physically present machine with an
    awake display, which is exactly what blocked the incomplete M2 states:
@@ -724,7 +736,7 @@ and treating them as a tail rather than a milestone is correct.
 | Icon set: SVG pipeline plus roughly 150 to 250 icons | 10^3 to 10^4 lines | the largest item, and the only one needing design time rather than engineering time |
 | Geometry ledger: 23 surfaces at 10 to 25 measurements each | 10^3 lines of test | rides on an existing harness |
 | The script and the ledgers | 10^2 to 10^3 lines of prose | plus 30 to 60 minutes of human time per release |
-| Reference captures | hours | one session per Acrobat version, gated on a Pro licence |
+| Reference captures | hours | one session per Acrobat version; the free build exposes the Pro toolsets, so no licence gates it |
 
 That total is one to two orders of magnitude smaller than the remaining
 functional work. The half nobody is tracking is the cheap half. It is also the
@@ -770,7 +782,7 @@ scope. Each is a proposed edit for the next plan revision.
 | 7 | `ACROBAT-PARITY.md` | `Catalog` is refused on the scoreboard's own authority, which the file itself flags. Needs plan ratification. |
 | 8 | `ACROBAT-PARITY.md` | Office import is refused while Office export is a post-1.0 target. Defensible, but the asymmetry should be stated in the row. |
 | 9 | `PLAN.md` Milestones | Nowhere states that 1.0 tops out at 266 of 323 in-scope rows. A reader can reasonably assume 1.0 means parity. |
-| 10 | `PLAN.md` GUI parity bullet | "Acrobat Pro screenshots/trials cover the Pro-only toolsets" is an unmet precondition with no owner and no milestone. It blocks measurement of most of M3 through M6. |
+| 10 | `PLAN.md` GUI parity bullet | "Acrobat Pro screenshots/trials cover the Pro-only toolsets" reads as though a licence were required. The free build exposes those toolsets in its own interface, so the precondition is a capture session rather than a purchase. Still unowned and unscheduled, but not blocked. |
 | 11 | `docs/plans/m2-viewer.md` section 6 | Deferred pixel parity with "file a follow-up issue at the end of M2". No issue exists. This document is that follow-up and the M2 plan should link it. |
 | 12 | `PLAN.md` decision 12 | Accessibility is justified on Section 508 and EAA grounds. It is also the reason visual measurement is nearly free here, since the a11y tree already carries a rectangle for every named control in a CI-gated harness. Worth a line, because it changes how the investment reads. |
 | 13 | `ACROBAT-PARITY.md` preamble | The board does not say that its number can go down when Adobe re-pins. Both boards have that exposure and only the risks section mentions it. |
