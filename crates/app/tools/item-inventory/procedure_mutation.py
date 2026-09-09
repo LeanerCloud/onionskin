@@ -8,10 +8,12 @@ the split starts from, delete one match arm and one whole `impl` method from
 it, run the inventory over the copy, and confirm it reports exactly those two
 and nothing else. If it reports nothing, the inventory is decorative.
 
-The match arm chosen is one a wildcard arm would absorb silently, so the
-compiler would not have caught its loss. That is the failure mode the inventory
-exists to catch, and picking an arm from an already-exhaustive match would test
-the compiler instead.
+A match arm is the harder of the two to catch: it lives inside a body, so an
+inventory keyed on names and signatures alone would not notice it going
+missing. Until the arm's match was made exhaustive, the wildcard below it
+absorbed the loss without a compile error either. Both mechanisms now cover it,
+which is the point: the inventory is not the only guard, but it has to be a
+real one.
 
 Usage:
     procedure_mutation.py FILE
@@ -36,8 +38,8 @@ DELETED_METHOD = """
     }
 """
 
-# One arm of `run_canvas_context_command`'s dispatch, chosen because the
-# wildcard arm below it would absorb its loss without a compile error.
+# One arm of `run_canvas_context_command`'s dispatch, which lives inside a body
+# and so is invisible to any inventory that stops at the signature.
 DELETED_ARM = """            CanvasContextCommand::RotateClockwise => {
                 self.run_view_action(ViewAction::RotateClockwise, cx)
             }

@@ -275,6 +275,29 @@ def is_ident_char(c):
     return c.isalnum() or c == "_"
 
 
+def canonical_signature(text):
+    """A signature spelled the same however rustfmt chose to wrap it.
+
+    Adding a visibility qualifier lengthens the first line, which can push
+    rustfmt from a one-line signature to a wrapped one with a trailing comma.
+    That is a layout difference, not a signature difference, so it is
+    normalized away here rather than reported as a changed item.
+    """
+    out = []
+    for c in text:
+        if c == " ":
+            if not out or out[-1] in "([<,":
+                continue
+        elif c in ")]>":
+            while out and out[-1] in " ,":
+                out.pop()
+        elif c == ",":
+            while out and out[-1] == " ":
+                out.pop()
+        out.append(c)
+    return "".join(out)
+
+
 def leading_identifier(word):
     end = 0
     while end < len(word) and is_ident_char(word[end]):
@@ -380,7 +403,7 @@ def parse(src, cls, start, end, container, out):
         header = normalize(src, cls, header_start, terminator_at, False)
         kind, name = kind_and_name(header)
         vis = visibility_of(header)
-        signature = " ".join(attrs + [strip_visibility(header)]).strip()
+        signature = canonical_signature(" ".join(attrs + [strip_visibility(header)]).strip())
 
         if terminator == "{":
             body_end = match_brace(src, cls, terminator_at)
@@ -416,14 +439,23 @@ def parse(src, cls, start, end, container, out):
 
 def emit(paths):
     lines = []
+    # A single `impl` block legitimately becomes several when its methods move
+    # to different files, so container lines are a set: what has to survive is
+    # that the block still exists and still holds the same methods, not how
+    # many `impl ShellFrame {` headers spell it.
+    containers = set()
     for path in paths:
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
         cls = classify(src)
         items = []
         parse(src, cls, 0, len(src), "", items)
-        lines.extend(item.line() for item in items)
-    for line in sorted(lines):
+        for item in items:
+            if item.kind in CONTAINER_KINDS:
+                containers.add(item.line())
+            else:
+                lines.append(item.line())
+    for line in sorted(lines + sorted(containers)):
         print(line)
     return 0
 
