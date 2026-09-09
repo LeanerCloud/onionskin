@@ -2329,7 +2329,21 @@ impl ShellFrame {
             CanvasContextCommand::RotateClockwise => {
                 self.run_view_action(ViewAction::RotateClockwise, cx)
             }
-            other => {
+            // Spelled out rather than left to a wildcard: every remaining
+            // entry activates a tool, and an entry added without a decision
+            // here has to be a compile error rather than a silent tool
+            // lookup that finds nothing and returns.
+            other @ (CanvasContextCommand::CopyWithFormatting
+            | CanvasContextCommand::ExportSelectionAs
+            | CanvasContextCommand::HighlightText
+            | CanvasContextCommand::AddNoteToText
+            | CanvasContextCommand::EditText
+            | CanvasContextCommand::RedactText
+            | CanvasContextCommand::CreateLink
+            | CanvasContextCommand::TakeASnapshot
+            | CanvasContextCommand::AddBookmark
+            | CanvasContextCommand::Print
+            | CanvasContextCommand::PageCommands) => {
                 let Some(index) = other
                     .capability()
                     .and_then(|capability| tool_with(canvas.read(cx).model.registry(), capability))
