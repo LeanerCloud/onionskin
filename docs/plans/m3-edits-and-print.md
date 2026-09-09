@@ -1,10 +1,13 @@
 # M3 implementation plan: first edits, first print
 
 Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
-folded in. No M3 code is written. This document is the authoritative
-decomposition; it supersedes PLAN.md's M3 paragraph wherever the two disagree,
-and section 8 lists every disagreement. The PLAN.md corrections those
-disagreements call for land as their own commit on this branch.
+folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
+on 2026-09-10. No M3 code is written except P0a, which is in flight. This
+document is the authoritative decomposition; it supersedes PLAN.md's M3
+paragraph wherever the two disagree, and section 8 lists every disagreement.
+The PLAN.md corrections those disagreements called for **landed at `989d8a7`**;
+section 8 marks each item as landed or still owed rather than describing all of
+them as pending.
 
 M3 is the milestone where Onionskin stops being a viewer. It is the first time
 the product writes a byte, and every architectural claim the project has made
@@ -21,28 +24,38 @@ GPUI. `crates/print` is GPUI-free; `app` supplies only the dialog.
 
 ---
 
-## 1. Ground truth at plan authoring
+## 1. Ground truth
 
-Verified against `main` at `81f802f` on 2026-09-02. Four sibling agents are
-closing M2 out on branches that are not merged; where their work changes a fact
-below, the fact is marked.
+**Re-measured against `main` at `fa5a194` on 2026-09-10.** The first draft of this
+section was taken at `81f802f`, 69 commits earlier, while four sibling agents were
+closing M2 out on unmerged branches. Their work landed, and it moved numbers this
+plan reasoned from: `crates/core` grew by half, `crates/app` by three thousand
+lines, and the guarantee-honesty package (`0f1c295`, merged at `1a4b7cf`) un-ignored
+three of the guarantee tests whose absence section 8 item 2 was built on. Every figure below was counted this session, by the method stated
+in the footnote, and any figure not re-counted here is not a fact.
 
 | Component | State | The part that matters for M3 |
 |---|---|---|
-| `crates/cos` | 8152 lines, real | Already has the whole write side: `set_object`, `add_object`, `delete_object`, `set_trailer_entry`, `set_info_field`, `has_pending_changes`, `incremental_section`, `save_to_writer/path/vec`, `original_len`. Edits accumulate in one `Vec<Edit>` and **one call to `incremental_section` emits one section carrying all of them**. There is no way to withdraw a pending edit, no section-chain accessor, no `flatten` full-rewrite API, and no `next_object_number` accessor. `Document` is `!Send` (`Rc<ObjectStream>` at `document.rs:109`). |
-| cos deletion | real, and the landmine | `delete_object` splices a chained free list at the head, refuses object 0 and refuses the trailer's `/Root`. It performs **no reference walk**: deleting a `/Pages` node, a page still in a `/Kids` array, a content stream, or an annotation's appearance stream leaves a dangling reference and cos will happily serialize it. The doc comment at `document.rs:868` names M3's `tools-organize` as the caller that must fix this up. |
-| `crates/core` | 7257 lines, real session | `core::Document` (there is no `Session` type) holds `bytes: Arc<Vec<u8>>`, a private `cos::Document` it never mutates, page geometry and text caches, selection, search, the render worker handle, and the four read-only pane readers. **No edit graph, no history, no save.** `history.rs` is view history and says so in its own doc comment. `ExportSnapshot` is the only state-replay mechanism and it replays layer visibility only. |
-| `crates/plugin-api` | 752 lines, real | `ToolPlugin` with its full gesture lifecycle, `CommandPlugin`, `CodecPlugin` (export only), `PluginRegistry`, `ToolCtx { doc, viewport }`, `ToolCapability` (7 variants), `Overlay` (6 variants). **A tool has no way to express a document edit.** Its own module doc says the import path "waits for the edit graph ... which is M3". `Requirement` is not here: it is a private four-variant enum in `crates/app/src/shell/context_menu.rs:47`. |
-| `crates/render` | 2807 lines | Renders from `Arc<Vec<u8>>` through hayro; `render_annotations` is a settings bool; `TileStore` evicts. Annotation appearance streams render. hayro's annotation loop **never reads an annotation's `/OC`**, only the `/F` hidden flag. |
-| `crates/content` | 13454 lines | `extract_page`, `PageText`/`TextRun`/`Glyph`/`Mapping`/`ByteProvenance`, `PageQuad`. This is where a highlight's quad points come from. Nothing writes. |
+| `crates/cos` | 8152 lines, real, **unchanged since `81f802f`** | Already has the whole write side: `set_object`, `add_object`, `delete_object`, `set_trailer_entry`, `set_info_field`, `has_pending_changes`, `incremental_section`, `save_to_writer/path/vec`, `original_len`. Edits accumulate in one `BTreeMap<u32, Edit>` (`Edit` is private) and **one call to `incremental_section` emits one section carrying all of them**. There is no way to withdraw a pending edit, no section-chain accessor, no `flatten` full-rewrite API, and no `next_object_number` accessor. `Document` is `!Send` (`Rc<ObjectStream>` at `document.rs:109`), is **not `Clone`**, and holds a `Reader` plus four `RefCell` caches (`document.rs:108-114`). |
+| cos deletion | real, and the landmine | `delete_object` splices a chained free list at the head (`free_list_rows`, `document.rs:995`), refuses object 0 and refuses the trailer's `/Root`, and **bumps the generation** (`document.rs:906`). It performs **no reference walk**: deleting a `/Pages` node, a page still in a `/Kids` array, a content stream, or an annotation's appearance stream leaves a dangling reference and cos will happily serialize it. The doc comment at `document.rs:868` names M3's `tools-organize` as the caller that must fix this up. Symmetrically, `set_object` **refuses a number the file marks free**, returning `Error::FreedObject` (`document.rs:836-838`); T1's undo-across-a-save rule is what that refusal costs. |
+| `crates/core` | **11047** lines, real session | `core::Document` (there is no `Session` type) holds `bytes: Arc<Vec<u8>>` and a private `cos::Document` it never mutates (`session.rs:182-184`), page geometry and text caches, selection, search, the render worker handle, and the read-only pane readers (`outline`, `attachments`, `signatures`, `layers`). **No edit graph, no history, no save.** `history.rs` is view history and says so in its own doc comment. `ExportSnapshot` (`session.rs:163`) is the only state-replay mechanism and it replays layer visibility only. `&mut Document` already reaches `selection_mut`, `cancel_search`, `set_layer_visible`, `reset_layer_visibility`, `request_snapshot` and `select_match`, which is P7's real review risk. |
+| `crates/plugin-api` | **755** lines, real | `ToolPlugin` with its full gesture lifecycle, `CommandPlugin`, `CodecPlugin` (export only), `PluginRegistry`, `ToolCtx { doc, viewport }` (`lib.rs:81`), `ToolCapability` (**8** variants, `lib.rs:60`), `Overlay` (6 variants, `lib.rs:43`: `AntsRect`, `Rect`, `Quads`, `Polyline`, `Line`, `Circle { center, radius }`). **A tool has no way to express a document edit.** Its own module doc says the import path "waits for the edit graph ... which is M3". `Requirement` is not here: it is a private four-variant enum in `crates/app/src/shell/context_menu.rs:47`. |
+| `crates/render` | **3118** lines | Renders from `Arc<Vec<u8>>` through hayro; `render_annotations` is a settings bool (`base.rs:103`); `TileStore` evicts. Annotation appearance streams render. hayro's annotation loop **never reads an annotation's `/OC`**, only the `/F` hidden flag. |
+| `crates/content` | 13454 lines, unchanged | `extract_page`, `PageText`/`TextRun`/`Glyph`/`Mapping`/`ByteProvenance`, `PageQuad`. This is where a highlight's quad points come from. Nothing writes. |
 | `crates/print` | 6 lines, doc comment only | Workspace member, `onionskin-print` in `[workspace.dependencies]`, **no `[dependencies]` section at all**. Greenfield. |
-| `crates/crypto` | 4 lines, doc comment only | No security handler, no RC4, no AES, no key derivation. `cos` raises `Error::Encrypted` from one `refuse_encrypted` check at four call sites. |
+| `crates/crypto` | 4 lines, doc comment only | No security handler, no RC4, no AES, no key derivation. `cos` raises `Error::Encrypted` from one `refuse_encrypted` predicate (`document.rs:1228`) at four call sites (171, 190, 198, 761). |
 | `plugins/tools-comment` | 20 lines | Manifest with a no-op `register`. Already a default cargo feature and already installed by `build_registry`. |
 | `plugins/tools-organize` | 19 lines | Same shape. |
-| `plugins/commands-core` | 214 lines | Registers exactly two commands, `edit.select-all` and `edit.deselect-all`, both of which only touch in-memory `Selection`. |
-| `crates/app` | 32896 lines under `src/`, of which `shell/chrome/tabs.rs` is **7278** and `shell/canvas.rs` is 5003 | `ShellFrame` in `tabs.rs` is the single top-level GPUI view: 24 fields, one `impl` block spanning lines 371 to 2765 with 83 methods, plus the export worker. Every new command, dialog, pane toggle and accessibility node lands in it. |
-| corpus | seeds 3, external 3300+, malformed 15 (gitignored, generated), bench 1000-page (gitignored), **`tagged/` is a README and nothing else** | Guarantee 8's fixtures do not exist. `verapdf/PDF_UA-1` and `PDF_UA-2` are the named raw material. |
-| guarantees | `crates/app/tests/guarantees.rs` 1, 2 and 6 are `#[ignore]`d and `unimplemented!()` on `main` | The capabilities they name are already proved one layer down in `crates/cos/tests/{roundtrip,incremental,repair}.rs`. See section 8, item 2, for what M3 actually owes them and why guarantee 6 was vacuous. |
+| `plugins/commands-core` | **213** lines | Registers exactly two commands, `edit.select-all` and `edit.deselect-all`, both of which only touch in-memory `Selection`. |
+| `crates/app` | **36112** lines under `src/`, of which `shell/chrome/tabs.rs` is **8521** and `shell/canvas.rs` is **6025** | `ShellFrame` in `tabs.rs` is the single top-level GPUI view: **24 fields** (`tabs.rs:234-264`), one `impl` block spanning lines **371 to 2924 with 115 methods**, plus the export worker. Every new command, dialog, pane toggle and accessibility node lands in it. |
+| corpus | seeds 3 (tracked), external gitignored and fetched by `corpus/fetch.sh` (default sets `hayro`, `pdf-association`, `verapdf`; `fetch.sh:50`), malformed 15 (gitignored, generated), bench 1000-page (gitignored), **`tagged/` and `js-forms/` are a README and nothing else** | Guarantee 8's fixtures do not exist. `verapdf/PDF_UA-1` and `PDF_UA-2` are the named raw material. `crates/cos/tests/common/mod.rs:30-47` (`corpus_dir` and `missing`) returns `None` and prints `SKIPPED` when a corpus directory is absent, unless `ONIONSKIN_CORPUS_REQUIRED` is set. |
+| guarantees | `crates/app/tests/guarantees.rs` is **4187 lines**; **guarantees 1, 2 and 6 run**; 3, 4, 7 and 8 are the `#[ignore]`d ones (lines 119, 127, 219, 228), each naming M5 | B6 closed the state this plan was drafted against. 1, 2 and 6 are now **executable tripwires**: each names its enforcing suite in `crates/cos/tests/{roundtrip,incremental,repair}.rs`, asserts the specific markers that suite must still contain, and asserts that CI still reaches it. Guarantee 6 additionally asserts both halves of the corpus rule as workflow steps. See section 8, item 2, for what M3 owes them now. |
+
+Footnote on method: crate line counts are `find crates/<name> -name '*.rs' | xargs cat | wc -l`,
+which is the convention the first draft used (it counts `tests/`, `benches/` and
+`fuzz/` as well as `src/`); the `crates/app` figure is the one exception and counts
+`src/` only, as its cell says. `impl` spans and method counts are brace-matched over
+`tabs.rs`, counting `fn` at one level of indent inside the block.
 
 Two structural facts that shape several packages:
 
@@ -350,7 +363,7 @@ rather than repeated fourteen times:
   Ctrl+F twice. A global action listener body that calls `window_handle.update()`
   fails with "window not found" and must be wrapped in `cx.defer`. Every new M3
   command with a keystroke gets a test in the shape of
-  `the_find_keystroke_opens_the_find_bar` (`tabs.rs:4396`).
+  `the_find_keystroke_opens_the_find_bar` (`tabs.rs:4579`).
 - **Every test must fail when the behaviour it names is removed.** Each package's
   review-risk list names the specific mutation that must break its tests, and
   the reviewer runs it. A test that passes against a no-op is a defect.
@@ -2130,29 +2143,55 @@ starts. Evidence is cited.
    engineering reason. That is a PLAN.md edit for the orchestrator, not made
    here.
 
-2. **"Guarantee tests 1-2 and 6 pass" describes work that is already done at the
-   wrong level, and one of the three was vacuous.** All three properties are
-   proved today in `crates/cos/tests/{roundtrip,incremental,repair}.rs`; the
-   app-level tests in `crates/app/tests/guarantees.rs` are `#[ignore]`d and
-   `unimplemented!()` on `main`. So the sentence reads as if a capability is
-   missing when what is missing is the wiring and the level. What M3 actually
-   owes: guarantee 2 must become true of an edit made by a **tool** through
-   `core`, not of a synthetic `cos::set_object` call, which is P3's test and not
-   cos's. And guarantee 6 **was vacuous**: `repair.rs` returns early when
-   `corpus/malformed` is absent, the set is gitignored, and CI never generated
-   it, so the enforcing test was present, green and measuring nothing.
-   **That half is fixed, and the fix is the pattern M3 copies.** The M2
-   close-out work adds two steps to CI's Linux leg: one that runs
-   `corpus/make-malformed.sh`, and a second that re-runs
-   `cargo test -p onionskin-cos --test repair` under
-   `ONIONSKIN_CORPUS_REQUIRED: 1`, because generating the set is not proof it
-   was measured and only the second step turns a silent skip into a failure. The
-   same work rewrites the app-level guarantees to assert against the enforcing
-   suites and against the CI steps that feed them. So what M3 owes is not a
-   defect report; it is inheriting that two-step rule for every guarantee it
-   touches, and **P4's tagged corpus is where it first applies**: a fetch step,
-   plus a re-run of the structure suite under `ONIONSKIN_CORPUS_REQUIRED`, or
-   guarantee 8's fixtures repeat guarantee 6's history one milestone later.
+2. **Landed at B6, and this item now describes what M3 inherits rather than
+   what is missing.** The draft of this item said guarantees 1, 2 and 6 were
+   `#[ignore]`d and `unimplemented!()` in `crates/app/tests/guarantees.rs`.
+   **That has not been true since `0f1c295`.** On `main` at `fa5a194` all three run;
+   the four that stay ignored are 3, 4, 7 and 8, at `guarantees.rs:119`, `127`,
+   `219` and `228`, each naming M5.
+
+   What the three that run actually contain is not the property itself but an
+   **executable tripwire over the suite that owns the property**, and M3 has to
+   extend that shape rather than replace it:
+
+   - `a_save_with_no_edit_is_byte_identical_to_the_original` names
+     `roundtrip.rs` and its seven enforcing tests by function name, asserts the
+     suite still invokes `document.incremental_section` and `.save_to_vec`,
+     still asserts `non-empty-noop-save`, still holds a pass floor on each
+     external-corpus walk, and calls `assert_ci_reaches_the_cos_suite()`.
+   - `an_edit_appends_one_incremental_section_that_truncates_away` names
+     `incremental.rs` and its two enforcing tests, and pins the three clauses of
+     the guarantee sentence to three assertion markers in that file plus
+     `document.original_len` as the truncation point.
+   - `every_malformed_file_opens_and_repairs_into_a_new_section` names
+     `repair.rs` and its three enforcing tests, pins three markers, **and
+     asserts the two CI steps by hand**: exactly one step running
+     `./corpus/make-malformed.sh` and exactly one running
+     `cargo test -p onionskin-cos --test repair` with
+     `ONIONSKIN_CORPUS_REQUIRED: 1`, both pinned to `runner.os == 'Linux'` so
+     `if: false` cannot switch either off.
+
+   So guarantee 6's vacuous pass is fixed, and **its fix is the pattern, not
+   the exception**. What M3 owes these three files is therefore concrete:
+
+   - **Guarantee 2 gains a second enforcing suite, one level up.** The clause
+     PLAN.md and the DoD both promise, "driven by an edit a tool made through
+     `core`", is satisfied by nothing that exists: `incremental.rs` drives
+     `cos::set_info_field`. P7 owns the new test and the tripwire edit, and `crates/app/tests/guarantees.rs` is named in
+     P7's file list because nobody currently owns editing it.
+   - **Every guarantee whose corpus M3 makes load-bearing gains the same
+     two-step CI pair**, generate-or-fetch plus a re-run under
+     `ONIONSKIN_CORPUS_REQUIRED=1`, asserted from `guarantees.rs` the way
+     guarantee 6 asserts its own. P4's tagged set is one instance; P1c
+     (section 4) is the package that lands the pair for every other external
+     set M3's fixtures come from, because today the `test` job fetches nothing
+     and every external-corpus assertion in this plan silently skips in CI.
+   - **The parity-totals contract lives in the same file.**
+     `acrobat_parity_headline_matches_every_inventory_row`
+     (`guarantees.rs:2959`) recounts `ACROBAT-PARITY.md`'s status totals, target
+     total and per-milestone totals from the rows themselves, so ruling B's row
+     moves fail the build unless the headline moves with them. P15 owns that
+     edit, atomically with the two rows.
 
 3. **PLAN.md's stated undo model is wrong for two reachable cases.** "What does
    not transfer" item 1 and parity row 17 both say undo is "dropping edit-graph
