@@ -21,8 +21,18 @@ def main():
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
     d = pathlib.Path(sys.argv[1])
+    if not d.is_dir():
+        raise SystemExit(f"not a directory: {d}")
+    captures = sorted(d.glob("*.png"))
+    if not captures:
+        raise SystemExit(f"no *.png captures in {d}; nothing to audit")
+    others = [p.name for p in sorted(d.iterdir())
+              if p.is_file() and p.suffix.lower() != ".png"]
+    if others:
+        print(f"note: {len(others)} non-PNG file(s) ignored: "
+              f"{', '.join(others[:5])}{' ...' if len(others) > 5 else ''}\n")
     groups = defaultdict(list)
-    for p in sorted(d.glob("*.png")):
+    for p in captures:
         groups[hashlib.sha256(p.read_bytes()).hexdigest()].append(p.name)
     dupes = sum(len(v) - 1 for v in groups.values() if len(v) > 1)
     total = sum(len(v) for v in groups.values())

@@ -1,16 +1,16 @@
 # Pro-only surface evidence, captured from the installed Reader
 
 Companion to `docs/plans/pro-toolset-reference-method.md`, which defines the
-method and the confidence model this file records results under. Extends the B7
-protocol in `parity/README.md` and the ledger in
+method and the confidence model this file records results under. Extends the
+B7 protocol in `parity/README.md` and the ledger in
 `docs/evidence/parity-reference.md`; it does not replace either.
 
 Reference build: Adobe Acrobat Reader **25.001.20438**, the version already
-pinned by `docs/evidence/parity-reference.md`, read from the installed bundle's
-`CFBundleShortVersionString` on 2026-09-09.
+pinned by `docs/evidence/parity-reference.md`, read from the installed
+bundle's `CFBundleShortVersionString` on 2026-09-09.
 
-Privacy rule, unchanged: image bytes stay under the ignored `parity/` tree. This
-file records control names, ordering, grouping, enabled state, keyboard
+Privacy rule, unchanged: image bytes stay under the ignored `parity/` tree.
+This file records control names, ordering, grouping, enabled state, keyboard
 shortcuts and geometry. Those are measurements, not artwork.
 
 ---
@@ -38,13 +38,14 @@ both.
 
 ## E2. Pro-gated entries in the Reader menu bar
 
-Captured live at 2026-09-09T23:04Z by
-`osascript -l JavaScript parity/tools/ax-menus.js AdobeReader`, rendered by
+Captured live at 2026-09-09T23:04Z by `osascript -l JavaScript
+parity/tools/ax-menus.js AdobeReader`, rendered by
 `parity/tools/ax-render-menus.py`. Raw dump kept locally, uncommitted.
 
-Confidence class **A** for every row: the running pinned build reported it about
-itself. Index is the item's position in its own menu including separators, so it
-is a statement about ordering and grouping, not a coordinate.
+Confidence class **A** for every row: the running pinned build reported it
+about itself. Index is the item's position in its own menu including
+separators, so it is a statement about ordering and grouping, not a
+coordinate.
 
 ### File menu, whole menu, in order
 
@@ -74,17 +75,17 @@ is a statement about ordering and grouping, not a coordinate.
 
 ### Edit menu, Pro-gated block
 
-The Edit menu carries a contiguous eight-item Pro block between two separators,
-at indices 5 to 13. Every one reports `AXEnabled = true`, which is the mechanical
-form of the claim in `docs/plans/parity-goal.md` candor item 1: the entry is
-live, and the paywall is somewhere past the click.
+The Edit menu carries a contiguous eight-item Pro block between two
+separators, at indices 5 to 13. Every one reports `AXEnabled = true`, which is
+the mechanical form of the claim in `docs/plans/parity-goal.md` candor item 1:
+the entry is live, and the paywall is somewhere past the click.
 
 Document state at query time, since an enabled flag means little without it: a
 multi-page document is open at page 1. Reader's Window menu lists
-`two-page.pdf`; `View > Page Navigation` reports `Previous page` and
-`First page` disabled with `Next page` and `Last page` enabled; and
-`Edit > Cut`, `Copy`, `Paste`, `Undo`, `Redo` and `Select all` all report
-disabled, so nothing is selected.
+`two-page.pdf`; `View > Page Navigation` reports `Previous page` and `First
+page` disabled with `Next page` and `Last page` enabled; and `Edit > Cut`,
+`Copy`, `Paste`, `Undo`, `Redo` and `Select all` all report disabled, so
+nothing is selected.
 
 | # | Title | Enabled | Toolset it opens |
 |---|---|---|---|
@@ -101,26 +102,27 @@ disabled, so nothing is selected.
 Two further Edit-menu submenus are relevant and are **not** Pro-gated in the
 same way, because their children report disabled rather than live:
 
-- `Edit > Protection` (index 17): `Security properties` live; `Revoke document`,
-  `View audit history`, `Synchronize for offline` and `Manage document security
-  account` all report `AXEnabled = false`. These are account-tethered, which is
-  a different gate from the purchase gate and produces a different observable.
+- `Edit > Protection` (index 17): `Security properties` live; `Revoke
+  document`, `View audit history`, `Synchronize for offline` and `Manage
+  document security account` all report `AXEnabled = false`. These are
+  account-tethered, which is a different gate from the purchase gate and
+  produces a different observable.
 - `Edit > Check Spelling` (index 15): three live children, no gate.
 
 ### View menu, for contrast
 
 The View menu contains no Pro-gated entries. Its whole content is Reader
-functionality, which is why M2 could be measured from this build without any of
-this work.
+functionality, which is why M2 could be measured from this build without any
+of this work.
 
 ---
 
 ## E3. Audit of the existing private capture set
 
 `parity/reference/acrobat-reader-25.001.20438/pro-surface/` holds 26 PNG files
-dated 2026-09-07, produced by an earlier click-and-capture run on this machine.
-They were never measured and no committed artefact referenced them. Auditing
-them before using them turned out to matter.
+dated 2026-09-07, produced by an earlier click-and-capture run on this
+machine. They were never measured and no committed artefact referenced them.
+Auditing them before using them turned out to matter.
 
 **26 files, 13 distinct frames.** Grouped by SHA-256 of the file bytes
 (`parity/tools/capture-audit.py`):
@@ -137,31 +139,37 @@ them before using them turned out to matter.
 The earlier run clicked a rail entry, captured, and moved on. Once the E-Sign
 recipients dialog opened it swallowed every later click, so twelve consecutive
 captures recorded the same modal under twelve different toolset names, and the
-first `01-edit-a-pdf` frame is byte-identical to the baseline because that click
-never landed at all.
+first `01-edit-a-pdf` frame is byte-identical to the baseline because that
+click never landed at all.
 
 Two rules for the method follow directly, and both are cheap:
 
-1. **A capture is invalid unless its frame differs from the frame before it.**
-   Byte equality with the previous capture means the click did not land or the
-   UI did not change; either way the file is not evidence of what its name says.
-2. **A capture is invalid unless something in the frame independently identifies
-   the state.** Here the panel header and the highlighted rail row do that. A
-   filename is a claim by the capture script, never evidence.
+1. **A capture is invalid unless its frame differs from every other frame in
+   its set.** Byte equality means the click did not land or the interface did
+   not change; either way at most one of the two filenames can be true. The
+   check is set-wide rather than adjacent because a modal that swallows clicks
+   produces a run of identical frames, not a pair.
+2. **A capture is invalid unless something in the frame independently
+   identifies the state.** Here the panel header and the highlighted rail row
+   do that. A filename is a claim by the capture script, never evidence.
 
-Both are checks on the captured frames, not on the capture session, so they can
-run long after the session ends, which is what made this audit possible at all.
+Both are checks on the captured frames, not on the capture session, so they
+can run long after the session ends, which is what made this audit possible at
+all.
 
 ---
 
 ## E4. What the surviving distinct frames establish
 
-Thirteen frames are distinct. The states verified frame by frame are below;
-three distinct frames were not opened and are listed as unverified in E4.7. Measured with `parity/tools/measure-pane.py`
-against the source pixels. The captures are 2x; every number below is in logical
-points and every one is **relative to the window or the pane**, per the
-relative-measurement rule in `docs/plans/parity-goal.md` section 4.3. Window:
-1800 x 1057 pt. Theme: dark. Document open: `corpus/seeds/two-page.pdf`.
+Thirteen frames are distinct and every one of them is accounted for: five in
+E4.1 to E4.5, four in E4.7, and the remaining four are the upsell-modal frames
+of E4.6 (`Edit a PDF`, `Organize pages`, `Combine files`) plus the rail-closed
+frame `7333d42`, which E4.7 also covers. Measured with
+`parity/tools/measure-pane.py` against the source pixels. The captures are 2x;
+every number below is in logical points and every one is **relative to the
+window or the pane**, per the relative-measurement rule in
+`docs/plans/parity-goal.md` section 4.3. Window: 1800 x 1057 pt. Theme: dark.
+Document open: `corpus/seeds/two-page.pdf`.
 
 ### E4.1 The All tools rail, whole toolset panel, frame `8d5d971`
 
@@ -201,34 +209,36 @@ box is only observable under hover and no hover state was captured:
 Icon metaphors, in words, per Legal posture rule 2. Recorded because the
 metaphor is a fact about the interface and the artwork is not: a sheet with an
 outward arrow (Export), a sheet with a pencil (Edit), a sheet with a plus
-(Create), two overlapping sheets (Combine), a sheet with page markers (Organize),
-a speech bubble with a spark (AI Assistant), a sheet with lines and a spark
-(Generative summary), a person with a pen (Request e-signatures), a sheet with a
-scan frame (Scan and OCR), a shield (Protect), a sheet with a struck block
-(Redact), a sheet with a downward arrow (Compress), a sheet with a form field
-(Prepare a form), a pen nib (Fill and Sign), a speech bubble on a sheet (Add
-comments), a sheet with an inward arrow (Convert to PDF), a stamp (Add a stamp),
-a certificate rosette (Use a certificate), a printer sheet (Use print
-production), a ruler (Measure objects). Optical size 15 to 16 pt on a pitch of
-40 pt.
+(Create), two overlapping sheets (Combine), a sheet with page markers
+(Organize), a speech bubble with a spark (AI Assistant), a sheet with lines
+and a spark (Generative summary), a person with a pen (Request e-signatures),
+a sheet with a scan frame (Scan and OCR), a shield (Protect), a sheet with a
+struck block (Redact), a sheet with a downward arrow (Compress), a sheet with
+a form field (Prepare a form), a pen nib (Fill and Sign), a speech bubble on a
+sheet (Add comments), a sheet with an inward arrow (Convert to PDF), a stamp
+(Add a stamp), a certificate rosette (Use a certificate), a printer sheet (Use
+print production), a ruler (Measure objects). Optical size 15 to 16 pt on a
+pitch of 40 pt.
 
-**The two elements below the rule are the upsell and are explicitly excluded
-from what Onionskin reproduces**: a two-line caption and a filled pill button.
-They are recorded here only so a later reader can tell that the space below the
-rule is accounted for, and so nobody re-derives them as content.
+**The space below the rule holds the upsell and is explicitly excluded from
+what Onionskin reproduces.** It is named here only so a later reader can tell
+the space is accounted for. Its contents are not described and its geometry is
+not measured.
 
 ### E4.2 The truncated rail, frame `ff9627a`
 
 The same pane, same width, but only **13 entries** followed by a link-styled
 `View more`. The cut falls after `Prepare a form`, which is entry 13, so the
-seven entries hidden by default are `Fill & Sign`, `Add comments`,
-`Convert to PDF`, `Add a stamp`, `Use a certificate`, `Use print production` and
-`Measure objects`.
+seven entries hidden by default are `Fill & Sign`, `Add comments`, `Convert to
+PDF`, `Add a stamp`, `Use a certificate`, `Use print production` and `Measure
+objects`.
 
-Frame `210fc67` settles which state is the default. It was captured immediately
-after Reader was restarted, carries Reader's own `Reopen closed PDFs` recovery
-toast, and shows the 13-entry state. So **the truncated rail is what a launched
-Reader shows and the 20-entry list is the expanded state**, not the reverse. The
+Frame `210fc67` indicates which state is the default. It was captured
+immediately after Reader was restarted, carries Reader's own `Reopen closed
+PDFs` recovery toast, and shows the 13-entry state. So **the truncated rail is
+very likely what a launched Reader shows, with the 20-entry list as the
+expanded state**. Not settled: the frame shows a recent restart, not that
+nobody expanded or collapsed the rail between the restart and the capture. The
 window height is identical across all three frames, so the cut is not a height
 fit. Whether the expansion persists across launches is not established.
 
@@ -275,12 +285,15 @@ Geometry:
 | Other-option row pitch | 39.25 pt over three rows |
 | Content column | left 26.0 pt, right 254.5 pt, so a 32.5 pt right gutter against a 26.0 pt left inset |
 
-Two things worth naming. The content column is not centred in the pane: 26.0 pt
-on the left against 32.5 pt on the right. The most likely reason is a scrollbar
-gutter, and this frame cannot distinguish that from a deliberate asymmetry, so
-it is recorded as measured and flagged. And the primary button and the upsell
-button share a height of exactly 32.0 pt, which is evidence for one control-height
-token rather than two.
+One thing worth naming. The content column is not centred in the pane: 26.0 pt
+on the left against 32.5 pt on the right. The most likely reason is a
+scrollbar gutter, and this frame cannot distinguish that from a deliberate
+asymmetry, so it is recorded as measured and flagged.
+
+Nothing below the panel's separator rule is measured. The upsell caption and
+the trial button occupy that space and section 1 of the method document
+excludes them from what Onionskin reproduces, so no number is taken from them
+and none may be promoted into a token.
 
 **Where the wall is: on apply.** The panel is fully interactive up to the
 `Convert` button. Nothing in this frame establishes what happens after that
@@ -299,39 +312,41 @@ replaces the whole window content with a task view:
 | Primary button | `Select Files`, centred below the empty-state line |
 
 Both the empty state and its call to action are centred horizontally in the
-window and sit in the upper third. The tab strip keeps the original document tab
-to the left of the new one, so the flow is tab-scoped rather than modal.
+window and sit in the upper third. The tab strip keeps the original document
+tab to the left of the new one, so the flow is tab-scoped rather than modal.
 
 **Where the wall is: step two.** Step one is fully capturable. What the picker
 returns to, and every step after it, is not in this capture set.
 
 ### E4.5 Request e-signatures: a panel and a dense dialog, frame `650b2b0`
 
-The most complete Pro state in the whole set, and it arrived by accident.
-Clicking `Request e-signatures` switches the tab strip to `E-Sign`, renders a
-full panel, and opens a modal dialog over the document.
+The most complete Pro state in the whole set, reached by a click the earlier
+run did not intend. Clicking `Request e-signatures` switches the tab strip to
+`E-Sign`, renders a full panel, and opens a modal dialog over the document.
 
-Panel, in order: header `E-Sign` with a close control; section label
-`GET E-SIGNATURES FAST`; a bordered card `Request e-signatures` with the
-secondary line `Send this document to anyone to e-sign online in 3 easy steps`;
-section label `FILL AND SIGN YOURSELF`; a six-control icon strip (text field,
-cross, check, filled dot, rounded rectangle, horizontal rule); a dashed-border
-row `Add signature` with a trailing plus; a dashed-border row `Add initials`
-with a trailing plus; the sentence `After signing, you can create a read-only
-certified copy with an audit trail.`; an outline button `Save a certified copy`.
+Panel, in order: header `E-Sign` with a close control; section label `GET
+E-SIGNATURES FAST`; a bordered card `Request e-signatures` with the secondary
+line `Send this document to anyone to e-sign online in 3 easy steps`; section
+label `FILL AND SIGN YOURSELF`; a six-control icon strip (text field, cross,
+check, filled dot, rounded rectangle, horizontal rule); a dashed-border row
+`Add signature` with a trailing plus; a dashed-border row `Add initials` with
+a trailing plus; the sentence `After signing, you can create a read-only
+certified copy with an audit trail.`; an outline button `Save a certified
+copy`.
 
-Dialog, in order: a full-width banner `Send up to 2 documents for signature for
-free every 30 days on a rolling basis.` with an `Upgrade Now` link; a left
+Dialog, in order: a full-width banner stating a free-tier quota, with an
+upgrade link (contents not recorded, per section 1 of the method); a left
 column headed `Get e-signatures faster than email` with three icon-and-text
 rows and a `See how it works` external link; a right column headed `Add
 recipients to e-sign this document` over a single text field with the
 placeholder `Add People's names or email IDs`; a footer with `Cancel`
 (secondary, **disabled**) and `Specify where to sign` (primary, enabled).
 
-This is the only frame in the set where the gate is a **quota banner rather than
-a block**: the dialog is live and the feature is free up to two documents per 30
-days. That is a third gate shape, distinct from both the modal upsell and the
-apply-time wall, and the method has to be able to record it.
+This is the only frame in the set where the gate is a **quota banner rather
+than a block**: the dialog is live and the feature works below a stated
+free-tier limit. That is a third gate shape, distinct from both the modal
+upsell and the apply-time wall, and the method has to be able to record its
+shape without recording its content.
 
 ### E4.6 Where the wall falls, for the toolsets the set does cover
 
@@ -354,12 +369,13 @@ apply-time wall, and the method has to be able to record it.
 | Use print production | yes | none found | not captured | not established | not established | not established |
 | Measure objects | yes | none found | not captured | not established | not established | not established |
 
-`not established` is doing real work in that table. Eleven of the sixteen
-toolsets have a rail entry and nothing past it, because the capture run that was
-supposed to open them recorded the E-Sign dialog eleven times instead. The upsell
-modal template, seen three times, is identical across toolsets except for its
-eyebrow, headline, bullet list and illustration, so it carries capability prose
-and no layout information Onionskin would use.
+`not established` is doing real work in that table. Ten of the sixteen
+toolsets have a rail entry and nothing past it, because the capture run that
+was supposed to open them recorded the E-Sign state under twelve consecutive
+toolset names instead. The upsell modal template, seen three times, is
+identical across toolsets except for its eyebrow, headline, bullet list and
+illustration, so it carries capability prose and no layout information
+Onionskin would use.
 
 ### E4.7 The remaining distinct frames
 
@@ -372,17 +388,17 @@ and no layout information Onionskin would use.
 
 ### E4.8 Facts the capture set does not establish, listed so nobody assumes them
 
-- No hover state was captured anywhere, so no control's hit box is known. Every
-  geometry number in E4 is an ink extent.
+- No hover state was captured anywhere, so no control's hit box is known.
+  Every geometry number in E4 is an ink extent.
 - No focus ring was captured, so focus treatment is unknown.
 - No light-theme frame exists. Every number is from the dark theme.
 - No frame captures a tooltip except `Edit a PDF`'s.
 - No frame captures a context menu.
 - No frame captures a second step of any multi-step flow.
-- No frame captures the state after a `Convert`, `Select Files` or
-  `Specify where to sign` click, so "the wall falls on apply" for
-  `Export a PDF` is an inference from the absence of an upsell before that
-  point, not an observation of the wall itself.
+- No frame captures the state after a `Convert`, `Select Files` or `Specify
+  where to sign` click, so "the wall falls on apply" for `Export a PDF` is an
+  inference from the absence of an upsell before that point, not an
+  observation of the wall itself.
 
 ---
 
@@ -398,17 +414,17 @@ and no layout information Onionskin would use.
 | Fetch tool, `https://web.archive.org/web/2024/<helpx url>` | refused by the fetch tool itself |
 
 So Adobe's help server refuses this environment rather than gating particular
-pages. **Every documentation fact in this file is therefore class D**, a search
-engine's summary of a page nobody here fetched, and the permission matrix in
-`docs/plans/pro-toolset-reference-method.md` section 4.3 forbids class D from
-establishing grouping (F3) or ordering (F4). Restoring class C is a prerequisite
-for any ordering claim about a walled dialog.
+pages. **Every documentation fact in this file is therefore class D**, a
+search engine's summary of a page nobody here fetched, and the permission
+matrix in `docs/plans/pro-toolset-reference-method.md` section 4.3 forbids
+class D from establishing grouping (F3) or ordering (F4). Restoring class C is
+a prerequisite for any ordering claim about a walled dialog.
 
 ### E5.2 Per-toolset probe result
 
 Sixteen toolsets, one or two search queries each against a list of roughly a
-dozen expected control labels per toolset. A label counts as confirmed only when
-it appeared in returned text.
+dozen expected control labels per toolset. A label counts as confirmed only
+when it appeared in returned text.
 
 | Toolset | Adobe URL surfaced | Path generation | Confirmed / listed | Order asserted |
 |---|---|---|---|---|
@@ -431,14 +447,14 @@ it appeared in returned text.
 
 Two provenance facts that the table is the point of recording:
 
-- **No page in this probe stated its Acrobat version.** Version provenance came
-  entirely from URL paths, which is why four toolsets are flagged as returning
-  `/acrobat/11/` results (Acrobat XI, 2012) and Print Production is flagged as
-  returning nothing else. For every other toolset the depicted version is
-  **could not determine**.
-- **Order was asserted for only two of sixteen toolsets**, and in both cases as
-  a single sentence about a constraint rather than a list. Documentation prose
-  gives field lists generously and orderings almost never, which is the
+- **No page in this probe stated its Acrobat version.** Version provenance
+  came entirely from URL paths, which is why four toolsets are flagged as
+  returning `/acrobat/11/` results (Acrobat XI, 2012) and Print Production is
+  flagged as returning nothing else. For every other toolset the depicted
+  version is **could not determine**.
+- **Order was asserted for only two of sixteen toolsets**, and in both cases
+  as a single sentence about a constraint rather than a list. Documentation
+  prose gives field lists generously and orderings almost never, which is the
   empirical basis for the F4 row of the permission matrix.
 
 ### E5.3 Contradictions and close variants found
@@ -459,5 +475,5 @@ functional board would not catch.
 | `Touch Up Reading Order` | `Reading Order tool`; the old name survives only in the URL slug |
 
 Class D may establish a label verbatim and may not establish that a variant is
-the *current* one, because the snapshot behind a search summary is unknown. Each
-row above is a question for a class C pass, not an answer.
+the *current* one, because the snapshot behind a search summary is unknown.
+Each row above is a question for a class C pass, not an answer.

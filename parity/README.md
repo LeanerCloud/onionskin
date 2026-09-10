@@ -18,10 +18,10 @@ Committed files:
 
 Private local output:
 
-- `parity/reference/`: Acrobat reference screenshots captured from the installed
-  Reader or Pro version named in the ledger.
-- `parity/onionskin/`: matching Onionskin screenshots captured from a committed
-  build.
+- `parity/reference/`: Acrobat reference screenshots captured from the
+  installed Reader or Pro version named in the ledger.
+- `parity/onionskin/`: matching Onionskin screenshots captured from a
+  committed build.
 - `parity/comparison/`: local diff images or reports that include Acrobat UI
   pixels.
 - `parity/tmp/` and `parity/manifests/`: scratch output from local comparison
@@ -33,24 +33,25 @@ private image contents.
 
 ## B7 Capture Protocol
 
-1. Capture the reference UI locally from the installed Acrobat version named in
-   the ledger. Keep the files under `parity/reference/`.
+1. Capture the reference UI locally from the installed Acrobat version named
+   in the ledger. Keep the files under `parity/reference/`.
 2. Capture the matching Onionskin state from a committed build. Keep the files
    under `parity/onionskin/`.
 3. Compare the pairs locally. Keep generated diffs under `parity/comparison/`.
 4. Record only metadata in `docs/evidence/parity-reference.md`: evidence ID,
    Acrobat version, Onionskin commit, local filenames, SHA-256 values, and the
    acceptance result.
-5. Before committing, run `git check-ignore` or the `parity_privacy` regression
-   test to prove private artifacts remain ignored.
+5. Before committing, run `git check-ignore` or the `parity_privacy`
+   regression test to prove private artifacts remain ignored.
 
 ## Accessibility-Tree Capture
 
 A raw accessibility dump is treated exactly like a screenshot: it is a complete
 extraction of another product's interface, so it stays local under
 `parity/reference/`, and only the distilled table reaches the repository. The
-tools are `parity/tools/ax-menus.js` for menu trees and
-`parity/tools/ax-tree.js` for window, panel and dialog trees.
+tools are `parity/tools/ax-menus.js` for menu trees, rendered for reading by
+`parity/tools/ax-render-menus.py`, and `parity/tools/ax-tree.js` for window,
+panel and dialog trees.
 
 `parity/tools/capture-audit.py` must pass on a capture directory before any
 frame in it is measured. It groups the directory by content hash and fails when
@@ -61,3 +62,7 @@ a modal that swallowed later clicks produces.
 ink bands with their pitch, and the column profile of one band, all in logical
 points. What it reports is ink extent, not control boxes, and a ledger line
 derived from it says so.
+
+`parity/tools/coverage-tally.py` tallies the per-row coverage verdicts in
+`docs/evidence/pro-surface-coverage.tsv` and checks their count against
+`ACROBAT-PARITY.md`.

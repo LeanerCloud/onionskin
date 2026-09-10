@@ -6,6 +6,10 @@
 // focused, selected, pos, size}. Geometry is in points, screen coordinates; only
 // relative differences between nodes in one dump are meaningful, per the
 // relative-measurement rule in docs/plans/parity-goal.md section 4.3.
+//
+// An absent key means either the node has no such attribute or the query for it
+// failed; the two are not distinguished, so a node with no `enabled` key is not
+// evidence that it is enabled.
 function run(argv) {
   const app = argv[0] || 'AdobeReader';
   const maxDepth = argv[1] ? parseInt(argv[1], 10) : 12;

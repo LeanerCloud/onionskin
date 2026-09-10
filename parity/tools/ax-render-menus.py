@@ -3,8 +3,18 @@
 import json
 import sys
 
-MODS = {0: "cmd", 1: "cmd+shift", 2: "cmd+opt", 3: "cmd+opt+shift",
-        4: "cmd+ctrl", 8: "no-cmd", 9: "shift", 10: "opt", 12: "ctrl", 24: "fn"}
+# AXMenuItemCmdModifiers is a bitmask: bit 0 shift, bit 1 option, bit 2 control,
+# bit 3 *suppresses* the implied command key. Decoded rather than tabled so an
+# unseen combination renders as modifiers instead of as a bare number.
+BITS = ((0, "shift"), (1, "opt"), (2, "ctrl"))
+
+
+def modifiers(mask):
+    if mask is None:
+        return "?"
+    names = [] if mask & 8 else ["cmd"]
+    names += [name for bit, name in BITS if mask & (1 << bit)]
+    return "+".join(names) if names else "no-modifier"
 
 
 def main() -> None:
@@ -23,8 +33,7 @@ def main() -> None:
         if r.get("mark"):
             bits.append(f"mark={r['mark']!r}")
         if r.get("cmdchar"):
-            mod = MODS.get(r.get("cmdmod"), r.get("cmdmod"))
-            bits.append(f"key={mod}+{r['cmdchar']}")
+            bits.append(f"key={modifiers(r.get('cmdmod'))}+{r['cmdchar']}")
         if r.get("submenu"):
             bits.append("submenu")
         tail = ("  [" + ", ".join(bits) + "]") if bits else ""

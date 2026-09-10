@@ -27,7 +27,13 @@ def load(path):
 
 
 def pane_edge(a, probe_y):
-    """First column where the pane background ends and stays ended."""
+    """First column where the pane background ends and stays ended.
+
+    Assumes the pane starts at x=0 and that x=10 on the probe row is pane
+    background. Neither is checked, because nothing in a single frame can check
+    them: if either is false this returns a confident wrong number, so read the
+    reported background colour before trusting the edge.
+    """
     row = a[probe_y]
     bg = row[10]
     diff = np.abs(row - bg).sum(axis=1)
@@ -66,6 +72,9 @@ def bands(path, scale):
 
 
 def columns(path, y0, y1, xlim, scale):
+    if y0 < 6:
+        raise SystemExit("y_top must be at least 6 px: the background is sampled "
+                         "six rows above the band")
     a = load(path)
     band = a[y0:y1 + 1, :xlim]
     bg = a[y0 - 6, 10]
