@@ -12,8 +12,9 @@ them as pending.
 M3 is the milestone where Onionskin stops being a viewer. It is the first time
 the product writes a byte, and every architectural claim the project has made
 about non-destructive editing becomes an executable fact or an embarrassment.
-It is also the largest milestone by scoreboard weight: 99 `ACROBAT-PARITY.md`
-rows against M2's 67.
+It is also the largest milestone by scoreboard weight: **99
+`ACROBAT-PARITY.md` rows assigned, 97 shipped** once ruling B moves booklet and
+poster/tile to M4, against M2's 67.
 
 Scope boundary, held throughout: `crates/mcp`, `crates/cli`, `crates/scripting`,
 `crates/text-engine` and `plugins/{tools-edit,tools-form,tools-fill-sign,redact,
@@ -595,7 +596,7 @@ use at M5. Naming a real M3 consumer is what lets it exist now (§ YAGNI).
 **T9. Verification discipline, learned expensively in M2.**
 
 Every package's verification section obeys these, and they are stated once here
-rather than repeated fourteen times:
+rather than repeated thirty-one times:
 
 - **Feature configurations are named, never assumed.** `cargo test --workspace`
   does **not** compile `crates/app/src/shell`: it is behind the `shell` feature,
@@ -649,7 +650,8 @@ rather than repeated fourteen times:
 
 Format per package: goal, parity rows closed, files, depends-on, what exists to
 build on, verification, review risk. Kernel packages close no rows directly and
-say which rows they back. Section 6 is the complete 99-row ledger.
+say which rows they back. Section 6 is the complete ledger of all 99 rows M3
+was assigned, including the two it hands to M4.
 
 ### P0. Split `ShellFrame`, in two packages
 
@@ -2359,7 +2361,9 @@ raster.
 the rows themselves and asserts the preamble line matches. Moving the two rows
 without the headline fails the build; moving the headline without the rows fails
 it too. After the move: **M3 97, M4 4**, every other milestone unchanged. The
-row Notes carry ruling B's reason.
+row Notes carry ruling B's reason. PLAN.md's M3 paragraph reads "99 rows
+assigned, 97 shipped once ruling B moves booklet and poster/tile to M4", so it is
+already correct either side of this commit and needs no change here.
 
 That edit is P15's rather than the orchestrator's because P15 is the package
 whose scope the ruling defines, and it is called out here because

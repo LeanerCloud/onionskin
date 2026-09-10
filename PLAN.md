@@ -549,9 +549,10 @@ what-does-not-transfer section demands:
   width, not a width floor). Ships as the first dogfoodable artifact, with
   the first parity screenshot comparison and the registry's proof of shape.
 - **M3 - First edits, first print.** Authoritative decomposition:
-  docs/plans/m3-edits-and-print.md (24 packages, reviewed). This is the
+  docs/plans/m3-edits-and-print.md (31 packages, reviewed). This is the
   identity release: the first milestone that writes a byte, and the largest by
-  scoreboard weight at 99 rows. Scope, matching those rows. In `core`: the edit
+  scoreboard weight: 99 rows assigned, 97 shipped once ruling B moves booklet
+  and poster/tile to M4. Scope, matching those rows. In `core`: the edit
   graph, transactions and a session-scoped undo stack; incremental save with
   one section per save, Save As, Revert, generations and the skins panel; a
   preview buffer, so the canvas renders committed edits from the bytes a save
