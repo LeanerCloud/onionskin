@@ -4,6 +4,7 @@ members = [
     "crates/app",
     "crates/cli",
     "crates/content",
+    "crates/corpus-testing",
     "crates/core",
     "crates/cos",
     "crates/crypto",
@@ -39,6 +40,7 @@ publish = false
 [workspace.dependencies]
 # internal
 onionskin-content = { path = "crates/content" }
+onionskin-corpus-testing = { path = "crates/corpus-testing" }
 onionskin-core = { path = "crates/core" }
 onionskin-cos = { path = "crates/cos" }
 onionskin-crypto = { path = "crates/crypto" }

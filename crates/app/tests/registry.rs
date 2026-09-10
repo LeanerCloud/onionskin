@@ -2,10 +2,9 @@
 //! registry at once so a new plugin cannot quietly skip them. A plugin
 //! inherits the contract by being registered.
 
-use std::path::{Path, PathBuf};
-
 use onionskin_app::build_registry;
 use onionskin_core::{Document, Modifiers, PagePoint, ViewSize, Viewport};
+use onionskin_corpus_testing::seed;
 use onionskin_plugin_api::{PointerInput, ToolCtx};
 
 #[test]
@@ -155,12 +154,6 @@ fn every_tool_survives_a_degenerate_document() {
             tool.overlays(ctx.doc);
         }
     }
-}
-
-fn seed(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/seeds")
-        .join(name)
 }
 
 /// A structurally valid document whose page tree is empty. The corpus has

@@ -18,9 +18,10 @@
 #![cfg(all(feature = "a11y-probe", target_os = "macos"))]
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+
+use onionskin_corpus_testing::seed;
 
 /// One node as the probe reported it.
 type Node = BTreeMap<String, serde_json::Value>;
@@ -87,12 +88,6 @@ impl Tree {
             frame[3].as_f64().unwrap(),
         ]
     }
-}
-
-fn seed(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/seeds")
-        .join(name)
 }
 
 /// Run the app in probe mode over a seed, once per seed for the whole suite.
