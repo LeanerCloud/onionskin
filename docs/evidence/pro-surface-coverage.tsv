@@ -1,17 +1,24 @@
 # Three-way coverage verdict, one line per in-scope row of the Pro-gated toolset
 # sections of ACROBAT-PARITY.md. Tally with parity/tools/coverage-tally.py.
 #
-# verdict:
-#   R  reachable in the installed Reader: the row's own controls appear in a
-#      state the pinned build renders, established by a captured frame (source
-#      class B) or a live accessibility query (source class A). Geometry,
-#      iconography, colour and type are obtainable for these rows and only these.
+# verdict, in descending strength:
+#   Rb reachable and captured: the row's own controls appear in a frame of the
+#      pinned build (source class B). Naming, grouping, ordering, default and
+#      enabled state, relative geometry, iconography and colour are obtainable.
+#      These rows and only these can feed a geometry or token ledger.
+#   Ra reachable by accessibility query: the row's own command is a live entry
+#      the pinned build reports about itself (source class A). Naming, index,
+#      grouping, enabled state and shortcut are obtainable; no geometry, no
+#      iconography, no colour.
 #   D  documentation-sourceable only: Adobe's public prose names the row's
-#      principal controls, so naming, grouping, field lists and step order are
-#      obtainable; geometry, iconography, colour, type and motion are not.
+#      principal controls. Naming, field lists and step order are obtainable;
+#      grouping only inside a verbatim quoted path; no geometry, iconography,
+#      colour, type or motion.
 #   N  neither source established it in this pass. N is a statement about this
-#      pass, not about the world: see section 7.4 of the method document for how
-#      much of N is genuinely unreachable and how much is unprobed.
+#      pass, not about the world: see section 7.4 of the method document.
+#
+# Rb and Ra together are the "reachable in the installed Reader" bucket. Only Rb
+# supports the token and geometry layers of docs/plans/parity-goal.md.
 #
 # evidence: the shortest thing a reader can re-check.
 #
@@ -19,10 +26,10 @@
 Edit a PDF	Edit text (line-level)	D	helpx edit-text pages name "Edit text"
 Edit a PDF	Reflowing text edit	N	no Acrobat control of this name surfaced
 Edit a PDF	Change font, size, colour, alignment, spacing of edited text	D	Format panel: Font, Size, Colour, Alignment, Line spacing
-Edit a PDF	Add text (new text box)	D	"Add text"; also Reader Edit menu index 6 (class A entry only)
+Edit a PDF	Add text (new text box)	Ra	Reader Edit menu index 6, "Add Text", enabled
 Edit a PDF	Edit images and objects	D	Objects panel: Flip, Rotate, Arrange, Align, Crop
 Edit a PDF	Replace image	N	not surfaced
-Edit a PDF	Add image	D	"Add image"; also Reader Edit menu index 7 (class A entry only)
+Edit a PDF	Add image	Ra	Reader Edit menu index 7, "Add Image", enabled
 Edit a PDF	Extract / save image	N	not surfaced under Edit
 Edit a PDF	Add or edit links	D	"Link"
 Edit a PDF	Auto-create links from URLs	N	not surfaced
@@ -34,8 +41,8 @@ Edit a PDF	Background	N	explicitly not surfaced by the probe
 Edit a PDF	Bates numbering	D	"Bates numbering"
 Edit a PDF	Edit a scanned PDF (OCR-then-edit)	N	not surfaced
 Edit a PDF	Edit a signed or certified PDF	N	not surfaced
-Create a PDF	Create from a single image file	R	frame 592642c: task view, "Select Files"
-Create a PDF	Create from multiple files	R	frame 592642c: task view, "Select Files"
+Create a PDF	Create from a single image file	Rb	frame 592642c: task view, "Select Files"
+Create a PDF	Create from multiple files	Rb	frame 592642c: task view, "Select Files"
 Create a PDF	Create a blank page	D	"Blank page on the left rail and select Create"
 Create a PDF	Create from the clipboard	D	"File > Create > PDF from clipboard"
 Create a PDF	Create from a scanner	D	"select Scanner from the left rail"
@@ -44,10 +51,10 @@ Combine files	Add files / add folders to the combine list	D	"Add Files", "Add op
 Combine files	Reorder, preview and remove entries before combining	D	Move Up / Move Down, drag and drop
 Combine files	Expand a file and combine at page granularity	N	not surfaced
 Combine files	Combine into a PDF Portfolio	D	"PDF Portfolio"
-Organize pages	Rotate pages (left / right)	R	Reader Edit menu index 10, "Rotate Pages", enabled
+Organize pages	Rotate pages (left / right)	Ra	Reader Edit menu index 10, "Rotate Pages", enabled
 Organize pages	Reorder / move pages	D	"Move", "arrange pages"
 Organize pages	Insert pages (from file, blank, clipboard)	D	"Insert"; "from a file, clipboard, scanner, web page, or a blank page"
-Organize pages	Delete pages	R	Reader Edit menu index 9, "Delete Pages", enabled
+Organize pages	Delete pages	Ra	Reader Edit menu index 9, "Delete Pages", enabled
 Organize pages	Extract pages	D	"Extract"
 Organize pages	Split	D	"Split"
 Organize pages	Replace pages	D	"Replace"
@@ -59,15 +66,15 @@ Compress a PDF	Compress a PDF (one-click, size level)	D	"Reduce PDF file size"
 Compress a PDF	Reduce File Size (compatibility target)	D	"Reduce PDF file size"
 Compress a PDF	PDF Optimizer	D	"PDF Optimizer": Images, Fonts, Transparency, Discard Objects, Discard User Data, Clean Up
 Compress a PDF	Audit space usage	D	"Audit Space Usage"
-Export a PDF	Export to Microsoft Word (.docx)	R	frame 07ffb1d: radio 1, "Microsoft Word", tag DOCX, selected
-Export a PDF	Export to Microsoft Excel (.xlsx)	R	frame 07ffb1d: radio 3, "Microsoft Excel", tag XLSX
-Export a PDF	Export to Microsoft PowerPoint (.pptx)	R	frame 07ffb1d: radio 2, "Microsoft PowerPoint", tag PPTX
-Export a PDF	Export to Rich Text Format (.rtf)	R	frame 07ffb1d: radio 5, "Other format", tag RTF
-Export a PDF	Export to HTML	D	behind the Other format chevron, not captured; Adobe prose names HTML export
-Export a PDF	Export to plain text / accessible text	R	Reader File menu index 7, "Save as Text..."
+Export a PDF	Export to Microsoft Word (.docx)	Rb	frame 07ffb1d: radio 1, "Microsoft Word", tag DOCX, selected
+Export a PDF	Export to Microsoft Excel (.xlsx)	Rb	frame 07ffb1d: radio 3, "Microsoft Excel", tag XLSX
+Export a PDF	Export to Microsoft PowerPoint (.pptx)	Rb	frame 07ffb1d: radio 2, "Microsoft PowerPoint", tag PPTX
+Export a PDF	Export to Rich Text Format (.rtf)	Rb	frame 07ffb1d: radio 5, "Other format", tag RTF
+Export a PDF	Export to HTML	D	no control in the captured panel offers HTML; Adobe prose names HTML export
+Export a PDF	Export to plain text / accessible text	Ra	Reader File menu index 7, "Save as Text..."
 Export a PDF	Export pages to PNG	D	behind the Image format chevron, not captured; Adobe prose names PNG
-Export a PDF	Export pages to SVG	N	Acrobat exports no SVG; see finding 7.5
-Export a PDF	Export pages to JPEG / JPEG2000 / TIFF	R	frame 07ffb1d: radio 4, "Image format", tag JPEG; JPEG2000 and TIFF behind the chevron
+Export a PDF	Export pages to SVG	N	no Acrobat SVG export surfaced by any source in this pass
+Export a PDF	Export pages to JPEG / JPEG2000 / TIFF	Rb	frame 07ffb1d: radio 4, "Image format", tag JPEG; JPEG2000 and TIFF behind the chevron
 Export a PDF	Export all images in a document	D	"Export images or selections from a PDF"
 Export a PDF	Export to XML / XML spreadsheet	N	not surfaced
 Prepare a form	Auto-detect form fields in an existing document	N	not surfaced
@@ -140,13 +147,13 @@ Prepare for accessibility	Accessibility report	D	"Accessibility Report"; statuse
 Prepare for accessibility	Automatically tag a PDF (autotag)	D	"Autotag Document"
 Prepare for accessibility	Fix reading order (Reading Order tool)	D	"Reading Order", "Reading Options"
 Prepare for accessibility	Edit structure with the Tags and Content panes	D	"Tags panel", "Content pane options menu"
-Prepare for accessibility	Set alternate text for figures	D	Adobe's current wording is "Add alternate text", not "Set Alternate Text"
+Prepare for accessibility	Set alternate text for figures	D	Adobe prose gives "Add alternate text"; whether that supersedes "Set Alternate Text" is open
 Prepare for accessibility	Set document language	N	not surfaced
 Prepare for accessibility	Set document title	N	not surfaced
 Prepare for accessibility	Table editor / table summary	N	not surfaced
 Prepare for accessibility	Keep the structure tree valid through every edit	N	Onionskin obligation, no Acrobat control
-Prepare for accessibility	Read Out Loud (from the accessibility toolset)	R	Reader View menu index 12: Activate Read Out Loud, Read This Page Only, Read To End of Document, Pause, Stop
-Prepare for accessibility	Accessibility Setup Assistant	R	Reader app menu index 4, "Accessibility Setup Assistant..."
+Prepare for accessibility	Read Out Loud (from the accessibility toolset)	Ra	Reader View menu index 12: Activate Read Out Loud, Read This Page Only, Read To End of Document, Pause, Stop
+Prepare for accessibility	Accessibility Setup Assistant	Ra	Reader app menu index 4, "Accessibility Setup Assistant..."
 Use print production	Set Page Boxes (media, crop, bleed, trim, art)	D	"Set Page Boxes (Crop Tool) dialog"; only legacy-version sources surfaced
 Use guided actions	Run a shipped action	D	"Action Steps To Show", "The tasks are run in the order in which they appear"
 Use guided actions	Create a new action	D	"New Action", "Create New Action"

@@ -3,9 +3,10 @@
 
     coverage-tally.py <coverage.tsv> <ACROBAT-PARITY.md>
 
-Fails when the verdict file's row count does not equal the number of in-scope
-rows in the Pro-gated toolset sections of the scoreboard, so a row added to the
-board cannot silently drop out of the coverage number.
+Reconciliation is by row count only. It catches a row added to or removed from
+the scoreboard; it does not catch a row renamed or moved between sections,
+because the verdict file abbreviates long board rows and so cannot be joined to
+them on text.
 """
 import re
 import sys
@@ -21,10 +22,11 @@ PRO_SECTIONS = [
     "Toolset: Use guided actions (Action Wizard)", "Toolset: Compare files",
 ]
 IN_SCOPE = {"planned", "partial", "implemented"}
+VERDICTS = ("Rb", "Ra", "D", "N")
 
 
-def board_counts(path):
-    section, counts = None, defaultdict(int)
+def board_rows(path):
+    section, n = None, 0
     for line in open(path):
         m = re.match(r"^## (.+)$", line)
         if m:
@@ -34,43 +36,52 @@ def board_counts(path):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) >= 4 and cells[1] in IN_SCOPE:
-            counts[section] += 1
-    return counts
+            n += 1
+    return n
 
 
 def main():
-    verdicts = defaultdict(lambda: defaultdict(int))
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__)
+    per_section = defaultdict(lambda: defaultdict(int))
     total = defaultdict(int)
     n = 0
     for line in open(sys.argv[1]):
         if line.startswith("#") or not line.strip():
             continue
         parts = line.rstrip("\n").split("\t")
-        if len(parts) < 3:
-            raise SystemExit(f"malformed line: {line!r}")
-        sec, _row, verdict = parts[0], parts[1], parts[2]
-        if verdict not in {"R", "D", "N"}:
+        if len(parts) != 4 or not all(p.strip() for p in parts):
+            raise SystemExit(f"malformed line, want 4 non-empty fields: {line!r}")
+        sec, _row, verdict, _evidence = parts
+        if verdict not in VERDICTS:
             raise SystemExit(f"bad verdict {verdict!r} in {line!r}")
-        verdicts[sec][verdict] += 1
+        per_section[sec][verdict] += 1
         total[verdict] += 1
         n += 1
+    if not n:
+        raise SystemExit("no verdict lines found")
 
-    print(f"{'section':<30}{'R':>4}{'D':>4}{'N':>4}{'all':>6}")
-    for sec in sorted(verdicts):
-        v = verdicts[sec]
-        print(f"{sec:<30}{v['R']:>4}{v['D']:>4}{v['N']:>4}"
-              f"{v['R'] + v['D'] + v['N']:>6}")
-    print(f"{'TOTAL':<30}{total['R']:>4}{total['D']:>4}{total['N']:>4}{n:>6}")
-    for k in ("R", "D", "N"):
+    head = "".join(f"{k:>4}" for k in VERDICTS)
+    print(f"{'section':<30}{head}{'all':>6}")
+    for sec in sorted(per_section):
+        v = per_section[sec]
+        print(f"{sec:<30}" + "".join(f"{v[k]:>4}" for k in VERDICTS)
+              + f"{sum(v.values()):>6}")
+    print(f"{'TOTAL':<30}" + "".join(f"{total[k]:>4}" for k in VERDICTS)
+          + f"{n:>6}")
+    for k in VERDICTS:
         print(f"  {k}: {total[k]} of {n} = {100 * total[k] / n:.1f}%")
+    reach = total["Rb"] + total["Ra"]
+    print(f"  Rb+Ra reachable in Reader: {reach} of {n} = {100 * reach / n:.1f}%")
+    print(f"  Rb+Ra+D sourced at all:    {reach + total['D']} of {n} = "
+          f"{100 * (reach + total['D']) / n:.1f}%")
 
-    board = board_counts(sys.argv[2])
-    expected = sum(board.values())
+    expected = board_rows(sys.argv[2])
     if expected != n:
         print(f"\nMISMATCH: scoreboard has {expected} in-scope Pro-toolset rows, "
               f"the verdict file has {n}")
         return 1
-    print(f"\nreconciles with {sys.argv[2]}: {expected} in-scope Pro-toolset rows")
+    print(f"\nrow count reconciles with {sys.argv[2]}: {expected} rows")
     return 0
 
 
