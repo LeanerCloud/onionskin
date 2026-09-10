@@ -72,3 +72,22 @@ are to be read rather than hashed away. Both halves are mutation-tested by
 `procedure_mutation.py`, which reroutes a field through a synthetic group and
 asserts both that the rule absorbs the hop and that it still reports a lost
 statement, a changed call, a renamed leaf, an undeclared group and a literal.
+
+The six `frame-state-*.txt` files are the acceptance record for the one change
+that has used the rule so far, P0b, which gathered ten of `ShellFrame`'s loose
+fields into five sub-structs. Like the `tabs-split-*` set they are a record and
+are not regenerated. Measured from `f349359` to `efb49ee` the comparison is
+fifteen lines out and twenty-five in, and every one of them is accounted for:
+
+* ten field lines leave `struct ShellFrame` and reappear under the five new
+  containers, byte-identical in name, type and visibility;
+* five `struct` items and the five `ShellFrame` fields naming them are new;
+* `struct ShellFrame`'s own body and `ShellFrame::new` change, which is the
+  restructuring itself;
+* three function bodies carry a rustfmt rewrap that adds a brace or a comma,
+  listed with their diffs in `frame-state-reflow.txt`.
+
+Everything else hashes exactly as it did: 326 of the 330 function bodies, across
+135 rerouted reads. `frame-state-visibility.txt` is the `audit` diff that
+answers the question the listing cannot: the ten fields moved module, and
+`pub(super)` in each new module still names `chrome::tabs`.

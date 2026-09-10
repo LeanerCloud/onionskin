@@ -1,0 +1,45 @@
+# The three bodies frame-state-compare.txt reports that are not declarations.
+#
+# The elision rule absorbs the group hop and the whitespace rustfmt moves when
+# the longer chain is rewrapped. It does not absorb a brace or a comma rustfmt
+# adds when it breaks a line, and it is not meant to: a rule that deleted those
+# would be deleting punctuation from a body, which is where a real change hides.
+# So the three are read instead. Each is rustfmt reformatting a line the hop
+# pushed past 100 columns, and in each the tokens either side are unchanged.
+#
+# Read against efb49ee, base f349359.
+
+crates/app/src/shell/chrome/tabs/accessible.rs, ShellFrame::focused_text_field
+the three-element array wraps, and a wrapped array takes a trailing comma
+
+-        [&self.search_input, &self.find_input, &self.page_input]
+-            .into_iter()
+-            .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
+-            .map(|input| input.read(cx).element_id().into())
++        [
++            &self.tool_search.search_input,
++            &self.find_input,
++            &self.page_entry.page_input,
++        ]
++        .into_iter()
++        .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
++        .map(|input| input.read(cx).element_id().into())
+
+crates/app/src/shell/chrome/tabs/mod.rs,
+tests::canvas_context_entries_come_from_the_live_model_and_run_against_it
+the assert wraps, and its last argument takes a trailing comma
+
+-            assert!(frame.canvas_context_menu.is_none(), "picking closes it");
++            assert!(
++                frame.context_menus.canvas_context_menu.is_none(),
++                "picking closes it"
++            );
+
+crates/app/src/shell/chrome/tabs/mod.rs,
+tests::a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page
+the closure body wraps, and a wrapped closure body takes a block
+
+-                    .find(|tab| tab.canvas.entity_id() == frame.export_job.as_ref().unwrap().origin)
++                    .find(|tab| {
++                        tab.canvas.entity_id() == frame.export.export_job.as_ref().unwrap().origin
++                    })
