@@ -1171,9 +1171,12 @@ impl Document {
     ///
     /// Returns an empty vector when there is nothing to say: a delta section
     /// with no deletions has no business rewriting the head of the list.
-    fn free_list_rows(&self, full_table: bool) -> Vec<XrefRow> {
-        let deleted: Vec<(u32, u16)> = self
-            .edits
+    fn free_list_rows(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        full_table: bool,
+    ) -> Vec<XrefRow> {
+        let deleted: Vec<(u32, u16)> = overlay
             .iter()
             .filter_map(|(number, edit)| match edit {
                 PendingEdit::Delete { generation } => Some((*number, *generation)),
@@ -1205,9 +1208,56 @@ impl Document {
     }
 
     /// The bytes a save would append, or `None` when there is nothing to say.
+    ///
+    /// This is [`Document::section_for`] over the document's own edit map. The
+    /// trailer edits are adapted entry by entry into the argument form, every
+    /// one of them as `Some`: this path has no verb that removes a trailer key
+    /// and never needed one, so the adaptation is total and loses nothing.
     pub fn incremental_section(&self) -> Result<Option<Vec<u8>>> {
-        if !self.has_pending_changes() {
+        let trailer_edits: BTreeMap<Name, Option<Object>> = self
+            .trailer_edits
+            .iter()
+            .map(|(key, value)| (key.clone(), Some(value.clone())))
+            .collect();
+        self.section_for(&self.edits, &trailer_edits)
+    }
+
+    /// The bytes a save of `overlay` would append, or `None` when it would
+    /// append nothing.
+    ///
+    /// **Nothing appended is exactly when `overlay` and `trailer_edits` are
+    /// both empty *and* the provenance is [`Provenance::Clean`]**: a repaired
+    /// document with an empty overlay still owes its repair, and dropping that
+    /// third clause would stop the repair ever being written.
+    ///
+    /// `trailer_edits` maps a key to `Some(value)` to set it and to `None` to
+    /// **clear** it. A cleared key is emitted as `Object::Null`, which
+    /// ISO 32000-1 7.3.7 makes equivalent to the entry being absent. That is
+    /// the whole of what a set-only dictionary of edits could not say, and
+    /// without it an undo that took back the creation of a trailer key could
+    /// not be saved: nothing above the trailer can stop naming it.
+    ///
+    /// Takes `&self` and the overlay by reference: no cache is dropped, the
+    /// document's own edit map is neither read nor written, and the bytes a
+    /// preview renders are the bytes a save writes, because they are one call.
+    ///
+    /// It grows no ability to resurrect a freed number. Removal is expressed by
+    /// rewriting the referrer, so nothing an overlay names is a number the file
+    /// has already marked free, and [`Document::set_object`] keeps its refusal.
+    pub fn section_for(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+    ) -> Result<Option<Vec<u8>>> {
+        if overlay.is_empty() && trailer_edits.is_empty() && self.provenance.is_clean() {
             return Ok(None);
+        }
+        // Ordered after the early-out on purpose. An unconditional refusal
+        // would make every encrypted document unrenderable, because the canvas
+        // draws from the original plus this section: refusing on an empty
+        // overlay would leave nothing to draw.
+        if self.trailer.contains(b"Encrypt") {
+            return Err(Error::EncryptedWrite);
         }
 
         // The section must start on its own line.
@@ -1218,8 +1268,7 @@ impl Document {
         };
         let section_start = self.original_len + lead.len() as u64;
 
-        let mut objects: Vec<(ObjRef, Object)> = self
-            .edits
+        let mut objects: Vec<(ObjRef, Object)> = overlay
             .iter()
             .filter_map(|(number, edit)| match edit {
                 PendingEdit::Set { generation, object } => {
@@ -1230,10 +1279,19 @@ impl Document {
             .collect();
 
         let full_table = self.needs_full_table();
-        let mut rows = self.free_list_rows(full_table);
+        let mut rows = self.free_list_rows(overlay, full_table);
         if full_table {
             for (number, entry) in self.xref.iter() {
-                if number == 0 || self.edits.contains_key(&number) {
+                // The overlay, not the document's edit map, and this is the
+                // fourth of the four places that distinction has to be made.
+                // Reading the edit map here - permanently empty for a caller
+                // that keeps its own overlay - would let an overlaid object
+                // whose base entry is compressed be pushed twice: once from
+                // the overlay and once by the copy below. The sort is stable,
+                // so the overlay's copy would come first and the table's
+                // last-write-wins row would point at the base copy. The edit
+                // would be written into the file and then indexed away.
+                if number == 0 || overlay.contains_key(&number) {
                     continue;
                 }
                 match entry {
@@ -1273,8 +1331,15 @@ impl Document {
                 trailer.set("Prev", Object::Integer(prev as i64));
             }
         }
-        for (key, value) in self.trailer_edits.iter() {
-            trailer.set(key.clone(), value.clone());
+        for (key, value) in trailer_edits {
+            match value {
+                Some(value) => trailer.set(key.clone(), value.clone()),
+                // ISO 32000-1 7.3.7: an entry whose value is null is
+                // equivalent to the entry being absent. That is how a section
+                // removes a trailer key without rewriting the file underneath
+                // it, which an append-only save cannot do.
+                None => trailer.set(key.clone(), Object::Null),
+            }
         }
         let highest = objects
             .iter()
@@ -1308,7 +1373,10 @@ impl Document {
         // built leaves the writer untouched rather than holding a document
         // that is all original and no update.
         let section = self.incremental_section()?;
+        self.write_original_then(section, out)
+    }
 
+    fn write_original_then(&self, section: Option<Vec<u8>>, out: &mut dyn Write) -> Result<()> {
         let mut offset = 0u64;
         while offset < self.original_len {
             let want = (self.original_len - offset).min(COPY_CHUNK);
@@ -1343,6 +1411,24 @@ impl Document {
     /// still reading. The rename also means a crash mid-save leaves the
     /// previous file whole rather than a half-written one.
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
+        self.write_section_to_path(self.incremental_section()?, path)
+    }
+
+    /// Saves `overlay` the way [`Document::save_to_path`] saves the document's
+    /// own edits, through the same section builder and the same temporary
+    /// file. The bytes on disk are the bytes
+    /// [`Document::section_for`] returned, so a preview built from them cannot
+    /// disagree with what a save wrote.
+    pub fn save_overlay_to_path(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+        path: &Path,
+    ) -> Result<()> {
+        self.write_section_to_path(self.section_for(overlay, trailer_edits)?, path)
+    }
+
+    fn write_section_to_path(&self, section: Option<Vec<u8>>, path: &Path) -> Result<()> {
         let Some(directory) = path.parent() else {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1350,7 +1436,7 @@ impl Document {
             )));
         };
         let temporary = directory.join(temporary_name(path));
-        let written = self.write_through(&temporary, path);
+        let written = self.write_through(section, &temporary, path);
         if written.is_err() {
             // The save already failed; a failure to clean up after it is not
             // the error worth reporting in its place.
@@ -1359,9 +1445,9 @@ impl Document {
         written
     }
 
-    fn write_through(&self, temporary: &Path, path: &Path) -> Result<()> {
+    fn write_through(&self, section: Option<Vec<u8>>, temporary: &Path, path: &Path) -> Result<()> {
         let mut out = BufWriter::new(File::create(temporary)?);
-        self.save_to_writer(&mut out)?;
+        self.write_original_then(section, &mut out)?;
         let file = out.into_inner().map_err(|e| Error::Io(e.into_error()))?;
         file.sync_all()?;
         // A file created here gets the process's default mode, so replacing a

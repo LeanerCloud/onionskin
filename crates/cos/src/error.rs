@@ -17,6 +17,11 @@ pub enum Error {
     /// The file has a `/Encrypt` entry. The spike parses no security handler,
     /// so this is a refusal rather than a partial open.
     Encrypted,
+    /// A section was asked for on a document whose trailer names `/Encrypt`.
+    /// Writing one means encrypting the objects it carries, which is M6 work,
+    /// and emitting them in the clear under an `/Encrypt` trailer would
+    /// produce a file no reader opens and disclose a protected document.
+    EncryptedWrite,
     /// A lexical or grammatical failure at a known byte offset.
     Syntax {
         offset: u64,
@@ -78,6 +83,10 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "io: {e}"),
             Error::NotAPdf => write!(f, "no %PDF- header found"),
             Error::Encrypted => write!(f, "document is encrypted"),
+            Error::EncryptedWrite => write!(
+                f,
+                "the document is encrypted; writing to one is M6 work and no section can be written to it"
+            ),
             Error::Syntax { offset, detail } => {
                 write!(f, "syntax error at byte {offset}: {detail}")
             }
@@ -133,6 +142,7 @@ impl Error {
             Error::Io(_) => "io",
             Error::NotAPdf => "not-a-pdf",
             Error::Encrypted => "encrypted",
+            Error::EncryptedWrite => "encrypted-write",
             Error::Syntax { .. } => "syntax",
             Error::Unrecoverable { .. } => "unrecoverable",
             Error::RepairRequired(_) => "repair-required",

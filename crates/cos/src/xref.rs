@@ -109,10 +109,25 @@ pub(crate) fn load_chain(
     walk.section(first, reasons)?;
     let Walk {
         xref,
-        trailer,
+        mut trailer,
         recovered,
         ..
     } = walk;
+
+    // ISO 32000-1 7.3.7: a dictionary entry whose value is null is equivalent
+    // to the entry being absent. A newer section says "this trailer key is
+    // gone" that way, which is the only way an append-only update can say it.
+    // The key is dropped after the whole chain has been merged, never during:
+    // dropping it as the walk went would let the older section's value for the
+    // same key take its place, which is the opposite of what it asked for.
+    let nulls: Vec<Vec<u8>> = trailer
+        .iter()
+        .filter(|(_, value)| matches!(value, Object::Null))
+        .map(|(key, _)| key.as_bytes().to_vec())
+        .collect();
+    for key in nulls {
+        trailer.remove(&key);
+    }
 
     if xref.is_empty() {
         return Err(Error::Unrecoverable {
