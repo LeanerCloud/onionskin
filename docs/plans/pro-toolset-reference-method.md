@@ -252,7 +252,7 @@ Tooling added, all under `parity/tools/`, none of it containing Adobe content:
 |---|---|
 | `ax-menus.js` | dumps a running app's whole menu tree: title, index, separators, submenu nesting, enabled state, mark character, command key and modifiers |
 | `ax-render-menus.py` | renders that dump as an indented tree for reading |
-| `ax-tree.js` | dumps a running app's window, panel, sheet and dialog trees with role, subrole, title, description, help, value, enabled, focused, selected, position and size |
+| `ax-tree.js` | dumps a running app's window, panel, sheet and dialog trees with role, subrole, title, description, help, value, enabled, focused, selected, position and size. **Untested against a live window**: the only session available to this pass reported zero windows, so the tool returned an empty array correctly and its output shape is unverified |
 | `capture-audit.py` | groups a capture directory by content hash and fails when filenames outnumber distinct frames |
 | `measure-pane.py` | finds a pane's edge and its ink bands, and profiles the columns of one band, in logical points |
 
@@ -265,12 +265,12 @@ this section is the verdict per sample and, where it failed, why.
 
 Conditions, stated because they bound everything below: the macOS session was
 **locked** with both displays asleep. That made class B unavailable live, so the
-class B results come from the nine distinct frames already sitting in
+class B results come from the thirteen distinct frames already sitting in
 `parity/reference/.../pro-surface/` from 2026-09-07, audited before use. Class A
 was available for the menu bar and unavailable for windows. Class C was
 unavailable: `helpx.adobe.com` returns HTTP 403 to this environment from both
-the fetch tool and `curl` with a browser user agent, and `web.archive.org` is
-not fetchable at all, so every documentation result below is class D.
+the fetch tool and `curl` with a browser user agent, and the fetch tool refuses
+`web.archive.org` outright, so every documentation result below is class D.
 
 ### 6.1 Whole toolset panel: the All tools rail. **Full success, class B.**
 
@@ -469,10 +469,15 @@ Protect a PDF, Use a certificate, Scan & OCR, Measure objects, Prepare for
 accessibility, Use print production, Use guided actions and Compare files.
 
 That is **145 rows**: 181 rows in those sections, of which 36 are out-of-scope.
-Add comments, Add stamps and Fill & Sign are excluded because the free Reader
-implements them, so their 38 in-scope rows were always measurable and are not
-part of this problem. Re-derive with
-`parity/tools/coverage-tally.py`, which fails if the two files disagree.
+Add comments, Add stamps and Fill & Sign are excluded, so their 38 in-scope
+rows are not part of this problem. That exclusion is **measured for Fill & Sign**
+(the E-Sign panel's `FILL AND SIGN YOURSELF` section renders live, with
+`Add signature`, `Add initials` and a six-control strip, and no gate) and
+**asserted, not measured, for Add comments and Add stamps**, from their presence
+in the rail and the product's free-tier positioning. If either turns out to be
+gated, 38 rows join the denominator and every percentage below falls. Re-derive
+with `parity/tools/coverage-tally.py`, which fails if the verdict file and the
+scoreboard disagree.
 
 ### 7.2 The answer
 
@@ -604,8 +609,11 @@ reader would otherwise reasonably assume.
    description of the same surface. Unprovable in general from this side. Every
    class B fact carries this uncertainty and no amount of capture removes it.
 3. **Adobe's documentation server refuses this environment.** `helpx.adobe.com`
-   returns HTTP 403 to the fetch tool and to `curl` with a browser user agent;
-   `web.archive.org` is not fetchable. So class C, the class the confidence model
+   returns HTTP 403 to the fetch tool and to `curl` with a browser user agent.
+   The fetch tool refuses `web.archive.org` outright, and `curl` to the Wayback
+   availability API returned HTTP 429, which is a rate limit rather than a
+   refusal, so an archive route may still exist and was not established either
+   way. So class C, the class the confidence model
    is built around for everything behind the wall, was unavailable for the whole
    run, and all 76 D verdicts rest on class D, a search engine's summary. Under
    the matrix in section 4.3 that means those 76 rows have naming and presence
