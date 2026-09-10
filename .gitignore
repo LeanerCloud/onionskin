@@ -1,5 +1,6 @@
 target/
 dist/
+__pycache__/
 corpus/bench/
 corpus/external/
 corpus/malformed/

@@ -1,0 +1,86 @@
+# before: /tmp/claude/p0/tabs_5ac2085.rs
+# after:  crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
+lines before: 7236
+lines after:  7311
+only in before: 25
+  -    CodecPlugin, ExportError, ExportRequest, PageRange, PluginRegistry, PointerInput, ToolCtx,
+  -    FindPreviousMatch, FindSummary, FIND_INPUT_ID, FIND_PLACEHOLDER,
+  -    FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
+  -    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+  -    PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
+  -    ParentElement as _, PathPromptOptions, Pixels, Point, Render, StatefulInteractiveElement as _,
+  -    RegistryFacts, NO_DYNAMIC_ZOOM_TOOL, NO_SNAPSHOT_TOOL,
+  -    Styled as _, Timer, Window, WindowHandle,
+  -    Timer::after(super::super::POLL_INTERVAL).await;
+  -    ToolPlugin,
+  -    div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EntityId,
+  -    document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
+  -    fn command_unavailable(&self, command: MenuCommand, cx: &App) -> Option<&'static str> {
+  -    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+  -    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+  -    fn open_canvas_context_menu(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+  -    fn render_main_menu(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+  -    fn report_export_failure(canvas: &Entity<Canvas>, failure: impl fmt::Display, cx: &mut App) {
+  -    fn run_accessibility_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+  -    fn step_focus(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
+  -    fn step_focus_within(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
+  -    main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
+  -    render_find_bar, Dismiss, FindBarState, FindDirection, FindNextMatch, FindOption,
+  -    self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
+  -    self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
+only in after: 100
+  +    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+  +x10  #[cfg(feature = "shell-test-support")]
+  +    #[cfg(test)]
+  +x6  &mut self,
+  +x2  &self,
+  +    ) -> Option<&'static str> {
+  +    ) -> impl IntoElement {
+  +x7  ) {
+  +    CONTEXT_MENU_ROW_HEIGHT,
+  +    CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageIndex, PageRange,
+  +    ExportFailure, ExportObserver, ExportOutcome, ExportPhase,
+  +    FindSummary,
+  +    FocusPrevious, FocusPreviousInGroup, Surface, TextField,
+  +    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, PathPromptOptions,
+  +    MouseDownEvent, ParentElement as _, Pixels, Point, StatefulInteractiveElement as _,
+  +    Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window,
+  +    PluginRegistry, PointerInput, ToolCtx, ToolPlugin,
+  +    StatefulInteractiveElement as _, Styled as _,
+  +    StatefulInteractiveElement as _, Styled as _, Window, WindowHandle,
+  +    Styled as _, Window,
+  +    Timer::after(POLL_INTERVAL).await;
+  +    _: &FocusNext,
+  +    _: &FocusPrevious,
+  +    canvas: &Entity<Canvas>,
+  +    command: MenuCommand,
+  +    context_menu_origin, tab_context_entries, CANVAS_CONTEXT_MENU_WIDTH, CONTEXT_MENU_PADDING,
+  +    cx: &App,
+  +    cx: &mut App,
+  +x7  cx: &mut Context<Self>,
+  +    div, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+  +    div, px, App, AppContext as _, ClipboardItem, Context, Entity, EntityId, Focusable as _,
+  +    div, px, App, Bounds, ClipboardItem, Context, InteractiveElement as _, IntoElement,
+  +    div, px, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+  +    document_search_result, search_registry, unavailable_selection, SearchResult,
+  +    event: &MouseDownEvent,
+  +    export_path, preflight_export_paths, run_export_worker, run_export_worker_observed,
+  +    failure: impl fmt::Display,
+  +    fn command_unavailable(
+  +    fn focus_next(
+  +    fn focus_previous(
+  +    fn open_canvas_context_menu(
+  +    fn render_main_menu(
+  +    fn report_export_failure(
+  +    fn run_accessibility_requests(
+  +    fn step_focus(
+  +    fn step_focus_within(
+  +x6  impl ShellFrame {
+  +    main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
+  +    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
+  +    render_find_bar, Dismiss, FindDirection, FindNextMatch, FindOption, FindPreviousMatch,
+  +x2  step: A11yStep,
+  +    window: &Window,
+  +x5  window: &mut Window,
+  +x6  }
+  +x4  };

@@ -1,0 +1,43 @@
+case 1: one whole method and one match arm deleted
+  method:    ShellFrame::toggle_fullscreen
+  match arm: CanvasContextCommand::RotateClockwise in ShellFrame::run_canvas_context_command
+
+items before: 463
+items after:  462
+visibility-only changes: 0
+only in before: 2
+  -    impl ShellFrame	fn	run_canvas_context_command	pub(super)	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	c3b25de281ac1170
+  -    impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+only in after:  1
+  +    impl ShellFrame	fn	run_canvas_context_command	pub(super)	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	86dbcff329d8fae1
+RESULT: sets differ
+
+CASE 1: exactly the two deletions
+
+case: a changed literal inside a body
+  -    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	f95c109abc808636
+  +    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	81ae0b16e6bb64a3
+
+case: a changed literal that contains the word pub
+  -    -	const	TOOL_ACTIVATION_FAILED	private	const TOOL_ACTIVATION_FAILED: &str = "This tool did not activate; the canvas status line has the reason"	e3b0c44298fc1c14
+  +    -	const	TOOL_ACTIVATION_FAILED	private	const TOOL_ACTIVATION_FAILED: &str = "This pub tool did not activate; the canvas status line has the reason"	e3b0c44298fc1c14
+
+case: two match arms swapped, same text in a different order
+  -    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	f95c109abc808636
+  +    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	d5277f980b64959c
+
+case: a widened tuple-struct field
+  VIS  struct ExportPhase(AtomicU8) :: field 0: private -> pub
+
+case: an added pub use re-export
+  +    -	use	Debug as Reexported	pub	use std::fmt::Debug as Reexported	e3b0c44298fc1c14
+
+case: a one-tuple parameter flattened on a body-less trait method
+  -    trait ExportObserver: Send + Sync	fn	page_completed	private	fn page_completed(&self,_page: PageIndex)	e3b0c44298fc1c14
+  +    trait ExportObserver: Send + Sync	fn	page_completed	private	fn page_completed(&self,_page: (PageIndex,))	e3b0c44298fc1c14
+
+case: a method moved to impl Render for ShellFrame
+  -    impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+  +    impl Render for ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+
+MUTATION CHECK: every mutation was reported
