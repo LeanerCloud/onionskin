@@ -1,5 +1,5 @@
 lines before: 7236
-lines after:  7302
+lines after:  7311
 only in before: 25
   -    CodecPlugin, ExportError, ExportRequest, PageRange, PluginRegistry, PointerInput, ToolCtx,
   -    FindPreviousMatch, FindSummary, FIND_INPUT_ID, FIND_PLACEHOLDER,
@@ -26,17 +26,18 @@ only in before: 25
   -    render_find_bar, Dismiss, FindBarState, FindDirection, FindNextMatch, FindOption,
   -    self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
   -    self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
-only in after: 91
+only in after: 100
   +    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+  +x10  #[cfg(feature = "shell-test-support")]
   +    #[cfg(test)]
   +x6  &mut self,
   +x2  &self,
   +    ) -> Option<&'static str> {
   +    ) -> impl IntoElement {
   +x7  ) {
-  +    CONTEXT_MENU_PADDING, CONTEXT_MENU_ROW_HEIGHT,
+  +    CONTEXT_MENU_ROW_HEIGHT,
   +    CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageIndex, PageRange,
-  +    ExportPhase, EXPORT_DPI,
+  +    ExportFailure, ExportObserver, ExportOutcome, ExportPhase,
   +    FindSummary,
   +    FocusPrevious, FocusPreviousInGroup, Surface, TextField,
   +    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, PathPromptOptions,
@@ -51,7 +52,7 @@ only in after: 91
   +    _: &FocusPrevious,
   +    canvas: &Entity<Canvas>,
   +    command: MenuCommand,
-  +    context_menu_origin, tab_context_entries, CanvasContextMenu, CANVAS_CONTEXT_MENU_WIDTH,
+  +    context_menu_origin, tab_context_entries, CANVAS_CONTEXT_MENU_WIDTH, CONTEXT_MENU_PADDING,
   +    cx: &App,
   +    cx: &mut App,
   +x7  cx: &mut Context<Self>,
@@ -61,7 +62,7 @@ only in after: 91
   +    div, px, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
   +    document_search_result, search_registry, unavailable_selection, SearchResult,
   +    event: &MouseDownEvent,
-  +    export_path, preflight_export_paths, report_export_failure, run_export_worker,
+  +    export_path, preflight_export_paths, run_export_worker, run_export_worker_observed,
   +    failure: impl fmt::Display,
   +    fn command_unavailable(
   +    fn focus_next(
@@ -76,7 +77,6 @@ only in after: 91
   +    main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
   +    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
   +    render_find_bar, Dismiss, FindDirection, FindNextMatch, FindOption, FindPreviousMatch,
-  +    run_export_worker_observed, ExportFailure, ExportJob, ExportObserver, ExportOutcome,
   +x2  step: A11yStep,
   +    window: &Window,
   +x5  window: &mut Window,

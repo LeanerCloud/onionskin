@@ -1407,12 +1407,18 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 
 #[cfg(test)]
 mod tests {
+    // Before the split this module reached its parent through `use super::*`,
+    // and a glob import is never reported as unused however many of its names
+    // go unused. The names below are explicit now, so each one carries the
+    // gate its users carry, or `--features shell` reports it as unused where
+    // `--features shell,shell-test-support` does not.
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Condvar, Mutex};
 
+    #[cfg(feature = "shell-test-support")]
     use accesskit::Role;
-    // Gated exactly like its one user, the canvas context menu test, which
-    // needs `tools-basic` to have a live entry to pick.
+    // `tools-basic` as well: without it the canvas context menu test has no
+    // live entry to pick.
     #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
     use gpui::MouseDownEvent;
     #[cfg(feature = "shell-test-support")]
@@ -1423,33 +1429,44 @@ mod tests {
         PluginRegistry, PointerInput, ToolCtx, ToolPlugin,
     };
 
+    #[cfg(feature = "shell-test-support")]
+    use super::context::CanvasContextMenu;
     use super::context::{
-        context_menu_origin, tab_context_entries, CanvasContextMenu, CANVAS_CONTEXT_MENU_WIDTH,
-        CONTEXT_MENU_PADDING, CONTEXT_MENU_ROW_HEIGHT,
+        context_menu_origin, tab_context_entries, CANVAS_CONTEXT_MENU_WIDTH, CONTEXT_MENU_PADDING,
+        CONTEXT_MENU_ROW_HEIGHT,
     };
-    use super::frame_state::TabState;
-    use crate::shell::chrome::page_controls::PAGE_ENTRY_ID;
-    use crate::shell::chrome::quick_actions::QuickActionsState;
-    use crate::shell::chrome::theme::ShellViewState;
-    use crate::shell::find_bar::FIND_INPUT_ID;
-    use crate::shell::ShellSettings;
-
     use super::export::{
-        export_path, preflight_export_paths, report_export_failure, run_export_worker,
-        run_export_worker_observed, ExportFailure, ExportJob, ExportObserver, ExportOutcome,
-        ExportPhase, EXPORT_DPI,
+        export_path, preflight_export_paths, run_export_worker, run_export_worker_observed,
+        ExportFailure, ExportObserver, ExportOutcome, ExportPhase,
     };
+    #[cfg(feature = "shell-test-support")]
+    use super::export::{report_export_failure, ExportJob, EXPORT_DPI};
+    use super::frame_state::TabState;
     use super::*;
-    use crate::preferences::{PreferenceCategory, ThemePreference};
+    #[cfg(feature = "shell-test-support")]
+    use crate::preferences::PreferenceCategory;
+    use crate::preferences::ThemePreference;
     #[cfg(feature = "shell-test-support")]
     use crate::shell::canvas::CanvasStatus;
     use crate::shell::canvas::{CanvasModel, PreparedExport};
+    #[cfg(feature = "shell-test-support")]
     use crate::shell::chrome::accessible::Element as A11yElement;
-    use crate::shell::chrome::global_bar::{main_menu_schema, ExportTarget, MenuAvailability};
+    use crate::shell::chrome::global_bar::MenuAvailability;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::chrome::global_bar::{main_menu_schema, ExportTarget};
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::chrome::page_controls::PAGE_ENTRY_ID;
+    use crate::shell::chrome::quick_actions::QuickActionsState;
+    use crate::shell::chrome::theme::ShellViewState;
     use crate::shell::context_menu::CanvasContextCommand;
+    #[cfg(feature = "shell-test-support")]
     use crate::shell::dialog::ShellDialog;
     #[cfg(feature = "shell-test-support")]
+    use crate::shell::find_bar::FIND_INPUT_ID;
+    #[cfg(feature = "shell-test-support")]
     use crate::shell::panes::NavigationPane;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::ShellSettings;
 
     /// A window with both top bars on screen, which is what every layout
     /// case below is measured against, with the three surfaces those cases
