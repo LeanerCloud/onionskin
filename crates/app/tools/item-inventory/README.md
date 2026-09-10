@@ -42,3 +42,33 @@ paired off, and it prints those pairs so they can be judged rather than
 trusted. `procedure_mutation.py` exits 0 only when every one of its deliberate
 mutations was reported, which is what stops the comparison from being
 decorative.
+
+## Gating a restructuring, with `--elide`
+
+A relocation leaves every body byte-identical. Gathering loose fields into a
+sub-struct does not: every method that read `self.foo` now reads
+`self.group.foo`, so every body hash moves at once and the comparison says
+nothing. `--elide` is the rule that keeps the listing exact across that:
+
+```
+python3 item_inventory.py emit --at "$BASE" --elide menus,export <files at base> > before.txt
+python3 item_inventory.py emit --at "$HEAD" --elide menus,export <files now>     > after.txt
+python3 item_inventory.py compare before.txt after.txt
+```
+
+In the code of a body, and only there, the whitespace beside every `.` is
+dropped and then `.g.` becomes `.`, to a fixed point. `x.g.field` hashes as
+`x.field` did, however rustfmt rewrapped the chain the hop lengthened. The hop
+goes and the leaf stays, so a field renamed on its way into a group is still a
+difference, as is a group nobody declared, a group passed whole, and a hop
+spelled inside a string literal. The names are on the command line and in the
+`# elided` header, and `compare` refuses two listings elided differently, so a
+diff cannot be emptied by eliding one side of it.
+
+What the rule does not absorb, by construction, is the declaration of the state:
+the fields change container, the sub-structs are new items, and a constructor
+that spells the literal out really is a changed body. Those are reported, and
+are to be read rather than hashed away. Both halves are mutation-tested by
+`procedure_mutation.py`, which reroutes a field through a synthetic group and
+asserts both that the rule absorbs the hop and that it still reports a lost
+statement, a changed call, a renamed leaf, an undeclared group and a literal.
