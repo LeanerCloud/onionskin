@@ -1383,6 +1383,74 @@ impl Document {
         self.save_to_writer(&mut out)?;
         Ok(out)
     }
+
+    // ---- write from scratch -------------------------------------------------
+
+    /// Serializes a complete document: the header, `objects` in ascending
+    /// number order, a classic cross-reference table covering all of them, and
+    /// `trailer`.
+    ///
+    /// Consumers: the operations that produce a **new** file rather than
+    /// editing one - combine, split, extract, create-from-image, compress, and
+    /// the printed sheets a print-to-file backend composes. The core invariant
+    /// applies to those files from their first save onwards, because there is
+    /// nothing underneath them to preserve.
+    ///
+    /// It is the section writer with an empty file in front of it, not a second
+    /// serializer: the same object writer, the same table builder, the same
+    /// trailer stripping. It emits a classic table, never a cross-reference
+    /// stream, and it never writes object streams.
+    ///
+    /// Three refusals, because each of them produces a file no reader opens:
+    /// a trailer with no `/Root`, an object numbered 0 (the free-list head is
+    /// not a document object), and two objects sharing a number.
+    pub fn write_new(objects: &[(ObjRef, Object)], trailer: Dict) -> Result<Vec<u8>> {
+        // The binary comment (ISO 32000-1 7.5.2) is what makes a transfer that
+        // sniffs content treat the file as binary rather than as text.
+        const HEADER: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
+
+        if !trailer.contains(b"Root") {
+            return Err(Error::Unrecoverable {
+                detail: "a new document's trailer must name a /Root".into(),
+            });
+        }
+        let mut objects: Vec<(ObjRef, Object)> = objects.to_vec();
+        objects.sort_by_key(|(r, _)| r.number);
+        if let Some((r, _)) = objects.first() {
+            if r.number == 0 {
+                return Err(Error::Unrecoverable {
+                    detail: "object 0 is the head of the free list, not a document object".into(),
+                });
+            }
+        }
+        if let Some(pair) = objects.windows(2).find(|p| p[0].0.number == p[1].0.number) {
+            return Err(Error::Unrecoverable {
+                detail: format!("object {} was given twice", pair[0].0.number),
+            });
+        }
+
+        // The free list of a file with nothing freed is its head alone,
+        // linking back to itself (ISO 32000-1 7.5.4). Writing it is what makes
+        // the table's first subsection cover object 0, which every conforming
+        // reader expects to be there.
+        let rows = [XrefRow {
+            number: 0,
+            generation: 65535,
+            entry: RowEntry::Free(0),
+        }];
+        let highest = objects.last().map_or(0, |(r, _)| r.number);
+        let mut trailer = writer::trailer_for_new_section(&trailer);
+        trailer.set("Size", Object::Integer(i64::from(highest) + 1));
+
+        let mut out = HEADER.to_vec();
+        out.extend_from_slice(&writer::incremental_section(
+            HEADER.len() as u64,
+            &objects,
+            &rows,
+            trailer,
+        )?);
+        Ok(out)
+    }
 }
 
 /// Names the temporary file a `save_to_path` writes through. Two saves of the
