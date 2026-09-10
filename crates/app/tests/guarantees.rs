@@ -175,40 +175,114 @@ fn every_malformed_file_opens_and_repairs_into_a_new_section() {
     // is what makes disabling the generation step above visible.
     let ci = workflow("ci.yml");
     let steps = job_steps(&ci, "test");
-    let one = |command: &str, absent: &str| {
-        let found = steps
-            .iter()
-            .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
-            .collect::<Vec<_>>();
-        assert_eq!(found.len(), 1, "{absent}");
-        assert_reviewed_keys(
-            found[0],
-            &["name", "if", "run", "env"],
-            &format!("the `{command}` step"),
-        );
-        // Both are pinned to Linux, and the guarantee says so: the repair path
-        // is byte manipulation with no platform dimension, and the generator
-        // wants bash and perl. Pinned to the value rather than merely allowed,
-        // so `if: false` is not a way to switch either one off.
-        assert_eq!(
-            field(found[0], "if").as_deref(),
-            Some("runner.os == 'Linux'"),
-            "the `{command}` step runs on a different set of runners than the other half of this gate"
-        );
-        found[0]
-    };
-    one(
+    linux_step(
+        &steps,
         "./corpus/make-malformed.sh",
         "CI never generates corpus/malformed, so repair.rs skips it and guarantee 6 passes unmeasured",
     );
-    let prove = one(
-        "cargo test -p onionskin-cos --test repair",
-        "CI never reruns the repair suite with the corpus made mandatory, so a skipped guarantee 6 still reports a pass",
+    assert!(
+        corpus_rerun_commands(&steps).iter().any(|command| command
+            == "cargo test -p onionskin-cos --test repair"),
+        "the corpus rerun no longer names the repair suite, so a skipped guarantee 6 still reports a pass"
+    );
+}
+
+/// The suites that read the corpus, and the CI step that re-runs them with it
+/// mandatory, held to the same list.
+///
+/// Guarantee 6 spent a milestone green over a corpus CI never generated. The
+/// fix was a fetch-or-generate step plus a re-run under
+/// `ONIONSKIN_CORPUS_REQUIRED`, and the fix is only worth anything for as long
+/// as the re-run names every suite it should. A suite added to a crate and not
+/// to `ci.yml` is the same hole in a narrower place, so the list is derived
+/// from the test targets rather than maintained beside them: this fails when
+/// they disagree, in either direction.
+#[test]
+fn every_corpus_suite_is_rerun_with_the_corpus_required() {
+    let ci = workflow("ci.yml");
+    let test = job_of(&ci, "test");
+    let steps = job_steps(&ci, "test");
+
+    // Everything below is a step, and a step gates nothing inside a job that
+    // is allowed to fail or is conditioned away.
+    assert_eq!(
+        field(test, "continue-on-error"),
+        None,
+        "a job allowed to fail is not a gate"
     );
     assert_eq!(
-        field(&prove["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
+        field(test, "if"),
+        None,
+        "the test job is conditional, so there are pushes it does not gate"
+    );
+
+    // The corpus has to be there before anything can be required to have read
+    // it. Each of these is pinned to the Linux runner for the reason the
+    // malformed generator already gives: corpus assertions are byte and
+    // structure work with no platform dimension, and three runners fetching
+    // 351 MB is three caches and three chances to flake for one claim.
+    for (command, absent) in [
+        (
+            "./corpus/fetch.sh",
+            "CI fetches no corpus, so every external/ walk runs over an empty directory and passes",
+        ),
+        (
+            "./corpus/fetch.sh hayro-corpus",
+            "CI does not fetch hayro-corpus, which guarantee 1's round-trip walk and both extraction walks name",
+        ),
+        (
+            "./corpus/make-bench.py",
+            "CI never generates the thousand-page file, so the pages suite cannot be made mandatory",
+        ),
+    ] {
+        linux_step(&steps, command, absent);
+    }
+    let cache = steps
+        .iter()
+        .find(|step| {
+            action_of(step).is_some_and(|action| action.starts_with("actions/cache@"))
+                && field(&step["with"], "path").as_deref() == Some("corpus/external")
+        })
+        .expect("the test job does not cache the corpus it fetches");
+    assert!(
+        field(&cache["with"], "key").is_some_and(|key| key.contains(
+            "hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"
+        )),
+        "the corpus cache key does not cover the pinned revisions and the checksum manifest, so a moved pin serves the old corpus forever"
+    );
+
+    let rerun = corpus_rerun_step(&steps);
+    assert_eq!(
+        field(&rerun["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
         Some("1"),
-        "the repair rerun still lets an absent corpus report a pass"
+        "the rerun still lets an absent corpus report a pass"
+    );
+
+    let mut expected = Vec::new();
+    for suite in corpus_suites() {
+        // `--features shell` needs GPUI's Linux dependencies, which this job
+        // installs none of and has never built. An app suite that reads the
+        // corpus belongs beside the windowed tests in the `shell` job on
+        // macOS, with a fetch step of its own.
+        assert_ne!(
+            suite.package, "onionskin-app",
+            "{} --test {} reads the corpus from the app crate, which the test job cannot build with the shell features; it belongs in the shell job",
+            suite.package, suite.target
+        );
+        expected.push(format!(
+            "cargo test -p {} --test {}",
+            suite.package, suite.target
+        ));
+    }
+    assert!(
+        !expected.is_empty(),
+        "no test target reads the corpus, which means this search stopped working rather than that the corpus stopped being read"
+    );
+
+    assert_eq!(
+        corpus_rerun_commands(&steps),
+        expected,
+        "the corpus rerun and the suites that read the corpus disagree"
     );
 }
 
@@ -3491,6 +3565,149 @@ fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
         &format!("the step running `{command}`"),
     );
     step
+}
+
+/// The one step whose whole script is `command`, held to the reviewed key set
+/// and pinned to the Linux runner.
+///
+/// Not `gate_step`: the corpus steps carry an `if:` and some an `env:`, and
+/// that helper allows neither. Pinned to the value rather than merely allowed,
+/// so `if: false` is not a way to switch one off.
+fn linux_step<'a>(steps: &[&'a Yaml], command: &str, absent: &str) -> &'a Yaml {
+    let found = steps
+        .iter()
+        .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
+        .collect::<Vec<_>>();
+    assert_eq!(found.len(), 1, "{absent}");
+    assert_reviewed_keys(
+        found[0],
+        &["name", "if", "run", "env"],
+        &format!("the `{command}` step"),
+    );
+    assert_eq!(
+        field(found[0], "if").as_deref(),
+        Some("runner.os == 'Linux'"),
+        "the `{command}` step runs on a different set of runners than the rest of this gate"
+    );
+    found[0]
+}
+
+/// The `test` job step that re-runs the corpus suites with the corpus made
+/// mandatory. Found by name, because its script is one command per suite and
+/// there is nothing else to match it on.
+const CORPUS_RERUN: &str = "Prove every corpus suite measured its corpus";
+
+fn corpus_rerun_step<'a>(steps: &[&'a Yaml]) -> &'a Yaml {
+    let found = steps
+        .iter()
+        .filter(|step| field(step, "name").as_deref() == Some(CORPUS_RERUN))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        found.len(),
+        1,
+        "the test job has no single `{CORPUS_RERUN}` step, so nothing proves any suite read the corpus"
+    );
+    assert_reviewed_keys(
+        found[0],
+        &["name", "if", "run", "env"],
+        "the corpus rerun step",
+    );
+    assert_eq!(
+        field(found[0], "if").as_deref(),
+        Some("runner.os == 'Linux'"),
+        "the corpus rerun runs on a different set of runners than the fetch that feeds it"
+    );
+    found[0]
+}
+
+/// The commands that step runs, one per line. Through `script_lines`, so a
+/// `set +e` spliced in among them is an extra command rather than an invisible
+/// one.
+fn corpus_rerun_commands(steps: &[&Yaml]) -> Vec<String> {
+    let run = field(corpus_rerun_step(steps), "run").expect("the corpus rerun step runs nothing");
+    script_lines(&run)
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// The calls a test target makes to find the corpus. Any of them means the
+/// target reads a directory that is fetched or generated rather than
+/// committed, so a run without it passes having done nothing.
+const CORPUS_LOOKUPS: &[&str] = &[
+    "corpus_root(",
+    "corpus_dir(",
+    "corpus_file(",
+    "var_os(\"ONIONSKIN_CORPUS\")",
+];
+
+/// One integration-test target and the package that owns it.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct CorpusSuite {
+    package: String,
+    target: String,
+}
+
+/// Every integration-test target in the workspace that reads the corpus, found
+/// by looking rather than by remembering.
+fn corpus_suites() -> Vec<CorpusSuite> {
+    let root = workspace_root();
+    let mut found = Vec::new();
+    for group in ["crates", "plugins"] {
+        let directory = root.join(group);
+        let entries = fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{} is unreadable ({error})", directory.display()));
+        for entry in entries.flatten() {
+            let tests = entry.path().join("tests");
+            if !tests.is_dir() {
+                continue;
+            }
+            let package = package_name(&entry.path().join("Cargo.toml"));
+            let targets = fs::read_dir(&tests)
+                .unwrap_or_else(|error| panic!("{} is unreadable ({error})", tests.display()));
+            for target in targets.flatten() {
+                // Only the top level: a `tests/common/mod.rs` is a module of
+                // whatever includes it, not a target `--test` can name.
+                let path = target.path();
+                if !path.extension().is_some_and(|kind| kind == "rs") {
+                    continue;
+                }
+                let name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                // This file names every lookup above because it is the one
+                // searching for them, so it would always match itself.
+                if package == "onionskin-app" && name == "guarantees" {
+                    continue;
+                }
+                let source = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
+                if CORPUS_LOOKUPS.iter().any(|call| source.contains(call)) {
+                    found.push(CorpusSuite {
+                        package: package.clone(),
+                        target: name,
+                    });
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A manifest's `[package] name`. From that table only: `[[bin]]` declares a
+/// `name` too, and `crates/app`'s is not the package's.
+fn package_name(manifest: &Path) -> String {
+    let text = fs::read_to_string(manifest)
+        .unwrap_or_else(|error| panic!("{} is unreadable ({error})", manifest.display()));
+    for line in toml_section(&text, "package") {
+        if let Some(value) = line.trim().strip_prefix("name = ") {
+            return value.trim().trim_matches('"').to_owned();
+        }
+    }
+    panic!("{} declares no package name", manifest.display())
 }
 
 /// Whether a command builds the app binary. The word `cargo` anywhere, then
