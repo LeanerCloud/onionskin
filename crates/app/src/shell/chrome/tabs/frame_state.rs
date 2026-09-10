@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use gpui::{AppContext as _, Context, Entity, Window};
 
 use super::context::{CanvasContextMenu, TabContextMenu};
-use super::export::ExportJob;
+use super::export::ExportState;
 use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
@@ -187,8 +187,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) dialog: Option<ShellDialog>,
     pub(super) recent_menu_open: bool,
     pub(super) home: HomeState,
-    pub(super) export_job: Option<ExportJob>,
-    pub(super) next_export_id: u64,
+    pub(super) export: ExportState,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -303,8 +302,7 @@ impl ShellFrame {
             dialog: None,
             recent_menu_open: false,
             home: HomeState::default(),
-            export_job: None,
-            next_export_id: 0,
+            export: ExportState::default(),
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);

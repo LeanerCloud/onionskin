@@ -366,6 +366,7 @@ impl ShellFrame {
             TabCommand::CloseOthers => {
                 if let Some(kept) = self.tabs.tabs().get(index) {
                     if self
+                        .export
                         .export_job
                         .as_ref()
                         .is_some_and(|job| job.origin != kept.canvas.entity_id())
@@ -1131,7 +1132,7 @@ impl Render for ShellFrame {
             });
             let find_state = self.find;
             let find_input = self.find_input.clone();
-            let export_progress = self.export_job.as_ref().map(|job| {
+            let export_progress = self.export.export_job.as_ref().map(|job| {
                 (
                     export_progress_label(job),
                     job.phase.load() == ExportPhaseValue::Running,
@@ -4087,7 +4088,7 @@ mod tests {
     #[cfg(feature = "shell-test-support")]
     fn install_test_export_job(frame: &mut ShellFrame, origin: EntityId) -> Arc<ExportPhase> {
         let phase = Arc::new(ExportPhase::new());
-        frame.export_job = Some(ExportJob {
+        frame.export.export_job = Some(ExportJob {
             id: 7,
             origin,
             phase: Arc::clone(&phase),
@@ -4110,7 +4111,7 @@ mod tests {
                 install_test_export_job(frame, origin);
                 frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Complete), cx);
                 let completed = Arc::new(AtomicUsize::new(2));
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 8,
                     origin,
                     phase: Arc::new(ExportPhase::new()),
@@ -4120,9 +4121,9 @@ mod tests {
                 });
 
                 assert_eq!(frame.poll_export_progress(7), (false, false));
-                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 0);
+                assert_eq!(frame.export.export_job.as_ref().unwrap().last_displayed, 0);
                 assert_eq!(frame.poll_export_progress(8), (true, true));
-                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 2);
+                assert_eq!(frame.export.export_job.as_ref().unwrap().last_displayed, 2);
             })
             .unwrap();
     }
@@ -4222,7 +4223,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 let canvas = frame.tabs.tabs()[0].canvas.clone();
                 let origin = canvas.entity_id();
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 7,
                     origin,
                     phase: Arc::new(ExportPhase::new()),
@@ -4232,9 +4233,9 @@ mod tests {
                 });
                 assert_eq!(frame.poll_export_progress(7), (true, true));
                 frame.start_export(ExportTarget::Png, cx);
-                assert!(frame.export_job.is_some());
+                assert!(frame.export.export_job.is_some());
                 frame.finish_export(7, origin, &canvas, result, cx);
-                assert!(frame.export_job.is_none());
+                assert!(frame.export.export_job.is_none());
                 assert!(frame
                     .accessible(window, cx)
                     .find(&"export-progress".into())
@@ -4375,7 +4376,7 @@ mod tests {
         window
             .update(cx, |frame, window, cx| {
                 let origin = frame.tabs.tabs()[0].canvas.entity_id();
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 7,
                     origin,
                     phase: Arc::clone(&phase),
@@ -4413,13 +4414,15 @@ mod tests {
                     .tabs
                     .tabs()
                     .iter()
-                    .find(|tab| tab.canvas.entity_id() == frame.export_job.as_ref().unwrap().origin)
+                    .find(|tab| {
+                        tab.canvas.entity_id() == frame.export.export_job.as_ref().unwrap().origin
+                    })
                     .unwrap()
                     .canvas
                     .clone();
-                let origin = frame.export_job.as_ref().unwrap().origin;
+                let origin = frame.export.export_job.as_ref().unwrap().origin;
                 frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Cancelled), cx);
-                assert!(frame.export_job.is_none());
+                assert!(frame.export.export_job.is_none());
                 assert!(frame
                     .accessible(window, cx)
                     .find(&"export-progress".into())

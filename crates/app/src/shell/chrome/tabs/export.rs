@@ -28,7 +28,7 @@ impl ShellFrame {
             return;
         };
         let canvas = tab.canvas.clone();
-        if self.export_job.is_some() {
+        if self.export.export_job.is_some() {
             report_export_failure(&canvas, ExportFailure::AlreadyInProgress, cx);
             return;
         }
@@ -71,7 +71,7 @@ impl ShellFrame {
             frame
                 .update(cx, |frame, cx| {
                     if frame.is_active_canvas(origin) {
-                        if frame.export_job.is_some() {
+                        if frame.export.export_job.is_some() {
                             report_export_failure(&canvas, ExportFailure::AlreadyInProgress, cx);
                             return;
                         }
@@ -99,12 +99,12 @@ impl ShellFrame {
         prepared: PreparedExport,
         cx: &mut Context<Self>,
     ) {
-        let id = self.next_export_id;
-        self.next_export_id = self.next_export_id.wrapping_add(1);
+        let id = self.export.next_export_id;
+        self.export.next_export_id = self.export.next_export_id.wrapping_add(1);
         let phase = Arc::new(ExportPhase::new());
         let completed = Arc::new(AtomicUsize::new(0));
         let total = prepared.request.pages.pages().count();
-        self.export_job = Some(ExportJob {
+        self.export.export_job = Some(ExportJob {
             id,
             origin,
             phase: Arc::clone(&phase),
@@ -147,7 +147,7 @@ impl ShellFrame {
     }
 
     pub(super) fn poll_export_progress(&mut self, id: u64) -> (bool, bool) {
-        let Some(job) = self.export_job.as_mut().filter(|job| job.id == id) else {
+        let Some(job) = self.export.export_job.as_mut().filter(|job| job.id == id) else {
             return (false, false);
         };
         let completed = job.completed.load(Ordering::Acquire);
@@ -166,10 +166,10 @@ impl ShellFrame {
         result: Result<ExportOutcome, ExportFailure>,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.export_job.as_ref(), Some(job) if job.id == id) {
+        if !matches!(self.export.export_job.as_ref(), Some(job) if job.id == id) {
             return;
         }
-        self.export_job = None;
+        self.export.export_job = None;
         if let Err(error) = result {
             if self
                 .tabs
@@ -185,6 +185,7 @@ impl ShellFrame {
 
     pub(super) fn cancel_export(&mut self, cx: &mut Context<Self>) {
         if self
+            .export
             .export_job
             .as_ref()
             .is_some_and(|job| job.phase.cancel())
@@ -194,7 +195,7 @@ impl ShellFrame {
     }
 
     pub(super) fn cancel_export_for(&mut self, origin: EntityId) {
-        if let Some(job) = &self.export_job {
+        if let Some(job) = &self.export.export_job {
             if job.origin == origin {
                 job.phase.cancel();
             }
@@ -256,6 +257,18 @@ impl ExportPhase {
     pub(super) fn is_cancelling(&self) -> bool {
         self.load() == ExportPhaseValue::Cancelling
     }
+}
+
+/// The frame's export state: the one job that can be in flight, and the
+/// counter that names the next one.
+///
+/// Declared here rather than among `ShellFrame`'s fields so that a package
+/// adding to the export surface edits this file and not the frame's
+/// declaration, which every other package is also editing.
+#[derive(Default)]
+pub(super) struct ExportState {
+    pub(super) export_job: Option<ExportJob>,
+    pub(super) next_export_id: u64,
 }
 
 pub(super) struct ExportJob {
@@ -789,7 +802,7 @@ pub(super) fn report_export_failure(
 }
 impl Drop for ShellFrame {
     fn drop(&mut self) {
-        if let Some(job) = &self.export_job {
+        if let Some(job) = &self.export.export_job {
             job.phase.cancel();
         }
     }

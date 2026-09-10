@@ -80,7 +80,7 @@ impl ShellFrame {
         if visibility.tab_bar {
             root = root.child(self.accessible_tabs());
         }
-        if let Some(job) = &self.export_job {
+        if let Some(job) = &self.export.export_job {
             let can_cancel = job.phase.load() == ExportPhaseValue::Running;
             root = root.child(
                 A11yElement::new(
