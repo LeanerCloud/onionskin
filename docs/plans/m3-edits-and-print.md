@@ -40,7 +40,7 @@ in the footnote, and any figure not re-counted here is not a fact.
 | `crates/cos` | 8152 lines, real, **unchanged since `81f802f`** | Already has the whole write side: `set_object`, `add_object`, `delete_object`, `set_trailer_entry`, `set_info_field`, `has_pending_changes`, `incremental_section`, `save_to_writer/path/vec`, `original_len`. Edits accumulate in one `BTreeMap<u32, Edit>` (`Edit` is private) and **one call to `incremental_section` emits one section carrying all of them**. There is no way to withdraw a pending edit, no section-chain accessor, no `flatten` full-rewrite API, and no `next_object_number` accessor. `Document` is `!Send` (`Rc<ObjectStream>` at `document.rs:109`), is **not `Clone`**, and holds a `Reader` plus four `RefCell` caches (`document.rs:108-114`). |
 | cos deletion | real, and the landmine | `delete_object` splices a chained free list at the head (`free_list_rows`, `document.rs:995`), refuses object 0 and refuses the trailer's `/Root`, and **bumps the generation** (`document.rs:906`). It performs **no reference walk**: deleting a `/Pages` node, a page still in a `/Kids` array, a content stream, or an annotation's appearance stream leaves a dangling reference and cos will happily serialize it. The doc comment at `document.rs:868` names M3's `tools-organize` as the caller that must fix this up. Symmetrically, `set_object` **refuses a number the file marks free**, returning `Error::FreedObject` (`document.rs:836-838`); T5's free-nothing rule is what keeps M3 clear of both. |
 | `crates/core` | **11047** lines, real session | `core::Document` (there is no `Session` type) holds `bytes: Arc<Vec<u8>>` and a private `cos::Document` it never mutates (`session.rs:182-184`), page geometry and text caches, selection, search, the render worker handle, and the read-only pane readers (`outline`, `attachments`, `signatures`, `layers`). **No edit graph, no history, no save.** `history.rs` is view history and says so in its own doc comment. `ExportSnapshot` (`session.rs:163`) is the only state-replay mechanism and it replays layer visibility only. `&mut Document` already reaches `selection_mut`, `cancel_search`, `set_layer_visible`, `reset_layer_visibility`, `request_snapshot` and `select_match`, which is P7's real review risk. |
-| `crates/plugin-api` | **755** lines, real | `ToolPlugin` with its full gesture lifecycle, `CommandPlugin`, `CodecPlugin` (export only), `PluginRegistry`, `ToolCtx { doc, viewport }` (`lib.rs:81`), `ToolCapability` (**8** variants, `lib.rs:60`), `Overlay` (6 variants, `lib.rs:43`: `AntsRect`, `Rect`, `Quads`, `Polyline`, `Line`, `Circle { center, radius }`). **A tool has no way to express a document edit.** Its own module doc says the import path "waits for the edit graph ... which is M3". `Requirement` is not here: it is a private four-variant enum in `crates/app/src/shell/context_menu.rs:47`. |
+| `crates/plugin-api` | **755** lines, real | `ToolPlugin` with its full gesture lifecycle, `CommandPlugin`, `CodecPlugin` (export only), `PluginRegistry`, `ToolCtx { doc, viewport }` (`lib.rs:81`), `ToolCapability` (**8** variants, `lib.rs:60`), `Overlay` (6 variants, `lib.rs:43`: `AntsRect`, `Rect`, `Quads`, `Polyline`, `Line`, `Circle { center, radius }`), of which **only `Quads` and `AntsRect` can be painted**: `canvas.rs`'s `OverlayPaint` (`canvas.rs:344`) has those two variants and `map_overlay` (`canvas.rs:1879-1895`) returns `Err` for the other four, surfacing `"the canvas cannot draw a {kind} overlay yet"`. `tools-basic` uses exactly the two that work. **A tool has no way to express a document edit.** Its own module doc says the import path "waits for the edit graph ... which is M3". `Requirement` is not here: it is a private four-variant enum in `crates/app/src/shell/context_menu.rs:47`. |
 | `crates/render` | **3118** lines | Renders from `Arc<Vec<u8>>` through hayro; `render_annotations` is a settings bool (`base.rs:103`); `TileStore` evicts. Annotation appearance streams render. hayro's annotation loop **never reads an annotation's `/OC`**, only the `/F` hidden flag. |
 | `crates/content` | 13454 lines, unchanged | `extract_page`, `PageText`/`TextRun`/`Glyph`/`Mapping`/`ByteProvenance`, `PageQuad`. This is where a highlight's quad points come from. Nothing writes. |
 | `crates/print` | 6 lines, doc comment only | Workspace member, `onionskin-print` in `[workspace.dependencies]`, **no `[dependencies]` section at all**. Greenfield. |
@@ -368,9 +368,17 @@ construction* rather than by two code paths being kept in step.
 
 The split with overlays is clean: `Overlay` covers the **in-progress gesture**
 (the rubber band, the ink stroke still under the stylus, the marquee), which is
-what `ToolPlugin::overlays` already returns and what tools-basic already uses.
-Committed edits go through the preview buffer. A tool never draws its own
-committed result.
+what `ToolPlugin::overlays` already returns. Committed edits go through the
+preview buffer. A tool never draws its own committed result.
+
+The seam is clean; it is not finished. `tools-basic` uses two of `Overlay`'s six
+variants and those two are the only two the canvas can paint: `OverlayPaint`
+(`canvas.rs:344`) has `Quads` and `AntsRect`, and `map_overlay`
+(`canvas.rs:1879-1895`) returns `Err` for `Rect`, `Polyline`, `Line` and
+`Circle`, which `overlay_paints` turns into the status
+`"the canvas cannot draw a {kind} overlay yet"`. Every M3 comment tool except the
+text markup ones needs one of those four, so **P9a lands the painters** before
+P9b and P9c can preview anything.
 
 Cost, stated in terms of `section_for` because that is what runs: a committed
 edit calls `section_for(&overlay, &trailer_edits)`, which serializes the changed
@@ -1742,23 +1750,50 @@ commit path, and none of them writes a content stream. All three depend on P6 an
 P7, and all three land after P8, so P6's generator has one consumer's worth of
 feedback before twelve more arrive.
 
-**One thing they all need that `plugin-api` does not have.** `Overlay`'s six
-variants (`lib.rs:43`) are `AntsRect`, `Rect`, `Quads`, `Polyline`, `Line` and
-`Circle { center, radius }`, and the first draft claimed they "cover every
-in-progress gesture these tools need". They do not, in two places:
+**The in-progress overlay seam does not exist yet, and the first draft said it
+did.** It claimed "`Overlay::{Polyline, Line, Circle, Rect}` cover every
+in-progress gesture these tools need, so nothing new is required on the overlay
+side". Measured against `main` at `fa5a194`, that is wrong twice, and the second
+way is the expensive one.
+
+**Four of the six `Overlay` variants cannot be drawn.** `plugin_api::Overlay`
+(`lib.rs:43`) has six variants, but `canvas.rs`'s `OverlayPaint`
+(`canvas.rs:344`) has **two**: `Quads` and `AntsRect`. `map_overlay`
+(`canvas.rs:1879-1895`) returns `Err` for `Rect`, `Polyline`, `Line` and
+`Circle`, and `overlay_paints` turns that into a user-visible status,
+`"the canvas cannot draw a {kind} overlay yet"`. Only the two that
+`tools-basic` uses have painters: `select_text` emits `Quads` and `marquee`
+emits `AntsRect`. So every tool in this group would ship with its in-progress
+preview replaced by an error string. That is not a shape problem; there is no
+painter.
+
+**And `Circle` is the wrong shape anyway**, in two ways:
 
 - **Oval is an ellipse inscribed in a dragged rectangle, and `Circle { center,
   radius }` cannot express one.** A preview drawn as a circle is a preview that
   does not match what the commit produces, which is the exact class T4's preview
-  buffer exists to abolish.
+  buffer exists to abolish. `Circle` also has **no consumer at all** today: the
+  search-hit marker its doc comment names is an example, not a caller, and
+  search hits are painted through `HighlightPaint`.
 - **Polygon and Cloud are closed and `Polyline` is open**, so the in-progress
   preview of a polygon is missing its closing edge.
 
-Both are `plugin-api` changes and they land in **P9c**, which is the package that
-needs them: `Overlay::Ellipse { bounds: PageRect }` replacing `Circle` (its only
-current consumer is a search-hit marker, which an ellipse with equal axes draws),
-and a `closed: bool` on `Polyline`. Naming them here rather than discovering them
-mid-gesture is the point.
+**P9a owns the whole seam**, because it lands first of the three, needs `Rect`
+itself for the text box and the callout box, and one package owning the mapping
+means one review of it rather than three:
+
+- `plugin_api::Overlay`: `Circle { center, radius }` becomes
+  `Ellipse { bounds: PageRect }`, and `Polyline` gains `closed: bool`. Named
+  consumers: P9c's Oval and P9c's Polygon and Cloud.
+- `canvas.rs`: `OverlayPaint` gains `Rect`, `Polyline`, `Line` and `Ellipse`,
+  with painters and viewport mapping, and `map_overlay` loses every `Err` arm so
+  a future unpainted variant is a compile error rather than a status message.
+  Named consumers: P9a's text box and callout (`Rect`), P9b's ink (`Polyline`),
+  P9c's line, arrow, rectangle, oval, polygon, polyline and cloud (all four).
+
+Naming this here rather than discovering it mid-gesture is the point, and it is
+the difference between three tool packages and three tool packages plus a shell
+change nobody scheduled.
 
 #### P9a. Notes and free text
 
@@ -1770,10 +1805,17 @@ Sticky note (`/Text`), Add text comment / typewriter (`/FreeText` with
 63 Callout. **4 rows.**
 
 **Files.** `plugins/tools-comment/src/{note,freetext}.rs`,
-`plugins/tools-comment/src/lib.rs`.
+`plugins/tools-comment/src/lib.rs`, `crates/plugin-api/src/lib.rs` (the two
+`Overlay` corrections above), `crates/app/src/shell/canvas.rs` (the four new
+`OverlayPaint` variants, their painters, and the removal of `map_overlay`'s
+`Err` arms).
+
+**Depends on.** P0b (the canvas painters), P6, P7, P8.
 
 **Verification.**
 - Per tool, a gesture test: the shape a drag produces, the shape a click produces (a sticky note is a click, a text box is not), and what a degenerate gesture produces (nothing, for every one of them).
+- **Every `Overlay` variant paints**, asserted by handing the canvas one of each and comparing the resulting `PaintList` against expected view-space geometry. `map_overlay` has no `Err` arm left, so this is exhaustive by the compiler rather than by the test remembering all six.
+- **No overlay produces the `"the canvas cannot draw a {kind} overlay yet"` status**, asserted on the recorded errors after each gesture test. That string is the current behaviour for four of six variants and it is what a user would have seen.
 - A callout's `/CL` line points from the leader's tail to the annotation's `/Rect`, asserted on the array rather than on the render, plus one render that shows the leader.
 - Every tool's edit passes P7's undoable-and-serializes property test.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment` and the P7 property suite; `cargo clippy -p onionskin-app --no-default-features --features tools-comment --all-targets -- -D warnings`.
@@ -1795,9 +1837,12 @@ Draw freehand (`/Ink`, with stylus pressure from the GPUI fork), Erase ink
 **Files.** `plugins/tools-comment/src/ink.rs`,
 `plugins/tools-comment/src/lib.rs`.
 
+**Depends on.** P6, P7, P8, P9a (the `Polyline` painter).
+
 **What exists to build on.** `PointerInput` already carries `pressure: f32` and
 the pinned GPUI fork adds stylus pressure, which is the whole reason the fork is
-pinned. `Overlay::Polyline` is the in-progress stroke and needs no change.
+pinned. `Overlay::Polyline` is the in-progress stroke and P9a gives it a
+painter.
 
 **Verification.**
 - A stroke with varying pressure produces an `/Ink` annotation whose appearance stream has varying stroke width, asserted by rendering two strokes at different pressures and comparing covered pixel counts, not by reading the content stream text.
@@ -1821,26 +1866,25 @@ Line (`/Line`), Arrow (`/Line` with `/LE` endings), Rectangle (`/Square`), Oval
 71 Connected lines (polyline), 72 Cloud. **7 rows.**
 
 **Files.** `plugins/tools-comment/src/shapes.rs`,
-`plugins/tools-comment/src/lib.rs`, `crates/plugin-api/src/lib.rs` (the two
-`Overlay` changes above), `crates/app/src/shell/canvas.rs` (their render arms).
+`plugins/tools-comment/src/lib.rs`.
 
-**Depends on.** P0b (the canvas render arms for the changed `Overlay` variants),
-P6, P7, P9a.
+**Depends on.** P6, P7, P9a (which owns every `Overlay` and `OverlayPaint`
+change these seven tools need, so this package adds no shell file).
 
 **Verification.**
 - Per tool, a gesture test: the shape a drag produces, and what a degenerate gesture produces (nothing, for every one of them).
 - **The in-progress overlay matches the committed result**, asserted for Oval and Polygon specifically by rendering the overlay and the committed annotation and comparing: an ellipse preview against an ellipse annotation, a closed polygon preview against a closed polygon. This is the assertion the `Overlay` changes exist for, and without it a circle-preview-for-an-oval ships and looks almost right.
 - Cloud: the `/BE` border effect renders as a scalloped edge, asserted by comparing against a plain `/Polygon` render (they must differ) rather than by asserting an exact pixel pattern.
-- `Overlay::Circle`'s existing consumer, the search-hit marker, still renders identically after the variant change, which is what makes this a replacement rather than an addition.
+- `Overlay::Ellipse` with equal axes draws the circle `Overlay::Circle` described, asserted once, so the replacement loses nothing. There is no existing consumer to regress: `Circle` had none, and search hits are painted through `HighlightPaint`.
 - Every tool's edit passes P7's undoable-and-serializes property test.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` for the canvas arms; the P7 property suite; the matching clippy.
 
 **Review risk.** Whether Arrow is a `/Line` with `/LE` or a separate subtype (it
 is the former, and shipping it as a `/Polygon` would render in Acrobat as a line
 with no head). Whether the seven tools share one defaults struct, one commit path
-and one appearance call, or are seven small renderers. Whether replacing
-`Overlay::Circle` was done as a replacement or as a seventh variant nobody
-removes. **Mutation that must break its tests:** dropping `/BE` must fail the
+and one appearance call, or are seven small renderers. Whether this package
+reached back into `canvas.rs` after all, which would mean P9a's seam was
+incomplete and is worth knowing rather than patching. **Mutation that must break its tests:** dropping `/BE` must fail the
 cloud test; drawing the Oval preview as a circle must fail the preview-matches-
 commit test and nothing else.
 
@@ -2838,10 +2882,10 @@ P1c corpus in CI       P0a relocate ShellFrame       P1b crypto (ruled in)
            │    │                        ├── P13b bookmark + attachment authoring (also P0b, P3, P5)
            │    │                        └── P20 comments pane (also P0b, P8, P9a, P9b, P9c)
            │    └── P6  core::annots
-           │         ├── P8  tools-comment: text markup (also P7)
-           │         ├── P9a notes and free text (after P8)
-           │         ├── P9b ink (after P8)
-           │         └── P9c shapes (also P0b, after P9a)
+           │         └── P8  tools-comment: text markup (also P7)
+           │              └── P9a notes, free text, the overlay painters (also P0b)
+           │                   ├── P9b ink
+           │                   └── P9c shapes
            ├── P7  plugin-api edit contract (also P0b)
            └── P22 remaining shell rows (P0b only; drawn here for position)
 ```
@@ -2875,7 +2919,7 @@ round.
 
 - **P0 does not run alone in `crates/app` and does not block nobody.** Both of
   those claims were in the first draft and both are false. `crates/app` files
-  appear in the Files line of P1b, P1c, P7, P9c, P10, P12, P13a, P13b, P13c,
+  appear in the Files line of P1b, P1c, P7, P9a, P10, P12, P13a, P13b, P13c,
   P14a, P14b, P17, P18, P19, P20, P21 and P22. All except P1c depend on P0b and
   land after it; P1c is the exception because its only app file is
   `crates/app/tests/guarantees.rs`, which neither P0a nor P0b touches.
@@ -2888,9 +2932,12 @@ round.
 - P5 and P6 are independent of each other; both need P4.
 - P8 comes before all three of P9a, P9b and P9c, on purpose: it gives P6's
   appearance generator one consumer's worth of feedback before twelve more
-  arrive. P9a and P9b are then independent of each other; P9c follows P9a for
-  the shared defaults struct and is the one that changes `plugin_api::Overlay`.
-  P10 needs P9c's shapes before its stamps.
+  arrive. **P9a then gates P9b and P9c**, not for taste but because it owns the
+  `Overlay` and `OverlayPaint` seam both need: four of six `Overlay` variants
+  have no painter today (`canvas.rs:1879-1895` returns `Err` for `Rect`,
+  `Polyline`, `Line` and `Circle`), so an ink stroke or a rectangle drawn before
+  P9a lands shows a status string instead of a preview. P9b and P9c are then
+  independent of each other. P10 needs P9c's shapes before its stamps.
 - P15 is windowless and in a crate nobody else touches, so it runs from the
   moment P3 and P6 land, and it is the head of the whole print track.
 
@@ -2922,11 +2969,13 @@ that later moves beneath it:
    every other app package reads or extends. A save and undo model rebased under
    twelve branches is worse than twelve rebasing under it. P19 next, as the first
    consumer of the rail-plus-side-panel surface P20 also uses.
-3. **P12** (depth 7) and **P21** (depth 7). P12 adds the first new `ShellDialog`
-   variants and P21 the second pane-shaped surface.
-4. **P9c**, **P14a** and **P17** (all depth 8). P9c changes two
-   `plugin_api::Overlay` variants and the canvas arms that render them, so it
-   lands before anything else touching `canvas.rs`.
+3. **P9a**, **P12** and **P21** (all depth 7). **P9a first among them**: it is
+   the only app package that changes `plugin_api::Overlay` and adds four
+   `OverlayPaint` variants with their painters, and it removes `map_overlay`'s
+   `Err` arms, so anything else touching `canvas.rs` should rebase over it rather
+   than under it. P12 then adds the first new `ShellDialog` variants and P21 the
+   second pane-shaped surface.
+4. **P14a** and **P17** (both depth 8).
 5. **P10** and **P14b** (both depth 9).
 6. **P13b** and **P20** (both depth 10). P20's is the one that also flips the
    quick action gates.
@@ -3120,6 +3169,8 @@ Every abstraction M3 introduces names the caller that exists in M3.
 | `core::embedded` (the embedded-file writer) | P10's attach-as-comment, P13b's Attachments pane |
 | `core::Document::edits()` | every M3 tool and command, reached through the `&mut Document` `ToolCtx` and `CommandCtx` already carry; there is no second field, because `EditSession` is a field of `Document` and two mutable borrows of it do not compile |
 | `Requirement::Command` in `plugin-api` | the six `Requirement::Milestone` arms `context_menu.rs` calls "guesses" |
+| `plugin_api::Overlay::Ellipse` (replacing `Circle`) and `Polyline { closed }` | P9c's Oval, Polygon and Cloud. `Circle` had no consumer at all, so this is a replacement, not an addition |
+| `canvas::OverlayPaint::{Rect, Polyline, Line, Ellipse}` and their painters | P9a's text box and callout, P9b's ink, P9c's seven shapes. Today four of six `Overlay` variants render as a status string instead of a preview |
 | `print::{Sheet, Placement, PrintBackend}` | the file backend, the macOS backend, and P17's preview |
 
 Deliberately **not** built in M3, and why:
