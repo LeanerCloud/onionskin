@@ -205,9 +205,10 @@ true within one save and false across one.
   trailer. ISO 32000-1 section 7.3.7 makes a dictionary entry whose value is null
   equivalent to that entry being absent, so this needs nothing beyond
   `Dict::set`, which cos already has.
-- `Change::TrailerKey`'s `before` gains the same three-way shape as the map:
-  **not in the overlay**, **cleared**, or **set to a value**, read against the
-  live base trailer at edit time exactly as an object's `before` is.
+- `Change::TrailerKey`'s `before` is `Cleared` or `Set(v)`, captured against the
+  overlay first and the **live base trailer** second, exactly as an object's
+  `before` is. There is no "not in the overlay" state: a key's absence and a
+  key's clearing are the same instruction to the section writer.
 
 - No overlay entry ever names a number the base marks free, so `section_for`
   never has to write an in-use row for one.
@@ -294,15 +295,15 @@ core::edit::Overlay  =  { states:  BTreeMap<u32, ObjectState>,
                           trailer: BTreeMap<Name, Option<cos::Object>>,   // None = clear the key
                           next_number }
 core::edit::ObjectState = { generation: u16, object: cos::Object }
-core::edit::TrailerState = NotInOverlay | Cleared | Set(cos::Object)
+core::edit::TrailerState = Cleared | Set(cos::Object)      // no NotInOverlay: nothing produces it
 core::edit::Change   = Object    { number: u32, before: Option<ObjectState>, after: Option<ObjectState> }
                      | TrailerKey { key: Name,  before: TrailerState,       after: TrailerState }
 core::edit::Entry    = { label: &'static str, changes: Vec<Change> }
 core::edit::History  = { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 ```
 
-**`TrailerState` is three-way where `ObjectState` is two-way, and the asymmetry
-is the point** (T1). An object this session created is unmade by dropping it from
+**`TrailerState` has a `Cleared` variant where `ObjectState` has nothing like
+it, and that asymmetry is the point** (T1). An object this session created is unmade by dropping it from
 the overlay, because its referrer's own `Change` stops naming it. **The trailer
 is the root and has no referrer**, so undoing the creation of a trailer key has
 to say "clear it" rather than "forget it", and that state has to survive into the
@@ -347,7 +348,7 @@ break silently:
   compare against.
 
 So `Overlay` gains a trailer map and `Change` gains a `TrailerKey` variant, in
-the three-way shape above. A trailer edit is then captured, undone and collapsed
+the shape above. A trailer edit is then captured, undone and collapsed
 by value exactly like an object edit, and **`section_for`'s two arguments both
 come out of one undoable structure** rather than one of them coming from
 nowhere - across a save as well as within one, which is the part pass 2 got
@@ -504,13 +505,31 @@ Three consequences the plan states rather than discovers:
   construction for the second save and matches the existing
   `ExportSnapshot::open` pattern.
 
-  **"Clears the overlay" means exactly three things, and one of them is not
-  "clear".** Left unspecified this has three readings and one of them destroys
-  the catalog, so:
+  **This is one function, `adopt`, and there are five call sites.** Written as a
+  rule "after a save", which is how it first appeared, it covers one of them and
+  four get nothing - and one of those four is the exact catastrophe the rule was
+  written to prevent:
 
-  > `states.clear()`, `trailer.clear()`, and **`next_number` reseeded to
-  > `max(reopened.next_object_number(), 1 + the highest object number named
-  > anywhere in `History`, including the redo tail)`**, never reset.
+  > **`fn adopt(&mut self, bytes: Arc<Vec<u8>>)`**: reopen from `bytes`, clear
+  > the overlay's `states` and `trailer`, reseed `next_number`, drop the cached
+  > `structure()` document and the per-generation caches, and reseat the render
+  > and search workers.
+
+  | Call site | Why it needs `adopt` and not a save-shaped rule |
+  |---|---|
+  | **Save** | the case the rule was written for |
+  | **Save As** | covered by implication only, which is not covered |
+  | **`revert_to`** | truncates, reopens, **and clears `History` both ways** (below), so `next_number` must come **entirely** from the reopened document. `Overlay::default()` here puts the next annotation at object 0 or 1 and **overwrites the catalog** - and this is the one package whose review risk deferred the question to P3 |
+  | **Crash-recovery replay** | replays an overlay naming numbers a freshly opened document has never seen, so seeding from that document alone **collides on the first edit after recovery** |
+  | **Generation preview (P19)** | a fifth document over a truncated range, with no stated relationship to the overlay, to `next_number`, or to `structure()`'s readers until now |
+
+  **The reseed itself**, which `adopt` performs and which differs by caller:
+
+  > `next_number` = `max(reopened.next_object_number(), 1 + the highest object
+  > number named anywhere in `History`, including the redo tail)`, never reset.
+  > After `revert_to`, `History` is empty, so the second term vanishes and the
+  > value comes wholly from the reopened document - which is correct, and is why
+  > the two are one expression rather than two rules.
 
   `Overlay::default()` would give `next_number` zero, so the next annotation
   would be written at object 0 or 1 and **silently overwrite the catalog**, and
@@ -591,21 +610,31 @@ State also **which state survives a preview-generation bump, over
 discipline T1's overlay table uses, and for the same reason: a list that samples
 is a list that misses the field nobody thought about.
 
-| Field | On a generation bump |
-|---|---|
-| `bytes` / preview buffer | replaced; this **is** the bump |
-| `cos` | unchanged until a save reopens it |
-| `page_count` | no longer a field at all; a method over the overlay's page set (P3) |
-| geometry cache | keyed on `(generation, page)`; unedited pages' entries still hit |
-| text cache | same |
-| tiles | unedited pages survive; edited pages evict |
-| `outline`, `attachments`, `signatures`, `layers` | dropped and re-read; each is an `Option` today, so this is invalidation |
-| `selection` | survives, **clamped** to the new page set |
-| search worker | re-seeded; it holds the original bytes and page bounds |
-| render worker handle | survives; it is handed the new `Arc` |
+| `core::Document` field | Preview-generation bump | Save + reopen (`adopt`) | `revert_to` (`adopt`) |
+|---|---|---|---|
+| `bytes` / preview buffer | replaced; this **is** the bump | replaced with the saved bytes | replaced with the truncated bytes |
+| `cos` | unchanged | reopened | reopened |
+| `structure()` cache | dropped, rebuilt lazily | dropped | dropped |
+| `provenance` | unchanged | **a repaired document becomes `Clean`**, so the repair notice must clear | re-derived; may become `Repaired` again |
+| `page_count` | not a field; `content::page_count(structure())` | same | same |
+| geometry cache | keyed `(generation, page)`; unedited pages hit | dropped | dropped |
+| `pending_geometry` | drained and discarded, or responses carry the generation (F6) | drained | drained |
+| text cache | keyed `(generation, page)` | dropped | dropped |
+| tiles | unedited pages survive | dropped | dropped |
+| `outline`, `attachments`, `signatures`, `layers` | dropped; re-read through `structure()` | dropped | dropped |
+| `selection` | survives, **clamped** to the new page set | clamped | clamped |
+| search matches and cursor | **page-keyed, so dropped**; a match on a removed page is not clampable | dropped | dropped |
+| search worker | re-seeded | re-seeded | re-seeded |
+| snapshot's pending page index | dropped | dropped | dropped |
+| render worker | new `RenderSession` over the new bytes (F9) | same | same |
+| `Overlay.states` / `.trailer` | unchanged; the bump is *caused* by them | cleared | cleared |
+| `Overlay.next_number` | unchanged | reseeded (`adopt`) | reseeded from the reopened document alone |
+| `History` | unchanged | unchanged; the saved mark advances | **cleared both ways**, `saved_mark = Some(0)` |
 
-Getting that list wrong in one direction is a full re-render per keystroke, and
-in the other is a pane showing a document that no longer exists.
+Getting a row wrong in one direction is a full re-render per keystroke, and in
+the other is a pane showing a document that no longer exists. The table is over
+the session's **real fields**, so adding a field means adding a row - the same
+rule T1's overlay table and `structure()` both carry.
 
 Two costs the naive design would have added and this one does not: `section_for`
 takes `&self`, so **neither cos cache is dropped** (the old projection called
@@ -1310,8 +1339,27 @@ already strips xref-stream-only trailer keys. The full-table path in
 `incremental_section` (`document.rs:1053-1085`) already enumerates every live
 object, which is most of `write_new`. `free_list_rows` (`document.rs:995`)
 already knows which numbers a section frees, which is the gate's cheap input.
-`incremental_section` is already `&self` and already reads `self.edits` in one
-place, so item 4 is a parameter change, not a rewrite.
+`incremental_section` is already `&self`, so item 4 is a parameter change
+rather than a rewrite - **but it reads `self.edits` in FOUR places, not one, and
+missing the fourth silently drops an edit**:
+
+| Site | What it does |
+|---|---|
+| `document.rs:962` | `has_pending_changes`, which gates the early-out |
+| `document.rs:995-1002` | `free_list_rows`, which collects the deletions |
+| `document.rs:1042-1044` | the objects collection |
+| **`document.rs:1057`** | the full-table skip, `if number == 0 \|\| self.edits.contains_key(&number) { continue; }` |
+
+**All four take the argument.** Leave the fourth reading `self.edits` - which is
+permanently empty for `core` - and on a **repaired** document an overlaid object
+whose base entry is `InObjectStream` is no longer skipped, so the compressed
+branch calls `self.get(number)` and pushes the **base** copy into `objects`
+alongside the overlay's. `sort_by_key` is stable so the overlay copy sorts first,
+`writer`'s `rows.insert` is last-write-wins, and **the xref row points at the base
+copy**. The edit is written into the file and then indexed away. Nothing catches
+it: `audit_references` resolves, the gate resolves, and preview and save agree
+because they are one call. The user sees the annotation not appear, on repaired
+documents only, with a fully green suite.
 
 **Verification.**
 - `sections()` over every `external/` corpus file that has more than one `%%EOF`: the reported chain's byte ranges partition the file with no gap and no overlap, and the last section's `end` equals the file length. Name the fixtures; a file set chosen by "some corpus file" is not a proof. This walk is one of the suites P1c's CI step makes mandatory, or it reports a pass over an empty file list.
@@ -1432,9 +1480,37 @@ a **no-op save** is plaintext objects under a trailer that still names
 of a protected document, from a save the user believes changed nothing.
 
 So: **a document whose trailer carries `/Encrypt` gets a typed refusal from
-`section_for` rather than a section**, on an empty overlay as much as a full one,
-naming M6. Writing to an encrypted document is M6's whole job and M3 has no
-business emitting one byte into one.
+`section_for` rather than a section**, naming M6. Writing to an encrypted
+document is M6's whole job and M3 has no business emitting one byte into one.
+
+**The predicates are ordered, and the order is the whole of it.** "Refuses on an
+empty overlay as much as a full one", which is how this was first written, makes
+**every encrypted document unrenderable**: the canvas draws from `preview_bytes`,
+which is `original ++ section_for(...)`, so an unconditional refusal means
+`preview_bytes(Unfiltered)` returns `Err` on any encrypted document and there is
+nothing to draw. Ruling A's entire deliverable - open it, render it, print it,
+export it - would have been unreachable, including this package's own
+"print-to-file with Print as Image on succeeds" bullet, since the sheet renderer
+asks `core` for preview bytes. It would have been found at P15, four packages
+later.
+
+> `section_for` returns `Ok(None)` when `states` and `trailer` are both empty
+> **and** provenance is `Clean`. It returns `Err(EncryptedWrite)` **only when it
+> would otherwise emit bytes.**
+
+**The residual that ordering leaves, named here rather than found at P15.** A
+document that is **both encrypted and repaired** has a non-empty section on an
+empty overlay, because the repair is the section. So it can be **neither
+previewed nor rendered nor printed**: it opens, and the canvas is empty. That
+class needs a **count in this package's measurement table**, alongside the
+permissions-only and `/P` bit-4 tallies, and a sentence in ruling A, because it
+is a hole in "renders it" that the ruling currently claims without qualification.
+
+Second half of the same composition: the annotation filter (T7) works by writing
+`/F` bit 2 into a section, so **on an encrypted document row 94's four
+Comments-and-Forms modes cannot be applied at all**, not even inside the
+Print-as-Image path the ruling blesses. P15 states that limitation on row 94
+rather than discovering it.
 
 **The encrypted-source rule**, which every other package cites by that name.
 **Its scope is "every operation reachable in an M3 build", and the sweep that
@@ -1753,14 +1829,16 @@ Shapes, per T2:
 /// One overlaid object. There is no `Deleted` variant: M3 frees no object
 /// number (T5), so a removal is a rewrite of the referrer.
 pub struct ObjectState { generation: u16, object: cos::Object }
-/// One overlaid trailer key. Three-way where `ObjectState` is two-way, because
-/// the trailer is the root and has no referrer that can stop naming a key, so
-/// undoing a key's creation has to say `Cleared` rather than forget it (T1).
-pub enum TrailerState { NotInOverlay, Cleared, Set(cos::Object) }
+/// One overlaid trailer key. `Cleared` exists because the trailer is the root
+/// and has no referrer that can stop naming a key, so undoing a key's creation
+/// has to say "clear it" rather than forget it (T1). There is deliberately no
+/// `NotInOverlay`: nothing produces it, and its only reachable use was the
+/// wrong capture the rule below forbids, so cutting it makes that unexpressible.
+pub enum TrailerState { Cleared, Set(cos::Object) }
 /// For an object, `before: None` means, and only ever means, "this number was
 /// not in the overlay immediately before this change". Trailer keys do not use
-/// `Option`: they carry `TrailerState`, whose `NotInOverlay` is the same idea
-/// and whose `Cleared` is the one `Option` cannot express. See the capture rule.
+/// `Option`: a key's absence and a key's clearing are the same instruction to
+/// the section writer, so `Cleared` covers both. See the capture rule.
 pub enum Change {
     Object     { number: u32, before: Option<ObjectState>, after: Option<ObjectState> },
     TrailerKey { key: Name,   before: TrailerState,        after: TrailerState },
@@ -1791,23 +1869,33 @@ that exists in the file, save, undo, and nothing is restored, because the save
 cleared the overlay and made the base the edited value. That loses data with a
 green suite, and P2's verification as first drafted covered every case except it.
 
-> **`Change::Object`'s `before`, for a number that exists in the base document,
-> is read through `cos::Document::get` at edit time and stored as a concrete
-> `Some(ObjectState { generation, object })`.** `None` is produced only by the
-> reservation counter, for a number nothing has ever written.
->
-> **`Change::TrailerKey`'s `before` is the same rule one level up, and it reads
-> the LIVE BASE TRAILER, not the overlay**: a key the base trailer has is stored
-> as `Set(value)`; a key the base trailer **lacks** is stored as **`Cleared`**.
-> **`NotInOverlay` is never a captured `before`.** It is a value the overlay map
-> can hold, not a state a change can have captured.
+> **`Change::Object`'s `before` is captured at edit time, by this precedence:**
+> the **overlay's current `ObjectState`** for that number if the overlay has one;
+> **else** the base's value through `cos::Document::get` if the base has the
+> number; **else `None`**, which the reservation counter alone produces.
 
-That last sentence is the whole fix, and getting it wrong moves the failure
-rather than closing it. Storing `NotInOverlay` for a key the base lacks - the
-obvious reading, and the one the first draft of this rule had - means undo
-**removes the key from the overlay map** instead of clearing it, so across a save
-the base still has `/Info` and the Description survives. That is the same silent
-no-op T1 built `Cleared` to prevent, one level down from where it was fixed.
+**The overlay clause first, and it is not a refinement.** Written as "read
+through `get`" alone - which is how this rule and T2's both first stated it - the
+**second edit of an object is un-undoable**, because `core` never writes into
+cos's edit map and `get` therefore cannot see the overlay. Base object 7 is A;
+edit it to B, capturing `before = A`; edit it to C, capturing `before` = the base
+again = **A, not B**. One `Ctrl+Z` and the overlay holds A: two edits gone, and B
+unreachable in either direction. This package's own review-risk line names that
+hazard, so the plan was flagging as a risk the behaviour its normative rule
+required.
+>
+> **`Change::TrailerKey`'s `before` follows the same precedence, one level up**:
+> the overlay's current state for that key if the overlay has one; else `Set(v)`
+> if the **live base trailer** has the key; else **`Cleared`**. There is no third
+> outcome, which is why `TrailerState` has two variants.
+
+That is the whole fix, and getting it wrong moves the failure rather than
+closing it. An earlier draft of this rule carried a third `NotInOverlay` state
+and captured it for a key the base lacks, which means undo **removes the key from
+the overlay map** instead of clearing it - so across a save the base still has
+`/Info` and the Description survives. That is the same silent no-op T1 built
+`Cleared` to prevent, one level down from where it was fixed. Cutting the variant
+is what makes the wrong capture unexpressible rather than merely forbidden.
 
 **And the collapse rule has to cover the trailer, or the pre-save case breaks
 instead.** `section_for`'s early-out requires the trailer map empty, so an undo
@@ -1890,6 +1978,7 @@ says the edit history "will own its own undo stack").
 **Verification.**
 - Headless property test over a generated sequence of edits: apply N edits then undo N leaves the overlay byte-identical to empty, for N up to a few hundred, including sequences that overwrite the same object repeatedly and sequences that delete an original object. **This is the case PLAN.md's "drop the overlay node" phrasing gets wrong**, so it is the case the test must cover explicitly and by name.
 - **The base-capture rule, by name:** editing an object that exists in the base document records `before` as `Some(ObjectState { .. })` holding the base object by value, asserted on the `Change` itself and not inferred from undo working. A test that only checks undo passes against an implementation that reads the base at undo time, which stops working the moment the base is reopened, which is the whole bug.
+- **The precedence, asserted on the INTERMEDIATE state**, which is the one thing that distinguishes the right implementation from the wrong one: **edit an object twice, undo once, and assert the overlay holds the FIRST edit's value** - not the base's. Every other test in this package passes against the wrong implementation. The property test asserts the *end* state (undo N leaves the overlay empty), which holds either way because undoing edit 1 writes the base value back and collapse rule 1 then drops it; and the capture test asserts `before` holds "the base object by value", which is exactly what the wrong implementation produces. Without this bullet the suite is green and `Ctrl+Z` loses two edits.
 - **The trailer is undone with everything else**, by name: **setting a Description field on a document with no `/Info`, then undoing, leaves the trailer as it was, asserted on the trailer and not on the overlay.** `corpus/seeds/minimal.pdf` is the fixture and it is tracked, so this runs everywhere. Then the consequence: the following save writes nothing at all, which is T3's headline claim on the one path that falsifies it.
 - **The same thing across a save**, which is the case `TrailerState::Cleared` exists for: **set a Description on a document with no `/Info`, save, undo, save**, asserted on the **reopened trailer** and on the **reopened `/Info` object**. Both halves are needed: after the first save the base trailer has `/Info`, so undo has to emit a cleared key rather than forget an overlay entry, and an assertion on the overlay alone passes while the Description is still in the file. This is T1's one overlay component with no referrer above it.
 - **Two producers, one `Entry`, one `Change` per key**: a transaction whose verb and whose P4 structure hook both rewrite the same page dict produces exactly one `Change` for that number, whose `before` is the state before the transaction and whose `after` is the hook's. Asserted on the entry, and asserted to hold with the two producers run in either order, which is what makes the ordering rule a rule rather than a description of today's code.
@@ -1950,8 +2039,27 @@ Four pieces:
    another mode's request: the print dialog would show Document-and-Markups
    while the user has Document-Only selected, and the four-mode assertion in
    P15's verification would pass because it never asks twice at one generation.
-   The cache holds at most one entry per live filter, which is bounded by the
-   four `AnnotationFilter` modes plus the canvas's unfiltered one.
+
+   **The cache holds ONE entry, not one per mode**, and that is a correction to
+   the draft rather than a detail. Five live entries means five live `Arc`s, so
+   **every buffer is still referenced and T4's buffer-reuse strategy never
+   fires** - the two paragraphs contradicted each other. Cycling the print
+   dialog's four modes on T4's own 67 MB worst case would cost four more full
+   copies. Filtered previews are **transient**, which is what T7 already calls
+   them: built for a render, used, dropped.
+
+   **And `AnnotationFilter` is the five-mode enum alone**, with `subtypes()` a
+   function over it. The draft gave it "a set of subtypes **and** a rendering
+   mode", and no caller can supply a subtype set that disagrees with its mode -
+   the mode determines the set, so carrying both invites the two to differ and
+   gives no caller anything.
+
+   **One cost this owes and the draft passed over:** building a filtered preview
+   has to **synthesize overlay entries for annotations that live in the base**,
+   since `/F` bit 2 has to be written onto objects the overlay does not hold.
+   That is an O(document) walk to find them plus an O(annotations) section per
+   filter change, on top of the section build. It is bounded and it is per filter
+   change rather than per frame, but it is real and P3's bench measures it.
 3. **Every read path becomes overlay-aware, which is the piece nobody
    specified.** `preview_bytes` was `core`'s only overlay-aware output, and
    everything else reads the document as it was opened:
@@ -1974,21 +2082,53 @@ Four pieces:
    and T4 rules out a scratch `cos::Document` to read through, so there was no
    mechanism anywhere. Two packages asserted the outcome; none owned the how.
 
-   This package owns it, beside `preview_bytes` because it is the same
-   generation:
+   **One mechanism, not six, and cache invalidation is not it.** The first
+   attempt at this bullet prescribed four changes - three cache keys and one
+   page-set special case - and **not one of them changes where the data comes
+   from**. `outline::read`, `attachments::read`, `signatures::read`,
+   `layers::read`, `content::page` and `content::extract_page` all take
+   `&self.cos`, the document **as opened**, so invalidating a cache and re-reading
+   returns the identical stale answer. The draft admitted it in its own words
+   ("this is invalidation, not new machinery") and did not notice that was the
+   defect. P6's annotation reader was not even in the list, because P6 lands
+   after this package, so P20's central claim - the Comments pane lists what the
+   session just authored - would have failed too.
 
-   - **The page set derives from the overlay** when the overlay holds a flat
-     `/Pages` node (P5 always rewrites it), falling back to `self.cos` when it
-     does not. `page_count` becomes a **method** over that, and every bound check
-     goes through it.
-   - **Geometry and text caches are keyed on `(preview generation, page)`**
-     rather than on page alone, so an edited page's entry cannot be served after
-     the edit.
-   - **`outline`, `attachments`, `layers` and `signatures` are re-read on a
-     generation bump** rather than memoised once. They are `Option<Vec<..>>`
-     fields today, so this is invalidation, not new machinery.
-   - **The search worker is re-seeded** on a generation bump, since it holds the
-     original bytes and its page bounds.
+   > **`fn structure(&mut self) -> &cos::Document`**: a second `cos::Document`,
+   > opened with `open_repairing(BytesSource::from_shared(preview_bytes))`, built
+   > **lazily, once per preview generation**, cached beside the buffer it was
+   > built from. **Every structural read routes through it instead of
+   > `&self.cos`.**
+
+   That is one referent instead of six, and it is strictly better than the four
+   bullets it replaces:
+
+   - `page_count` falls out of `content::page_count(structure())`. It is still a
+     method, but there is no overlay-derived page set to special-case, and the
+     special case only ever worked because P5 always writes a flat `/Pages` node -
+     an assumption about another package that this one had no way to enforce.
+   - Geometry, text, outline, attachments, layers, signatures and P6's
+     annotations are all correct **by construction**, because they read a
+     document that has the edits in it.
+   - The caches still key on `(generation, page)`, but now as an optimisation
+     rather than as the mechanism.
+   - The search worker still re-seeds, because it holds bytes rather than a
+     document.
+
+   **Cost: one lazy xref parse per generation**, paid only when a structural read
+   actually happens, and not at all for a generation that is only rendered.
+
+   **T4 does not forbid this.** It rules out a scratch `cos::Document` to *build
+   the section through*, because that one would have to be mutated and cos cannot
+   withdraw an edit. This one is opened read-only from bytes that already exist
+   and is thrown away on the next bump. They are different documents solving
+   different problems, and conflating them is what left this hole in the first
+   place.
+
+   **The counterpart to T1's rule, so this does not recur: adding a reader to
+   `core` means routing it through `structure()`.** T1's table says adding a
+   field to `Overlay` means adding a row; this says the same thing on the read
+   side. Both exist because the previous version of each was a list that sampled.
 
 4. **Generations.** `Document::generations() -> &[Generation]` over P1's
    `sections()`, plus `revert_to(generation)`, which truncates and reopens.
@@ -2071,9 +2211,19 @@ it over, splits one type across two packages for no gain.
 **What exists to build on.** P1's `section_for` and `save_overlay_to_path`,
 `save_to_path`'s temp-file-and-rename with permission preservation, and
 `has_pending_changes` are all real and tested. `ExportSnapshot::open`
-(`session.rs:163`) is the reopen pattern. The render worker already builds its
-`render::Document` from an `Arc<Vec<u8>>` inside its own spawned closure, so
-feeding it preview bytes is a new `Arc`, not a new threading model.
+(`session.rs:163`) is the reopen pattern.
+
+**But the render worker cannot simply be handed new bytes, and the draft said it
+could.** `worker_loop` takes `renderer: &mut RenderSession<'_>` borrowing
+`document: &render::Document` (`render.rs:501-503`), so the session cannot
+outlive the document it borrows and the loop cannot swap in a new one. Feeding it
+preview bytes is a **restructure of `crates/core/src/render.rs`**, not a new
+`Arc`. Budget it as real work in this package rather than as a line.
+
+Two consequences for the bench: hayro's `RenderCache` is discarded for **every
+page on every generation bump**, not only for edited pages, so the first frame
+after each commit re-renders everything visible; and P3's budget is set knowing
+that rather than against a steady-state number.
 
 **Verification.**
 - **Guarantee 1, at the level the guarantee means it.** Open every corpus seed and every **well-formed** `external/` file through `core::Document`, save with no edit, assert byte-identical output and that `sections()` reports the same count as before. Well-formed is not a hedge: `has_pending_changes` is true on every repaired document (`document.rs:961-963`), so a repaired file's no-op save legitimately appends the repair and this assertion would fail on it. The partition is `Provenance`, read from the session, not a filename list. **The positive case is asserted too**, or the carve-out becomes a place to hide failures: for every repaired `external/` file, the no-op save appends exactly one section, the bytes beneath it are byte-identical to the original, and the result reopens through `Document::open`. PLAN.md's guarantee-1 sentence says "for every well-formed corpus file" and this is what that clause is for.
@@ -2082,6 +2232,9 @@ feeding it preview bytes is a new `Arc`, not a new threading model.
 - **Add an annotation, delete it, save writes nothing**, in the same session and with no undo involved. This is T3's second collapse rule and it needs its own bullet, because rule 1 cannot reach it: the annotation dict and its appearance stream have **no base object to compare against**, so value comparison leaves them in the overlay after the page's `/Annots` has already collapsed out. Zero appended sections, byte-identical output.
 - **Edit, save, undo, save**, which is the test the first draft had no bullet for and the one that catches the whole save-boundary class. Three assertions on the second output: it reopens through `Document::open`; **object N equals its pre-edit value**, compared as a parsed object; and **the object graph reachable from the catalog equals the pre-edit graph**, walked and compared node by node, which is what catches a reversal that restored the object and forgot the referrer. Run it in all **four** shapes M3 can produce: edit an object that exists in the file, create an object, remove one (which under T5's rule means rewriting its referrer, so the assertion is that the removed object is unreachable rather than absent), and **set a trailer key the base document does not have**. The first is the silent no-op the base-capture rule exists to prevent; the fourth is the one with no referrer above it, where undo has to emit an explicit cleared key and where an assertion on the overlay rather than on the reopened trailer passes while the change is still in the file (T1). `audit_references` on the output must be empty in every shape.
 - Two saves produce two sections and the second's `/Prev` points at the first, asserted by parsing the trailers, not by scanning for the string `/Prev`.
+- **An edit against a REPAIRED fixture**, which none of this package's other tests does: the `Provenance` partition is applied only to the no-op save. Edit an object the base stores **in an object stream**, on a repaired fixture, and assert it appears **exactly once** in the reopened document, with the overlay's value. That is the assertion that fails if `section_for`'s full-table skip still reads `self.edits` (P1), where the base copy is written alongside the overlay's and the xref indexes the base one.
+- **`structure()` answers from the edits, not from the open document**, per package-visible read: delete page 3 of ten and assert `page_count()` is 9, `page_geometry(3)` returns the **new** page 3's metrics, `outline()` reflects P5's fix-ups, and search does not hit the deleted page. Each of those reads a different `core` module, and every one of them returns the stale answer if any is left on `&self.cos`.
+- **Async geometry responses carry the generation they were computed for.** `Request::GeometryAsync { page }` and `GeometryResponse = (PageIndex, Result<..>)` (`render.rs:132`, `164`) carry **no** staleness marker, while `RenderRequest` carries a `generation` and `ThumbnailRequest` an `epoch`. So a response computed before a bump is filed under the new generation and the canvas lays the page out at the **old size**. Either the request and response carry the generation and stale ones are dropped, or the channel is drained and discarded on a bump; assert whichever, here rather than in P18, because this package owns the generation.
 - **Create an annotation, save, create a second annotation, save**: two distinct objects at two distinct numbers, both reachable from their pages, `audit_references` empty. This is the only bullet that allocates an object number **after** a save, which is where `next_number` is either reseeded or catastrophically reset (T3): `Overlay::default()` puts the second annotation at object 0 or 1 and silently overwrites the catalog, with every reference still resolving and every other test green.
 - Preview: after a committed edit, `preview_bytes` parses as a valid PDF through `cos::Document::open` (not `open_repairing`), and its object graph equals what the subsequent save writes, compared object by object. Since both come from one `section_for` call with one argument, this is a regression test on the wiring rather than a check on two implementations agreeing.
 - **The preview cache key includes the filter**, asserted directly: two `preview_bytes` calls at one overlay generation with two different `AnnotationFilter` modes return different bytes, and the same mode twice returns the cached buffer. Without the first half the print dialog shows the wrong Comments-and-Forms mode and every downstream filter test still passes, because none of them asks twice at one generation.
@@ -3632,7 +3785,22 @@ updates while work continues. `quick_actions.rs` resolves availability through
 - "Make current properties default" writes a preference and the next annotation created uses it, asserted end to end through the tool, not through the preference store.
 - The quick action toolbar's Comment, Highlight and Draw are enabled and carry no reason string, asserted, and the assertion reads the registry rather than a list.
 - Find with Include Comments finds text that exists only in an annotation's `/Contents`.
-- **The encrypted-source refusal sweep, exhaustive over the registry**, which P1b defines and cannot assert (its own app invocation registers no plugin). This package is the last of the deep app packages, so it is the first point at which `--features commands-core,tools-organize,codecs-common` has everything registered at once. Open an encrypted document and **iterate `registry.commands()` and `registry.codecs()`**, asserting each is either refused with P1b's typed reason naming M6 or on a short, in-test allowlist of provably raster-only operations, each entry of which names why. Print-to-file is the worked example: available with Print as Image on, refused with it off. **A command or codec added later that is neither refused nor allowlisted fails this test by existing**, which is the only property that survives the next feature - a hand list missed print-to-file at one pass and SVG export at the next.
+- **The encrypted-source refusal sweep**, which P1b defines and cannot assert (its own app invocation registers no plugin). This package is the last of the deep app packages, so it is the first point at which `--features commands-core,tools-organize,codecs-common` has everything registered at once.
+
+  **Three buckets, not two, and the registry is not the whole surface.** A binary "refused or raster-only" fails today on a shipped command: `commands-core`'s `SELECT_ALL` (`plugins/commands-core/src/lib.rs:18`, reading `page_text` at line 67) puts text into a `TextSelection` and is neither refused nor raster. So each entry is **refused**, **provably raster-only**, or **reads into session state or the clipboard and writes no file**, with every entry in the third bucket naming why it is safe.
+
+  **And the walk covers `core::Document`'s public methods that return
+  graph-derived bytes**, not only `registry.commands()` and `registry.codecs()`.
+  The case this sweep was written for - **attachment extraction** - touches
+  `PluginRegistry` nowhere: it is a pane button going `panes/attachments.rs` to
+  `canvas.rs` to `core::Document::attachment_bytes` to `attachments::read_bytes`.
+  A registry walk misses it entirely. So the sweep also enumerates
+  `attachment_bytes`, `page_svg`, `export_snapshot` and `page_text`, which a test
+  over `core`'s public API can hold and keep holding, rather than a list of UI
+  call sites nobody maintains. **Anything added to either surface that is in none
+  of the three buckets fails this test by existing** - which is the only property
+  that survives the next feature, after a hand list missed print-to-file at one
+  pass and SVG export at the next.
 - Pane rows and menu entries are in the accessibility tree; the pane's rows leave it when the pane closes.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-core` for the widened reason type.
 - **Corpus.** The fixture carrying comments Onionskin did not author is `external/`, behind P1c's fetch step and its mandatory re-run. It is the fixture that distinguishes a Comments pane from a view of the edit graph, so a skipped run leaves the package's central claim unmeasured.
