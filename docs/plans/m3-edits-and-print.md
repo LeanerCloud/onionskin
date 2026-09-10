@@ -256,20 +256,24 @@ impl Document {
     pub fn section_for(
         &self,
         overlay: &BTreeMap<u32, PendingEdit>,
-        trailer_edits: &Dict,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,   // None clears the key
     ) -> Result<Option<Vec<u8>>>;
 
     pub fn save_overlay_to_path(
         &self,
         overlay: &BTreeMap<u32, PendingEdit>,
-        trailer_edits: &Dict,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
         path: &Path,
     ) -> Result<()>;
 }
 ```
 
-`incremental_section()` becomes `self.section_for(&self.edits, &self.trailer_edits)`
-and keeps its behaviour, so nothing that exists changes. A method rather than a
+`incremental_section()` becomes `self.section_for(&self.edits, &adapted)`, where
+`adapted` maps cos's own `trailer_edits: Dict` into the argument form with every
+entry as `Some`. cos's own edit path has no way to clear a key and never needed
+one, so the adaptation is total and lossless in that direction, and
+`incremental_section` keeps its behaviour exactly. The **clearing** direction
+exists only for `core`, which is the caller that has an undo stack. A method rather than a
 free function because every input it needs is private to `Document` (`reader`,
 `xref`, `provenance`, `prev_startxref`, `trailer`, `original_len`, `locate`,
 `get`), and a free function would have to make all of them public to save one
@@ -334,11 +338,12 @@ break silently:
   (`document.rs:961-963`), and the collapse-by-value rule has no trailer key to
   compare against.
 
-So `Overlay` gains `trailer: Dict` and `Change` gains a `TrailerKey` variant. A
-trailer edit is then captured, undone and collapsed by value exactly like an
-object edit, `before: None` means the key was absent exactly as it means the
-number was unreserved, and **`section_for`'s two arguments both come out of one
-undoable structure** rather than one of them coming from nowhere.
+So `Overlay` gains a trailer map and `Change` gains a `TrailerKey` variant, in
+the three-way shape above. A trailer edit is then captured, undone and collapsed
+by value exactly like an object edit, and **`section_for`'s two arguments both
+come out of one undoable structure** rather than one of them coming from
+nowhere - across a save as well as within one, which is the part pass 2 got
+wrong.
 
 The alternative, refusing `SetInfoField` on a document with no `/Info`, is a
 visible cut that P13a would have to state in row 14's Notes, and it is worse: it
@@ -1266,7 +1271,7 @@ place, so item 4 is a parameter change, not a rewrite.
 - A hand-built fixture with a cyclic `/Prev` terminates and reports the cycle rather than looping.
 - `write_new` output reopens through `Document::open` (not `open_repairing`), has the stated page count, and round-trips: `write_new` then `open` then `save_to_vec` with no edit is byte-identical.
 - **`write_new`'s cross-reference table is well formed by ISO 32000-1 section 7.5.4**, asserted by **parsing the output's first subsection header** rather than by reopening it through our own `Document::open`: it emits the object-0 free-list head at generation 65535, and its subsections cover every object number it wrote with no gap. Reopening through our own parser proves our parser accepts what our writer emits, which is the one thing it will always do; five M3 commands ship documents to other readers this way.
-- **`section_for` is a refactor, not a second serializer.** Two halves, because the obvious test is true by construction and proves nothing: `incremental_section()` delegates to `section_for(&self.edits, &self.trailer_edits)`, so comparing the two always agrees. The half that bites is that **every existing test in `crates/cos/tests/{incremental,delete,roundtrip,repair}.rs` passes byte-for-byte unchanged**, which pins the delegation. The half that exercises the new path is a section built from an overlay the document's own edit map does **not** contain: it reopens through `Document::open` and resolves every written number to the overlay's object, proving the argument is read rather than ignored.
+- **`section_for` is a refactor, not a second serializer.** Two halves, because the obvious test is true by construction and proves nothing: `incremental_section()` delegates to `section_for`, so comparing the two always agrees. The half that bites is that **every existing test in `crates/cos/tests/{incremental,delete,roundtrip,repair}.rs` passes byte-for-byte unchanged**, which pins the delegation. The half that exercises the new path is a section built from an overlay the document's own edit map does **not** contain: it reopens through `Document::open` and resolves every written number to the overlay's object, proving the argument is read rather than ignored.
 - **The gate, three cases.** A section whose written object references a number that section frees is refused with the typed error naming both. A section whose written object references a number the *base file* marks free is refused the same way. The legal case, a section that frees an object nothing references, still succeeds, which is what `crates/cos/tests/delete.rs` already exercises and what stops the gate being a constant `Err`.
 - **`audit_references`, three cases.** It is empty on a **named sample** of `external/` fixtures with a stated pass floor, in the shape `roundtrip.rs` already uses for its corpus walks, or it is reporting noise and no package can assert on it. It is non-empty on a hand-built file with one deleted target, naming that exact pair and no other. It finds a reference buried in a nested array inside a stream dictionary, which is the shallow-walk failure mode.
 - **The sweep is bounded on purpose.** `audit_references` is O(file), P1c makes `external/` mandatory, and the set is 3300-plus PDFs, so "empty on every unmodified fixture" would put a new unbounded walk over the whole corpus on every CI run. Every other use in this plan is already bounded at three fixtures per package; only this one was not. The sample is named in the test and its size is chosen against the wall-time P1c records, not guessed. A floor rather than an exact count, so a corpus refresh that adds files does not fail the build for adding them.
@@ -1604,8 +1609,14 @@ pub enum Change {
     TrailerKey { key: Name, before: Option<cos::Object>, after: Option<cos::Object> },
 }
 /// The trailer lives here, not beside here: `section_for`'s two arguments are
-/// `states` and `trailer`, and both have to be undoable (T2).
-pub struct Overlay { states: BTreeMap<u32, ObjectState>, trailer: Dict, next_number: u32 }
+/// `states` and `trailer`, and both have to be undoable (T2). `None` in the
+/// trailer map means "clear this key", which is what undoing the creation of a
+/// key across a save needs and what a `Dict` of edits cannot say.
+pub struct Overlay {
+    states: BTreeMap<u32, ObjectState>,
+    trailer: BTreeMap<Name, Option<cos::Object>>,
+    next_number: u32,
+}
 pub struct Entry { label: &'static str, changes: Vec<Change> }
 pub struct History { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 pub enum DocumentEdit { /* the typed vocabulary, grown by P5 and P6 */ }
