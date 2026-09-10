@@ -141,9 +141,9 @@ Measure objects	Area tool	D	"Area Tool"
 Measure objects	Scale ratio and units	D	"Change Scale Ratio and Precision"
 Measure objects	2D snap settings	D	"Snap to Paths", "Snap to Endpoints", "Snap to Midpoints", "Snap to Intersections"
 Measure objects	Enable Measurement Markup	N	not surfaced
-Measure objects	Measurement Info panel	D	"Measurement Info panel": current measurement, delta values, scale ratio
+Measure objects	Measurement Info panel	D	field list of the "Measurement Info panel": current measurement, delta values, scale ratio
 Prepare for accessibility	Check for accessibility	D	"Accessibility Check" / "Full Check"
-Prepare for accessibility	Accessibility report	D	"Accessibility Report"; statuses Passed, Skipped By User, Needs Manual Check, Failed
+Prepare for accessibility	Accessibility report	D	field list of the "Accessibility Report": statuses Passed, Skipped By User, Needs Manual Check, Failed
 Prepare for accessibility	Automatically tag a PDF (autotag)	D	"Autotag Document"
 Prepare for accessibility	Fix reading order (Reading Order tool)	D	labels "Reading Order" and "Reading Options", no placement asserted
 Prepare for accessibility	Edit structure with the Tags and Content panes	D	labels "Tags panel" and "Content pane options menu", no placement asserted
@@ -152,7 +152,7 @@ Prepare for accessibility	Set document language	N	not surfaced
 Prepare for accessibility	Set document title	N	not surfaced
 Prepare for accessibility	Table editor / table summary	N	not surfaced
 Prepare for accessibility	Keep the structure tree valid through every edit	N	Onionskin obligation, no Acrobat control
-Prepare for accessibility	Read Out Loud (from the accessibility toolset)	Ra	Reader View menu index 12: Activate Read Out Loud, Read This Page Only, Read To End of Document, Pause, Stop
+Prepare for accessibility	Read Out Loud (from the accessibility toolset)	Ra	Reader View menu index 12, submenu item 0, "Activate Read Out Loud", enabled; its four siblings are disabled with no document being read
 Prepare for accessibility	Accessibility Setup Assistant	Ra	Reader app menu index 4, "Accessibility Setup Assistant..."
 Use print production	Set Page Boxes (media, crop, bleed, trim, art)	D	"Set Page Boxes (Crop Tool) dialog"; only legacy-version sources surfaced
 Use guided actions	Run a shipped action	D	"Action Steps To Show", "The tasks are run in the order in which they appear"

@@ -24,7 +24,7 @@ rather than rediscovering.
 |---|---|---|
 | `screencapture -x` of the whole display, session locked, displays asleep | All-black frame. `screencapture -R` fails outright with `could not create image from rect`. | 8,416,800 of 8,416,800 luminance samples below 10 |
 | `screencapture -x` after `caffeinate -u`, session still locked | Renders the login window, not the desktop. No application window is composited. | 8,416,592 of 8,416,800 samples above 10, all of them lock screen |
-| System Events accessibility, menu bar of `AdobeReader` | Full menu tree readable: titles, index, separators, submenu nesting, enabled state, mark characters, command key and modifiers. | `E2` below, 209 rendered lines from a live query |
+| System Events accessibility, menu bar of `AdobeReader` | Full menu tree readable: titles, index, separators, submenu nesting, enabled state, mark characters, command key and modifiers. | `E2` below; 202 records over six menus, 158 items and 38 separators |
 | System Events accessibility, windows of `AdobeReader` | `count of windows` returns 0 while the session is locked, so no window, panel, dialog or sheet tree is readable. A window nonetheless **exists**: Reader's own Window menu lists `two-page.pdf` at index 14. So the zero is the lock hiding the window, not the absence of one. | repeated at 23:07Z, 23:12Z and 23:41Z, all 0 |
 
 Consequence for the method: **menu-surface facts are capturable from an
@@ -88,17 +88,22 @@ page` disabled with `Next page` and `Last page` enabled; and `Edit > Cut`,
 `Copy`, `Paste`, `Undo`, `Redo` and `Select all` all report disabled, so
 nothing is selected.
 
-| # | Title | Enabled | Toolset it opens |
-|---|---|---|---|
-| 5 | Edit a PDF | yes | Edit a PDF |
-| 6 | Add Text | yes | Edit a PDF |
-| 7 | Add Image | yes | Edit a PDF |
-| 8 | separator | | |
-| 9 | Delete Pages | yes | Organize pages |
-| 10 | Rotate Pages | yes | Organize pages |
-| 11 | Redact a PDF | yes | Redact |
-| 12 | Scan and OCR | yes | Scan and OCR |
-| 13 | Prepare Form | yes | Prepare a form |
+| # | Title | Enabled | Shortcut | Toolset it opens |
+|---|---|---|---|---|
+| 5 | Edit a PDF | yes | none | Edit a PDF |
+| 6 | Add Text | yes | none | Edit a PDF |
+| 7 | Add Image | yes | none | Edit a PDF |
+| 8 | separator | | | |
+| 9 | Delete Pages | yes | none | Organize pages |
+| 10 | Rotate Pages | yes | none | Organize pages |
+| 11 | Redact a PDF | yes | none | Redact |
+| 12 | Scan and OCR | yes | none | Scan and OCR |
+| 13 | Prepare Form | yes | none | Prepare a form |
+
+`none` means the dump reported no `AXMenuItemCmdChar`. Not one Pro entry in
+this menu carries a keyboard shortcut, which is itself a class A fact and one
+Onionskin should not reproduce: these are commands a user reaches often enough
+to want a key for.
 
 Two further Edit-menu submenus are relevant and are **not** Pro-gated in the
 same way, because their children report disabled rather than live:
@@ -391,7 +396,7 @@ shape without recording its content.
 
 | Toolset | Rail entry | Menu entry | Tooltip | Panel renders | Dialog renders | Wall falls |
 |---|---|---|---|---|---|---|
-| Export a PDF | yes | `File > Convert to Word, Excel or PowerPoint` | not captured | **yes, in full** | n/a | on apply |
+| Export a PDF | yes | `File > Convert to Word, Excel or PowerPoint` | not captured | **yes, in full** | n/a | inferred, on apply |
 | Edit a PDF | yes | `Edit > Edit a PDF` | `Modify or add text, images, pages, and more` | no | upsell modal | **at the click** |
 | Create a PDF | yes | `File > Create PDF` | not captured | **yes, task view** | n/a | at step two |
 | Combine files | yes | `File > Combine Files` | not captured | no | upsell modal | **at the click** |

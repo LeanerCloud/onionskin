@@ -591,7 +591,11 @@ negative is not available from a failed search, so the four rows that look
 like they have no Acrobat control at all (`Reflowing text edit`, `Export pages
 to SVG`, `Keep the structure tree valid through every edit`, `Preserve
 signature validity across edits`) carry the same evidence string as the rest
-of N, and only the last two are Onionskin obligations by construction.
+of N, and only the last two are Onionskin obligations by construction. Of
+those two, `Keep the structure tree valid through every edit` is proposed as a
+board edit in 7.5 because it sits in an Acrobat toolset section; `Preserve
+signature validity across edits` is not, because it is a property Acrobat's
+own signing surface has and a reader could reasonably expect a row for it.
 
 Second, and despite that, the shape of the fix is knowable. Every one of the
 57 is a row on the board, and the route that failed for all of them is the
