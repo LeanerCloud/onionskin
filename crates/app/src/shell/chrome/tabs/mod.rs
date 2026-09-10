@@ -1426,6 +1426,8 @@ mod tests {
     mod export_settings;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    mod native_input;
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names
     // go unused. The names below are explicit now, so each one carries the

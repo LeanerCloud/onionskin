@@ -24,6 +24,7 @@ use crate::shell::chrome::accessible::{Activation, Surface};
 use crate::shell::chrome::global_bar::{
     main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
 };
+use crate::shell::chrome::tool_search::SearchSelectAll;
 use crate::shell::dialog::ShellDialog;
 
 impl ShellFrame {
@@ -133,6 +134,18 @@ impl ShellFrame {
             }
             MenuCommand::SelectAll | MenuCommand::DeselectAll => {
                 self.dismiss_menus(cx);
+                if command == MenuCommand::SelectAll {
+                    let focused_input = self
+                        .focused_text_field(window, cx)
+                        .is_some_and(|key| self.accessible(window, cx).find(&key).is_some());
+                    if focused_input {
+                        window.dispatch_action(Box::new(SearchSelectAll), cx);
+                        return Ok(());
+                    }
+                    if self.dialog.is_some() {
+                        return Ok(());
+                    }
+                }
                 let id = command
                     .registry_command_id()
                     .expect("both entries name a registry command");
