@@ -107,6 +107,15 @@ and packaged-platform acceptance remain open.
 
 ## Retained and concurrent state
 
+- M3 P0c is a local test-only checkpoint at `fdf875c`, based on `65d29c6`.
+  It moves 94 inline tests beside their shell implementation and retains 24
+  at the root, without changing production code or the three external C1.2 files.
+  Eleven configurations pass with 3,060 test-result entries, including ignored
+  cases, preserved in the before/after census. Missing-test/import mutations
+  and a fresh 624-test control pass. Native
+  smoke and window-only capture remain blocked by the locked GUI session,
+  so integration and full P0c acceptance are pending. This changes no matrix
+  status. Detailed proof is in `crates/app/tools/item-inventory/p0c-test-relocation-*.txt`.
 - B0 restored all three deleted source artifacts at `d683def` before current main
   was merged additively into this retained audit branch. The frozen repository
   source-report bytes are tracked and preserved; no rebase, removal, move, or

@@ -1,0 +1,19 @@
+# before: 65d29c6:crates/app/src/shell/chrome/tabs/accessible.rs 65d29c6:crates/app/src/shell/chrome/tabs/context.rs 65d29c6:crates/app/src/shell/chrome/tabs/dialogs.rs 65d29c6:crates/app/src/shell/chrome/tabs/export.rs 65d29c6:crates/app/src/shell/chrome/tabs/frame_state.rs 65d29c6:crates/app/src/shell/chrome/tabs/menu.rs 65d29c6:crates/app/src/shell/chrome/tabs/mod.rs 65d29c6:crates/app/src/shell/chrome/tabs/tests/export_settings.rs 65d29c6:crates/app/src/shell/chrome/tabs/tests/input_values.rs 65d29c6:crates/app/src/shell/chrome/tabs/tests/native_input.rs
+# after:  fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/accessible.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/context.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/dialogs.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/export.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/frame_state.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/menu.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/mod.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/tests/export_settings.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/tests/input_values.rs fdf875c7bcfdc988fc149028b2ef0d90b78904fb:crates/app/src/shell/chrome/tabs/tests/native_input.rs
+lines before: 8599
+lines after:  8667
+only in before: 2
+  -    PluginRegistry, PointerInput, ToolCtx, ToolPlugin,
+  -    fn install_test_export_job(frame: &mut ShellFrame, origin: EntityId) -> Arc<ExportPhase> {
+only in after: 70
+  +x10  #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+  +x41  #[cfg(feature = "shell-test-support")]
+  +x6  #[cfg(test)]
+  +    ) -> Arc<ExportPhase> {
+  +    CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageIndex, PluginRegistry,
+  +    PointerInput, ToolCtx, ToolPlugin,
+  +    fn install_test_export_job(
+  +    frame: &mut ShellFrame,
+  +    origin: EntityId,
+  +x6  }
+  +    };

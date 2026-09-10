@@ -53,6 +53,14 @@ C1.2 acceptance gate, not the remaining whole-app accessibility work.
 
 ## Historical capture blockers
 
+- M3 P0c source checkpoint, 2026-09-10: test relocation is committed at
+  `fdf875c` and automated verification passed. Fresh CoreGraphics probes
+  report capture permission granted, `CGSSessionScreenIsLocked=1`, and no
+  Onionskin windows. Native open/Find/tab/export smoke and the Task A
+  window-only capture remain pending. The subsequent evidence/status task
+  also needs its representative capture. No screenshot or native acceptance
+  is claimed, and no full-screen fallback was taken. Retry on the committed
+  build after the GUI is unlocked.
 - C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build
   `f0cbbcb` Onionskin-window-only capture remains pending. It was deferred while
   B7 owned the overlapping evidence files, and the GUI session is now locked
