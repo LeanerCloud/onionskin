@@ -66,6 +66,17 @@ source IDs, severity, ownership, and required proof.
   parsing is lazy. A cross-reference stream is always covered (opening parses
   it) and M5 redaction reads every stream it rewrites, so both see what they
   touch; a caller wanting a whole-file answer has to walk the xref itself.
+- cos lazy I/O budget, reproduced 2026-09-10 at `65d29c6`: the default-only
+  corpus enables the 10,000-page Isartor fixture and reads 1,857,768 of
+  4,010,934 bytes through first-page access, exceeding the 25% budget.
+  Growing windows reread prefixes, and structural validation parses a large
+  Pages dictionary that first-page access parses again. P1c owns the fix;
+  see `docs/evidence/m3-p1c-read-windows.md`. Do not relax the budget or mark
+  corpus CI ready from test-result counts alone.
+  **Read-window checkpoint:** retaining prefixes reduces the same scenario to
+  1,335,528 bytes (33.3%), with unchanged unique coverage and successful
+  first-page access. Duplicate validation parsing and window overfetch remain;
+  the 25% budget still fails and P1c is not complete.
 - cos: only the copy loop of a save is bounded memory. A repaired or
   escalated document assembles a section carrying a full table, which
   materializes every compressed object it has to copy forward, and

@@ -152,3 +152,9 @@ C1.2 acceptance gate, not the remaining whole-app accessibility work.
   window by CoreGraphics window ID 9009. Bounds were
   `{X = 350, Y = 155, Width = 1100, Height = 893}`. SHA-256:
   `f29036ddc3cadbf2608f535210ca1d2ca516b1d0585a66413e9e1f1415d0ae89`.
+- M3 P1c read-window checkpoint, 2026-09-10T22:00Z: representative Onionskin
+  window capture pending. Parser/corpus checks, application build and headless
+  startup are recorded in `m3-p1c-read-windows.md`; they are not native UI proof.
+  Fresh preflight reports `capturePermission=true` and
+  `CGSSessionScreenIsLocked=1`, with no Onionskin window. No full-screen fallback
+  was taken, and no screenshot is claimed for this checkpoint.

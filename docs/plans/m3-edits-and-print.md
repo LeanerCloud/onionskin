@@ -1656,6 +1656,15 @@ print-with-Print-as-Image one green.
 
 ### P1c. CI: make the corpus this plan's fixtures come from reach CI
 
+**2026-09-10 implementation checkpoint:** the default-only corpus reproduced
+the documented lazy I/O failure at `65d29c6`. The parser-window fix reduces
+returned bytes from 1,857,768 to 1,335,528 on that fixture, with six red/green
+regressions and 16 of 17 broader checks passing. The remaining lazy-budget
+failure is preserved, tracked in [read-window evidence](../evidence/m3-p1c-read-windows.md).
+The existing 25% total-byte budget remains unchanged. Corpus fetch/rerun CI gates,
+the shared helper and P1c acceptance remain outstanding; this is not a feature
+row promotion.
+
 **Goal.** Every assertion in this document over an `external/` fixture currently
 runs in CI over an empty file list and reports a pass. This package fixes that,
 once, for the whole milestone.

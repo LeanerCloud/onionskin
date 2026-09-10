@@ -244,9 +244,10 @@ fn read_table(reader: &Reader, offset: u64, reasons: &mut Vec<RepairReason>) -> 
     };
     let available = available as usize;
     let mut window = XREF_INITIAL_WINDOW.min(available);
+    let mut buf = Vec::new();
     loop {
         let at_eof = window >= available;
-        let buf = reader.read(offset, window)?;
+        buf.extend(reader.read(offset + buf.len() as u64, window - buf.len())?);
         match parse_table(&buf, offset, at_eof) {
             TableParse::Done(section, new_reasons) => {
                 reasons.extend(new_reasons);
@@ -506,4 +507,108 @@ fn read_fields(row: &[u8], widths: &[usize]) -> [u64; 3] {
         cursor += width;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_table, XrefEntry};
+    use crate::error::{Error, Result};
+    use crate::object::{ObjRef, Object};
+    use crate::reader::Reader;
+    use crate::source::{BytesSource, CountingSource, Source};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn growing_xref_window_reads_each_byte_once() {
+        let mut bytes = b"prefix!xref\n0 1000\n0000000000 65535 f \n".to_vec();
+        for number in 1..1000 {
+            bytes.extend_from_slice(format!("{:010} 00000 n \n", number * 100).as_bytes());
+        }
+        bytes.extend_from_slice(b"trailer\n<< /Size 1000 /Root 1 0 R >>\n");
+        let len = bytes.len() as u64 - 7;
+        let (source, stats) = CountingSource::new(Box::new(BytesSource::new(bytes)));
+        let mut reasons = Vec::new();
+        let section = read_table(&Reader::new(Box::new(source)), 7, &mut reasons).unwrap();
+        assert!(reasons.is_empty());
+        assert_eq!(section.entries.len(), 1000);
+        assert_eq!(section.entries[0], (0, XrefEntry::Free { next: 0 }));
+        for number in 1..1000 {
+            assert_eq!(
+                section.entries[number],
+                (
+                    number as u32,
+                    XrefEntry::InFile {
+                        offset: number as u64 * 100,
+                        generation: 0,
+                    }
+                )
+            );
+        }
+        assert_eq!(section.trailer.get(b"Size"), Some(&Object::Integer(1000)));
+        assert_eq!(
+            section.trailer.get(b"Root"),
+            Some(&Object::Ref(ObjRef::new(1, 0)))
+        );
+        assert_eq!(stats.total(), len);
+    }
+
+    #[test]
+    fn truncated_xref_window_does_not_reread_prefixes() {
+        let mut bytes = b"prefix!xref\n".to_vec();
+        bytes.resize(20007, b' ');
+        let (source, stats) = CountingSource::new(Box::new(BytesSource::new(bytes)));
+        let result = read_table(&Reader::new(Box::new(source)), 7, &mut Vec::new());
+        assert!(matches!(result, Err(Error::Unrecoverable { .. })));
+        assert_eq!(stats.total(), 20000);
+    }
+
+    #[test]
+    fn xref_window_handles_short_empty_and_failed_reads() {
+        struct PartialSource {
+            limit: Option<usize>,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl Source for PartialSource {
+            fn len(&self) -> u64 {
+                20007
+            }
+            fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+                self.reads.lock().unwrap().push((offset, len));
+                let Some(limit) = self.limit else {
+                    return Err(Error::Io(std::io::Error::other("read failed")));
+                };
+                let mut bytes = b"prefix!xref\n".to_vec();
+                bytes.resize(20007, b' ');
+                BytesSource::new(bytes).read_at(offset, len.min(limit))
+            }
+        }
+        for limit in [Some(7), Some(0), None] {
+            let reads = Arc::new(Mutex::new(Vec::new()));
+            let reader = Reader::new(Box::new(PartialSource {
+                limit,
+                reads: Arc::clone(&reads),
+            }));
+            let result = read_table(&reader, 7, &mut Vec::new());
+            match limit {
+                Some(7) => {
+                    assert!(matches!(result, Err(Error::Unrecoverable { .. })));
+                    assert_eq!(
+                        *reads.lock().unwrap(),
+                        vec![(7, 4096), (14, 16377), (21, 19986),]
+                    );
+                }
+                Some(0) => {
+                    assert!(matches!(result, Err(Error::Syntax { .. })));
+                    assert_eq!(*reads.lock().unwrap(), vec![(7, 4096)]);
+                }
+                None => {
+                    assert!(
+                        matches!(result, Err(Error::Io(error)) if error.to_string() == "read failed")
+                    );
+                    assert_eq!(*reads.lock().unwrap(), vec![(7, 4096)]);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
 }

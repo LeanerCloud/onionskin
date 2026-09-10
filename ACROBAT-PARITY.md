@@ -73,6 +73,12 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
 
 ### Implementation evidence (reconciled 2026-09-10)
 
+M3 P1c verification is in progress: the default-corpus lazy I/O failure is
+reproduced, and the verified parser-window correction reduces the named
+fixture's returned bytes by 28.1%, while its budget still fails. See
+`docs/evidence/m3-p1c-read-windows.md`. No feature row changes or P1c completion
+are claimed; the corpus CI gates remain outstanding.
+
 The evidence keys in changed rows refer to these live paths. `M2-AUDIT-T1-001`
 is the window-only visual baseline, and `M2-AUDIT-T2-001` records the required
 Find-and-Thumbnails state. The view/zoom reconciliation inspected source and

@@ -92,9 +92,10 @@ impl Reader {
         }
         let available = (self.len - offset) as usize;
         let mut window = INITIAL_WINDOW.min(available);
+        let mut buf = Vec::new();
         loop {
             let at_eof = window >= available;
-            let buf = self.read(offset, window)?;
+            buf.extend(self.read(offset + buf.len() as u64, window - buf.len())?);
             match parse::parse_indirect(&buf, offset, at_eof, length_of) {
                 Ok(indirect) => return Ok(indirect),
                 Err(e) if e.is_eof() && !at_eof => {
@@ -105,6 +106,92 @@ impl Reader {
                         offset: e.offset,
                         detail: e.detail(),
                     })
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Reader;
+    use crate::error::{Error, Result};
+    use crate::object::{ObjRef, Span};
+    use crate::source::{BytesSource, CountingSource, Source};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn growing_object_window_reads_each_byte_once() {
+        let payload = vec![b'x'; 7000];
+        let mut bytes = b"prefix!7 0 obj << /Length 7000 >> stream\n".to_vec();
+        bytes.extend_from_slice(&payload);
+        bytes.extend_from_slice(b"\nendstream\nendobj");
+        let end = bytes.len() as u64;
+        let (source, stats) = CountingSource::new(Box::new(BytesSource::new(bytes)));
+        let parsed = Reader::new(Box::new(source))
+            .parse_indirect_at(7, &|_| None)
+            .unwrap();
+        assert_eq!(parsed.objref, ObjRef::new(7, 0));
+        assert_eq!(parsed.span, Span::new(7, end));
+        assert_eq!(parsed.object.as_stream().unwrap().raw, payload);
+        assert_eq!(parsed.recovered, None);
+        assert_eq!(stats.total(), end - 7);
+    }
+
+    #[test]
+    fn truncated_object_window_does_not_reread_prefixes() {
+        let mut bytes = b"prefix!7 0 obj [".to_vec();
+        bytes.resize(7007, b' ');
+        let (source, stats) = CountingSource::new(Box::new(BytesSource::new(bytes)));
+        let result = Reader::new(Box::new(source)).parse_indirect_at(7, &|_| None);
+        assert!(matches!(result, Err(Error::Syntax { .. })));
+        assert_eq!(stats.total(), 7000);
+    }
+
+    #[test]
+    fn object_window_handles_short_empty_and_failed_reads() {
+        struct PartialSource {
+            limit: Option<usize>,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl Source for PartialSource {
+            fn len(&self) -> u64 {
+                7007
+            }
+            fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+                self.reads.lock().unwrap().push((offset, len));
+                let Some(limit) = self.limit else {
+                    return Err(Error::Io(std::io::Error::other("read failed")));
+                };
+                let mut bytes = b"prefix!7 0 obj [".to_vec();
+                bytes.resize(7007, b' ');
+                BytesSource::new(bytes).read_at(offset, len.min(limit))
+            }
+        }
+        for limit in [Some(7), Some(0), None] {
+            let reads = Arc::new(Mutex::new(Vec::new()));
+            let reader = Reader::new(Box::new(PartialSource {
+                limit,
+                reads: Arc::clone(&reads),
+            }));
+            let result = reader.parse_indirect_at(7, &|_| None);
+            match limit {
+                Some(limit) => {
+                    assert!(matches!(result, Err(Error::Syntax { .. })));
+                    assert_eq!(
+                        *reads.lock().unwrap(),
+                        vec![
+                            (7, 1024),
+                            (7 + limit as u64, 4096 - limit),
+                            (7 + 2 * limit as u64, 7000 - 2 * limit),
+                        ]
+                    );
+                }
+                None => {
+                    assert!(
+                        matches!(result, Err(Error::Io(error)) if error.to_string() == "read failed")
+                    );
+                    assert_eq!(*reads.lock().unwrap(), vec![(7, 1024)]);
                 }
             }
         }
