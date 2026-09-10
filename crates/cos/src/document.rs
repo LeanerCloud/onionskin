@@ -387,10 +387,20 @@ impl Document {
             // point a caller may truncate at. Truncating there leaves a file
             // with no catalog in it.
             let describes_later_bytes = section.entries.iter().any(|(_, entry)| match entry {
-                // Offsets in a file with junk before its header are short by
-                // exactly that much, which is how `locate` reads them.
                 XrefEntry::InFile { offset, .. } => {
-                    offset.saturating_add(self.reader.header_offset) >= end
+                    // An offset in a file with junk before its header may be
+                    // written short by that much or written absolute, and
+                    // `locate` accepts either, so an entry counts only when
+                    // both readings land past the end. And only when one of
+                    // them lands inside the file at all: an offset past the
+                    // end of the file is a corrupt entry, not a table
+                    // describing bytes later on, and reading it as one would
+                    // drop a real generation.
+                    let candidates = [*offset, offset.saturating_add(self.reader.header_offset)];
+                    candidates.iter().all(|candidate| *candidate >= end)
+                        && candidates
+                            .iter()
+                            .any(|candidate| *candidate < self.original_len)
                 }
                 XrefEntry::Free { .. } | XrefEntry::InObjectStream { .. } => false,
             });
@@ -407,6 +417,17 @@ impl Document {
                     })
                 }
             };
+        }
+
+        // A file has at least one generation, so an empty list is this walk
+        // having talked itself out of every boundary it found. Saying so is
+        // what keeps the rule above loud when it is wrong rather than handing
+        // a caller a `Vec` with no first element.
+        if ends.is_empty() {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "no section in the chain ends a generation".into(),
+            });
         }
 
         ends.sort_unstable();
@@ -1308,15 +1329,47 @@ impl Document {
         trailer: &Dict,
         trailer_edits: &BTreeMap<Name, Option<Object>>,
     ) -> Result<()> {
-        // The file has already marked this number free, in a section that is
-        // on disk, and an append-only save cannot re-link a free list it
-        // cannot rewrite. `set_object` refuses this at its own door; an
-        // overlay comes straight from a caller, so this is the same refusal at
-        // the other one.
+        // `set_object` and `delete_object` refuse five things outright. An
+        // overlay comes straight from a caller and reaches the same writer, so
+        // the same five are refused here rather than written into a file where
+        // nothing would notice: a self-linked free entry is a cycle in the
+        // free list, and a file whose catalog is free does not open at all.
+        let root = trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .map(|objref| objref.number);
         for (number, edit) in overlay {
-            if let PendingEdit::Set { generation, .. } = edit {
-                if matches!(self.xref.get(*number), Some(XrefEntry::Free { .. })) {
-                    return Err(Error::FreedObject(ObjRef::new(*number, *generation)));
+            let already_free = matches!(self.xref.get(*number), Some(XrefEntry::Free { .. }));
+            match edit {
+                // Taking a freed number back means re-linking a free list that
+                // lives in a section already on disk.
+                PendingEdit::Set { generation, .. } if already_free => {
+                    return Err(Error::FreedObject(ObjRef::new(*number, *generation)))
+                }
+                PendingEdit::Set { .. } => {}
+                PendingEdit::Delete { generation } => {
+                    if *number == 0 || root == Some(*number) {
+                        return Err(Error::Unrecoverable {
+                            detail: format!(
+                                "object {number} is {}, not something a section may free",
+                                if *number == 0 {
+                                    "the head of the free list"
+                                } else {
+                                    "the document catalog"
+                                }
+                            ),
+                        });
+                    }
+                    // Freeing a number the file does not have in use writes a
+                    // free entry for an object that was never there, and a
+                    // free entry for one that is already free links the list
+                    // to itself.
+                    if !matches!(
+                        self.xref.get(*number),
+                        Some(XrefEntry::InFile { .. }) | Some(XrefEntry::InObjectStream { .. })
+                    ) {
+                        return Err(Error::MissingObject(ObjRef::new(*number, *generation)));
+                    }
                 }
             }
         }

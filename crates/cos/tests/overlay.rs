@@ -9,9 +9,12 @@ use std::collections::BTreeMap;
 use common::{classic_pdf, corpus_dir, skeleton};
 use onionskin_cos::{BytesSource, Document, Error, Holder, Name, Object, PendingEdit, Provenance};
 
+/// The skeleton plus two objects nothing points at, so a test can rewrite or
+/// free one without disturbing the page tree.
 fn fixture() -> Vec<u8> {
     let mut bodies: Vec<&[u8]> = skeleton();
     bodies.push(b"<</Type/Spare/Which 4>>");
+    bodies.push(b"<</Type/Spare/Which 5>>");
     classic_pdf(&bodies, &[])
 }
 
@@ -329,17 +332,17 @@ fn an_overlay_over_a_compressed_object_in_a_repaired_document_is_the_one_indexed
 #[test]
 fn the_next_object_number_is_one_above_everything_the_file_names() {
     let mut document = open(&fixture());
-    // The fixture writes objects 1 through 4 and a /Size of 5.
-    assert_eq!(document.next_object_number(), 5);
+    // The fixture writes objects 1 through 5 and a /Size of 6.
+    assert_eq!(document.next_object_number(), 6);
 
     let first = document.add_object(Object::Integer(1)).expect("a number");
     assert_eq!(
-        first.number, 5,
+        first.number, 6,
         "the accessor names the number that is handed out"
     );
     assert_eq!(
         document.next_object_number(),
-        6,
+        7,
         "and it moves on once that number is taken"
     );
 
@@ -348,7 +351,7 @@ fn the_next_object_number_is_one_above_everything_the_file_names() {
         .expect("object 2 is writable");
     assert_eq!(
         document.next_object_number(),
-        6,
+        7,
         "rewriting an existing object takes no new number"
     );
 }
@@ -406,4 +409,51 @@ fn an_overlay_may_not_write_a_number_the_file_has_marked_free() {
         Err(Error::FreedObject(objref)) => assert_eq!(objref.number, 4),
         other => panic!("writing a freed number must be refused, got {other:?}"),
     }
+}
+
+/// The other half of the same door. `delete_object` refuses object 0, the
+/// catalog, and a number the file has already freed; an overlay reaches the
+/// same writer, and each of those writes a file nothing downstream would
+/// complain about: a free entry linked to itself is a cycle in the free list,
+/// and a document whose catalog is free does not open at all.
+#[test]
+fn an_overlay_may_not_free_what_the_document_cannot_do_without() {
+    let mut first = open(&fixture());
+    first.delete_object(4).expect("object 4 is deletable");
+    let once = first.save_to_vec().expect("save");
+    let document = open(&once);
+
+    let free = |number: u32| -> BTreeMap<u32, PendingEdit> {
+        [(number, PendingEdit::Delete { generation: 1 })]
+            .into_iter()
+            .collect()
+    };
+
+    // Object 4 is already free in the base: freeing it again would write
+    // `4 -> 4` into the list.
+    match document.section_for(&free(4), &BTreeMap::new()) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 4),
+        other => panic!("freeing an already-free number must be refused, got {other:?}"),
+    }
+    // Object 9 was never in the file at all.
+    match document.section_for(&free(9), &BTreeMap::new()) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 9),
+        other => panic!("freeing a number the file never had must be refused, got {other:?}"),
+    }
+    match document.section_for(&free(0), &BTreeMap::new()) {
+        Err(Error::Unrecoverable { detail }) => assert!(detail.contains("free list"), "{detail}"),
+        other => panic!("object 0 is the free-list head, got {other:?}"),
+    }
+    // Object 1 is the catalog: the file it would produce does not open.
+    match document.section_for(&free(1), &BTreeMap::new()) {
+        Err(Error::Unrecoverable { detail }) => assert!(detail.contains("catalog"), "{detail}"),
+        other => panic!("freeing the catalog must be refused, got {other:?}"),
+    }
+
+    // Object 5 is in use and nothing names it, which is the legal case and
+    // has to stay legal.
+    assert!(document
+        .section_for(&free(5), &BTreeMap::new())
+        .expect("freeing an object nothing names is allowed")
+        .is_some());
 }

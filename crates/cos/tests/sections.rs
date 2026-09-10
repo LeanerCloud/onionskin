@@ -385,6 +385,28 @@ fn a_linearized_files_first_page_table_is_not_a_generation() {
     );
 }
 
+/// One corrupt offset must not talk the walk out of the generation it is in.
+/// A table naming an object past its own `%%EOF` is how a linearized file's
+/// first-page table is told apart from a generation, and an entry pointing
+/// past the end of the file looks exactly like one - `issue391.pdf` in the
+/// corpus carries `7000000788` and opens clean.
+#[test]
+fn an_offset_past_the_end_of_the_file_is_a_corrupt_entry_not_a_later_generation() {
+    let mut bodies: Vec<&[u8]> = common::skeleton();
+    bodies.push(b"<</Type/Spare/Which 4>>");
+    let bytes = common::classic_pdf(&bodies, &[(4, 7_000_000_788)]);
+
+    let document = open(&bytes);
+    assert_eq!(
+        document.sections().expect("the chain walks"),
+        vec![Section {
+            start: 0,
+            end: bytes.len() as u64
+        }],
+        "the file has one generation, whatever its table says about object 4"
+    );
+}
+
 /// A document cos had to rebuild the cross-reference for was not read through
 /// the chain in the file, so it has no generations to report. Handing back
 /// ranges derived from that chain would be reporting a structure this document
