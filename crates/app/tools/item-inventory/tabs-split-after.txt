@@ -46,7 +46,7 @@
 #[cfg(test)] mod tests	fn	cancellation_after_the_only_codec_return_publishes_nothing	private	#[test] fn cancellation_after_the_only_codec_return_publishes_nothing()	a58a654c21f4bc5e
 #[cfg(test)] mod tests	fn	cancellation_preserves_an_existing_single_destination	private	#[test] fn cancellation_preserves_an_existing_single_destination()	04b7c13337ab84e5
 #[cfg(test)] mod tests	fn	canvas_context_entries_come_from_the_live_model_and_run_against_it	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext)	159142d09c965ef4
-#[cfg(test)] mod tests	fn	canvas_for_export	private	#[cfg(feature = "shell-test-support")] fn canvas_for_export(registry: PluginRegistry,cx: &mut TestAppContext) -> (Entity<Canvas>,onionskin_render::BaseRaster,&mut VisualTestContext)	27bf5a70a3bb8752
+#[cfg(test)] mod tests	fn	canvas_for_export	private	#[cfg(feature = "shell-test-support")] fn canvas_for_export(registry: PluginRegistry,cx: &mut TestAppContext) -> (Entity<Canvas>,onionskin_render::BaseRaster,&mut VisualTestContext,)	27bf5a70a3bb8752
 #[cfg(test)] mod tests	fn	choosing_a_magnification_applies_it_and_closes_the_chooser	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn choosing_a_magnification_applies_it_and_closes_the_chooser(cx: &mut TestAppContext)	e59cd23aa84566d8
 #[cfg(test)] mod tests	fn	chrome	private	fn chrome(rail: bool,side_panel: bool,page_controls: bool) -> SurfaceVisibility	915f68a0cba66c79
 #[cfg(test)] mod tests	fn	close_all_leaves_no_invalid_active_tab	private	#[test] fn close_all_leaves_no_invalid_active_tab()	8726054c2407efb5
@@ -273,6 +273,8 @@
 -	struct	TabContextMenu	pub(super)	#[derive(Debug,Clone,Copy)] struct TabContextMenu	a4653023e9ac4538
 -	struct	TabState	pub(super)	struct TabState<T>	fa72f1d1d7e9073e
 -	trait	-	pub(super)	trait ExportObserver: Send + Sync	e3b0c44298fc1c14
+-	use	ShellFrame	pub(in crate::shell)	use self::frame_state::ShellFrame	e3b0c44298fc1c14
+-	use	TabError	pub(super)	use self::frame_state::TabError	e3b0c44298fc1c14
 impl DocumentTab	fn	new	pub(super)	fn new(source: PathBuf,canvas: Entity<Canvas>) -> Self	f16a3cf04b2b8a1e
 impl DocumentTab	fn	title	pub(super)	fn title(&self) -> &str	227070101a4a3772
 impl Drop for ShellFrame	fn	drop	private	fn drop(&mut self)	7793aaaf68d4a7cb
@@ -425,6 +427,7 @@ struct ExportJob	field	last_displayed	pub(super)	last_displayed: usize	e3b0c4429
 struct ExportJob	field	origin	pub(super)	origin: EntityId	e3b0c44298fc1c14
 struct ExportJob	field	phase	pub(super)	phase: Arc<ExportPhase>	e3b0c44298fc1c14
 struct ExportJob	field	total	pub(super)	total: usize	e3b0c44298fc1c14
+struct ExportPhase(AtomicU8)	field	0	private	AtomicU8	e3b0c44298fc1c14
 struct OwnedExport	field	identity	private	identity: Option<FileIdentity>	e3b0c44298fc1c14
 struct OwnedExport	field	path	private	path: PathBuf	e3b0c44298fc1c14
 struct ShellFrame	field	a11y	pub(super)	a11y: ShellAccessibility	e3b0c44298fc1c14

@@ -1,5 +1,5 @@
-items before: 460
-items after:  460
+items before: 461
+items after:  463
 visibility-only changes: 120
   VIS  #[derive(Debug,Clone,Copy)] struct CanvasContextMenu :: field origin: private -> pub(super)
   VIS  #[derive(Debug,Clone,Copy)] struct TabContextMenu :: field origin: private -> pub(super)
@@ -123,6 +123,8 @@ visibility-only changes: 120
   VIS  struct ShellFrame :: field tabs: private -> pub(super)
 only in before: 1
   -    impl ShellFrame	fn	arm_export_poll	private	fn arm_export_poll(&mut self,id: u64,cx: &mut Context<Self>)	5efea0c406fd2de9
-only in after:  1
+only in after:  3
+  +    -	use	ShellFrame	pub(in crate::shell)	use self::frame_state::ShellFrame	e3b0c44298fc1c14
+  +    -	use	TabError	pub(super)	use self::frame_state::TabError	e3b0c44298fc1c14
   +    impl ShellFrame	fn	arm_export_poll	pub(super)	fn arm_export_poll(&mut self,id: u64,cx: &mut Context<Self>)	9c0704b5eed4ad46
 RESULT: sets differ
