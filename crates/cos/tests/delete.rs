@@ -224,6 +224,33 @@ fn rewriting_a_freed_object_does_not_corrupt_the_free_list() {
     );
 }
 
+/// The other half of the free-number rule, one generation later: the free
+/// entry is already in the file, so a section that writes an object naming
+/// that number would index a reference into a number nothing can resolve.
+/// Refused before a byte is written, naming both ends of it.
+#[test]
+fn a_section_may_not_write_an_object_that_points_at_a_number_the_file_freed() {
+    let mut first = open(&fixture());
+    first.delete_object(4).expect("deletable");
+    let once = first.save_to_vec().expect("save");
+
+    let mut second =
+        Document::open(Box::new(BytesSource::new(once.clone()))).expect("reopens clean");
+    let mut referrer = onionskin_cos::Dict::new();
+    referrer.set("Points", Object::Ref(onionskin_cos::ObjRef::new(4, 0)));
+    second
+        .set_object(5, 0, Object::Dict(referrer))
+        .expect("object 5 is writable; it is the save that must refuse the reference");
+
+    match second.save_to_vec() {
+        Err(Error::DanglingReference { holder, target }) => {
+            assert_eq!(format!("{holder}"), "object 5");
+            assert_eq!(target.number, 4);
+        }
+        other => panic!("writing a reference to a freed number must be refused, got {other:?}"),
+    }
+}
+
 /// The two edit verbs work on one map, so the last one called wins. Writing an
 /// object back after deleting it has to bring it back, or a caller undoing a
 /// deletion would silently save a free entry over the object it just wrote.

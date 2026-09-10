@@ -64,7 +64,7 @@ mod xref;
 
 pub mod source;
 
-pub use document::{Document, PendingEdit, Section};
+pub use document::{Dangling, Document, Holder, PendingEdit, Section};
 pub use error::{Error, Result};
 pub use object::{
     Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,

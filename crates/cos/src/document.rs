@@ -93,6 +93,32 @@ impl Section {
     }
 }
 
+/// Where a reference was found. The trailer is a holder of its own because it
+/// is the one thing a section emits that is not one of its objects, and it can
+/// dangle on its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Holder {
+    Trailer,
+    Object(u32),
+}
+
+impl std::fmt::Display for Holder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Holder::Trailer => write!(f, "the trailer"),
+            Holder::Object(number) => write!(f, "object {number}"),
+        }
+    }
+}
+
+/// A reference whose target is free or absent: who names it, and what it
+/// names.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Dangling {
+    pub holder: Holder,
+    pub target: ObjRef,
+}
+
 struct ObjectStream {
     data: Vec<u8>,
     /// `(object number, offset of its data within `data`)`, in stream order.
@@ -1141,6 +1167,149 @@ impl Document {
         !self.edits.is_empty() || !self.trailer_edits.is_empty() || !self.provenance.is_clean()
     }
 
+    // ---- reference checking -------------------------------------------------
+
+    /// Every reference in the document that resolves to no object: the
+    /// complete check, as a query rather than a gate.
+    ///
+    /// It walks every in-use object and the trailer, and reports each
+    /// `(holder, target)` pair whose target is free or absent from the
+    /// cross-reference. It is O(file), which is why it is a query the
+    /// verification suites run over a fixture rather than something a save
+    /// pays for.
+    ///
+    /// This is the check that sees what the gate in [`Document::section_for`]
+    /// cannot: an object already in the file, not rewritten by a section,
+    /// pointing at a number that section freed. No walk bounded by the edit
+    /// can find that one, and pretending otherwise is what makes a cheap gate
+    /// look complete.
+    ///
+    /// An object the file cannot produce at all is an error rather than a
+    /// dangling entry: the two are different findings and a damaged file is
+    /// not this walk's answer to give.
+    ///
+    /// `0 0 R` is never reported. ISO 32000-1 7.3.10 makes a reference to a
+    /// nonexistent object the null object, and object 0 is the head of the
+    /// free list, so naming it is how a file writes a null reference.
+    pub fn audit_references(&self) -> Result<Vec<Dangling>> {
+        let mut numbers: BTreeSet<u32> = self
+            .xref
+            .iter()
+            .filter(|(number, entry)| {
+                *number != 0
+                    && matches!(
+                        entry,
+                        XrefEntry::InFile { .. } | XrefEntry::InObjectStream { .. }
+                    )
+            })
+            .map(|(number, _)| number)
+            .collect();
+        for (number, edit) in &self.edits {
+            match edit {
+                PendingEdit::Set { .. } => numbers.insert(*number),
+                PendingEdit::Delete { .. } => numbers.remove(number),
+            };
+        }
+
+        let resolves = |number: u32| self.in_use(&self.edits, number);
+        let mut found = Vec::new();
+        let mut trailer = self.trailer.clone();
+        for (key, value) in self.trailer_edits.iter() {
+            trailer.set(key.clone(), value.clone());
+        }
+        collect_dangling(
+            Holder::Trailer,
+            &Object::Dict(trailer),
+            &resolves,
+            &mut found,
+        );
+        for number in numbers {
+            let parsed = self.get(number)?;
+            collect_dangling(
+                Holder::Object(number),
+                &parsed.object,
+                &resolves,
+                &mut found,
+            );
+        }
+        Ok(found)
+    }
+
+    /// Whether object `number` exists, with `overlay` laid over the file's own
+    /// table. The gate asks it of the overlay it is about to write; the audit
+    /// asks it of the document's own edit map, which is the same question
+    /// about the document as it stands.
+    fn in_use(&self, overlay: &BTreeMap<u32, PendingEdit>, number: u32) -> bool {
+        match overlay.get(&number) {
+            Some(PendingEdit::Set { .. }) => true,
+            Some(PendingEdit::Delete { .. }) => false,
+            None => matches!(
+                self.xref.get(number),
+                Some(XrefEntry::InFile { .. }) | Some(XrefEntry::InObjectStream { .. })
+            ),
+        }
+    }
+
+    /// The gate: refuses to emit a section that would leave a reference in its
+    /// own bytes pointing at nothing.
+    ///
+    /// Its scope is proportional to the edit, and stated as a contract: every
+    /// reference in **the trailer this section emits** and in **every object
+    /// this section writes** must resolve, after this section, to an object
+    /// that exists, and neither may name a number this section frees. It is
+    /// the same walk [`Document::audit_references`] uses.
+    ///
+    /// Two places where the walk is narrower than that sentence, both because
+    /// the alternative refuses to save files that were already like that:
+    ///
+    /// - A trailer key this section does **not** set is checked only against
+    ///   the numbers this section or the file has freed, not against absence.
+    ///   Files whose trailer names an `/Info` nothing defines are real, and a
+    ///   section that does not touch `/Info` did not make that true; refusing
+    ///   would make such a document uneditable. What the section may not do is
+    ///   free the object an inherited key names, and that is checked.
+    /// - The copies of base objects a repaired document's full table carries
+    ///   are not walked. They are the file's own objects, re-serialized
+    ///   because a rebuilt table cannot point into an object stream, so their
+    ///   references predate the section and walking them would make the gate
+    ///   O(file) on every preview of a repaired document. `audit_references`
+    ///   is the check that sees them.
+    fn refuse_dangling_references(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer: &Dict,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+    ) -> Result<()> {
+        let resolves = |number: u32| self.in_use(overlay, number);
+        let not_freed = |number: u32| {
+            !matches!(overlay.get(&number), Some(PendingEdit::Delete { .. }))
+                && !matches!(self.xref.get(number), Some(XrefEntry::Free { .. }))
+        };
+
+        let mut found = Vec::new();
+        for (number, edit) in overlay {
+            if let PendingEdit::Set { object, .. } = edit {
+                collect_dangling(Holder::Object(*number), object, &resolves, &mut found);
+            }
+        }
+        for (key, value) in trailer.iter() {
+            let test: &dyn Fn(u32) -> bool = if trailer_edits.contains_key(key) {
+                &resolves
+            } else {
+                &not_freed
+            };
+            collect_dangling(Holder::Trailer, value, test, &mut found);
+        }
+
+        match found.first() {
+            Some(dangling) => Err(Error::DanglingReference {
+                holder: dangling.holder,
+                target: dangling.target,
+            }),
+            None => Ok(()),
+        }
+    }
+
     // ---- save ---------------------------------------------------------------
 
     /// Whether the appended section must carry a table covering every object,
@@ -1350,6 +1519,10 @@ impl Document {
             .max(self.xref.max_number());
         trailer.set("Size", Object::Integer(i64::from(highest) + 1));
 
+        // Before a byte is serialized: a section that would index a reference
+        // into nothing is refused rather than written and discovered later.
+        self.refuse_dangling_references(overlay, &trailer, trailer_edits)?;
+
         let mut section = lead.to_vec();
         section.extend_from_slice(&writer::incremental_section(
             section_start,
@@ -1546,6 +1719,56 @@ fn temporary_name(path: &Path) -> String {
     let serial = SAVES.fetch_add(1, Ordering::Relaxed);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     format!(".{name}.onionskin-save.{}.{serial}", std::process::id())
+}
+
+/// Calls `found` for every indirect reference inside `object`: dictionary
+/// values, array elements, and a stream's dictionary, at any depth. A walk
+/// that only looked at the top level would pass on exactly the nesting a page
+/// tree and an annotation list are made of.
+fn each_reference(object: &Object, found: &mut dyn FnMut(ObjRef)) {
+    match object {
+        Object::Ref(r) => found(*r),
+        Object::Array(items) => {
+            for item in items {
+                each_reference(item, found);
+            }
+        }
+        Object::Dict(dict) => {
+            for (_, value) in dict.iter() {
+                each_reference(value, found);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter() {
+                each_reference(value, found);
+            }
+        }
+        Object::Null
+        | Object::Bool(_)
+        | Object::Integer(_)
+        | Object::Real(_)
+        | Object::String(_)
+        | Object::Name(_) => {}
+    }
+}
+
+/// The one reference check. The gate and the audit differ in the set of
+/// objects they hand it, not in how a reference is found.
+///
+/// `0 0 R` is skipped: object 0 is the head of the free list and never an
+/// object, so a file names it to write a reference that resolves to null
+/// (ISO 32000-1 7.3.10).
+fn collect_dangling(
+    holder: Holder,
+    object: &Object,
+    resolves: &dyn Fn(u32) -> bool,
+    out: &mut Vec<Dangling>,
+) {
+    each_reference(object, &mut |target| {
+        if target.number != 0 && !resolves(target.number) {
+            out.push(Dangling { holder, target });
+        }
+    });
 }
 
 /// A numeric object as an `f64`. Rectangles are the only place `cos` needs

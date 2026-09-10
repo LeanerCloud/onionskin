@@ -4,6 +4,7 @@
 
 use std::fmt;
 
+use crate::document::Holder;
 use crate::object::ObjRef;
 use crate::repair::RepairReport;
 
@@ -52,6 +53,13 @@ pub enum Error {
     /// A reference cycle, or nesting past the depth limit.
     DepthExceeded {
         detail: String,
+    },
+    /// A section was asked to emit a reference that would resolve to nothing:
+    /// `holder` is the trailer or the object the section writes, `target` is
+    /// the number it names. Refused before any byte is written.
+    DanglingReference {
+        holder: Holder,
+        target: ObjRef,
     },
     /// The chain of cross-reference sections could not be walked from the
     /// file's `startxref` back to its first table: a `/Prev` that points at no
@@ -107,6 +115,11 @@ impl fmt::Display for Error {
             Error::UnsupportedFilter(name) => write!(f, "unsupported filter /{name}"),
             Error::Filter { filter, detail } => write!(f, "filter /{filter} failed: {detail}"),
             Error::DepthExceeded { detail } => write!(f, "depth limit exceeded: {detail}"),
+            Error::DanglingReference { holder, target } => write!(
+                f,
+                "{holder} references object {}, which the section would leave pointing at nothing",
+                target.number
+            ),
             Error::SectionChain { offset, detail } => {
                 write!(f, "cross-reference chain at byte {offset}: {detail}")
             }
@@ -151,6 +164,7 @@ impl Error {
             Error::UnsupportedFilter(_) => "unsupported-filter",
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",
+            Error::DanglingReference { .. } => "dangling-reference",
             Error::SectionChain { .. } => "section-chain",
             Error::NoSuchPage { .. } => "no-such-page",
             Error::InvalidPageCount { .. } => "invalid-page-count",
