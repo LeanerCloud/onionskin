@@ -23,29 +23,33 @@ use super::super::canvas::{CanvasModel, CanvasViewState, ViewAction};
 use super::super::context_menu::tool_with;
 use super::super::dialog::render_dialog;
 use super::super::find_bar::{
-    render_find_bar, Dismiss, FindBarState, FindDirection, FindNextMatch, FindOption,
-    FindPreviousMatch, FindSummary, FIND_INPUT_ID, FIND_PLACEHOLDER,
+    render_find_bar, Dismiss, FindDirection, FindNextMatch, FindOption, FindPreviousMatch,
+    FindSummary,
 };
-use super::super::home::{render_home, HomeState, HomeView};
-use super::super::panes::{self, NavigationPanesState, PaneAction};
+use super::super::home::{render_home, HomeView};
+// Only the tests and the accessors they call still name the type here, now
+// that the frame's construction moved to `frame_state`. Gated on `test`
+// alone, not on `shell-test-support`: a plain `#[test]` in this file uses it
+// too, so a `--features shell` test build needs it.
+#[cfg(test)]
+use super::super::panes::NavigationPanesState;
+use super::super::panes::{self, PaneAction};
 use super::super::Canvas;
-use super::super::{record_opened, repair_notice, ShellSettings};
+use super::super::{record_opened, repair_notice};
 
 use self::export::{export_progress_label, ExportPhaseValue};
-use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab, TabState};
-use super::accessible::{Activation, ShellAccessibility, SHELL_KEY_CONTEXT};
+use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab};
+use super::accessible::{Activation, SHELL_KEY_CONTEXT};
 use super::global_bar::{refresh_native_menus, MenuCommand, NO_SNAPSHOT_TOOL};
 use super::page_controls::{
-    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
+    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
 };
-use super::quick_actions::{
-    render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
-};
-use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry, RailState};
+use super::quick_actions::{render_quick_actions, QuickAction, QuickActionEntry};
+use super::rail::{apply_rail_selection, rail_width, render_rail, RailEntry};
 use super::side_panel::{render_side_panel, SidePanelState};
-use super::theme::{ShellViewAction, ShellViewState, SurfaceVisibility};
+use super::theme::{ShellViewAction, SurfaceVisibility};
 use super::tool_search::{
-    document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
+    document_search_result, search_registry, unavailable_selection, SearchResult,
 };
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
@@ -67,94 +71,6 @@ pub(in crate::shell) enum TabCommand {
 }
 
 impl ShellFrame {
-    pub(in crate::shell) fn new(
-        tabs: Vec<(PathBuf, Entity<Canvas>)>,
-        mut shell_view_state: ShellViewState,
-        mut settings: ShellSettings,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        shell_view_state.set_fullscreen(window.is_fullscreen());
-        let theme = shell_view_state.tokens();
-        let search_input = cx.new(|cx| SearchInput::new(theme, cx));
-        // Named from the same constants the accessible description names,
-        // so a field and the node describing it cannot be given different
-        // identities.
-        let find_input =
-            cx.new(|cx| SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx));
-        let page_input =
-            cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
-        cx.observe(&search_input, |frame, _, cx| {
-            frame.search_feedback = None;
-            cx.notify();
-        })
-        .detach();
-        cx.observe(&find_input, |frame, _, cx| {
-            frame.find_query_changed(cx);
-        })
-        .detach();
-        cx.observe(&page_input, |frame, _, cx| {
-            frame.page_entry_error = None;
-            cx.notify();
-        })
-        .detach();
-        cx.observe_window_appearance(window, |frame, window, cx| {
-            frame.window_appearance_changed(window, cx);
-        })
-        .detach();
-        cx.observe_window_bounds(window, |frame, window, cx| {
-            frame.window_bounds_changed(window, cx);
-        })
-        .detach();
-        let document_tabs: Vec<_> = tabs
-            .into_iter()
-            .map(|(source, canvas)| DocumentTab::new(source, canvas))
-            .collect();
-        for tab in &document_tabs {
-            cx.observe(&tab.canvas, |frame, _, cx| {
-                frame.canvas_view_changed(cx);
-            })
-            .detach();
-        }
-        let tabs = TabState::new(document_tabs);
-        let observed_view_state = tabs
-            .active()
-            .map(|tab| tab.canvas.read(cx).model.view_state());
-        let notices = std::mem::take(&mut settings.notices);
-        let frame = Self {
-            tabs,
-            main_menu_open: false,
-            tab_context_menu: None,
-            canvas_context_menu: None,
-            search_input,
-            search_feedback: None,
-            find: FindBarState::with_options(settings.preferences.search),
-            find_input,
-            page_input,
-            page_entry_error: None,
-            observed_view_state,
-            shell_view_state,
-            rail_state: RailState::default(),
-            quick_actions_state: QuickActionsState::default(),
-            side_panel_state: SidePanelState::default(),
-            navigation: NavigationPanesState::default(),
-            settings,
-            notices,
-            dialog: None,
-            recent_menu_open: false,
-            home: HomeState::default(),
-            export_job: None,
-            next_export_id: 0,
-            a11y: ShellAccessibility::new(cx),
-        };
-        frame.sync_page_entry(cx);
-        // The chrome takes keyboard focus at launch. Without it GPUI has no
-        // focus path to dispatch along, so the shell's own keys, Escape
-        // included, would reach nothing until the user clicked a text field.
-        window.focus(frame.a11y.focus_handle());
-        frame
-    }
-
     /// Escape: close the topmost thing that is open.
     ///
     /// In the order a user would expect to peel them off, and propagating
@@ -1118,14 +1034,6 @@ impl ShellFrame {
     }
 }
 
-impl Drop for ShellFrame {
-    fn drop(&mut self) {
-        if let Some(job) = &self.export_job {
-            job.phase.cancel();
-        }
-    }
-}
-
 impl Render for ShellFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.shell_view_state.tokens();
@@ -1519,6 +1427,13 @@ mod tests {
         context_menu_origin, tab_context_entries, CanvasContextMenu, CANVAS_CONTEXT_MENU_WIDTH,
         CONTEXT_MENU_PADDING, CONTEXT_MENU_ROW_HEIGHT,
     };
+    use super::frame_state::TabState;
+    use crate::shell::chrome::page_controls::PAGE_ENTRY_ID;
+    use crate::shell::chrome::quick_actions::QuickActionsState;
+    use crate::shell::chrome::theme::ShellViewState;
+    use crate::shell::find_bar::FIND_INPUT_ID;
+    use crate::shell::ShellSettings;
+
     use super::export::{
         export_path, preflight_export_paths, report_export_failure, run_export_worker,
         run_export_worker_observed, ExportFailure, ExportJob, ExportObserver, ExportOutcome,

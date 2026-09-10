@@ -1,7 +1,8 @@
 lines before: 7236
-lines after:  7301
-only in before: 22
+lines after:  7302
+only in before: 25
   -    CodecPlugin, ExportError, ExportRequest, PageRange, PluginRegistry, PointerInput, ToolCtx,
+  -    FindPreviousMatch, FindSummary, FIND_INPUT_ID, FIND_PLACEHOLDER,
   -    FocusPrevious, FocusPreviousInGroup, ShellAccessibility, Surface, TextField, SHELL_KEY_CONTEXT,
   -    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
   -    PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
@@ -11,6 +12,7 @@ only in before: 22
   -    Timer::after(super::super::POLL_INTERVAL).await;
   -    ToolPlugin,
   -    div, px, App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EntityId,
+  -    document_search_result, search_registry, unavailable_selection, SearchInput, SearchResult,
   -    fn command_unavailable(&self, command: MenuCommand, cx: &App) -> Option<&'static str> {
   -    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
   -    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
@@ -21,10 +23,12 @@ only in before: 22
   -    fn step_focus(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
   -    fn step_focus_within(&mut self, step: A11yStep, window: &mut Window, cx: &mut Context<Self>) {
   -    main_menu_schema, refresh_native_menus, ExportTarget, MenuAvailability, MenuCommand, MenuState,
+  -    render_find_bar, Dismiss, FindBarState, FindDirection, FindNextMatch, FindOption,
   -    self, parse_page_entry, render_page_controls, PageControlsState, PageEntryError,
   -    self, render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
-only in after: 87
+only in after: 91
   +    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+  +    #[cfg(test)]
   +x6  &mut self,
   +x2  &self,
   +    ) -> Option<&'static str> {
@@ -33,6 +37,7 @@ only in after: 87
   +    CONTEXT_MENU_PADDING, CONTEXT_MENU_ROW_HEIGHT,
   +    CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageIndex, PageRange,
   +    ExportPhase, EXPORT_DPI,
+  +    FindSummary,
   +    FocusPrevious, FocusPreviousInGroup, Surface, TextField,
   +    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, PathPromptOptions,
   +    MouseDownEvent, ParentElement as _, Pixels, Point, StatefulInteractiveElement as _,
@@ -54,6 +59,7 @@ only in after: 87
   +    div, px, App, AppContext as _, ClipboardItem, Context, Entity, EntityId, Focusable as _,
   +    div, px, App, Bounds, ClipboardItem, Context, InteractiveElement as _, IntoElement,
   +    div, px, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+  +    document_search_result, search_registry, unavailable_selection, SearchResult,
   +    event: &MouseDownEvent,
   +    export_path, preflight_export_paths, report_export_failure, run_export_worker,
   +    failure: impl fmt::Display,
@@ -66,13 +72,13 @@ only in after: 87
   +    fn run_accessibility_requests(
   +    fn step_focus(
   +    fn step_focus_within(
-  +x5  impl ShellFrame {
+  +x6  impl ShellFrame {
   +    main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
-  +    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT, PAGE_ENTRY_ID,
-  +    render_quick_actions, QuickAction, QuickActionEntry, QuickActionsState,
+  +    parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
+  +    render_find_bar, Dismiss, FindDirection, FindNextMatch, FindOption, FindPreviousMatch,
   +    run_export_worker_observed, ExportFailure, ExportJob, ExportObserver, ExportOutcome,
   +x2  step: A11yStep,
   +    window: &Window,
   +x5  window: &mut Window,
-  +x5  }
-  +x5  };
+  +x6  }
+  +x4  };

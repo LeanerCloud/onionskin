@@ -782,3 +782,10 @@ pub(super) fn report_export_failure(
         }
     });
 }
+impl Drop for ShellFrame {
+    fn drop(&mut self) {
+        if let Some(job) = &self.export_job {
+            job.phase.cancel();
+        }
+    }
+}

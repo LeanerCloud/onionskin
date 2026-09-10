@@ -13,7 +13,6 @@ crate::shell::chrome::tabs	impl ShellFrame	fn	find_previous_match	pub(in crate::
 crate::shell::chrome::tabs	impl ShellFrame	fn	is_active_canvas	pub(in crate::shell)
 crate::shell::chrome::tabs	impl ShellFrame	fn	navigation	pub(in crate::shell)
 crate::shell::chrome::tabs	impl ShellFrame	fn	navigation_mut	pub(in crate::shell)
-crate::shell::chrome::tabs	impl ShellFrame	fn	new	pub(in crate::shell)
 crate::shell::chrome::tabs	impl ShellFrame	fn	open_documents	pub(super)
 crate::shell::chrome::tabs	impl ShellFrame	fn	open_find_bar	pub(super)
 crate::shell::chrome::tabs	impl ShellFrame	fn	open_from_home	pub(in crate::shell)
@@ -125,6 +124,7 @@ crate::shell::chrome::tabs::frame_state	-	struct	ShellFrame	pub(in crate::shell)
 crate::shell::chrome::tabs::frame_state	-	struct	TabState	pub(super)
 crate::shell::chrome::tabs::frame_state	impl DocumentTab	fn	new	pub(super)
 crate::shell::chrome::tabs::frame_state	impl DocumentTab	fn	title	pub(super)
+crate::shell::chrome::tabs::frame_state	impl ShellFrame	fn	new	pub(in crate::shell)
 crate::shell::chrome::tabs::frame_state	impl<T> TabState<T>	fn	activate	pub
 crate::shell::chrome::tabs::frame_state	impl<T> TabState<T>	fn	active	pub
 crate::shell::chrome::tabs::frame_state	impl<T> TabState<T>	fn	active_index	pub
