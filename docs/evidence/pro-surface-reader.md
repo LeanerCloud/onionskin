@@ -75,10 +75,11 @@ coordinate.
 
 ### Edit menu, Pro-gated block
 
-The Edit menu carries a contiguous eight-item Pro block between two
-separators, at indices 5 to 13. Every one reports `AXEnabled = true`, which is
-the mechanical form of the claim in `docs/plans/parity-goal.md` candor item 1:
-the entry is live, and the paywall is somewhere past the click.
+The Edit menu carries eight Pro entries at indices 5 to 13, in **two**
+separator-bounded groups: three items at 5 to 7, then five at 9 to 13, with a
+separator at index 8. Every one reports `AXEnabled = true`, which is the
+mechanical form of the claim in `docs/plans/parity-goal.md` candor item 1: the
+entry is live, and the paywall is somewhere past the click.
 
 Document state at query time, since an enabled flag means little without it: a
 multi-page document is open at page 1. Reader's Window menu lists
@@ -115,6 +116,43 @@ The View menu contains no Pro-gated entries. Its whole content is Reader
 functionality, which is why M2 could be measured from this build without any
 of this work.
 
+### Two accessibility entries elsewhere in the menu bar
+
+Both are cited as evidence in `docs/evidence/pro-surface-coverage.tsv`, so
+their dumps are recorded here rather than left to a raw file nobody can see.
+
+`View > Read Out Loud` at index 12, submenu, in order:
+
+| # | Title | Enabled | Shortcut |
+|---|---|---|---|
+| 0 | Activate Read Out Loud | yes | cmd+shift+Y |
+| 1 | Read This Page Only | no | cmd+shift+V |
+| 2 | Read To End of Document | no | cmd+shift+B |
+| 3 | Pause | no | cmd+shift+C |
+| 4 | Stop | no | cmd+shift+E |
+
+Application menu (`Acrobat Reader`), whole menu, in order:
+
+| # | Title | Enabled | Shortcut |
+|---|---|---|---|
+| 0 | About Adobe Acrobat Reader | yes | |
+| 1 | About Adobe Plug-Ins... | yes | |
+| 2 | separator | | |
+| 3 | Preferences... | yes | cmd+, |
+| 4 | Accessibility Setup Assistant... | yes | |
+| 5 | separator | | |
+| 6 | Services | yes | |
+| 7 | separator | | |
+| 8 | Hide Adobe Acrobat Reader | yes | cmd+H |
+| 9 | Hide Others | yes | cmd+opt+H |
+| 10 | Show All | no | |
+| 11 | separator | | |
+| 12 | Quit Adobe Acrobat Reader | yes | cmd+Q |
+
+The `Services` submenu is populated by the operating system from whatever
+other applications are installed, so its contents are not a fact about Reader
+and are not recorded.
+
 ---
 
 ## E3. Audit of the existing private capture set
@@ -135,12 +173,12 @@ Auditing them before using them turned out to matter.
 | `ff9627ad8b5bc274` | 2 (`30-test-w1`, `30-test-w2`) | rail in its truncated 13-entry state |
 | 9 more | 1 each | see E4 |
 
-**Conclusion: 13 of the 26 filenames cannot be what they say.**
-The earlier run clicked a rail entry, captured, and moved on. Once the E-Sign
-recipients dialog opened it swallowed every later click, so twelve consecutive
-captures recorded the same modal under twelve different toolset names, and the
-first `01-edit-a-pdf` frame is byte-identical to the baseline because that
-click never landed at all.
+**Conclusion: 13 of the 26 filenames cannot be what they say.** The earlier
+run clicked a rail entry, captured, and moved on. Once the E-Sign recipients
+dialog opened it swallowed every later click, so twelve consecutive captures
+recorded the same modal under twelve different toolset names, and the first
+`01-edit-a-pdf` frame is byte-identical to the baseline because that click
+never landed at all.
 
 Two rules for the method follow directly, and both are cheap:
 
@@ -161,10 +199,10 @@ all.
 
 ## E4. What the surviving distinct frames establish
 
-Thirteen frames are distinct and every one of them is accounted for: five in
-E4.1 to E4.5, four in E4.7, and the remaining four are the upsell-modal frames
-of E4.6 (`Edit a PDF`, `Organize pages`, `Combine files`) plus the rail-closed
-frame `7333d42`, which E4.7 also covers. Measured with
+Thirteen frames are distinct and every one is accounted for: five in E4.1 to
+E4.5 (`8d5d971`, `ff9627a`, `07ffb1d`, `592642c`, `650b2b0`), three upsell
+modals in E4.6 (`49c4866`, `1a3a67a`, `29c21cc`), and five in E4.7 (`7333d42`,
+`a8a380b`, `0f3d966`, `210fc67`, `7a5d8a0`). Measured with
 `parity/tools/measure-pane.py` against the source pixels. The captures are 2x;
 every number below is in logical points and every one is **relative to the
 window or the pane**, per the relative-measurement rule in
@@ -295,9 +333,10 @@ the trial button occupy that space and section 1 of the method document
 excludes them from what Onionskin reproduces, so no number is taken from them
 and none may be promoted into a token.
 
-**Where the wall is: on apply.** The panel is fully interactive up to the
-`Convert` button. Nothing in this frame establishes what happens after that
-click, because no frame captured it.
+**Where the wall is: inferred to be on apply.** No upsell appears anywhere up
+to the `Convert` button. Nothing in this frame establishes what happens after
+that click, because no frame captured it, so this is an absence-of-upsell
+argument rather than an observation of the wall.
 
 ### E4.4 Create a PDF: a multi-step flow whose first step renders, frame `592642c`
 
@@ -382,7 +421,7 @@ Onionskin would use.
 | Frame | What it shows | Why it is recorded |
 |---|---|---|
 | `7333d42` | The rail **closed**. Only the floating quick-tools strip (six controls, vertical, upper left of the canvas) and the right-hand pane switcher (four controls) remain, with the Pages pane still open. | Establishes that dismissing the tool pane is a distinct layout, not a width change: the canvas takes the pane's 287 pt and the quick-tools strip moves to the canvas edge. |
-| `a8a380b` | The E-Sign panel and recipients dialog, one caret-blink apart from `0f3d966` and `650b2b0`. | Confirms all three E-Sign frames are one state, so the set contains one E-Sign capture, not three. |
+| `a8a380b` and `0f3d966` | The E-Sign panel and recipients dialog, differing from `650b2b0` and from each other only by the text caret. | Confirms all three E-Sign frames are one state, so the set contains one E-Sign capture, not three. |
 | `210fc67` | The 13-entry rail plus Reader's `Reopen closed PDFs` recovery toast. | Dates the earlier run's force-quit and, as E4.2 says, settles which rail state is the default. |
 | `7a5d8a0` | A 260 x 192 px thumbnail, the only capture in the set that is not a full window. | Not usable. Recorded so the count reconciles. |
 

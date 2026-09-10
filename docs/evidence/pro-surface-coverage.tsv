@@ -25,9 +25,9 @@
 # section	row	verdict	evidence
 Edit a PDF	Edit text (line-level)	D	helpx edit-text pages name "Edit text"
 Edit a PDF	Reflowing text edit	N	no Acrobat control of this name surfaced
-Edit a PDF	Change font, size, colour, alignment, spacing of edited text	D	Format panel: Font, Size, Colour, Alignment, Line spacing
+Edit a PDF	Change font, size, colour, alignment, spacing of edited text	D	field list of the Format panel: Font, Size, Colour, Alignment, Line spacing
 Edit a PDF	Add text (new text box)	Ra	Reader Edit menu index 6, "Add Text", enabled
-Edit a PDF	Edit images and objects	D	Objects panel: Flip, Rotate, Arrange, Align, Crop
+Edit a PDF	Edit images and objects	D	field list of the Objects panel: Flip, Rotate, Arrange, Align, Crop
 Edit a PDF	Replace image	N	not surfaced
 Edit a PDF	Add image	Ra	Reader Edit menu index 7, "Add Image", enabled
 Edit a PDF	Extract / save image	N	not surfaced under Edit
@@ -64,7 +64,7 @@ Organize pages	Crop pages (from Organize)	D	Set Page Boxes / Crop dialog
 Organize pages	Page thumbnail zoom and multi-select in the Organize grid	N	not surfaced
 Compress a PDF	Compress a PDF (one-click, size level)	D	"Reduce PDF file size"
 Compress a PDF	Reduce File Size (compatibility target)	D	"Reduce PDF file size"
-Compress a PDF	PDF Optimizer	D	"PDF Optimizer": Images, Fonts, Transparency, Discard Objects, Discard User Data, Clean Up
+Compress a PDF	PDF Optimizer	D	field list of "PDF Optimizer": Images, Fonts, Transparency, Discard Objects, Discard User Data, Clean Up
 Compress a PDF	Audit space usage	D	"Audit Space Usage"
 Export a PDF	Export to Microsoft Word (.docx)	Rb	frame 07ffb1d: radio 1, "Microsoft Word", tag DOCX, selected
 Export a PDF	Export to Microsoft Excel (.xlsx)	Rb	frame 07ffb1d: radio 3, "Microsoft Excel", tag XLSX
@@ -88,7 +88,7 @@ Prepare a form	Image field	N	not surfaced
 Prepare a form	Date field	D	"Date"
 Prepare a form	Digital signature field	D	"Digital Signature"
 Prepare a form	Barcode field	D	"Barcode"
-Prepare a form	Field properties: General, Appearance, Position, Options, Actions	D	tabs General, Appearance, Options, Actions confirmed; Position not
+Prepare a form	Field properties: General, Appearance, Position, Options, Actions	D	field list of the Properties dialog: tabs General, Appearance, Options, Actions confirmed; Position not; no order asserted
 Prepare a form	Field properties: Format, Validate, Calculate	D	Format and Calculate confirmed; Validate not
 Prepare a form	Tab order / form field navigation	N	not surfaced
 Prepare a form	Fill in a form (as an end user)	N	not probed
@@ -145,8 +145,8 @@ Measure objects	Measurement Info panel	D	"Measurement Info panel": current measu
 Prepare for accessibility	Check for accessibility	D	"Accessibility Check" / "Full Check"
 Prepare for accessibility	Accessibility report	D	"Accessibility Report"; statuses Passed, Skipped By User, Needs Manual Check, Failed
 Prepare for accessibility	Automatically tag a PDF (autotag)	D	"Autotag Document"
-Prepare for accessibility	Fix reading order (Reading Order tool)	D	"Reading Order", "Reading Options"
-Prepare for accessibility	Edit structure with the Tags and Content panes	D	"Tags panel", "Content pane options menu"
+Prepare for accessibility	Fix reading order (Reading Order tool)	D	labels "Reading Order" and "Reading Options", no placement asserted
+Prepare for accessibility	Edit structure with the Tags and Content panes	D	labels "Tags panel" and "Content pane options menu", no placement asserted
 Prepare for accessibility	Set alternate text for figures	D	Adobe prose gives "Add alternate text"; whether that supersedes "Set Alternate Text" is open
 Prepare for accessibility	Set document language	N	not surfaced
 Prepare for accessibility	Set document title	N	not surfaced

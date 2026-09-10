@@ -48,6 +48,7 @@ def bands(path, scale):
     h, w, _ = a.shape
     print(f"capture {w}x{h} px = {w // scale}x{h // scale} pt")
     edge, bg = pane_edge(a, h // 2)
+    print(f"pane background at (10,{h // 2}) {tuple(bg)}")
     print(f"pane right edge x={edge} px = {edge / scale:.1f} pt")
     pane = a[:, 5:edge - 5]
     ink = (np.abs(pane - bg).sum(axis=2) > 40).sum(axis=1)

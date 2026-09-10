@@ -119,7 +119,7 @@ unused.
 |---|---|---|
 | **F1** | Presence or absence | `Redact a PDF` is an entry in the rail |
 | **F2** | Naming | the entry reads exactly `Redact a PDF`, not `Redact PDF` |
-| **F3** | Grouping and hierarchy | the eight Pro entries in the Edit menu sit in one block between two separators |
+| **F3** | Grouping and hierarchy | the Edit menu's Pro entries sit in two separator-bounded groups, three items then five |
 | **F4** | Ordering | `Microsoft Word`, `Microsoft PowerPoint`, `Microsoft Excel`, `Image format`, `Other format`, in that sequence |
 | **F5** | Default and enabled state | `Microsoft Word` is the selected radio when the panel opens; the recipients dialog's `Cancel` is rendered disabled |
 | **F6** | Dialog field list | the recipients dialog has exactly one text field, with that placeholder |
@@ -140,11 +140,11 @@ own?
 | **A** accessibility | yes | yes | yes | for menus | yes | yes | no | no | no | no | no | no |
 | **B** private capture | yes | yes | yes | yes | yes | yes | with a frame per step | yes | yes | no | yes | no |
 | **C** doc prose | yes | yes | yes | if the prose asserts it | if the prose asserts it | yes | yes | no | no | no | no | no |
-| **D** search summary | yes | only verbatim | no | no | no | partial | partial | no | no | no | no | no |
+| **D** search summary | yes | only verbatim | verbatim path only | no | no | partial | partial | no | no | no | no | no |
 | **E** third party | as a lead only | no | no | no | no | no | as a lead only | no | no | no | no | no |
 | **X** doc images | no | no | no | no | no | no | no | no | no | no | no | no |
 
-Four entries in that matrix are the ones that do real work.
+Five entries in that matrix are the ones that do real work.
 
 **F10 is refused to every source.** Absolute screen geometry is not
 establishable from anything, including a private capture, because the window's
@@ -178,7 +178,8 @@ appears verbatim in the returned text; it cannot prove that label sits third
 in a list, because the ordering in a summary is the engine's. This is the one
 place the model is stricter than it first looks, and it is deliberate: class D
 is the only class that reaches Adobe documentation from this machine at all
-(section 6.6), so the temptation to lean on it is real.
+(section 6's conditions, and section 8 item 3), so the temptation to lean on
+it is real.
 
 The exception, added during review of the proof run because the run kept
 producing facts the matrix as first written would have thrown away: **class D
@@ -331,10 +332,11 @@ which `Cancel` is rendered **disabled**. Recovered in full, including the
 disabled state, which is an F5 fact no documentation page would have given.
 
 This sample also produced the run's third gate shape. The gate here is a
-**quota**, not a block: "Send up to 2 documents for signature for free every
-30 days on a rolling basis." The dialog is live and the feature works. A
-method that assumed two states, gated and ungated, would have recorded this
-one wrong.
+**quota**, not a block: a banner states a free-tier allowance and the dialog
+below it is live. The banner's wording is the purchase call to action, which
+section 1 excludes, so the shape is recorded and the copy is not. A method
+that assumed two states, gated and ungated, would have recorded this one
+wrong.
 
 ### 6.4 Multi-step flow: Create a PDF. **Partial, and it produced the run's most important caveat.**
 
@@ -442,8 +444,9 @@ grouping, no ordering and no iconography beyond its own rail icon.
 What was recovered: the rail entry's exact label and position, its tooltip
 `Modify or add text, images, pages, and more` (an F2 fact, captured), and
 three class A menu entries, `Edit a PDF`, `Add Text` and `Add Image`, at Edit
-menu indices 5, 6 and 7, all enabled, in one separator-bounded block. Class D
-then named ten of the eighteen rows' controls.
+menu indices 5, 6 and 7, all enabled, in one separator-bounded group. Two of
+the eighteen rows, `Add text` and `Add image`, are those entries and so stand
+at class A; class D named the controls of eight more.
 
 The upsell modal itself is a fixed template that varies only in eyebrow,
 headline, bullet list and illustration. Its bullet lists are Adobe's own
@@ -472,7 +475,7 @@ class D; two lost.
 | 6.1 | All tools rail | whole toolset panel | B | full success |
 | 6.2 | Export a PDF panel | whole toolset panel | B | full success |
 | 6.3 | Request e-signatures dialog | dense dialog | B | full success |
-| 6.4 | Create a PDF | multi-step flow | B | step one only, and it is a reduced surface |
+| 6.4 | Create a PDF | multi-step flow | B | step one only; reduced surface or older documentation, not separable |
 | 6.5 | Change Scale Ratio | context menu | D | naming yes, ordering refused |
 | 6.6 | Form field Properties | dense dialog | D | field list yes, tab order no, one tab unconfirmed |
 | 6.7 | Print Production | expected to source badly | D (legacy) | as expected; F1 and F2 only |
@@ -502,9 +505,8 @@ out-of-scope. Add comments, Add stamps and Fill & Sign are excluded, so their
 38 in-scope rows are not part of this problem. That exclusion is **measured
 for Fill & Sign** (the E-Sign panel's `FILL AND SIGN YOURSELF` section renders
 live, with `Add signature`, `Add initials` and a six-control strip, and no
-gate) and
-**asserted, not measured, for Add comments (25 rows) and Add stamps (7
-rows)**, from their presence in the rail and the product's free-tier
+gate) and **asserted, not measured, for Add comments (25 rows) and Add stamps
+(7 rows)**, from their presence in the rail and the product's free-tier
 positioning. If both turn out to be gated the denominator rises to 177 and
 every percentage below falls by about a fifth. Re-derive with
 `parity/tools/coverage-tally.py`, which compares the two files' row counts.
@@ -549,7 +551,7 @@ Per toolset:
 Two toolsets of sixteen have any captured surface at all, and one of them,
 Create a PDF, has only its first step.
 
-### 7.3 What the 61% and the 4.8% buy, which is not the same thing
+### 7.3 What the 60.7% and the 4.8% buy, which is not the same thing
 
 `docs/plans/parity-goal.md` builds look-and-feel acceptance out of three
 layers: sourced design tokens, a relative geometry ledger, and a behavioural
@@ -563,10 +565,12 @@ surface from which a spacing token, a row pitch, an icon grid or a colour
 could be taken today.
 
 The other three buckets buy something real and different. The 7 Ra rows give a
-command's exact label, its index, its group and its shortcut, which is what
-the keyboard-parity and menu-parity claims rest on. The 74 D rows give naming,
-field lists and workflow step order, which is what the **functional** board
-counts and what stops Onionskin shipping a feature with the wrong vocabulary.
+command's exact label, its index, its group and its shortcut where one exists,
+which is what the keyboard-parity and menu-parity claims rest on. Six of the
+seven carry no shortcut, and that absence is itself a class A fact. The 74 D
+rows give naming, field lists and workflow step order, which is what the
+**functional** board counts and what stops Onionskin shipping a feature with
+the wrong vocabulary.
 
 Restated as the three numbers that matter:
 
@@ -590,12 +594,12 @@ signature validity across edits`) carry the same evidence string as the rest
 of N, and only the last two are Onionskin obligations by construction.
 
 Second, and despite that, the shape of the fix is knowable. Every one of the
-57 is a real Acrobat feature or a real Onionskin obligation, and the route
-that failed for all of them is the same route: a search engine standing in for
-a documentation server that refuses this environment. **The 39.3% is a
-measurement of this pass's access, not of Adobe's documentation.** Restoring
-class C should move most of it, and a reader comparing two passes should
-expect that and should not read it as progress.
+57 is a row on the board, and the route that failed for all of them is the
+same route: a search engine standing in for a documentation server that
+refuses this environment. **The 39.3% is a measurement of this pass's access,
+not of Adobe's documentation.** Restoring class C should move most of it, and
+a reader comparing two passes should expect that and should not read it as
+progress.
 
 The 4.8% will not move the same way. It is bounded by what Reader renders, and
 section 6 established that two of the sixteen toolsets in the denominator
@@ -663,9 +667,10 @@ something a reader would otherwise reasonably assume.
    built around for everything behind the wall, was unavailable for the whole
    run, and all 74 D verdicts rest on class D, a search engine's summary.
    Under the matrix in section 4.3 that means those 74 rows have naming and
-   presence and **do not** have confirmed grouping or ordering. Restoring
-   class C is the highest-value single fix available to this method and it is
-   an access problem, not a research one.
+   presence, have grouping only where a verbatim quoted path carries it, and
+   **do not** have confirmed ordering. Restoring class C is the highest-value
+   single fix available to this method and it is an access problem, not a
+   research one.
 4. **A locked session removes both live instruments except the menu bar.**
    Screen capture returns the login window; the Reader process reports zero
    windows. Menu enumeration survives. So the unattended fraction of this work
