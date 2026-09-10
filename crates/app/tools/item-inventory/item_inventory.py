@@ -400,6 +400,14 @@ def elide_groups(text, names, hops):
 
     The hop's own dot is the one that goes; the leaf keeps its name and its
     dot, which is what makes a renamed leaf a difference rather than a match.
+
+    What is enforced is narrower than "no rewrap is absorbed", and the
+    difference is worth knowing. Whitespace beside `(){}[],;` is never semantic
+    in Rust, so collapsing it there could not hide a change and nothing here
+    forbids it; a rewrap that only moves such whitespace would be absorbed by a
+    rule that did. What is forbidden, and asserted, is deleting punctuation: a
+    trailing comma and a brace are both real in a body, and two of the three
+    rewraps this change reports survive because they add one.
     """
     if not names:
         return text

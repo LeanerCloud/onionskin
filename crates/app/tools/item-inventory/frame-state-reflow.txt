@@ -7,6 +7,14 @@
 # So the three are read instead. Each is rustfmt reformatting a line the hop
 # pushed past 100 columns, and in each the tokens either side are unchanged.
 #
+# Two of the three are reported because they add punctuation. The first is
+# reported only because whitespace beside a delimiter happens not to be
+# collapsed, which is a choice and not a consequence: collapsing it could hide
+# nothing, since whitespace there is never semantic in Rust, so a rule that did
+# collapse it would absorb that hunk and still pass every case. What the
+# procedure guarantees is that no punctuation is deleted, which is narrower than
+# "no rewrap is absorbed" and is the honest way to read these three.
+#
 # Read against 536487a, base f349359.
 
 crates/app/src/shell/chrome/tabs/accessible.rs, ShellFrame::focused_text_field

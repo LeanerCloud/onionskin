@@ -12,6 +12,15 @@
 # dead-code on test-support helpers outside chrome/tabs/, and CI lints
 # neither configuration. known-issues.md records six of the nine.
 #
+# A warm target directory can make a clippy count measure the cache rather
+# than the code, so the two counts that are not zero were re-taken with
+# `onionskin-app` forced to rebuild: `--features shell --all-targets` emits
+# the same nine, and `--workspace --all-targets` the same zero. Both runs
+# rebuilt the app anyway, since its sources are what changed, and the before
+# run started from an empty target directory. A zero on a workspace crate
+# outside `crates/app` is therefore the only figure here that a cache could
+# have flattened, and no such crate is touched.
+#
 # `app-nodefault-shell-test` exits 101 on both sides for the same single
 # failure, `a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops
 # _the_next_page`, which is gated on shell-test-support alone while its
