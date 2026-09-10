@@ -199,7 +199,7 @@ fn a_trailer_key_the_section_sets_may_not_name_an_object_nobody_writes() {
 /// unsupported filter is not a dangling reference, and putting it in the same
 /// bucket would let a real finding hide behind a parse failure.
 #[test]
-fn the_pdf_association_fixtures_audit_clean() {
+fn the_named_pdf_association_sample_audits_clean_to_its_floor() {
     let Some(dir) = corpus_dir("external/pdf-association") else {
         return;
     };
@@ -211,7 +211,7 @@ fn the_pdf_association_fixtures_audit_clean() {
         let source = match FileSource::open(path) {
             Ok(source) => source,
             Err(e) => {
-                tally.record(path, &e);
+                tally.skip(path, e.category());
                 continue;
             }
         };

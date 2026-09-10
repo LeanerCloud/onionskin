@@ -1505,15 +1505,12 @@ impl Document {
         let mut rows = self.free_list_rows(overlay, full_table);
         if full_table {
             for (number, entry) in self.xref.iter() {
-                // The overlay, not the document's edit map, and this is the
+                // The overlay, not the document's edit map, which is the
                 // fourth of the four places that distinction has to be made.
-                // Reading the edit map here - permanently empty for a caller
-                // that keeps its own overlay - would let an overlaid object
-                // whose base entry is compressed be pushed twice: once from
-                // the overlay and once by the copy below. The sort is stable,
-                // so the overlay's copy would come first and the table's
-                // last-write-wins row would point at the base copy. The edit
-                // would be written into the file and then indexed away.
+                // Reading the edit map here would push an overlaid compressed
+                // object twice - the overlay's copy and the base's - and the
+                // table's last row wins, so the edit would be written into the
+                // file and then indexed away.
                 if number == 0 || overlay.contains_key(&number) {
                     continue;
                 }
