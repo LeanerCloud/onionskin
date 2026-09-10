@@ -248,10 +248,10 @@ fn saving_a_large_file_streams_it_in_bounded_chunks() {
         .filter(|(len, _)| *len > 4 * COPY_BUDGET)
         .collect();
     if candidates.is_empty() {
-        eprintln!(
-            "SKIPPED: the corpus holds no PDF bigger than {} bytes",
+        common::missing(&format!(
+            "the corpus holds no PDF bigger than {} bytes, so the copy budget cannot be measured",
             4 * COPY_BUDGET
-        );
+        ));
         return;
     }
     candidates.sort_by_key(|(len, _)| std::cmp::Reverse(*len));

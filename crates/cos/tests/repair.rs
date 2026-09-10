@@ -7,9 +7,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use common::{
-    classic_pdf, classic_pdf_covering, corpus_dir, corpus_root, pdfs_in, skeleton, Tally,
-};
+use common::{classic_pdf, classic_pdf_covering, corpus_dir, pdfs_in, skeleton, Tally};
 use onionskin_cos::{BytesSource, Document, Error, Object, Provenance, RepairReason};
 
 /// The damage each malformed variant carries, keyed by filename suffix.
@@ -152,18 +150,12 @@ fn repairs_and_saves(path: &Path) -> Result<(), String> {
 /// as "needed-repair" lands here, and has to survive the same contract.
 #[test]
 fn damaged_files_in_the_external_corpora_repair_the_same_way() {
-    let Some(root) = corpus_root() else {
-        common::missing("no corpus found; set ONIONSKIN_CORPUS");
+    // Through `corpus_dir` rather than an `is_dir` check of its own: this
+    // walk printed SKIPPED and returned even under ONIONSKIN_CORPUS_REQUIRED,
+    // so guarantee 6's own re-run reported a pass over an absent corpus.
+    let Some(external) = corpus_dir("external") else {
         return;
     };
-    let external = root.join("external");
-    if !external.is_dir() {
-        eprintln!(
-            "SKIPPED: {} is absent (it is gitignored)",
-            external.display()
-        );
-        return;
-    }
 
     let mut tally = Tally::new("external (damaged only)");
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();

@@ -91,7 +91,9 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         })
         .collect();
     if candidates.is_empty() {
-        eprintln!("SKIPPED: the corpus holds no PDF of at least {INTERESTING} bytes");
+        common::missing(&format!(
+            "the corpus holds no PDF of at least {INTERESTING} bytes, so laziness cannot be measured"
+        ));
         return;
     }
     candidates.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
@@ -256,7 +258,7 @@ fn an_object_is_parsed_only_when_it_is_asked_for() {
     };
     let path = root.join("seeds").join("two-page.pdf");
     if !path.is_file() {
-        eprintln!("SKIPPED: {} is absent", path.display());
+        common::missing(&format!("{} is absent", path.display()));
         return;
     }
 
