@@ -1503,6 +1503,10 @@ mod tests {
     use std::sync::{mpsc, Arc, Condvar, Mutex};
 
     use accesskit::Role;
+    // Gated exactly like its one user, the canvas context menu test, which
+    // needs `tools-basic` to have a live entry to pick.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use gpui::MouseDownEvent;
     #[cfg(feature = "shell-test-support")]
     use gpui::{TestAppContext, VisualTestContext};
     use onionskin_core::{PageLayoutMode, ViewPoint, ViewRotation, ZoomPolicy};
