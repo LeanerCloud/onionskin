@@ -187,8 +187,8 @@ fn every_malformed_file_opens_and_repairs_into_a_new_section() {
     );
 }
 
-/// The suites that read the corpus, and the CI step that re-runs them with it
-/// mandatory, held to the same list.
+/// The suites that can reach the corpus, and the CI step that re-runs them
+/// with it mandatory, held to the same list.
 ///
 /// Guarantee 6 spent a milestone green over a corpus CI never generated. The
 /// fix was a fetch-or-generate step plus a re-run under
@@ -221,22 +221,43 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
     // malformed generator already gives: corpus assertions are byte and
     // structure work with no platform dimension, and three runners fetching
     // 351 MB is three caches and three chances to flake for one claim.
-    for (command, absent) in [
+    let producing = [
         (
             "./corpus/fetch.sh",
             "CI fetches no corpus, so every external/ walk runs over an empty directory and passes",
         ),
         (
             "./corpus/fetch.sh hayro-corpus",
-            "CI does not fetch hayro-corpus, which guarantee 1's round-trip walk and both extraction walks name",
+            "CI does not fetch hayro-corpus, which guarantee 1's round-trip walk, the extraction walk and the document search walk all name",
+        ),
+        (
+            "./corpus/make-malformed.sh",
+            "CI never generates corpus/malformed, so the repair and session walks cannot be made mandatory",
         ),
         (
             "./corpus/make-bench.py",
             "CI never generates the thousand-page file, so the pages suite cannot be made mandatory",
         ),
-    ] {
-        linux_step(&steps, command, absent);
+    ]
+    .map(|(command, absent)| (command, linux_step(&steps, command, absent)));
+
+    // A corpus produced after the run that needed it is a corpus nothing read.
+    // The plain workspace run matters as much as the rerun here: it is the one
+    // that catches a suite the fetch newly switches on.
+    let workspace_run = steps
+        .iter()
+        .position(|step| {
+            field(step, "run").as_deref().map(str::trim) == Some("cargo test --workspace")
+        })
+        .expect("the test job no longer runs the workspace suite");
+    let (rerun_at, rerun) = corpus_rerun_step(&steps);
+    for (command, at) in producing {
+        assert!(
+            at < workspace_run && at < rerun_at,
+            "`{command}` runs after the suites that read what it produces"
+        );
     }
+
     let cache = steps
         .iter()
         .find(|step| {
@@ -244,14 +265,35 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
                 && field(&step["with"], "path").as_deref() == Some("corpus/external")
         })
         .expect("the test job does not cache the corpus it fetches");
+    let key = field(&cache["with"], "key").expect("the corpus cache declares no key");
     assert!(
-        field(&cache["with"], "key").is_some_and(|key| key.contains(
+        key.contains(
             "hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"
-        )),
+        ),
         "the corpus cache key does not cover the pinned revisions and the checksum manifest, so a moved pin serves the old corpus forever"
     );
+    // The hash covers what a set contains and not which sets were asked for,
+    // so a fetch step added without touching the key would hit it, restore a
+    // cache without the new set, download it, and - the key having hit - never
+    // save it again, every run. Every fetch step in the job, not only the ones
+    // named above: an unrecognised one is exactly the case this catches.
+    for step in &steps {
+        let Some(run) = field(step, "run") else {
+            continue;
+        };
+        for line in script_lines(&run) {
+            let Some(sets) = line.trim().strip_prefix("./corpus/fetch.sh") else {
+                continue;
+            };
+            let sets = sets.trim();
+            let named = if sets.is_empty() { "default" } else { sets };
+            assert!(
+                key.contains(named),
+                "`{line}` fetches a set the cache key does not name, so a warm cache serves a corpus without it"
+            );
+        }
+    }
 
-    let rerun = corpus_rerun_step(&steps);
     assert_eq!(
         field(&rerun["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
         Some("1"),
@@ -276,13 +318,13 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
     }
     assert!(
         !expected.is_empty(),
-        "no test target reads the corpus, which means this search stopped working rather than that the corpus stopped being read"
+        "no test target reaches the corpus, which means this search stopped working rather than that the corpus stopped being read"
     );
 
     assert_eq!(
         corpus_rerun_commands(&steps),
         expected,
-        "the corpus rerun and the suites that read the corpus disagree"
+        "the corpus rerun and the suites that can reach the corpus disagree"
     );
 }
 
@@ -3567,29 +3609,33 @@ fn gate_step<'a>(steps: &[&'a Yaml], command: &str) -> &'a Yaml {
     step
 }
 
-/// The one step whose whole script is `command`, held to the reviewed key set
-/// and pinned to the Linux runner.
+/// Where the one step whose whole script is `command` sits, held to the
+/// reviewed key set and pinned to the Linux runner.
 ///
 /// Not `gate_step`: the corpus steps carry an `if:` and some an `env:`, and
 /// that helper allows neither. Pinned to the value rather than merely allowed,
-/// so `if: false` is not a way to switch one off.
-fn linux_step<'a>(steps: &[&'a Yaml], command: &str, absent: &str) -> &'a Yaml {
+/// so `if: false` is not a way to switch one off. The index comes back so a
+/// caller can check that a step producing a corpus runs before the one that
+/// reads it.
+fn linux_step(steps: &[&Yaml], command: &str, absent: &str) -> usize {
     let found = steps
         .iter()
-        .filter(|step| field(step, "run").as_deref().map(str::trim) == Some(command))
+        .enumerate()
+        .filter(|(_, step)| field(step, "run").as_deref().map(str::trim) == Some(command))
         .collect::<Vec<_>>();
     assert_eq!(found.len(), 1, "{absent}");
+    let (at, step) = found[0];
     assert_reviewed_keys(
-        found[0],
+        step,
         &["name", "if", "run", "env"],
         &format!("the `{command}` step"),
     );
     assert_eq!(
-        field(found[0], "if").as_deref(),
+        field(step, "if").as_deref(),
         Some("runner.os == 'Linux'"),
         "the `{command}` step runs on a different set of runners than the rest of this gate"
     );
-    found[0]
+    at
 }
 
 /// The `test` job step that re-runs the corpus suites with the corpus made
@@ -3597,34 +3643,33 @@ fn linux_step<'a>(steps: &[&'a Yaml], command: &str, absent: &str) -> &'a Yaml {
 /// there is nothing else to match it on.
 const CORPUS_RERUN: &str = "Prove every corpus suite measured its corpus";
 
-fn corpus_rerun_step<'a>(steps: &[&'a Yaml]) -> &'a Yaml {
+fn corpus_rerun_step<'a>(steps: &[&'a Yaml]) -> (usize, &'a Yaml) {
     let found = steps
         .iter()
-        .filter(|step| field(step, "name").as_deref() == Some(CORPUS_RERUN))
+        .enumerate()
+        .filter(|(_, step)| field(step, "name").as_deref() == Some(CORPUS_RERUN))
         .collect::<Vec<_>>();
     assert_eq!(
         found.len(),
         1,
         "the test job has no single `{CORPUS_RERUN}` step, so nothing proves any suite read the corpus"
     );
-    assert_reviewed_keys(
-        found[0],
-        &["name", "if", "run", "env"],
-        "the corpus rerun step",
-    );
+    let (at, step) = found[0];
+    assert_reviewed_keys(step, &["name", "if", "run", "env"], "the corpus rerun step");
     assert_eq!(
-        field(found[0], "if").as_deref(),
+        field(step, "if").as_deref(),
         Some("runner.os == 'Linux'"),
         "the corpus rerun runs on a different set of runners than the fetch that feeds it"
     );
-    found[0]
+    (at, *step)
 }
 
 /// The commands that step runs, one per line. Through `script_lines`, so a
 /// `set +e` spliced in among them is an extra command rather than an invisible
 /// one.
 fn corpus_rerun_commands(steps: &[&Yaml]) -> Vec<String> {
-    let run = field(corpus_rerun_step(steps), "run").expect("the corpus rerun step runs nothing");
+    let (_, step) = corpus_rerun_step(steps);
+    let run = field(step, "run").expect("the corpus rerun step runs nothing");
     script_lines(&run)
         .into_iter()
         .filter(|line| !line.is_empty())
@@ -3648,8 +3693,16 @@ struct CorpusSuite {
     target: String,
 }
 
-/// Every integration-test target in the workspace that reads the corpus, found
-/// by looking rather than by remembering.
+/// Every integration-test target in the workspace that can reach the corpus,
+/// found by looking rather than by remembering.
+///
+/// "Can reach" rather than "does read": a target counts when it calls a lookup
+/// itself *or* declares a module that does, because a walk moved into a
+/// `tests/common` helper is still a walk. That over-includes the two targets
+/// which include `common` for its fixture builders alone, and the error is
+/// deliberately on that side - an extra suite in the rerun costs a second and
+/// is visible in the workflow, while a missing one is the silent gap this
+/// whole package exists to close.
 fn corpus_suites() -> Vec<CorpusSuite> {
     let root = workspace_root();
     let mut found = Vec::new();
@@ -3684,7 +3737,11 @@ fn corpus_suites() -> Vec<CorpusSuite> {
                 }
                 let source = fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
-                if CORPUS_LOOKUPS.iter().any(|call| source.contains(call)) {
+                if reaches_the_corpus(&source)
+                    || declared_modules(&source, &tests)
+                        .iter()
+                        .any(|module| reaches_the_corpus(module))
+                {
                     found.push(CorpusSuite {
                         package: package.clone(),
                         target: name,
@@ -3695,6 +3752,28 @@ fn corpus_suites() -> Vec<CorpusSuite> {
     }
     found.sort();
     found
+}
+
+fn reaches_the_corpus(source: &str) -> bool {
+    CORPUS_LOOKUPS.iter().any(|call| source.contains(call))
+}
+
+/// The sources of the modules a target declares with `mod NAME;`, as
+/// `tests/NAME.rs` or `tests/NAME/mod.rs`. Only the ones it declares: reading
+/// every file in the directory would make each target answer for its
+/// neighbours.
+fn declared_modules(source: &str, tests: &Path) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("mod ")?.strip_suffix(';'))
+        .flat_map(|name| {
+            [
+                tests.join(format!("{name}.rs")),
+                tests.join(name).join("mod.rs"),
+            ]
+        })
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .collect()
 }
 
 /// A manifest's `[package] name`. From that table only: `[[bin]]` declares a

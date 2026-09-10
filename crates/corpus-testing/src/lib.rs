@@ -8,13 +8,26 @@
 //! and CI sets it on the re-run step that exists to turn a skip into a
 //! failure.
 //!
-//! This crate exists because that rule was implemented four times before it
-//! was implemented anywhere the app and plugin test targets could reach it,
-//! and their fixtures are the ones CI has never seen.
+//! This crate exists because that rule was written out six times over -
+//! `cos/tests/common`, `content/tests/common`, `core/tests/search.rs`,
+//! `core/tests/panes.rs`, `core/benches/harness` and
+//! `codecs-common/tests/roundtrip.rs` - and in none of them anywhere the app
+//! or plugin test targets could reach it. Their fixtures are the ones CI has
+//! never seen. Those six stay where they are; this is what a new caller uses
+//! instead of becoming a seventh.
 
 use std::path::{Path, PathBuf};
 
+// Deliberately not here: a recursive `pdfs_in`, which the four existing
+// helpers each carry. It belongs in this crate the moment a target that walks
+// a corpus directory reaches for it, and there is not one yet.
+
 /// Root of the shared corpus: `$ONIONSKIN_CORPUS`, else `<workspace>/corpus`.
+///
+/// A set `ONIONSKIN_CORPUS` that is not a directory is a typo, and reading it
+/// as "unset" would run the whole suite against the repository's own corpus
+/// while the caller believed it was running against another one. It fails
+/// instead.
 ///
 /// The fallback is this crate's own manifest directory two levels up, which is
 /// the workspace root for as long as this crate lives under `crates/`. Nothing
@@ -23,10 +36,14 @@ use std::path::{Path, PathBuf};
 pub fn corpus_root() -> Option<PathBuf> {
     if let Some(from_env) = std::env::var_os("ONIONSKIN_CORPUS") {
         let path = PathBuf::from(from_env);
-        return path.is_dir().then_some(path);
+        assert!(
+            path.is_dir(),
+            "ONIONSKIN_CORPUS is set to {}, which is not a directory",
+            path.display()
+        );
+        return Some(path);
     }
-    let workspace = workspace_root();
-    let corpus = workspace.join("corpus");
+    let corpus = workspace_root().join("corpus");
     corpus.is_dir().then_some(corpus)
 }
 
@@ -45,10 +62,7 @@ pub fn corpus_dir(relative: &str) -> Option<PathBuf> {
 
 /// Reports an absent corpus: a loud skip normally, a failure under
 /// `ONIONSKIN_CORPUS_REQUIRED`.
-///
-/// Generic in the return type so a caller producing anything other than a path
-/// can end a lookup with it rather than reimplementing the rule.
-pub fn missing<T>(why: &str) -> Option<T> {
+pub fn missing(why: &str) -> Option<PathBuf> {
     if std::env::var_os("ONIONSKIN_CORPUS_REQUIRED").is_some() {
         panic!("corpus required but {why}");
     }
@@ -56,41 +70,22 @@ pub fn missing<T>(why: &str) -> Option<T> {
     None
 }
 
-/// Every PDF under `dir`, recursively, sorted by path so a run that samples a
-/// prefix samples the same files everywhere.
-pub fn pdfs_in(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    collect(dir, &mut out);
-    out.sort();
-    out
-}
-
-fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect(&path, out);
-        } else if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
-        {
-            out.push(path);
-        }
-    }
-}
-
 /// One of the committed seeds under `corpus/seeds`.
 ///
-/// Not a lookup: the seeds are in the repository, so a caller that cannot find
-/// one has a broken checkout rather than an unfetched corpus, and should fail
-/// on the read rather than skip. It goes through [`corpus_root`] so that
-/// `ONIONSKIN_CORPUS` moves the seeds along with everything else.
+/// Not a lookup, so it never skips: the seeds are in the repository. It goes
+/// through [`corpus_root`] so `ONIONSKIN_CORPUS` moves them along with
+/// everything else, and it names the root it looked in, because a corpus
+/// pointed elsewhere is the way this stops being a broken checkout and starts
+/// being a wrong environment.
 pub fn seed(name: &str) -> PathBuf {
     let root = corpus_root().unwrap_or_else(|| workspace_root().join("corpus"));
-    root.join("seeds").join(name)
+    let path = root.join("seeds").join(name);
+    assert!(
+        path.is_file(),
+        "{} holds no seed {name}, so the corpus root is wrong rather than incomplete",
+        root.display()
+    );
+    path
 }
 
 fn workspace_root() -> &'static Path {

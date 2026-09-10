@@ -220,8 +220,9 @@ command list from the test targets that actually call a corpus lookup, so a new
 suite that reads the corpus and never reaches CI fails the build.
 
 `hayro-corpus` is an opt-in set for a fetch on a laptop, and CI fetches it
-anyway: four suites name it outright, and one of them is `roundtrip.rs`, which
-enforces guarantee 1. Leaving it out would mean either a mandatory re-run that
+anyway: three live suites name it outright (`cos/tests/roundtrip.rs`,
+`content/tests/corpus.rs`, `core/tests/search.rs`), plus one `#[ignore]`d
+sweep in `content/tests/oracle.rs`, and the first of those enforces guarantee 1. Leaving it out would mean either a mandatory re-run that
 skipped guarantee 1's own walk or a per-test skip list inside it, and both put
 the guarantee back where it started. It costs 152 MB on a cold cache and
 nothing on a warm one.

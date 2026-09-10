@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: corpus/external
-          key: corpus-test-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
+          key: corpus-test-default-hayro-corpus-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
       # The default sets: hayro, pdf-association and verapdf. Almost every
       # external fixture the guarantee suites name comes from one of them, and
       # until this step existed every walk over them ran on an empty directory
@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         run: ./corpus/fetch.sh
       # hayro-corpus is opt-in for a fetch on a laptop - 152 MB for 41 files -
-      # but four suites name it outright, guarantee 1's own round-trip walk
+      # but three live suites name it outright, guarantee 1's own round-trip walk
       # among them, and a mandatory re-run that excluded them would leave
       # guarantee 1 meaning the tracked seeds again. Its own step rather than
       # arguments spliced into the one above, so neither is a list of set names
@@ -99,11 +99,13 @@ jobs:
           cargo test -p onionskin-codecs-common --test roundtrip
           cargo test -p onionskin-content --test corpus
           cargo test -p onionskin-content --test oracle
+          cargo test -p onionskin-content --test regressions
           cargo test -p onionskin-content --test seeds
           cargo test -p onionskin-core --test panes
           cargo test -p onionskin-core --test search
           cargo test -p onionskin-core --test session
           cargo test -p onionskin-cos --test boundaries
+          cargo test -p onionskin-cos --test delete
           cargo test -p onionskin-cos --test incremental
           cargo test -p onionskin-cos --test lazy
           cargo test -p onionskin-cos --test pages

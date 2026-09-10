@@ -146,6 +146,12 @@ fn a_cross_reference_stream_with_the_right_length_reports_nothing() {
 /// would be worse than no note.
 #[test]
 fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
+    // "What the wild actually contains" is `external/`. Sampling the root
+    // without requiring it let this walk report a pass over the three tracked
+    // seeds, which contain no recovered boundary at all.
+    if corpus_dir("external").is_none() {
+        return;
+    }
     let Some(root) = corpus_root() else {
         common::missing("no corpus found; set ONIONSKIN_CORPUS");
         return;
@@ -158,6 +164,14 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
     let stride = (all.len() / 600).max(1);
     let sampled: Vec<_> = all.into_iter().step_by(stride).collect();
     println!("sampling {} corpus files, every {stride}", sampled.len());
+    // The sets CI fetches sample 680 files here. A floor rather than a count,
+    // so a corpus refresh that adds files does not fail the build for adding
+    // them, but a corpus that shrank to the seeds cannot report a pass.
+    assert!(
+        sampled.len() >= 500,
+        "only {} corpus files sampled, so this walk is not measuring the wild",
+        sampled.len()
+    );
     for path in sampled {
         let Ok((document, _)) = Document::open_path_repairing(&path) else {
             continue;
@@ -195,6 +209,13 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
         }
     }
     println!("{recoveries} recovered stream boundaries in {files_with_recoveries} corpus files");
+    // The invariant is about files whose /Length lied. A sample that met none
+    // of them checked nothing, and printing the zero is not the same as
+    // saying so.
+    assert!(
+        recoveries > 0,
+        "no sampled corpus file needed a boundary recovery, so the invariant went unchecked"
+    );
 }
 
 /// The seeds are well-formed, so walking every object in them must produce no

@@ -15,8 +15,20 @@ use onionskin_cos::{
 /// covers the document anyway.
 const INTERESTING: u64 = 1024 * 1024;
 /// Reading a quarter of a multi-megabyte file to show its first page would
-/// already mean the laziness bet had failed.
+/// already mean the laziness bet had failed. Applied to the bytes the open
+/// looked at, counting each one once.
 const BUDGET_PERCENT: u64 = 25;
+/// Applied to the bytes handed out, re-reads included, which is the I/O the
+/// open actually costs.
+///
+/// Higher than the budget above and derived rather than chosen: `Reader`
+/// parses an object by reading a window and quadrupling it until the object
+/// fits, re-reading from the object's start each time, so the bytes handed out
+/// run to a bounded multiple of the bytes looked at. Measured over the sets CI
+/// fetches, the worst file is isartor-6-1-12-t01-fail-a.pdf at 22% looked at
+/// and 46% handed out, and every other file is under 3%. This is the ceiling
+/// on that multiple, not a second opinion about laziness.
+const IO_CEILING_PERCENT: u64 = 60;
 
 /// Where the ranges are recorded, shared between the wrapper handing them out
 /// and the test reading them back.
@@ -129,20 +141,23 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
                 .expect("the range log outlives every reader")
                 .clone(),
         );
-        let percent = looked_at * 100 / len;
         println!(
-            "{}: looked at {looked_at} of {len} bytes ({percent}%), {handed_out} handed out, {} pages, first page in {:?}",
+            "{}: looked at {looked_at} of {len} bytes ({}%), {handed_out} handed out ({}%), {} pages, first page in {:?}",
             path.file_name().unwrap_or_default().to_string_lossy(),
+            looked_at * 100 / len,
+            handed_out * 100 / len,
             document.page_count().unwrap_or(-1),
             elapsed
         );
+        // Compared as a product rather than through an integer percentage,
+        // which truncates and would pass a file at 25.99% of a 25% budget.
         assert!(
-            handed_out < *len,
-            "opening read {handed_out} bytes of a {len} byte file: that is the whole file"
+            looked_at * 100 <= BUDGET_PERCENT * len,
+            "opening looked at {looked_at} of {len} bytes, over the {BUDGET_PERCENT}% budget"
         );
         assert!(
-            percent <= BUDGET_PERCENT,
-            "opening looked at {percent}% of the file, over the {BUDGET_PERCENT}% budget"
+            handed_out * 100 <= IO_CEILING_PERCENT * len,
+            "opening read {handed_out} bytes of a {len} byte file, over the {IO_CEILING_PERCENT}% re-read ceiling"
         );
         measured += 1;
     }
