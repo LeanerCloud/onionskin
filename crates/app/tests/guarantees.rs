@@ -302,15 +302,26 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
         for line in script_lines(&run) {
             // Every way of naming the script, not the one spelling this
             // workflow happens to use: `bash corpus/fetch.sh pdfjs` adds a set
-            // just as well.
+            // just as well. A shell line is not parsed here, so the reading is
+            // deliberately literal and anything it cannot read is refused
+            // rather than assumed to fetch nothing.
+            if line.starts_with('#') {
+                continue;
+            }
             let Some((_, sets)) = line.split_once("corpus/fetch.sh") else {
                 continue;
             };
             let sets = sets.trim();
             if sets.is_empty() {
                 fetched.insert("default".to_owned());
-            } else {
-                fetched.extend(sets.split_whitespace().map(str::to_owned));
+                continue;
+            }
+            for set in sets.split_whitespace() {
+                assert!(
+                    !set.starts_with('-'),
+                    "`{line}` passes `{set}` to fetch.sh, which this cannot read as a set name"
+                );
+                fetched.insert(set.to_owned());
             }
         }
     }
@@ -3706,16 +3717,6 @@ fn corpus_rerun_commands(steps: &[&Yaml]) -> Vec<String> {
         .collect()
 }
 
-/// The calls a test target makes to find the corpus. Any of them means the
-/// target reads a directory that is fetched or generated rather than
-/// committed, so a run without it passes having done nothing.
-const CORPUS_LOOKUPS: &[&str] = &[
-    "corpus_root(",
-    "corpus_dir(",
-    "corpus_file(",
-    "var_os(\"ONIONSKIN_CORPUS\")",
-];
-
 /// One integration-test target and the package that owns it.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct CorpusSuite {
@@ -3760,11 +3761,6 @@ fn corpus_suites() -> Vec<CorpusSuite> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                // This file names every lookup above because it is the one
-                // searching for them, so it would always match itself.
-                if package == "onionskin-app" && name == "guarantees" {
-                    continue;
-                }
                 if reaches_the_corpus(&path) {
                     found.push(CorpusSuite {
                         package: package.clone(),
@@ -3786,86 +3782,160 @@ fn reaches_the_corpus(file: &Path) -> bool {
         if !seen.insert(path.clone()) {
             continue;
         }
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
-        if CORPUS_LOOKUPS.iter().any(|call| source.contains(call)) {
+        let parsed = parse_rust(&path);
+        let mut calls = CorpusCalls::default();
+        for item in &parsed.items {
+            calls.visit_item(item);
+        }
+        if calls.found {
             return true;
         }
-        frontier.extend(declared_modules(&source, &path));
+        frontier.extend(declared_modules(
+            &parsed.items,
+            &module_directory(&path),
+            &path,
+        ));
     }
     false
 }
 
-/// Where the modules `file` declares live.
-///
-/// Resolved rather than guessed, and every declaration has to resolve: a
-/// module this cannot find is a module whose corpus walk this cannot see, and
-/// dropping it silently is the failure mode the whole gate exists to prevent.
-/// `#[path]` is honoured because `crates/core/tests/scroll_accounting.rs`
-/// already uses it, to reach a file outside `tests/` entirely.
-fn declared_modules(source: &str, file: &Path) -> Vec<PathBuf> {
-    // A crate root and a `mod.rs` own the directory they sit in; any other
-    // module file owns a subdirectory named after it.
-    let directory = match file.file_name().and_then(std::ffi::OsStr::to_str) {
-        Some("mod.rs") => file.parent().expect("a file has a parent").to_path_buf(),
-        _ if is_crate_root(file) => file.parent().expect("a file has a parent").to_path_buf(),
-        _ => file.with_extension(""),
-    };
+fn parse_rust(path: &Path) -> syn::File {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
+    syn::parse_file(&source).unwrap_or_else(|error| {
+        panic!(
+            "{} does not parse ({error}), so whether it reaches the corpus cannot be read",
+            path.display()
+        )
+    })
+}
 
+/// Whether a file calls one of the corpus lookups, or reads the variable that
+/// moves the corpus.
+///
+/// Parsed rather than grepped. A substring scan finds these names in a comment,
+/// in a doc example and in the error messages of the very test doing the
+/// scanning, which is why this file used to have to exclude itself from its own
+/// search. It also finds them through a macro, because syn leaves a macro's
+/// tokens unparsed and something has to walk them.
+#[derive(Default)]
+struct CorpusCalls {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for CorpusCalls {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Expr::Path(path) = &*call.func {
+            if let Some(last) = path.path.segments.last() {
+                self.found |= match last.ident.to_string().as_str() {
+                    "corpus_root" | "corpus_dir" | "corpus_file" => true,
+                    // How every helper written before the shared crate finds
+                    // its root.
+                    "var_os" | "var" => strings_in(&call.args)
+                        .iter()
+                        .any(|literal| literal == "ONIONSKIN_CORPUS"),
+                    _ => false,
+                };
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if let Ok(args) = mac.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated) {
+            for arg in &args {
+                self.visit_expr(arg);
+            }
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Where the modules declared in `file` live: a crate root and a `mod.rs` own
+/// the directory they sit in, any other module file owns a subdirectory named
+/// after it.
+fn module_directory(file: &Path) -> PathBuf {
+    let parent = file.parent().expect("a file has a parent");
+    match file.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some("mod.rs") => parent.to_path_buf(),
+        // An integration-test target sits directly in `tests/` and is a crate
+        // root, so its modules are its neighbours rather than its children.
+        _ if parent.file_name().is_some_and(|name| name == "tests") => parent.to_path_buf(),
+        _ => file.with_extension(""),
+    }
+}
+
+/// The files the module declarations in `items` resolve to.
+///
+/// Read from the syntax tree, because a line scan of this had four spellings
+/// wrong: `#[path = "..."] mod x;` on one line, `pub(crate) mod`, `pub(super)
+/// mod`, and the second of two on one line. Every declaration has to resolve to
+/// exactly one file: a module this cannot find is a module whose corpus walk it
+/// cannot see, and dropping it silently is the failure mode the whole gate
+/// exists to prevent.
+fn declared_modules(items: &[syn::Item], directory: &Path, file: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let mut at_path: Option<&str> = None;
-    for line in source.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("#[path = \"") {
-            at_path = rest.split('"').next();
+    for item in items {
+        let syn::Item::Mod(item) = item else {
+            continue;
+        };
+        let name = item.ident.to_string();
+        if let Some((_, inline)) = &item.content {
+            // Its source is already in hand; anything it declares in turn is
+            // a child of a directory named after it.
+            found.extend(declared_modules(inline, &directory.join(&name), file));
             continue;
         }
-        let Some(rest) = line
-            .strip_prefix("mod ")
-            .or_else(|| line.strip_prefix("pub mod "))
-        else {
-            // Only an attribute directly above the declaration applies to it.
-            if !line.is_empty() && !line.starts_with("//") && !line.starts_with('#') {
-                at_path = None;
-            }
-            continue;
-        };
-        let Some((name, _)) = rest.split_once(';') else {
-            // `mod name { ... }` is inline, so its source is already in hand.
-            at_path = None;
-            continue;
-        };
-        let name = name.trim();
-        let candidates = match at_path.take() {
+        let candidates = match module_path_attribute(&item.attrs) {
             Some(relative) => vec![directory.join(relative)],
             None => vec![
                 directory.join(format!("{name}.rs")),
-                directory.join(name).join("mod.rs"),
+                directory.join(&name).join("mod.rs"),
             ],
         };
-        let resolved: Vec<PathBuf> = candidates.iter().filter(|c| c.is_file()).cloned().collect();
+        let resolved = candidates
+            .iter()
+            .filter(|candidate| candidate.is_file())
+            .collect::<Vec<_>>();
         assert_eq!(
             resolved.len(),
             1,
-            "{} declares `mod {name};`, which resolves to {:?} rather than to one file, so whether it reaches the corpus cannot be read",
+            "{} declares `mod {name};`, which resolves to {:?} of the candidates {:?} rather than to one file, so whether it reaches the corpus cannot be read",
             file.display(),
-            resolved
+            resolved,
+            candidates
         );
         found.push(resolved[0].clone());
     }
     found
 }
 
-/// Whether `file` is an integration-test target rather than a module of one.
-/// Targets sit directly in a crate's `tests/` directory.
-fn is_crate_root(file: &Path) -> bool {
-    file.parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "tests")
+/// The `#[path = "..."]` a module declaration carries, if any.
+fn module_path_attribute(attributes: &[syn::Attribute]) -> Option<String> {
+    attributes.iter().find_map(|attribute| {
+        if !attribute.path().is_ident("path") {
+            return None;
+        }
+        let syn::Meta::NameValue(pair) = &attribute.meta else {
+            return None;
+        };
+        let Expr::Lit(literal) = &pair.value else {
+            return None;
+        };
+        let syn::Lit::Str(text) = &literal.lit else {
+            return None;
+        };
+        Some(text.value())
+    })
 }
 
 /// A manifest's `[package] name`. From that table only: `[[bin]]` declares a
 /// `name` too, and `crates/app`'s is not the package's.
+///
+/// A line reader over TOML rather than a parse, unlike the module and workflow
+/// readers above, and on purpose: every way it can fail to recognise a name
+/// ends in the panic below rather than in a package silently missing from the
+/// rerun list, which is the failure the parsed readers exist to rule out.
 fn package_name(manifest: &Path) -> String {
     let text = fs::read_to_string(manifest)
         .unwrap_or_else(|error| panic!("{} is unreadable ({error})", manifest.display()));

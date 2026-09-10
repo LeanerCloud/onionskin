@@ -10,6 +10,7 @@
 #   ./corpus/proof/rerun.sh                      the whole corpus, all pass
 #   ./corpus/proof/rerun.sh --without external   the fetch step removed
 #   ./corpus/proof/rerun.sh --empty external     the fetch step half-done
+#   ./corpus/proof/rerun.sh --clean external     a corpus with no damage in it
 #   ./corpus/proof/rerun.sh --without malformed --without bench
 #
 # The assembled root is symlinks into the repository's own corpus, so nothing
@@ -26,6 +27,7 @@ readonly RERUN_STEP='name: Prove every corpus suite measured its corpus'
 
 omit=()
 empty=()
+clean=()
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--without)
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--empty)
 		empty+=("$2")
+		shift 2
+		;;
+	--clean)
+		clean+=("$2")
 		shift 2
 		;;
 	*)
@@ -63,6 +69,13 @@ for part in "$CORPUS_DIR"/*/; do
 	fi
 	if is_named "$name" ${empty[@]+"${empty[@]}"}; then
 		mkdir -p -- "$root/$name"
+		continue
+	fi
+	# The committed seeds are well formed, so a directory of them is a corpus
+	# with nothing in it for a damage walk to find.
+	if is_named "$name" ${clean[@]+"${clean[@]}"}; then
+		mkdir -p -- "$root/$name/undamaged"
+		cp -- "$CORPUS_DIR"/seeds/*.pdf "$root/$name/undamaged/"
 		continue
 	fi
 	ln -s -- "$part" "$root/$name"

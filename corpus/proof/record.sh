@@ -32,6 +32,9 @@ banner 'The fetch step removed. The rerun must fail.'
 banner 'The fetch step half-done, external/ present and empty. Must fail.'
 "$SCRIPT_DIR/rerun.sh" --empty external
 
+banner 'An external/ of undamaged files. The damage walks must fail.'
+"$SCRIPT_DIR/rerun.sh" --clean external
+
 banner 'Both generators removed. The suites that need them must fail.'
 "$SCRIPT_DIR/rerun.sh" --without malformed --without bench
 

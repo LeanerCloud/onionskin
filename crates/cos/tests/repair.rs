@@ -194,6 +194,16 @@ fn damaged_files_in_the_external_corpora_repair_the_same_way() {
         0,
         "a repaired real-world file must still save over intact original bytes"
     );
+    // A file list is not damage. Every clean file is skipped by the loop
+    // above, so an `external/` of well-formed documents leaves the tally empty
+    // and the assertion just made is satisfied by nothing at all. The sets CI
+    // fetches carry 28 damaged files, so this is a floor with a wide margin
+    // over a full walk rather than a count taken from a sample.
+    assert!(
+        tally.total() > 0,
+        "{} holds no file that needed repairing, so real-world damage went unmeasured",
+        external.display()
+    );
 }
 
 fn repaired_save_survives(path: &Path, document: &Document) -> Result<(), String> {

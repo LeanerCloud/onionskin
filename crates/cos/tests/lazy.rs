@@ -27,12 +27,13 @@ const BUDGET_PERCENT: u64 = 25;
 /// stated against the file size binds only on the one large reader and leaves
 /// the rest free to regress by any factor at all.
 ///
-/// Between two anchors, both of them named because neither alone justifies a
-/// number. Measured over the sets CI fetches, the whole-open factor runs from
-/// 1.31 to 2.31 across the 32 files. The loop's own worst case for a single
-/// object is 16/3, when the object is one byte past a window boundary. So this
-/// sits above everything observed with room for a file that lands worse, and
-/// below what a loop that stopped quadrupling would produce.
+/// Measured rather than derived, and said so: over the sets CI fetches the
+/// factor runs from 1.31 to 2.31 across the 32 files, with a median of 1.74.
+/// There is no clean bound to derive it from. Per object the loop re-reads at
+/// most 4/3 of the window it settles on, but the windows of objects that sit
+/// near each other overlap, and the union counts the overlap once, so the
+/// whole-open figure runs well above 4/3 with no closed form. This sits above
+/// everything observed with room for a corpus that moves under it.
 const REREAD_CEILING: u64 = 4;
 
 /// Where the ranges are recorded, shared between the wrapper handing them out
@@ -163,6 +164,13 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         assert!(
             handed_out <= REREAD_CEILING * looked_at,
             "opening handed out {handed_out} bytes for the {looked_at} it looked at, over the {REREAD_CEILING}x re-read ceiling"
+        );
+        // The sentence this file is named after, stated rather than left to
+        // follow from the two above: a quarter of the file looked at and four
+        // times over handed out multiply out to exactly the file.
+        assert!(
+            handed_out < *len,
+            "opening read {handed_out} bytes of a {len} byte file: that is the whole file"
         );
         measured += 1;
     }
