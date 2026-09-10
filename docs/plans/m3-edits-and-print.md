@@ -661,6 +661,11 @@ build on, verification, review risk. Kernel packages close no rows directly and
 say which rows they back. Section 6 is the complete ledger of all 99 rows M3
 was assigned, including the two it hands to M4.
 
+Four numbers (P0, P9, P13, P14) are **umbrella sections**: a shared preamble
+saying why the work splits, then `####` sub-packages that are the real units. A
+sub-package carries every field above unless the umbrella states it once as
+shared, which only P0 does. Thirty-one packages in total.
+
 ### P0. Split `ShellFrame`, in two packages
 
 **Goal.** Make the seventeen M3 app packages able to run in parallel. This is not
@@ -682,6 +687,32 @@ rewrites `self.foo` to `self.state.foo` in every method that touches it, so
 **every body hash changes and the inventory degenerates into noise for exactly
 the transformation it most needs to prove**. Running both under one acceptance
 test would mean running neither.
+
+**Shared by both packages**, stated once rather than twice:
+
+**Rows closed.** None, in either. Neither changes behaviour.
+
+**Depends on.** Nothing. P0a is a day-one root and P0b follows it. Every app
+package below depends on "P0" meaning **P0b**, since that is when the split is
+complete, except P1c, whose only app file is one P0 does not touch.
+
+**What exists to build on.** `chrome/mod.rs` already re-exports `ShellFrame`
+from `tabs`, so callers outside `chrome` see no change. `accessible.rs`,
+`commands.rs` and the pane modules already demonstrate the target shape.
+`ShellDialog` (`shell/dialog.rs:27`) is already a separate host with its own
+`accessible`/`render` pair, so dialogs are not part of this split.
+
+**Review risk**, also shared: whether this is a refactor or a rewrite wearing a
+refactor's name. The reviewer should reject any behaviour change, including
+"obvious" improvements, and the item inventory is what makes that reviewable
+rather than a matter of trust. Whether the split lines follow M3's package
+boundaries or the author's taste, which is the difference between it buying
+parallelism and it buying nothing. Whether `frame_state.rs` became a second god
+object. Whether a wildcard arm was preserved "for now", which would silently
+readmit the failure mode the inventory exists to catch. Whether P0b's
+normalization rule was written to make the inventory pass rather than to make it
+meaningful, which is the one place in either package where the test can be tuned
+to the result.
 
 #### P0a. Relocation only
 
@@ -781,29 +812,6 @@ have module homes (`find`, `home`, `navigation`, `rail_state`,
 
 **Verification.** The same five invocations as P0a (its four plus the
 guarantee-5 `--no-default-features` run), at the same test count.
-
-**Rows closed.** None, in either package. Neither changes behaviour.
-
-**Depends on.** Nothing. P0a is a day-one root and P0b follows it. Every app
-package below depends on P0 meaning **both**, except where a package's Files
-line touches only files P0 does not (P1c).
-
-**What exists to build on.** `chrome/mod.rs` already re-exports `ShellFrame`
-from `tabs`, so callers outside `chrome` see no change. `accessible.rs`,
-`commands.rs` and the pane modules already demonstrate the target shape.
-`ShellDialog` (`shell/dialog.rs:27`) is already a separate host with its own
-`accessible`/`render` pair, so dialogs are not part of this split.
-
-**Review risk.** Whether this is a refactor or a rewrite wearing a refactor's
-name: the reviewer should reject any behaviour change, including "obvious"
-improvements, and the item inventory is what makes that reviewable rather than a
-matter of trust. Whether the split lines follow M3's package boundaries or the
-author's taste, which is the difference between it buying parallelism and it
-buying nothing. Whether `frame_state.rs` became a second god object. Whether a
-wildcard arm was preserved "for now", which would silently readmit the failure
-mode the inventory exists to catch. Whether P0b's normalization rule was written
-to make the inventory pass rather than to make it meaningful, which is the one
-place in this package where the test can be tuned to the result.
 
 ### P1. cos: the edit surface M3 needs
 
