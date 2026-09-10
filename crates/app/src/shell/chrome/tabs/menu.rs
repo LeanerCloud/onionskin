@@ -445,3 +445,446 @@ pub(super) struct MenuOpenState {
     pub(super) main_menu_open: bool,
     pub(super) recent_menu_open: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "shell-test-support")]
+    use super::super::tests::{bound_window, bound_window_in, keystroke_for};
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use super::super::ToolCapability;
+    #[cfg(feature = "shell-test-support")]
+    use super::super::{px, Canvas, Document, MenuCommand, ShellFrame, ShellViewAction, ViewSize};
+    #[cfg(feature = "shell-test-support")]
+    use crate::preferences::ThemePreference;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::canvas::CanvasModel;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::chrome::global_bar::main_menu_schema;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::chrome::theme::ShellViewState;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::shell::context_menu::tool_with;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::dialog::ShellDialog;
+    #[cfg(feature = "shell-test-support")]
+    use crate::shell::ShellSettings;
+    #[cfg(feature = "shell-test-support")]
+    use gpui::{AppContext as _, TestAppContext};
+    #[cfg(feature = "shell-test-support")]
+    use onionskin_plugin_api::PluginRegistry;
+    #[cfg(feature = "shell-test-support")]
+    use std::path::Path;
+
+    /// The headline binding, dispatched the way the user dispatches it, and
+    /// with the keystroke the keymap actually installed.
+    ///
+    /// Everything else about the find bar was tested by calling its methods,
+    /// which is how two separate dead routes shipped: an element listener that
+    /// action dispatch never reached, and then a window-wide listener that ran
+    /// inside the dispatching window's own update and could not find it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_find_keystroke_opens_the_find_bar(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        window
+            .update(cx, |frame, _window, _cx| assert!(!frame.find.is_open()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.find"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert!(
+                    frame.find.is_open(),
+                    "the find keystroke did not reach the find bar in a real window"
+                );
+            })
+            .unwrap();
+    }
+
+    /// The route the close and view commands used to take had the same
+    /// latent shape as the find bar's did: a global listener calling back
+    /// into the window that is mid-update. Both are pressed here rather than
+    /// called, because calling the handler is exactly what missed it twice.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_close_keystroke_closes_the_active_tab(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.close"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame
+                        .tabs
+                        .tabs()
+                        .iter()
+                        .map(|tab| tab.title().to_owned())
+                        .collect::<Vec<_>>(),
+                    vec!["two-page.pdf".to_owned()],
+                    "the close keystroke did not reach the window"
+                );
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_view_keystroke_reaches_the_canvas(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(!frame.active_view_state(cx).unwrap().is_actual_size());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.actual-size"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert!(
+                    frame.active_view_state(cx).unwrap().is_actual_size(),
+                    "the zoom keystroke did not reach the canvas"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Fit Visible is the one zoom command that needs something from the
+    /// rendered page, so its route runs further than the others': keystroke,
+    /// action listener, deferred window update, canvas, raster. Pressed
+    /// rather than called, for the same reason every other route here is.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_fit_visible_keystroke_fits_the_pages_marks(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, cx| {
+                frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .update(cx, |canvas, _cx| {
+                        // The worker may already have answered the visible
+                        // page; only stand in for it when it has not.
+                        if !canvas.model.has_rendered_current_page_for_test() {
+                            canvas
+                                .model
+                                .seed_visible_raster_for_test([0, 0, 0, 255])
+                                .expect("the visible page takes a raster");
+                        }
+                    });
+                assert!(frame.active_view_state(cx).unwrap().fit_mode().is_some());
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.fit-visible"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let fit = frame.active_view_state(cx).unwrap().fit_mode();
+                assert!(
+                    matches!(fit, Some(onionskin_core::FitMode::Visible(_))),
+                    "the fit visible keystroke did not reach the canvas: {fit:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Dynamic Zoom is a drag, so its menu entry selects a tool rather than
+    /// changing the view. Pressed on a real window through the binding a
+    /// user would give it, and asserted on the tool the canvas ends up with.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    #[gpui::test]
+    fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("dynamic-zoom-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            "{\"view.dynamic-zoom\": \"cmd-shift-z\"}",
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let dynamic_zoom = window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                let index = tool_with(canvas.model.registry(), ToolCapability::DynamicZoom)
+                    .expect("tools-basic registers a dynamic zoom tool");
+                assert_ne!(canvas.model.active_tool(), Some(index));
+                index
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(
+            window.into(),
+            &keystroke_for(&bindings, "view.dynamic-zoom"),
+        );
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame
+                    .tabs
+                    .active()
+                    .expect("the seed is open")
+                    .canvas
+                    .read(cx);
+                assert_eq!(
+                    canvas.model.active_tool(),
+                    Some(dynamic_zoom),
+                    "the dynamic zoom keystroke did not select the tool"
+                );
+                assert!(frame.notices.is_empty(), "{:?}", frame.notices);
+            })
+            .unwrap();
+    }
+
+    /// Zoom To ships unbound because Acrobat's Ctrl+M is Minimize on macOS,
+    /// so its keystroke route is the one `keymap.json` gives it. Pressed on a
+    /// real window, which proves both halves at once: the file's binding
+    /// reaches the command, and the command reaches the dialog.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keymap_binding_opens_the_zoom_to_dialog(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("zoom-to-keymap");
+        std::fs::write(
+            dir.join(crate::config::KEYMAP_FILE),
+            r#"{"view.zoom-to": "cmd-m"}"#,
+        )
+        .expect("the test writes its keymap");
+        let (window, bindings) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+        window
+            .update(cx, |frame, _window, _cx| assert!(frame.dialog.is_none()))
+            .unwrap();
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.zoom-to"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame.dialog,
+                    Some(ShellDialog::ZoomTo),
+                    "the bound keystroke did not open the magnification chooser"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Quit runs inside the same deferred window update every other command
+    /// does, and it is the one that tears the application down while it is
+    /// there. Pressed rather than called, because that is the route.
+    ///
+    /// Named for what it asserts: a test context has no process to end, so
+    /// this says the update quit ran in did not leave the frame unusable,
+    /// and nothing more. Making the Quit arm a no-op leaves it green.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_quit_keystroke_does_not_leave_the_frame_mid_flight(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.quit"));
+        cx.run_until_parked();
+
+        // The window is still addressable in a test context, which is what
+        // says the update that quit did not leave the frame mid-flight.
+        window
+            .update(cx, |frame, _window, _cx| {
+                assert_eq!(frame.tabs.tabs().len(), 1);
+            })
+            .expect("quitting left the window in a state it can be read in");
+    }
+
+    /// A keystroke can reach a command the menus grey out, and telling the
+    /// user only on stderr tells them nothing.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_keystroke_the_menus_would_grey_out_says_so_in_the_window(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.close"));
+        cx.run_until_parked();
+
+        // No document now, so the zoom command the keystroke reaches is one
+        // the menus disable.
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "view.actual-size"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, _cx| {
+                let notices = frame.notices.join(" | ");
+                assert!(notices.contains("view.actual-size"), "{notices}");
+                assert!(notices.contains("No document is open"), "{notices}");
+            })
+            .unwrap();
+    }
+
+    /// Select All is a plugin's command reached by a keystroke: the keymap
+    /// binds the id the plugin published, the menu entry names the same id,
+    /// and the shell runs whatever the registry holds for it.
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    #[gpui::test]
+    fn the_select_all_keystroke_runs_the_registered_command(cx: &mut TestAppContext) {
+        let (window, bindings) = bound_window(&["hello.pdf"], cx);
+
+        cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.select-all"));
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                let selected = frame
+                    .tabs
+                    .active()
+                    .unwrap()
+                    .canvas
+                    .read(cx)
+                    .model
+                    .selection_text()
+                    .map(str::to_owned);
+                assert!(
+                    selected.is_some_and(|text| !text.is_empty()),
+                    "the Select All keystroke selected nothing"
+                );
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes(
+            window.into(),
+            &keystroke_for(&bindings, "edit.deselect-all"),
+        );
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, _window, cx| {
+                assert_eq!(
+                    frame
+                        .tabs
+                        .active()
+                        .unwrap()
+                        .canvas
+                        .read(cx)
+                        .model
+                        .selection_text(),
+                    None
+                );
+            })
+            .unwrap();
+    }
+
+    /// The display theme is one setting with two ways in. Choosing it from
+    /// the View menu used to change the window and nothing else, so it was
+    /// gone on restart and the dialog showed the wrong one.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn the_view_menus_theme_is_the_preference(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("theme-from-menu");
+        let file = dir.join(crate::config::PREFERENCES_FILE);
+        let _ = std::fs::remove_file(&file);
+        let (window, _) =
+            bound_window_in(&["hello.pdf"], crate::config::ConfigPaths::in_dir(&dir), cx);
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::ThemeDark, window, cx)
+                    .expect("the theme entry is live");
+
+                assert_eq!(frame.shell_view_state.theme(), ThemePreference::Dark);
+                assert_eq!(frame.preferences().theme, ThemePreference::Dark);
+            })
+            .unwrap();
+
+        let (saved, errors) = crate::preferences::Preferences::load(Some(&file));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            saved.theme,
+            ThemePreference::Dark,
+            "the View menu's choice did not reach the file"
+        );
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn fullscreen_command_updates_the_real_window_and_mirrored_menu_state(cx: &mut TestAppContext) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            PluginRegistry::new(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let mut shell_view =
+            ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
+        shell_view.apply(ShellViewAction::ToggleReadMode);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
+        });
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::FullScreen, window, cx)
+                    .unwrap();
+            });
+        });
+        cx.simulate_resize(gpui::size(px(900.0), px(700.0)));
+        cx.run_until_parked();
+
+        let (window_fullscreen, state, read_mode) = cx.update(|window, app| {
+            let state = frame.read(app).menu_state(app);
+            (
+                window.is_fullscreen(),
+                state,
+                frame.read(app).shell_view_state.read_mode(),
+            )
+        });
+        let full_screen = main_menu_schema(state)[2]
+            .entries
+            .iter()
+            .find(|entry| entry.command == MenuCommand::FullScreen)
+            .copied()
+            .unwrap();
+        assert!(window_fullscreen);
+        assert!(full_screen.selected);
+        assert!(read_mode);
+
+        cx.update(|window, app| {
+            frame.update(app, |frame, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::FullScreen, window, cx)
+                    .unwrap();
+            });
+        });
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            assert!(!window.is_fullscreen());
+            assert!(!frame.read(app).shell_view_state.fullscreen());
+            assert!(frame.read(app).shell_view_state.read_mode());
+        });
+    }
+}

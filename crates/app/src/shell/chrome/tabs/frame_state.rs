@@ -338,3 +338,100 @@ impl ShellFrame {
         frame
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::frame_state::TabState;
+    use super::super::{CanvasViewState, PageControlsState, TabError};
+    use onionskin_core::{PageLayoutMode, ViewRotation, ZoomPolicy};
+
+    #[test]
+    fn switching_and_closing_tabs_keeps_a_valid_active_index() {
+        let mut tabs = TabState::new(vec!["one", "two", "three"]);
+
+        assert_eq!(tabs.active_index(), Some(0));
+        assert!(tabs.activate(1).unwrap());
+        assert_eq!(tabs.close(0).unwrap(), "one");
+        assert_eq!(tabs.active_index(), Some(0));
+        assert_eq!(tabs.active(), Some(&"two"));
+        assert_eq!(tabs.close(0).unwrap(), "two");
+        assert_eq!(tabs.active_index(), Some(0));
+        assert_eq!(tabs.active(), Some(&"three"));
+        assert_eq!(tabs.close(0).unwrap(), "three");
+        assert_eq!(tabs.active_index(), None);
+    }
+
+    #[test]
+    fn tab_switching_exposes_the_active_documents_page_control_values() {
+        let first = CanvasViewState {
+            current_page: 0,
+            page_count: 1,
+            zoom: 1.0,
+            zoom_policy: ZoomPolicy::Fixed,
+            layout_mode: PageLayoutMode::SinglePageContinuous,
+            show_cover: false,
+            rotation: ViewRotation::None,
+            can_previous_view: false,
+            can_next_view: false,
+        };
+        let second = CanvasViewState {
+            current_page: 1,
+            page_count: 2,
+            zoom: 2.0,
+            zoom_policy: ZoomPolicy::Fixed,
+            layout_mode: PageLayoutMode::TwoPage,
+            show_cover: true,
+            rotation: ViewRotation::Clockwise90,
+            can_previous_view: true,
+            can_next_view: false,
+        };
+        let mut tabs = TabState::new(vec![first, second]);
+
+        assert_eq!(
+            PageControlsState::from_view(*tabs.active().unwrap()).current_page,
+            1
+        );
+        assert!(tabs.activate(1).unwrap());
+        let active = PageControlsState::from_view(*tabs.active().unwrap());
+        assert_eq!(active.current_page, 2);
+        assert_eq!(active.page_count, 2);
+        assert_eq!(active.zoom_percent, Some(200));
+        assert!(active.can_previous_view);
+    }
+
+    #[test]
+    fn close_others_leaves_exactly_the_selected_tab() {
+        let mut tabs = TabState::new(vec!["one", "two", "three"]);
+
+        assert_eq!(tabs.close_others(1).unwrap(), vec!["one", "three"]);
+        assert_eq!(tabs.tabs(), &["two"]);
+        assert_eq!(tabs.active_index(), Some(0));
+    }
+
+    #[test]
+    fn close_all_leaves_no_invalid_active_tab() {
+        let mut tabs = TabState::new(vec!["one", "two"]);
+
+        assert_eq!(tabs.close_all(), vec!["one", "two"]);
+        assert!(tabs.is_empty());
+        assert_eq!(tabs.active_index(), None);
+    }
+
+    #[test]
+    fn out_of_range_operations_fail_loudly() {
+        let mut tabs = TabState::new(vec!["one"]);
+
+        assert!(matches!(
+            tabs.activate(1),
+            Err(TabError::OutOfRange { index: 1, count: 1 })
+        ));
+        assert!(matches!(
+            tabs.close(1),
+            Err(TabError::OutOfRange { index: 1, count: 1 })
+        ));
+        assert!(matches!(
+            tabs.close_others(1),
+            Err(TabError::OutOfRange { index: 1, count: 1 })
+        ));
+    }
+}
