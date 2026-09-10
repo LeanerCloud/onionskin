@@ -25,7 +25,7 @@ rather than rediscovering.
 | `screencapture -x` of the whole display, session locked, displays asleep | All-black frame. `screencapture -R` fails outright with `could not create image from rect`. | 8,416,800 of 8,416,800 luminance samples below 10 |
 | `screencapture -x` after `caffeinate -u`, session still locked | Renders the login window, not the desktop. No application window is composited. | 8,416,592 of 8,416,800 samples above 10, all of them lock screen |
 | System Events accessibility, menu bar of `AdobeReader` | Full menu tree readable: titles, index, separators, submenu nesting, enabled state, mark characters, command key and modifiers. | `E2` below, 209 rendered lines from a live query |
-| System Events accessibility, windows of `AdobeReader` | `count of windows` returns 0 while the session is locked, so no window, panel, dialog or sheet tree is readable. | repeated at 23:07Z and 23:12Z, both 0 |
+| System Events accessibility, windows of `AdobeReader` | `count of windows` returns 0 while the session is locked, so no window, panel, dialog or sheet tree is readable. A window nonetheless **exists**: Reader's own Window menu lists `two-page.pdf` at index 14. So the zero is the lock hiding the window, not the absence of one. | repeated at 23:07Z, 23:12Z and 23:41Z, all 0 |
 
 Consequence for the method: **menu-surface facts are capturable from an
 unattended session; window-surface facts are not.** The B7 ledger already
@@ -75,9 +75,16 @@ is a statement about ordering and grouping, not a coordinate.
 ### Edit menu, Pro-gated block
 
 The Edit menu carries a contiguous eight-item Pro block between two separators,
-at indices 5 to 13. Every one reports `AXEnabled = true` with no document open,
-which is the mechanical form of the claim in `docs/plans/parity-goal.md` candor
-item 1: the entry is live, and the paywall is somewhere past the click.
+at indices 5 to 13. Every one reports `AXEnabled = true`, which is the mechanical
+form of the claim in `docs/plans/parity-goal.md` candor item 1: the entry is
+live, and the paywall is somewhere past the click.
+
+Document state at query time, since an enabled flag means little without it: a
+multi-page document is open at page 1. Reader's Window menu lists
+`two-page.pdf`; `View > Page Navigation` reports `Previous page` and
+`First page` disabled with `Next page` and `Last page` enabled; and
+`Edit > Cut`, `Copy`, `Paste`, `Undo`, `Redo` and `Select all` all report
+disabled, so nothing is selected.
 
 | # | Title | Enabled | Toolset it opens |
 |---|---|---|---|
