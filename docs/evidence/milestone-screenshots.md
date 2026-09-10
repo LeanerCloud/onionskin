@@ -25,7 +25,33 @@ absolute paths when needed; this tracked manifest records filenames only.
 | M2-B5-001 | B5 required macOS accessibility probe | Shell built from the B5 CI-only revision and opened `two-page.pdf`; the production viewer remains unchanged from B6, both page surfaces render without the prior black-line artifact, and the exact B5 revision makes the 14-case macOS accessibility probe a required CI gate; inspected as window-only | `c948e42` | 2026-09-01T23:27:10Z | `m2-b5-required-a11y-probe-20260901T232710Z.png` | `ae6a17038341fbcaaee381d21392d52ba8c4e273c6f5cc5d3ebb36cfaf035bec` |
 | M2-B7-SCAFFOLD-001 | B7 private parity evidence scaffold | Shell opened `two-page.pdf` after the public privacy protocol and executable ignore/tracked-state regression landed; the production viewer is unchanged from B4 and both page surfaces render without the prior black-line artifact; inspected as window-only | `78bd120` | 2026-09-01T23:39:16Z | `m2-b7-parity-privacy-scaffold-20260901T233916Z.png` | `c277567ac4ddd4b90759d46aa82ae5af0c41cdbec75e1b149f3aaa9396c5da6c` |
 
-## Capture blockers
+## C1.2 native progress, 2026-09-10
+
+The first three captures contain only the Onionskin window, ID 20322, from exact build
+`4ddec23` (PID 59412). Times below use file modification times in UTC because
+the filename times are approximate. They prove the new dialog's native menu
+route, visible validation, and keyboard-focused Export button. Native testing
+also exported only page 2 of `two-page.pdf`: PNG at 144 DPI was 160 by 360 pixels,
+and the single text output contained only `Page two`.
+
+The final build `62576fb` (PID 82243, window 20433) also passed native Cmd+A
+and Edit > Select All replacement, raw AXValue reads (`1`, `2`, `150`, then
+`2`, `2`, `144`), visible validation, and keyboard focus on Export. The existing
+Page Number field reported AXValue `1`. Its page-2 PNG at 144 DPI was again
+160 by 360 pixels, SHA-256
+`db576c0bd09ccb5f7e0d74645d884a9736b987a27043f3c01f06fa7b5947c088`.
+The final shell/support suite passed 624 tests with 7 ignored. This closes the
+C1.2 acceptance gate, not the remaining whole-app accessibility work.
+
+| Evidence ID | Scenario | Time (UTC) | Local image | SHA-256 |
+|---|---|---|---|---|
+| C1.2-NATIVE-001 | Default PNG settings opened from the native menu | 2026-09-10T14:41:45Z | `c12-export-settings-4ddec23-20260910T1442Z.png` | `31ca80f3370c81117e05b6bd3a3882e2f92987f0283244828c21cbb7a4a5e9df` |
+| C1.2-NATIVE-002 | Invalid First page produces a visible error without a destination prompt | 2026-09-10T14:42:07Z | `c12-export-validation-4ddec23-20260910T1443Z.png` | `45c92707a0e163f7e7bc76cb2028e3e7d354d0297d5a0563c60a54c00eb4041e` |
+| C1.2-NATIVE-003 | Page 2 only, 144 DPI, keyboard-focused Export button | 2026-09-10T14:43:44Z | `c12-export-page2-144dpi-focus-4ddec23-20260910T1445Z.png` | `b616bfcb1fbaa5fe0a65e80f591c4566bfebc69cc098d3c8ebace79175ebc041` |
+| C1.2-NATIVE-004 | Final build after native field replacement, page 2 at 144 DPI, Export focused | 2026-09-10T15:05:05Z | `c12-native-input-verified-62576fb-20260910T1505Z.png` | `a9660eb25fe281332910be7b0ce5492e9407f085cb7b4f5320f62675acaec842` |
+| C1.2-NATIVE-005 | Final build, invalid First page visibly rejected | 2026-09-10T15:06:37Z | `c12-native-alert-62576fb-20260910-final.png` | `45382a38b00269ac807f9c59a951d686f50c8b5e22378f226390d9921671acae` |
+
+## Historical capture blockers
 
 - C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build
   `f0cbbcb` Onionskin-window-only capture remains pending. It was deferred while

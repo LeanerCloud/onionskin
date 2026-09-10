@@ -32,6 +32,13 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- Native menu availability: Select All is disabled without a document
+  or the commands-core plugin, even when Home search has text focus. Correct
+  native menu availability and focus-driven refresh in the next menu pass.
+  The separate focused-input dispatch and missing AXValue defects found during
+  C1.2 acceptance are resolved by `62576fb` and `c7f1afa`; native Cmd+A,
+  Edit > Select All, and macOS field-value reads were verified on 2026-09-10.
+
 - Dialog accessibility geometry, found 2026-09-10: About, Keyboard Shortcuts,
   Zoom To, and Preferences publish controls without position bounds. The modal
   branch in `shell/chrome/tabs/accessible.rs` returns before geometry placement;
@@ -87,7 +94,12 @@ source IDs, severity, ownership, and required proof.
   temporary-file writer; PerPage keeps at most one destination writer open.
   Visible and accessible progress,
   cancellation, and cleanup-before-guard-release are proved. APP-010 is now
-  limited to the C1.2 user-facing page-range/settings dialog.
+  limited to the C1.2 user-facing page-range/settings dialog at that checkpoint.
+  **2026-09-10 C1.2 disposition:** `4ddec23` adds validated page ranges and PNG
+  DPI before destination selection. `c7f1afa` and `62576fb` fix native field
+  values and focused Select All. APP-010 is resolved: 624 shell/support tests
+  passed (7 ignored), and native page-2 PNG/text subset exports were verified.
+  See `docs/evidence/milestone-screenshots.md` for window-only evidence.
 - P10/foundation review follow-ups (app shell): B2.2 resolved the first-error
   and stale worker-wait portions by preserving a primary pointer/update error
   over a same-cycle snapshot failure and resetting the poll wait deadline before

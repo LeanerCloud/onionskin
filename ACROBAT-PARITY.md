@@ -75,9 +75,10 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
 
 The evidence keys in changed rows refer to these live paths. `M2-AUDIT-T1-001`
 is the window-only visual baseline, and `M2-AUDIT-T2-001` records the required
-Find-and-Thumbnails state. The September 10 reconciliation inspected source and
-test definitions at `755842f`; it does not claim a fresh test run or manual
-acceptance. Test counts below describe their named historical verification.
+Find-and-Thumbnails state. The view/zoom reconciliation inspected source and
+test definitions at `755842f`; its evidence is separate from C1.2's automated and
+native checks at `4ddec23`, `c7f1afa`, and `62576fb` below. Test counts describe
+their named verification, not a fresh run of every historical package.
 
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
@@ -94,7 +95,8 @@ acceptance. Test counts below describe their named historical verification.
 | M2-BASIC | `plugins/tools-basic/src/` | Real gesture tests for Hand, selection, Snapshot, Marquee Zoom, and Dynamic Zoom. |
 | M2-VIEW-ZOOM | `crates/app/src/shell/{canvas,dialog}.rs`, `crates/app/src/shell/chrome/{global_bar,theme}.rs`, `crates/app/src/shell/chrome/tabs/{menu,accessible,mod}.rs`, `plugins/tools-basic/src/zoom.rs` | Merge `cb87b72`: Fit Visible menu/keystroke and raster-content fitting, Dynamic Zoom drag, Read Mode chrome visibility, Full Screen chrome removal, and the preset Zoom To chooser. Tests include `the_fit_visible_keystroke_fits_the_pages_marks`, `choosing_a_magnification_applies_it_and_closes_the_chooser`, `read_mode_takes_the_top_bars_out_of_the_tree_and_keeps_the_page_controls`, `full_screen_leaves_no_chrome_described_and_escape_answers_it_first`, and `plugins/tools-basic/tests/gestures.rs` drag cases. Custom Zoom To entry and Full Screen presentation semantics remain gaps. |
 | M2-SEARCH | `crates/app/src/shell/find_bar.rs`, `crates/app/src/shell/panes/results.rs`, `crates/app/src/shell/chrome/tool_search.rs` | Find routing, tool lookup, highlight, result navigation, and pane tests. |
-| M2-EXPORT | `crates/core/src/session.rs`, `crates/plugin-api/src/codec.rs`, `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs/export.rs` | C1.1 snapshot `f0cbbcb` and background export `3ac647b`: source bytes are shared into a worker-owned document; Single output streams page chunks into one temporary file and publishes it atomically at completion, while PerPage publishes completed page files incrementally with one destination writer at a time. Visible and accessible progress follows completed pages, and cancellation cleans partial output before the one-job guard is released. Post-rebase proof includes 100 focused tab tests, 501 shell tests plus integrations, codec suites, headless suites, feature isolation, and scoped strict clippy. The C1.2 page-range/settings dialog remains open. |
+| M2-EXPORT | `crates/core/src/session.rs`, `crates/plugin-api/src/codec.rs`, `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs/export.rs` | C1.1 snapshot `f0cbbcb` and background export `3ac647b`: source bytes are shared into a worker-owned document; Single output streams page chunks into one temporary file and publishes it atomically at completion, while PerPage publishes completed page files incrementally with one destination writer at a time. Visible and accessible progress follows completed pages, and cancellation cleans partial output before the one-job guard is released. Post-rebase proof includes 100 focused tab tests, 501 shell tests plus integrations, codec suites, headless suites, feature isolation, and scoped strict clippy. C1.2 settings are recorded separately below. |
+| M2-EXPORT-SETTINGS | `crates/app/src/shell/chrome/export_dialog.rs`, `crates/app/src/shell/chrome/tabs/{export,menu}.rs`, `crates/app/src/shell/chrome/tabs/tests/{export_settings,input_values,native_input}.rs` | C1.2 is resolved by `4ddec23`, editable AX values by `c7f1afa`, and native Select All routing by `62576fb`. Tests cover validation, modal focus/bounds, stale prompts, subset filenames, PNG dimensions, and immutable Single output requests. Latest full shell run: 624 passed, 7 ignored; focused no-codecs input/value tests and strict clippy/format checks passed. Native checks at `62576fb` verify AXValue defaults 1/2/150, Cmd+A and Edit > Select All field replacement, invalid-input validation, corrected 2/2/144 values, Tab focus on Export, and page-2 PNG output at 144 DPI (160 by 360 pixels). Native output/capture evidence is in `docs/evidence/milestone-screenshots.md`. Home/no-document or missing-commands-core native Select All remains disabled; older modal geometry/focus, real VoiceOver, and cross-platform acceptance remain open. |
 | M2-LAYERS | `crates/core/src/session.rs`, `crates/app/src/shell/panes/layers.rs` | Real-file render-change test and pane toggle-refresh tests. |
 
 ---
@@ -138,7 +140,7 @@ acceptance. Test counts below describe their named historical verification.
 | Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
 | UI localization | planned | post-1.0 | Plan lists localization plus bidi/vertical text as post-1.0. |
-| App-level accessibility tree (screen reader support for the UI) | partial | M2 | The macOS tree, grouped focus traversal, bidirectional GPUI/AccessKit focus transfer, background request publication, and demand-driven page text are implemented. Real VoiceOver acceptance remains open, and Linux/Windows adapters remain no-ops. Evidence: M2-A11Y. |
+| App-level accessibility tree (screen reader support for the UI) | partial | M2 | The macOS tree, grouped focus traversal, bidirectional GPUI/AccessKit focus transfer, background request publication, demand-driven page text, and editable field values are implemented. Export controls have bounds and visible keyboard focus; older modal geometry/focus and real VoiceOver acceptance remain open, and Linux/Windows adapters remain no-ops. Evidence: M2-A11Y and M2-EXPORT-SETTINGS. |
 | Pinch-to-zoom and stylus pressure | partial | M2 | Pinch zoom and pressure propagation are live; no shipped pressure-aware ink tool exists yet. Evidence: M2-SHELL. |
 | Register `.pdf` as openable ("Open with") | partial | M2 | macOS, Linux, and Windows declarations exist and never claim the default. Release builds include the shell feature; hosted release and packaged platform smoke tests remain open. Evidence: M2-PACKAGE and audit REPO-001. |
 | Set as the default PDF viewer | out-of-scope | - | Deliberate product decision in the plan: never the default handler. |
@@ -158,7 +160,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Save | planned | M3 | Appends an incremental update section; a no-op save writes nothing. |
 | File > Save As | planned | M3 | Copy plus the same incremental discipline. |
 | File > Save as Other | planned | M3 | The future menu will expose only supported sub-targets; PDF/X and Reader-Extended variants remain out of scope. |
-| File > Export To | partial | M2 | The live menu exposes Text, PNG, and SVG; stale successful prompt writes are refused and derived destinations cannot overwrite existing files. Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT and B4.2-B4.4. |
+| File > Export To | partial | M2 | Text, PNG, and SVG exports have First/Last settings, plus PNG resolution; stale successful prompt writes are refused and derived destinations cannot overwrite existing files. Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.2-B4.4. |
 | File > Revert | planned | M3 | Cheap here: truncate to the previous generation. |
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | planned | M3 | `commands-core`. Acrobat's current unified UI documents five tabs: Description, Security, Fonts, Initial View, Custom. The classic Advanced tab is no longer listed; confirm against the screenshot corpus before building it. |
@@ -344,9 +346,9 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Export to Microsoft PowerPoint (.pptx) | planned | post-1.0 | A deliberately lossy post-1.0 target; no usable subset has shipped. |
 | Export to Rich Text Format (.rtf) | planned | post-1.0 | A deliberately lossy post-1.0 target; no usable subset has shipped. |
 | Export to HTML | planned | post-1.0 | Layout-to-flow conversion will remain deliberately lossy; no usable subset has shipped. |
-| Export to plain text / accessible text | partial | M2 | Plain document-order text export is live; tagged accessible reading order remains M6. Evidence: M2-EXPORT. |
-| Export pages to PNG | implemented | M2 | Multi-page numbered export is live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT and B4.4. |
-| Export pages to SVG | implemented | M2 | Per-page vector export is live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT and B4.4. |
+| Export to plain text / accessible text | partial | M2 | Plain document-order text export supports a selected page range; tagged accessible reading order remains M6. Evidence: M2-EXPORT and M2-EXPORT-SETTINGS. |
+| Export pages to PNG | implemented | M2 | Selected page ranges and PNG resolution are live; filenames retain absolute page numbers padded to the document's page-count width, with no-overwrite destination reservation. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.4. |
+| Export pages to SVG | implemented | M2 | Selected page ranges and per-page vector export are live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.4. |
 | Export pages to JPEG / JPEG2000 / TIFF | planned | M3 | Not named in the plan; same codec crate, one milestone later. |
 | Export all images in a document | planned | M3 | (judgment) |
 | Export to XML / XML spreadsheet | planned | post-1.0 | Low demand relative to cost, and no plan consumer. (judgment) |

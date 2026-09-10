@@ -38,24 +38,26 @@ regression test and real user path pass.
 
 ## Live package map
 
-| Unit | Main evidence | Audit disposition |
+| Unit | Implementation evidence | Audit disposition |
 |---|---|---|
 | M0 | scaffold/CI/corpus/matrix files | Mostly landed; the private evidence protocol and first two Reader/Onionskin baselines are complete, with eight required states still open. |
 | M1 | `docs/spikes/*`, retained `a11y_spike.rs` | Technical spikes landed; real VoiceOver acceptance remains open. |
 | P1-P7 foundation | `1eed2de` | Merged; hardening findings below remain. |
 | P4 render | `aa4d9b8` | Merged. |
 | P8 navigation | `452f575` | Merged; B3 resolved layer order and stale-size thumbnail classification, and B7 resolved deferred idle-poll thumbnail delivery at `4132a99`. |
-| P9 search | `72d0a21` | Merged; rare cancel race and Arabic visual/logical order remain. |
-| P10 tools | `00a7d29` | Merged; snapshot/context-menu defects remain. |
-| P11 commands/preferences/recents | `c3c6576` | Merged; keymap and preference-cap defects remain. |
+| P9 search | `72d0a21`, B4.1 `d5a0836` | Merged; B4.1 resolved queued-search cancellation. Arabic presentation forms match, but visual-to-logical run reordering remains unsupported. |
+| P10 tools | `00a7d29`, B2.2-B2.4 evidence below | Merged; B2 resolved snapshot allocation/encoding/error/stale-completion handling and context-menu repositioning. Canvas geometry regression gaps and the current-page-only raster zoom ceiling remain. |
+| P11 commands/preferences/recents | `c3c6576`, B3 `c3d0444` | Merged; B3 resolved extended-key acceptance and the unknown-preference carry-forward cap. Existing config-directory modes and silent save-time rescue-copy notices remain. |
 | P12 accessibility | `07ebc93`, residuals `11d5751` | Merged; grouped traversal, GPUI/AccessKit focus synchronization, background publication, and demand-driven page text are implemented. Real VoiceOver acceptance and Linux/Windows adapters remain. |
 | View/zoom residuals | `cb87b72` | Merged; Fit Visible, Dynamic Zoom, and Read Mode now meet their matrix scope. Zoom To has preset choices but no custom percentage entry; Full Screen hides chrome but still lacks presentation semantics. |
-| P13 codecs/export | `74b60ec`, C1.1 `f0cbbcb` and `3ac647b` | Merged; C1.1 moved encoding and output I/O to a background worker. Single publishes one completed temporary file atomically; PerPage publishes completed page files incrementally. Progress, cancellation, and one-writer bounds are proved. The C1.2 page-range/settings dialog remains. |
-| P14 budgets | `64829a0` | Merged; eviction-churn accounting and corpus integrity defects remain. |
+| P13 codecs/export | `74b60ec`, C1.1 `f0cbbcb` and `3ac647b` | Merged; C1.1 moved encoding and output I/O to a background worker. Single publishes one completed temporary file atomically; PerPage publishes completed page files incrementally. Progress, cancellation, and one-writer bounds are proved. C1.2 is resolved at the commits below. |
+| C1.2 export settings and native input | `4ddec23`, `c7f1afa`, `62576fb` | Implemented and verified at the cited commits. Page range/PNG resolution, modal focus/bounds, editable AX values, and native Select All routing for enabled menu entries are implemented. Home/no-document and missing-commands-core native availability remain outside this fix. |
+| P14 budgets | `64829a0`, `be39bae`, B1.4 `c32ae05` and `be3789e` | Merged; composite accounting now accumulates across cache incarnations, and merge-gating corpus integrity is verified for cached and fresh downloads. Headless benches do not measure shell raster ownership; hosted required-check enforcement remains unverified. |
 | M2 overall | no completion commit | Not complete. |
 
-The September 10 reconciliation inspected merged source and test definitions;
-it does not record a fresh test run or manual acceptance. Current shell paths are
+The September 10 view/zoom reconciliation inspected merged source and test
+definitions; C1.2's later automated and native proof is recorded separately below.
+Current shell paths are
 `crates/app/src/shell/chrome/tabs/{mod,menu,accessible,dialogs,export,context,frame_state}.rs`.
 The `tabs.rs` citations under "Evidence at `7413186`" below remain historical.
 
@@ -71,6 +73,37 @@ ignored). The 179-line no-default normal dependency graph contains no
 `tempfile`. Formatting, diff checks, and scoped strict clippy also passed. The
 clippy command allows only the pre-existing unrelated
 `clippy::single-char-add-str` baseline in `crates/app/src/a11y/probe.rs`.
+
+### C1.2 verification and native acceptance, 2026-09-10
+
+`4ddec23` implements First/Last page settings, PNG resolution, validation,
+modal keyboard traversal, and rendered accessibility bounds. `c7f1afa` publishes
+raw editable values for export and existing Search/Find/Page inputs. `62576fb`
+routes enabled native Select All commands to the visible focused field while
+preserving document selection when a modal is open.
+
+The latest full shell/support run passed 624 tests with 7 expected ignored.
+Focused no-codecs checks passed all 3 native-input and 2 published-value tests;
+strict app clippy, formatting, and diff checks passed. Regressions cover real
+menu/settings/prompt/worker subset output, absolute numbering, PNG dimensions,
+immutable Single-output requests, invalid inputs, stale origins/prompts, modal
+focus/bounds, and Unicode/empty/invalid raw values. The input regressions failed
+before their fixes and passed afterwards.
+
+Native checks on committed `62576fb` read AXValue defaults `1`, `2`, `150`.
+Cmd+A replaced the First value with `bad`, Enter produced validation, and native
+Edit > Select All visibly selected `bad`; typing `2` after restoring foreground
+replaced it. Setting DPI to `144` yielded AX values `2`, `2`, `144`; Tab visibly
+focused Export, and submission opened the native destination Save dialog. The
+final build exported page 2 at 144 DPI as a 160 by 360 pixel PNG. Earlier
+native text output contained only `Page two`; output hashes and captures are in
+`docs/evidence/milestone-screenshots.md`.
+
+APP-010 is resolved. File > Export To remains partial for later format targets,
+and accessible-text export still lacks tagged reading order. Native Select All
+remains disabled on Home/without a document or commands-core. Older modal
+geometry/focus omissions, real VoiceOver acceptance, and Linux/Windows adapters
+and packaged-platform acceptance remain open.
 
 ## Retained and concurrent state
 
@@ -117,7 +150,7 @@ clippy command allows only the pre-existing unrelated
 | APP-007 | Low | `crates/app/src/keymap.rs:267,287` | Resolved in B3.4 | B3 | Removed from known issues | `f19`-`f35`, `back`, and `forward` parse through the canonical key path. |
 | APP-008 | Low | `crates/app/src/preferences.rs:437,462` | Resolved in B3.5 | B3 | Removed from known issues | Exactly 64 unknown preferences survive regardless of key ordering. |
 | APP-009 | Low | `crates/app/src/shell/panes/attachments.rs:78,80` | Resolved in B4.3 | B4 | Resolved; historical row retained | Attachment prompt failure uses the pane feedback path while cancellation remains silent. |
-| APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs`; `crates/core/src/session.rs` | Narrowed by C1.1 at `f0cbbcb` and `3ac647b` | C1.2 | Existing export entry, split from APP-002 | Background streaming, responsive progress, cancellation, bounded output publication, and cleanup-before-guard-release are proved. Add the user-facing page-range/settings dialog. |
+| APP-010 | Medium | `crates/app/src/shell/chrome/tabs.rs`; `crates/core/src/session.rs` | Resolved by C1.1 and C1.2 (`4ddec23`, `c7f1afa`, `62576fb`) | C1.2 | Resolved; historical row retained | Background streaming, progress, cancellation, bounded publication, and cleanup-before-guard-release remain covered. Page-range/PNG-resolution settings, modal validation/focus/bounds, raw AX values, and native input replacement are verified as recorded above. |
 | APP-011 | High | `crates/app/src/shell/panes/mod.rs:439-444`; live Task 2 verification | Resolved in B3.1 | B3 | Removed from known issues | Shared navigation flex item uses its existing open-state width; focused GPUI coverage proves every pane body has rendered bounds. |
 | APP-012 | High | `crates/app/src/shell/panes/thumbnails.rs`; pre-fix B7-REF-003 Onionskin capture | Resolved in B7 at `4132a99` | B7 | Resolved before ledger; no live entry | Opening Page Thumbnails after initial canvas work settles rearms polling for deferred thumbnail requests. The regression drives only the normal GPUI timer/observer path and receives every picture without direct collection. |
 
@@ -188,8 +221,9 @@ rather than claimed as an end-to-end regression. B4.3 reports attachment prompt
 failures through the existing pane feedback path while preserving silent
 cancellation. B4.4 derives numbered export width from the page count and reserves
 all derived destinations without overwrite before writing. C1.1 later resolved
-the export UI-thread and whole-document buffering work; APP-010 now retains only
-the C1.2 page-range/settings dialog.
+the export UI-thread and whole-document buffering work. C1.2 subsequently resolved
+APP-010's page-range/settings remainder at `4ddec23`, with native-input follow-ups
+at `c7f1afa` and `62576fb`.
 B7 traced the Page Thumbnails black placeholders to deferred `Show` handling:
 thumbnail work was queued after the canvas poll loop had gone idle, so completed
 worker responses were never collected. `4132a99` rearms the existing idempotent
@@ -236,8 +270,9 @@ Every `known-issues.md` item is retained and assigned as follows:
   current viewer correctness path.
 - P8/P11/P14 and shell correctness items belong to B1-B4.
 - Export background streaming, progress, and cancellation landed in C1.1 at
-  `f0cbbcb` and `3ac647b`; only the C1.2 page-range/settings dialog remains.
-  M2 correctness/lifecycle defects belong to B4.
+  `f0cbbcb` and `3ac647b`. C1.2 settings and native-input follow-ups are resolved
+  at `4ddec23`, `c7f1afa`, and `62576fb`; APP-010 is retained as history.
+  Remaining format and tagged-reading-order gaps keep their matrix owners.
 - Arabic visual/logical ordering belongs to the later localization/text package;
   M2 matrix rows remain partial where it affects behavior.
 - P12/VoiceOver belongs to B5. Linux/Windows first-release validation belongs to
