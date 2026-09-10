@@ -2,8 +2,9 @@
 
 Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
 folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
-on 2026-09-10. No M3 code is written except P0a, which is in flight. This
-document is the authoritative decomposition; it supersedes PLAN.md's M3
+on 2026-09-10. Implementation status at `755842f`: P0a merged at `28b311e`
+and P0b merged at `755842f`; P0c and the editing/printing packages remain
+outstanding. This document is the authoritative decomposition; it supersedes PLAN.md's M3
 paragraph wherever the two disagree, and section 8 lists every disagreement.
 The PLAN.md corrections those disagreements called for **landed at `989d8a7`**;
 section 8 marks each item as landed or still owed rather than describing all of
@@ -988,8 +989,11 @@ to that one block. Sixteen branches doing that concurrently is sixteen rebases
 through a 2500-line `impl`, and a rebase through an `impl` block resolves without
 judgement only until two packages add a method with the same name.
 
-**P0a is merged to `main` at `28b311e`.** Every Files line below that names a
-`chrome/tabs/*.rs` path names a path that exists; P0b and P0c are not started.
+**2026-09-10 status: P0a merged to `main` at `28b311e`, and P0b at `755842f`.**
+Every Files line below that names a `chrome/tabs/*.rs` path names a path that
+exists. P0c remains outstanding; the production split does not complete the
+test-module split or any editing/printing feature. The pre-split counts above
+remain the historical acceptance baseline, not current source measurements.
 
 **It is three packages. Two of them because the acceptance test only works for
 one, and the third because P0a leaves the tests where they were.**
@@ -1161,6 +1165,10 @@ confirm the length assertion fails, since that is the case the compiler does not
 cover.
 
 #### P0b. Field restructuring
+
+**Status: merged at `755842f` on 2026-09-10.** The requirements below retain the
+package's planned shape; this status correction checks commit ancestry and does
+not claim a fresh verification run.
 
 `ShellFrame`'s loose fields move into named sub-structs. Six state types already
 have module homes (`find`, `home`, `navigation`, `rail_state`,
@@ -3649,7 +3657,7 @@ pre-existing siblings, untouched by the split),
 `crates/app/src/shell/chrome/tabs/menu.rs` (P0a's, nested),
 `crates/app/src/shell/chrome/tabs/mod.rs` (the dirty indicator field and its
 `render` call site) and `crates/app/src/shell/chrome/tabs/frame_state.rs` (the
-close confirmation's state, once P0b lands), `crates/app/src/keymap.rs`, `crates/app/src/config.rs` (the
+close confirmation's state, following the merged P0b layout), `crates/app/src/keymap.rs`, `crates/app/src/config.rs` (the
 recovery directory), new `crates/app/src/shell/recovery.rs`.
 
 **Depends on.** P0b, P3.
@@ -4340,7 +4348,8 @@ carry and which nobody should discover at review time:
   with Notes naming the read-only scope, the M6 write path and the accepted
   regression for documents whose `/P` bits allow modification.
 - Rows 90 and 91 move from M3 to M4, per ruling B, with the reason recorded.
-- The `implemented` count moves from 49 to 49 plus whatever M3 lands; the
+- The September 10 reconciled `implemented` count is 52, up from the planning
+  baseline of 49; M3 adds only the rows its completed user paths support. The
   executable totals contract in `crates/app/tests/guarantees.rs` recounts it, so
   a mismatch fails the build rather than living in the preamble.
 

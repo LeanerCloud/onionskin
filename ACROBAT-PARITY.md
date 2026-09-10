@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 256 planned / 18 partial / 80 out-of-scope. 49 implemented.**
+**403 rows: 255 planned / 16 partial / 80 out-of-scope. 52 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
@@ -71,27 +71,30 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
   END {for (k in c) print c[k], k}' ACROBAT-PARITY.md
 ```
 
-### 2026-08-31 implementation evidence
+### Implementation evidence (reconciled 2026-09-10)
 
 The evidence keys in changed rows refer to these live paths. `M2-AUDIT-T1-001`
 is the window-only visual baseline, and `M2-AUDIT-T2-001` records the required
-Find-and-Thumbnails state.
+Find-and-Thumbnails state. The September 10 reconciliation inspected source and
+test definitions at `755842f`; it does not claim a fresh test run or manual
+acceptance. Test counts below describe their named historical verification.
 
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
 | M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |
 | M2-PARITY-REF | `docs/evidence/parity-reference.md`, `parity/README.md`, `crates/app/tests/parity_privacy.rs` | Private Reader 25.001.20438 and Onionskin captures are hashed and compared for the Actual Size shell and document-Find baselines as `B7-REF-001/002`. B7-REF-003 pins the clean Reader Page Thumbnails reference and the exact `4132a99` code/test fix while its corrected Onionskin capture remains blocked. The executable privacy contract proves private roots are ignored and untracked. Eight required reference states remain incomplete. |
-| M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs.rs` | Home list/thumbnail and recents tests. |
+| M2-HOME | `crates/app/src/shell/home.rs`, `crates/app/src/shell/chrome/tabs/mod.rs` | Home list/thumbnail and recents tests. |
 | M2-PREFS | `crates/app/src/{preferences,keymap}.rs`, `crates/app/src/shell/preferences_dialog.rs` | Preference persistence, keymap resolution, and dialog tests. |
 | M2-PACKAGE | `packaging/{macos/Info.plist,linux/onionskin.desktop,windows/installer.nsi}` | `crates/app/tests/file_association.rs`. |
 | M2-PANES | `crates/app/src/shell/panes/` | Pane action, rendering, context-menu tests, and the B3.1 rendered-bounds regression for activated pane bodies. |
-| M2-A11Y | `crates/app/src/a11y/`, `crates/app/tests/a11y_probe.rs`, `docs/spikes/m2-voiceover-acceptance.md` | P12 tree, focus, action, bounds, shell, and 14-test platform probe evidence; the macOS probe is a required CI gate, while the real VoiceOver session and listed residuals remain open. |
-| M2-REPAIR | `crates/core/src/session.rs`, `crates/app/src/shell/chrome/tabs.rs` | Core repair tests and shell repaired-document notice test. |
+| M2-A11Y | `crates/app/src/a11y/`, `crates/app/src/shell/chrome/tabs/accessible.rs`, `crates/app/tests/a11y_probe.rs`, `docs/spikes/m2-voiceover-acceptance.md` | P12 tree and platform probe evidence plus `11d5751`: grouped keyboard traversal, bidirectional GPUI/AccessKit focus transfer, background request publication, and demand-driven page text. Shell tests in `tabs/mod.rs` include `a_screen_reader_cursor_takes_the_keys_off_a_text_field` and `focusing_a_text_field_moves_the_published_cursor_onto_it`. The macOS probe remains a required CI gate; real VoiceOver acceptance and Linux/Windows adapters remain open. |
+| M2-REPAIR | `crates/core/src/session.rs`, `crates/app/src/shell/chrome/tabs/mod.rs` | Core repair tests and shell repaired-document notice test. |
 | M2-VIEWER | `crates/app/src/shell/canvas.rs`, `crates/render/src/base.rs` | Core/render integration tests and the window-only visual baseline. |
 | M2-LAZY | `crates/core/benches/open.rs`, `crates/cos/tests/lazy.rs` | Budgeted 1000-page open and lazy object-read tests. |
-| M2-BASIC | `plugins/tools-basic/src/` | Real gesture tests for Hand, selection, Snapshot, and Marquee Zoom. |
+| M2-BASIC | `plugins/tools-basic/src/` | Real gesture tests for Hand, selection, Snapshot, Marquee Zoom, and Dynamic Zoom. |
+| M2-VIEW-ZOOM | `crates/app/src/shell/{canvas,dialog}.rs`, `crates/app/src/shell/chrome/{global_bar,theme}.rs`, `crates/app/src/shell/chrome/tabs/{menu,accessible,mod}.rs`, `plugins/tools-basic/src/zoom.rs` | Merge `cb87b72`: Fit Visible menu/keystroke and raster-content fitting, Dynamic Zoom drag, Read Mode chrome visibility, Full Screen chrome removal, and the preset Zoom To chooser. Tests include `the_fit_visible_keystroke_fits_the_pages_marks`, `choosing_a_magnification_applies_it_and_closes_the_chooser`, `read_mode_takes_the_top_bars_out_of_the_tree_and_keeps_the_page_controls`, `full_screen_leaves_no_chrome_described_and_escape_answers_it_first`, and `plugins/tools-basic/tests/gestures.rs` drag cases. Custom Zoom To entry and Full Screen presentation semantics remain gaps. |
 | M2-SEARCH | `crates/app/src/shell/find_bar.rs`, `crates/app/src/shell/panes/results.rs`, `crates/app/src/shell/chrome/tool_search.rs` | Find routing, tool lookup, highlight, result navigation, and pane tests. |
-| M2-EXPORT | `crates/core/src/session.rs`, `crates/plugin-api/src/codec.rs`, `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs.rs` | C1.1 snapshot `f0cbbcb` and background export `3ac647b`: source bytes are shared into a worker-owned document; Single output streams page chunks into one temporary file and publishes it atomically at completion, while PerPage publishes completed page files incrementally with one destination writer at a time. Visible and accessible progress follows completed pages, and cancellation cleans partial output before the one-job guard is released. Post-rebase proof includes 100 focused tab tests, 501 shell tests plus integrations, codec suites, headless suites, feature isolation, and scoped strict clippy. The C1.2 page-range/settings dialog remains open. |
+| M2-EXPORT | `crates/core/src/session.rs`, `crates/plugin-api/src/codec.rs`, `plugins/codecs-common/src/`, `crates/app/src/shell/chrome/tabs/export.rs` | C1.1 snapshot `f0cbbcb` and background export `3ac647b`: source bytes are shared into a worker-owned document; Single output streams page chunks into one temporary file and publishes it atomically at completion, while PerPage publishes completed page files incrementally with one destination writer at a time. Visible and accessible progress follows completed pages, and cancellation cleans partial output before the one-job guard is released. Post-rebase proof includes 100 focused tab tests, 501 shell tests plus integrations, codec suites, headless suites, feature isolation, and scoped strict clippy. The C1.2 page-range/settings dialog remains open. |
 | M2-LAYERS | `crates/core/src/session.rs`, `crates/app/src/shell/panes/layers.rs` | Real-file render-change test and pane toggle-refresh tests. |
 
 ---
@@ -135,9 +138,9 @@ Find-and-Thumbnails state.
 | Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
 | UI localization | planned | post-1.0 | Plan lists localization plus bidi/vertical text as post-1.0. |
-| App-level accessibility tree (screen reader support for the UI) | partial | M2 | P12 ships the macOS tree, focus ring, roles, labels, bounds, actions, and direct-view probe, with the macOS probe now required in CI. A real VoiceOver session, correct GPUI focus transfer for screen-reader focus actions, and non-macOS adapter acceptance remain open. Evidence: M2-A11Y. |
+| App-level accessibility tree (screen reader support for the UI) | partial | M2 | The macOS tree, grouped focus traversal, bidirectional GPUI/AccessKit focus transfer, background request publication, and demand-driven page text are implemented. Real VoiceOver acceptance remains open, and Linux/Windows adapters remain no-ops. Evidence: M2-A11Y. |
 | Pinch-to-zoom and stylus pressure | partial | M2 | Pinch zoom and pressure propagation are live; no shipped pressure-aware ink tool exists yet. Evidence: M2-SHELL. |
-| Register `.pdf` as openable ("Open with") | partial | M2 | macOS, Linux, and Windows declarations exist and never claim the default, but packaged platform smoke tests remain open and the release build lacks the shell feature. Evidence: M2-PACKAGE. |
+| Register `.pdf` as openable ("Open with") | partial | M2 | macOS, Linux, and Windows declarations exist and never claim the default. Release builds include the shell feature; hosted release and packaged platform smoke tests remain open. Evidence: M2-PACKAGE and audit REPO-001. |
 | Set as the default PDF viewer | out-of-scope | - | Deliberate product decision in the plan: never the default handler. |
 | Display PDF in a browser / browser extension | out-of-scope | - | A browser plug-in is a separate product with its own sandbox and update channel. |
 | Acrobat for Outlook / Office add-ins (PDFMaker) | out-of-scope | - | Requires shipping into Microsoft Office's add-in model and reading Office formats; a product in itself. |
@@ -186,10 +189,10 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Page Display > Show Cover Page in Two Page View | implemented | M2 | Live two-page cover toggle. Evidence: M2-SHELL. |
 | View > Page Display > Automatically Scroll | planned | M3 | (judgment) |
 | View > Page Display > Overprint Preview | planned | post-1.0 | A rendering toggle that simulates overprinting ink, so it belongs to `render`, not to the prepress Output Preview tool listed as out of scope. Deferred until hayro can express it. (judgment) |
-| View > Zoom > Zoom In / Zoom Out / Zoom To | partial | M2 | Zoom In and Zoom Out are live; the dedicated Zoom To command is missing. Evidence: M2-SHELL. |
-| View > Zoom > Actual Size / Fit Page / Fit Width / Fit Height / Fit Visible | partial | M2 | Actual Size, Fit Page, Fit Width, and Fit Height are live; Fit Visible has no menu command. Evidence: M2-SHELL. |
+| View > Zoom > Zoom In / Zoom Out / Zoom To | partial | M2 | Zoom In, Zoom Out, and a dedicated Zoom To chooser with 12 presets from 25% to 3200% are live; custom percentage entry remains missing. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
+| View > Zoom > Actual Size / Fit Page / Fit Width / Fit Height / Fit Visible | implemented | M2 | All five commands are live. Fit Visible uses the rendered page's content bounds and reports blank or unrendered pages explicitly. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
 | View > Zoom > Marquee Zoom | implemented | M2 | `tools-basic` click and marquee zoom are live. Evidence: M2-BASIC. |
-| View > Zoom > Dynamic Zoom | planned | M2 | |
+| View > Zoom > Dynamic Zoom | implemented | M2 | Menu and rail select the tool; dragging up zooms in and down zooms out around the press point. Evidence: M2-BASIC and M2-VIEW-ZOOM. |
 | View > Zoom > Loupe Tool | planned | post-1.0 | Loupe and Pan & Zoom windows are a named post-1.0 slot. |
 | View > Zoom > Pan & Zoom | planned | post-1.0 | Loupe and Pan & Zoom windows are a named post-1.0 slot. |
 | View > Zoom > Reflow | planned | post-1.0 | Viewer-side reflow shares the machinery the plan defers with reflowing text edit. |
@@ -200,8 +203,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Show/Hide > Line Weights | planned | M3 | Moved from M2 in plan review: the hayro patch it needed was cut, and the correct semantics are constant hairline width when off, not a width floor. Ships disabled with a reason at M2. |
 | View > Page Navigation (First/Previous/Next/Last, Page..., Previous/Next View) | implemented | M2 | All named navigation paths are live. Evidence: M2-SHELL. |
 | View > Display Theme (System Theme, Light grey, Dark grey) | implemented | M2 | System, light, and dark themes cover the live shell surfaces. Evidence: M2-SHELL. |
-| View > Read Mode | partial | M2 | The command hides the tool rail, panes, quick actions, and page controls; the global and tab bars remain visible. Evidence: M2-SHELL. |
-| View > Full Screen Mode | partial | M2 | Native full-screen entry and exit are live; Acrobat-level chrome visibility and presentation semantics remain missing. Evidence: M2-SHELL. |
+| View > Read Mode | implemented | M2 | Hides global/tab bars, the tool rail, panes, and quick actions while retaining page controls; Escape restores the normal view. Evidence: M2-VIEW-ZOOM. |
+| View > Full Screen Mode | partial | M2 | Native entry/exit, complete chrome hiding, full viewport use, and Escape handling are live; presentation semantics remain missing. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
 | View > Read Out Loud | planned | M6 | `tools-accessibility` via platform TTS (AVSpeech / SAPI / speech-dispatcher). |
 | View > Split / Spreadsheet Split / Remove Split | planned | post-1.0 | Two panes, or four synchronized panes over one document. Not named in the plan. (judgment) |
 | View > New Window (second window on the same document) | planned | M3 | (judgment) |

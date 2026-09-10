@@ -7,15 +7,17 @@ Audit status: findings captured; remediation in progress
 ## Outcome
 
 M2 is substantially implemented but not complete. P1 through P14 are represented
-on main. P12's automated accessibility tree and probe merged at `07ebc93`; real
-VoiceOver acceptance and the documented residuals remain open. M2 also has
+on main. P12's automated accessibility tree and probe merged at `07ebc93`, with
+focus and background-publication residuals closed by `11d5751`; real VoiceOver
+acceptance and Linux/Windows adapters remain open. M2 also has
 confirmed correctness, lifecycle, release, performance-accounting, navigation,
 and documentation defects that must close before final acceptance.
 
 At the reviewed baseline, the Acrobat feature matrix still reported zero
 implemented rows even though most M2 packages had landed. Audit Task 2 has since
-reconciled all 403 rows, and later hardening moved the live totals to 49
-implemented, 18 partial, 256 planned, and 80 out of scope. B7's privacy scaffold
+reconciled all 403 rows. The 2026-09-10 source reconciliation at `755842f`, including
+the view/zoom merge `cb87b72`, brings the live totals to 52 implemented,
+16 partial, 255 planned, and 80 out of scope. B7's privacy scaffold
 is landed, and its first two private comparisons are complete with public metadata
 ledgered. It still owns the remaining eight states and final acceptance.
 
@@ -46,10 +48,16 @@ regression test and real user path pass.
 | P9 search | `72d0a21` | Merged; rare cancel race and Arabic visual/logical order remain. |
 | P10 tools | `00a7d29` | Merged; snapshot/context-menu defects remain. |
 | P11 commands/preferences/recents | `c3c6576` | Merged; keymap and preference-cap defects remain. |
-| P12 accessibility | `07ebc93` | Merged; real VoiceOver acceptance, focus dispatch, platform coverage, and listed residuals remain. |
+| P12 accessibility | `07ebc93`, residuals `11d5751` | Merged; grouped traversal, GPUI/AccessKit focus synchronization, background publication, and demand-driven page text are implemented. Real VoiceOver acceptance and Linux/Windows adapters remain. |
+| View/zoom residuals | `cb87b72` | Merged; Fit Visible, Dynamic Zoom, and Read Mode now meet their matrix scope. Zoom To has preset choices but no custom percentage entry; Full Screen hides chrome but still lacks presentation semantics. |
 | P13 codecs/export | `74b60ec`, C1.1 `f0cbbcb` and `3ac647b` | Merged; C1.1 moved encoding and output I/O to a background worker. Single publishes one completed temporary file atomically; PerPage publishes completed page files incrementally. Progress, cancellation, and one-writer bounds are proved. The C1.2 page-range/settings dialog remains. |
 | P14 budgets | `64829a0` | Merged; eviction-churn accounting and corpus integrity defects remain. |
 | M2 overall | no completion commit | Not complete. |
+
+The September 10 reconciliation inspected merged source and test definitions;
+it does not record a fresh test run or manual acceptance. Current shell paths are
+`crates/app/src/shell/chrome/tabs/{mod,menu,accessible,dialogs,export,context,frame_state}.rs`.
+The `tabs.rs` citations under "Evidence at `7413186`" below remain historical.
 
 ### C1.1 post-rebase verification
 
@@ -194,7 +202,7 @@ timer path until all thumbnails arrive without calling the collector directly.
 | Source ID | Severity | Evidence at `7413186` | Disposition | Owner | Known-issues state | Required proof |
 |---|---|---|---|---|---|---|
 | REPO-001 | Critical | `.github/workflows/release.yml:49-50`; `crates/app/Cargo.toml:64-100` | Resolved in B6; hosted release run still unproven | B6 | Resolved; historical row retained | Every release artifact builds with `--features shell` on every matrix platform, with the CI shell job's prerequisites mirrored step for step. `release_artifacts_build_the_windowed_viewer` refuses a conditioned build step and any later featureless rebuild of the same binary. Proved locally on macOS: the shell build links AppKit, CoreGraphics, QuartzCore and Metal where the featureless build links only `libSystem`, and `bundle.sh` packages either without complaint. No hosted release run has happened, so the Linux tarball and Windows installer remain unlaunched. |
-| REPO-002 | Critical | `07ebc93`; `docs/spikes/m2-voiceover-acceptance.md` | Partially resolved; M2 acceptance blocker remains | B5 | Existing VoiceOver/P12 entry, narrowed | Keep the restored spike, fix focus/platform residuals, keep the required macOS probe gate green, and pass one real VoiceOver session. |
+| REPO-002 | Critical | `07ebc93`, `11d5751`; `docs/spikes/m2-voiceover-acceptance.md` | Partially resolved; M2 acceptance blocker remains | B5 | Existing VoiceOver/P12 entry, narrowed | Focus residuals are implemented. Keep the restored spike and required macOS probe gate, pass one real VoiceOver session, and implement/accept Linux and Windows adapters. |
 | REPO-003 | High | `ACROBAT-PARITY.md:29-31,60` | Resolved in Audit Task 2 | B7 | Added and resolved by this audit | All 403 rows are reviewed and the summary totals mechanically match the rows; B7 retains REPO-010 and final acceptance. |
 | REPO-004 | High | `docs/plans/m2-viewer.md:3` at baseline | Resolved in this task | B7 | Added and resolved by this audit | M2 plan header now matches live merge history and open gates. |
 | REPO-005 | High | retained P10/agent branches and worktrees | Preserve, no cleanup | B0 | Added by this audit | Inventory remains reproducible; useful work reconciles additively only. |
@@ -259,14 +267,14 @@ disposition table follows from a line-by-line revalidation against `7413186`.
 | HARD-CHR-003 | Reclassified in B3.7 | C1 | Quick-action milestone reasons have no second consumer today; defer plugin metadata until a real consumer exists. |
 | HARD-CHR-004 | Resolved in B3.6 | B3 | Canvas and thumbnail context rows have command-specific milestone reasons. |
 | HARD-CHR-005 | Deferred after B3.7 | C1 | No local themed-scrollbar API or distinct Acrobat matrix row blocks B3; keep default overflow scrolling. |
-| HARD-CHR-006 | Deferred by matrix | post-1.0 | Full Screen remains partial for presentation semantics and is outside B3.7. |
+| HARD-CHR-006 | Partially resolved by `cb87b72` | post-1.0 | Full Screen now hides all chrome and fills the viewport, with Escape handling covered in `crates/app/src/shell/chrome/tabs/mod.rs`; presentation semantics remain partial and outside B3.7. |
 | HARD-CHR-007 | Resolved | B3 | Startup now uses `MenuState::new`; the duplicate active-tab rule is gone. |
 | HARD-CHR-008 | Resolved in B3.8 | B3 | The rail maps icon IDs to compact visual marks instead of drawing raw asset IDs such as `hand`. |
 | HARD-CHR-009 | Deferred after B3.7 | C1 | Remaining live expects are internal hardening, not matrix-visible B3 parity. |
 | HARD-CHR-010 | Deferred after B3.7 | C1 | Module ownership docs are internal hardening, not a matrix-visible B3 blocker. |
 | HARD-CHR-011 | Reclassified after B3.7 | B3 | No shared-invariant literal change is required for matrix honesty. |
 | HARD-CHR-012 | Resolved in B3.7 | B3 | The shared input reports the page field as `NumberInput`. |
-| HARD-CHR-013 | Deferred by matrix | M3 | Dedicated Zoom To remains the tracked matrix gap; page zoom input is outside B3.7. |
+| HARD-CHR-013 | Partially resolved by `cb87b72` | M3 | Dedicated Zoom To now opens a 12-preset chooser through `crates/app/src/shell/chrome/tabs/menu.rs`; custom percentage entry remains missing. Page zoom input is outside B3.7. |
 | HARD-CHR-014 | Resolved in B3.7 | B3 | Invalid zoom renders as unavailable instead of 0%. |
 | HARD-CHR-015 | Resolved in B3.7 | B3 | The empty side-panel host renders Tool details with a fitted empty-state prompt. |
 | HARD-A11Y-001 | Partially resolved | B5 | P12 shipped the tree, roles, labels, page text, focus ring, actions, bounds, and probe; B5 made the macOS probe a required CI gate. Four of the six residuals are now closed. The focus ring is grouped, so Tab moves between surfaces and the arrows move inside one, proved by a keyboard sweep that reaches all 38 published stops. An AccessKit focus request moves GPUI's focus, and GPUI's focus moving into a text field moves the published cursor onto it. A press on a window macOS reports as not visible is drained and published on the main queue rather than on the window's display link, which gpui runs only while the window is visible. A page's text is extracted once a client has asked for the tree instead of on every frame; a page nobody has read says so rather than reading as empty. Remaining: one real VoiceOver session, per `docs/spikes/m2-voiceover-acceptance.md`, whose steps 7, 7b and 9 cover this work, and the Linux and Windows adapters, which stay no-ops. |
