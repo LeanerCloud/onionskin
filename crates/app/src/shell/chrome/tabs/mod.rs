@@ -96,9 +96,11 @@ impl ShellFrame {
             cx.notify();
             return;
         }
-        if self.tab_context_menu.is_some() || self.canvas_context_menu.is_some() {
-            self.tab_context_menu = None;
-            self.canvas_context_menu = None;
+        if self.context_menus.tab_context_menu.is_some()
+            || self.context_menus.canvas_context_menu.is_some()
+        {
+            self.context_menus.tab_context_menu = None;
+            self.context_menus.canvas_context_menu = None;
             cx.notify();
             return;
         }
@@ -349,7 +351,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
         self.main_menu_open = false;
-        self.tab_context_menu = None;
+        self.context_menus.tab_context_menu = None;
         match command {
             TabCommand::Close => {
                 if let Some(tab) = self.tabs.tabs().get(index) {
@@ -585,7 +587,7 @@ impl ShellFrame {
     ) {
         self.find.open();
         self.main_menu_open = false;
-        self.tab_context_menu = None;
+        self.context_menus.tab_context_menu = None;
         if let Some(query) = query {
             self.find_input
                 .update(cx, |input, cx| input.set_query(query, cx));
@@ -970,7 +972,7 @@ impl ShellFrame {
     fn search_panel_visible(&self, cx: &App) -> bool {
         self.shell_view_state.visibility().global_bar
             && !self.main_menu_open
-            && self.tab_context_menu.is_none()
+            && self.context_menus.tab_context_menu.is_none()
             && !self.search_input.read(cx).query().trim().is_empty()
     }
 
@@ -1269,8 +1271,8 @@ impl Render for ShellFrame {
             .child(frame);
         if self.main_menu_open
             || self.recent_menu_open
-            || self.tab_context_menu.is_some()
-            || self.canvas_context_menu.is_some()
+            || self.context_menus.tab_context_menu.is_some()
+            || self.context_menus.canvas_context_menu.is_some()
         {
             root = root.child(
                 div()
@@ -1299,10 +1301,10 @@ impl Render for ShellFrame {
         if self.recent_menu_open {
             root = root.child(self.render_recent_menu(cx));
         }
-        if let Some(menu) = self.tab_context_menu {
+        if let Some(menu) = self.context_menus.tab_context_menu {
             root = root.child(self.render_tab_context_menu(menu, window, cx));
         }
-        if let Some(menu) = self.canvas_context_menu {
+        if let Some(menu) = self.context_menus.canvas_context_menu {
             root = root.child(self.render_canvas_context_menu(menu, window, cx));
         }
         if self.search_panel_visible(cx) {
@@ -1880,7 +1882,7 @@ mod tests {
         });
 
         let entries = cx.update(|_window, app| {
-            assert!(frame.read(app).canvas_context_menu.is_some());
+            assert!(frame.read(app).context_menus.canvas_context_menu.is_some());
             frame.read(app).canvas_context_menu_entries(app)
         });
         let live = |command| {
@@ -1904,7 +1906,10 @@ mod tests {
         });
         cx.update(|_window, app| {
             let frame = frame.read(app);
-            assert!(frame.canvas_context_menu.is_none(), "picking closes it");
+            assert!(
+                frame.context_menus.canvas_context_menu.is_none(),
+                "picking closes it"
+            );
             let model = &frame.tabs.active().unwrap().canvas.read(app).model;
             assert_eq!(
                 model.active_tool(),
@@ -1920,7 +1925,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             let frame = frame.read(app);
-            assert!(frame.canvas_context_menu.is_none());
+            assert!(frame.context_menus.canvas_context_menu.is_none());
             let rotation = frame
                 .tabs
                 .active()
@@ -1953,6 +1958,7 @@ mod tests {
             .update(&mut cx, |frame, _window, _cx| {
                 assert_eq!(
                     frame
+                        .context_menus
                         .canvas_context_menu
                         .expect("the canvas menu remains open")
                         .origin,
@@ -1993,7 +1999,7 @@ mod tests {
 
         window
             .update(&mut cx, |frame, _window, _cx| {
-                assert!(frame.canvas_context_menu.is_none());
+                assert!(frame.context_menus.canvas_context_menu.is_none());
             })
             .unwrap();
     }
@@ -2362,12 +2368,12 @@ mod tests {
             (
                 "the canvas context menu",
                 |frame, _window, cx| {
-                    frame.canvas_context_menu = Some(CanvasContextMenu {
+                    frame.context_menus.canvas_context_menu = Some(CanvasContextMenu {
                         origin: gpui::point(px(300.0), px(300.0)),
                     });
                     cx.notify();
                 },
-                |frame, _cx| frame.canvas_context_menu.is_some(),
+                |frame, _cx| frame.context_menus.canvas_context_menu.is_some(),
             ),
             (
                 "the main menu",

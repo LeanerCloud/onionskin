@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use gpui::{AppContext as _, Context, Entity, Window};
 
-use super::context::{CanvasContextMenu, TabContextMenu};
+use super::context::ContextMenuState;
 use super::export::ExportState;
 use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
@@ -165,8 +165,7 @@ impl<T> TabState<T> {
 pub(in crate::shell) struct ShellFrame {
     pub(super) tabs: TabState<DocumentTab>,
     pub(super) main_menu_open: bool,
-    pub(super) tab_context_menu: Option<TabContextMenu>,
-    pub(super) canvas_context_menu: Option<CanvasContextMenu>,
+    pub(super) context_menus: ContextMenuState,
     pub(super) search_input: Entity<SearchInput>,
     pub(super) search_feedback: Option<SearchResult>,
     pub(super) find: FindBarState,
@@ -283,8 +282,7 @@ impl ShellFrame {
         let frame = Self {
             tabs,
             main_menu_open: false,
-            tab_context_menu: None,
-            canvas_context_menu: None,
+            context_menus: ContextMenuState::default(),
             search_input,
             search_feedback: None,
             find: FindBarState::with_options(settings.preferences.search),

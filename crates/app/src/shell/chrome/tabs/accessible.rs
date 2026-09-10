@@ -164,10 +164,10 @@ impl ShellFrame {
         if self.recent_menu_open {
             root = root.child(self.accessible_recent_menu());
         }
-        if let Some(menu) = self.tab_context_menu {
+        if let Some(menu) = self.context_menus.tab_context_menu {
             root = root.child(self.accessible_tab_context_menu(menu));
         }
-        if self.canvas_context_menu.is_some() {
+        if self.context_menus.canvas_context_menu.is_some() {
             root = root.child(self.accessible_canvas_context_menu(cx));
         }
         if self.search_panel_visible(cx) {

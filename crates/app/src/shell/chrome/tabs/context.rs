@@ -39,8 +39,8 @@ impl ShellFrame {
             return;
         }
         self.main_menu_open = false;
-        self.canvas_context_menu = None;
-        self.tab_context_menu = Some(TabContextMenu {
+        self.context_menus.canvas_context_menu = None;
+        self.context_menus.tab_context_menu = Some(TabContextMenu {
             tab_index: index,
             origin: event.position,
         });
@@ -54,7 +54,9 @@ impl ShellFrame {
         document_bounds: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        if self.canvas_context_menu.is_some() && document_bounds.contains(&event.position) {
+        if self.context_menus.canvas_context_menu.is_some()
+            && document_bounds.contains(&event.position)
+        {
             self.open_canvas_context_menu(event, cx);
         } else {
             self.dismiss_menus(cx);
@@ -70,8 +72,8 @@ impl ShellFrame {
             return;
         }
         self.main_menu_open = false;
-        self.tab_context_menu = None;
-        self.canvas_context_menu = Some(CanvasContextMenu {
+        self.context_menus.tab_context_menu = None;
+        self.context_menus.canvas_context_menu = Some(CanvasContextMenu {
             origin: event.position,
         });
         cx.stop_propagation();
@@ -86,7 +88,7 @@ impl ShellFrame {
         command: CanvasContextCommand,
         cx: &mut Context<Self>,
     ) {
-        self.canvas_context_menu = None;
+        self.context_menus.canvas_context_menu = None;
         // The menu is closed above whatever the command turns out to do, so
         // every exit below has to repaint.
         cx.notify();
@@ -298,6 +300,19 @@ pub(in crate::shell::chrome) struct TabContextEntry {
     pub(in crate::shell::chrome) label: &'static str,
     pub(in crate::shell::chrome) tab_index: usize,
     pub(in crate::shell::chrome) availability: MenuAvailability,
+}
+
+/// Which context menu is open, if either. Only one can be, but they are
+/// opened from different surfaces and answer different commands, so each
+/// keeps its own field.
+///
+/// Declared here rather than among `ShellFrame`'s fields so that a package
+/// adding a context surface edits this file and not the frame's declaration,
+/// which every other package is also editing.
+#[derive(Default)]
+pub(super) struct ContextMenuState {
+    pub(super) tab_context_menu: Option<TabContextMenu>,
+    pub(super) canvas_context_menu: Option<CanvasContextMenu>,
 }
 
 #[derive(Debug, Clone, Copy)]

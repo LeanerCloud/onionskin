@@ -273,8 +273,8 @@ impl ShellFrame {
 
     pub(super) fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
         self.main_menu_open = !self.main_menu_open;
-        self.tab_context_menu = None;
-        self.canvas_context_menu = None;
+        self.context_menus.tab_context_menu = None;
+        self.context_menus.canvas_context_menu = None;
         cx.notify();
     }
 
@@ -330,8 +330,8 @@ impl ShellFrame {
     pub(super) fn dismiss_menus(&mut self, cx: &mut Context<Self>) {
         self.main_menu_open = false;
         self.recent_menu_open = false;
-        self.tab_context_menu = None;
-        self.canvas_context_menu = None;
+        self.context_menus.tab_context_menu = None;
+        self.context_menus.canvas_context_menu = None;
         cx.notify();
     }
 
