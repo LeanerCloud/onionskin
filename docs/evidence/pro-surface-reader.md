@@ -376,3 +376,81 @@ and no layout information Onionskin would use.
   `Specify where to sign` click, so "the wall falls on apply" for
   `Export a PDF` is an inference from the absence of an upsell before that
   point, not an observation of the wall itself.
+
+---
+
+## E5. Documentation sourcing, 2026-09-09
+
+### E5.1 Class C is unavailable from this environment
+
+| Attempt | Result |
+|---|---|
+| Fetch tool, `https://helpx.adobe.com/acrobat/using/grids-guides-measurements-pdfs.html` | HTTP 403 |
+| `curl` with a desktop Chrome user agent, same URL | HTTP 403 |
+| Fetch tool, eight further `helpx.adobe.com` URLs across four locales (`gr_en`, `my_en`, `ph_fil`, default) and three path shapes (`/using/`, `/desktop/`, `/current/`) | HTTP 403, all eight |
+| Fetch tool, `https://web.archive.org/web/2024/<helpx url>` | refused by the fetch tool itself |
+
+So Adobe's help server refuses this environment rather than gating particular
+pages. **Every documentation fact in this file is therefore class D**, a search
+engine's summary of a page nobody here fetched, and the permission matrix in
+`docs/plans/pro-toolset-reference-method.md` section 4.3 forbids class D from
+establishing grouping (F3) or ordering (F4). Restoring class C is a prerequisite
+for any ordering claim about a walled dialog.
+
+### E5.2 Per-toolset probe result
+
+Sixteen toolsets, one or two search queries each against a list of roughly a
+dozen expected control labels per toolset. A label counts as confirmed only when
+it appeared in returned text.
+
+| Toolset | Adobe URL surfaced | Path generation | Confirmed / listed | Order asserted |
+|---|---|---|---|---|
+| Edit a PDF | yes | current | 10 of 11 groups; `Background` not surfaced | no |
+| Organize pages | yes | current | 8 of 9; `More` menu not surfaced | no |
+| Redact a PDF | yes | current **and** `/acrobat/11/` | 6 of 7; `Apply` not surfaced verbatim | no |
+| Protect a PDF | yes | current **and** `/acrobat/11/` | 5 of 8, plus four extra labels | no |
+| Prepare a form | yes | current | 8 of 9 field types; tabs General, Appearance, Options, Actions, Format, Signed | partial: "General and Actions appear for all field types" |
+| Scan & OCR | yes | current | 6 of 7, two as close variants | no |
+| Use a certificate | yes | current | **2 of 6** | yes: certification precedes other signatures |
+| Prepare for accessibility | yes | current | 6 of 8; one contradicted | no |
+| Use guided actions | yes | current **and** `/acrobat/11/` | 5 of 5, two as close variants | yes: steps run in list order |
+| Compare files | yes | current | 4 of 6 | no |
+| Compress a PDF | yes | current | 8 of 9 | no |
+| Combine files | yes | current **and** `/acrobat/11/` | 4 of 6 | no |
+| Create a PDF | yes | current | 4 of 4, with menu paths | no |
+| Export a PDF | yes | current | Word, Excel, PowerPoint, HTML, RTF, plain text, JPG, PNG, TIFF, export-images | no |
+| Measure objects | yes | current | Distance, Perimeter, Area, Measurement Info panel, four snap types, Change Scale Ratio | no |
+| Use print production | yes | **`/acrobat/11/` only**, plus a third-party page titled "Acrobat XI Pro" | 7 tool names including the one in-scope row | no |
+
+Two provenance facts that the table is the point of recording:
+
+- **No page in this probe stated its Acrobat version.** Version provenance came
+  entirely from URL paths, which is why four toolsets are flagged as returning
+  `/acrobat/11/` results (Acrobat XI, 2012) and Print Production is flagged as
+  returning nothing else. For every other toolset the depicted version is
+  **could not determine**.
+- **Order was asserted for only two of sixteen toolsets**, and in both cases as
+  a single sentence about a constraint rather than a list. Documentation prose
+  gives field lists generously and orderings almost never, which is the
+  empirical basis for the F4 row of the permission matrix.
+
+### E5.3 Contradictions and close variants found
+
+These matter because a parity row carrying the wrong label is a defect the
+functional board would not catch.
+
+| Row or expected label | What Adobe's prose says |
+|---|---|
+| `Set Alternate Text` | `Add alternate text` |
+| `Correct recognized text` | `Correct Recognize Text` |
+| `Editable Text and Images` | `Editable Text & Images` |
+| `Reduce File Size` | `Reduce PDF file size` |
+| `Tools to add` | `Choose Tools To Add` |
+| `Action steps` | `Action Steps To Show` |
+| `Add Open Files` | `Add open files` |
+| `Select files` | `Select File` |
+| `Touch Up Reading Order` | `Reading Order tool`; the old name survives only in the URL slug |
+
+Class D may establish a label verbatim and may not establish that a variant is
+the *current* one, because the snapshot behind a search summary is unknown. Each
+row above is a question for a class C pass, not an answer.
