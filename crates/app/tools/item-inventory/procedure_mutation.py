@@ -28,11 +28,16 @@ aimed at a way an inventory can be blind:
 
 `--elide` is a normalization, so it gets its own set. A normalization tuned
 until a diff comes out empty proves nothing, so the cases assert both halves:
-that the rule absorbs a field rerouted through a sub-struct and the rewrap the
-hop provokes, and that with the rule in force the inventory still reports a lost
-statement, a changed call, a renamed leaf, a hop through a group nobody declared,
-and a hop spelled inside a string literal. The group is synthetic and applied by
-these cases, so they read the same before a restructuring and after one.
+that the rule absorbs a field rerouted through a sub-struct, the rewrap the hop
+provokes, and a chain that gained two hops, and that with the rule in force the
+inventory still reports a lost statement, a changed call, a renamed leaf, a hop
+through a group nobody declared, the group passed whole with nothing after it,
+and a hop spelled inside a literal: a plain string, a raw string, and a string
+that follows a `'"'`. The last three are separate cases because a `"` walk that
+knows nothing of raw strings or char literals passes the first and fails the
+other two, which is what the first alone cannot show. The group is synthetic and
+applied by these cases, so they read the same before a restructuring and after
+one.
 
 The files are passed on the command line, so this keeps working after the split:
 each snippet is located across the set rather than in one file.
@@ -246,6 +251,33 @@ LITERAL_HOP = LITERAL_ANCHOR.replace("chosen:", "chosen.%s.:" % GROUP)
 INLINE_CHAIN = "self.notices.remove(index);"
 WRAPPED_CHAIN = "self\n                .notices\n                .remove(index);"
 
+# The plain-literal case above passes against a scanner that only knows `"`.
+# These two do not: a raw string closes on `"#` and not on the first `"` inside
+# it, and a `'"'` is one char and not the start of a string. Both are whole
+# functions rather than edits to existing ones, so they carry their own context
+# and cannot be broken by an unrelated edit to the file.
+INJECT_AT = "impl Render for ShellFrame {"
+
+
+def injected(body):
+    return "fn probe_literal() -> &'static str {\n%s\n}\n\n%s" % (body, INJECT_AT)
+
+
+RAW_PLAIN = injected('    r#"{"view.zoom-to": "cmd-m"}"#')
+RAW_HOP = injected('    r#"{"view.%s.zoom-to": "cmd-m"}"#' % GROUP)
+CHAR_PLAIN = injected("    let _quote = '\"';\n    \"view.zoom-to\"")
+CHAR_HOP = injected("    let _quote = '\"';\n    \"view.%s.zoom-to\"" % GROUP)
+
+# `&mut self.g` with nothing after it is the group passed whole, which the rule
+# says it leaves alone. Two sides differing only by that trailing hop: a rule
+# that stripped it would report nothing.
+WHOLE_PLAIN = "std::mem::take(&mut self);"
+WHOLE_GROUP = "std::mem::take(&mut self.%s);" % GROUP
+
+# Two hops in one chain, which the fixed-point loop is there for.
+NESTED_ONE = "self.%s.notices.remove(index);" % GROUP
+NESTED_TWO = "self.%s.%s.notices.remove(index);" % (GROUP, GROUP)
+
 
 def regroup(sources, group=GROUP):
     """Reroute every access to one field through `group`, as a restructuring does."""
@@ -330,6 +362,30 @@ def elision_cases(sources):
         apply_once(sources, LITERAL_ANCHOR, LITERAL_PLAIN, "literal to change"),
         apply_once(sources, LITERAL_ANCHOR, LITERAL_HOP, "literal to change"),
         True,
+    )
+    ok &= elision_case(
+        "a hop spelled inside a raw string literal",
+        apply_once(sources, INJECT_AT, RAW_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, RAW_HOP, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "a hop in a literal after a quote char literal",
+        apply_once(sources, INJECT_AT, CHAR_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, CHAR_HOP, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "the group passed whole, with nothing after it",
+        apply_once(sources, INLINE_CHAIN, WHOLE_PLAIN, "statement to replace"),
+        apply_once(sources, INLINE_CHAIN, WHOLE_GROUP, "statement to replace"),
+        True,
+    )
+    ok &= elision_case(
+        "two hops in one chain, which needs the fixed point",
+        apply_once(sources, INLINE_CHAIN, NESTED_ONE, "statement to replace"),
+        apply_once(sources, INLINE_CHAIN, NESTED_TWO, "statement to replace"),
+        False,
     )
     return ok
 

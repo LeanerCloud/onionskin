@@ -49,11 +49,15 @@ a normalization tuned to make a diff empty:
   * the leaf keeps its own name in the hash, so a field renamed on the way into
     its group is a difference. A restructuring that renames nothing is what the
     rule is for; one that renames is reported.
-  * string literals are left alone, so a changed literal that happens to spell
-    a group hop cannot be normalized back into the original.
+  * literals are left alone, so a changed literal that happens to spell a group
+    hop cannot be normalized back into the original. The split is `classify`'s,
+    so a raw string, a byte string and a `'"'` are the literals the parser
+    already knows and not a second, weaker guess at them.
   * the names are given on the command line and recorded in the listing header,
-    and `compare` refuses two listings that were elided differently. A diff
-    cannot be emptied by eliding one side of it.
+    each with the number of hops it absorbed, and `compare` refuses two listings
+    elided by different names. A diff cannot be emptied by eliding one side of
+    it, and a name that matched something it was not meant for shows in its
+    count.
 
 What the rule cannot absorb, by construction, is the declaration of the state
 itself: the fields change container, the sub-structs are new items, and the
@@ -344,39 +348,38 @@ def is_ident_char(c):
 
 
 def code_spans(text):
-    """Split normalized text into (is_code, span) runs, strings being the gaps.
+    """Split normalized text into (is_code, span) runs, literals being the gaps.
 
-    A string literal is data. Rewriting inside one would let a changed literal
-    hash the same as the original, which is the failure the body hash exists to
-    prevent, so every code rewrite is applied to the code runs only. Raw and
-    byte literals open on the same `"` and close on the first unescaped one,
-    which is what `strip_visibility` already assumes.
+    A literal is data. Rewriting inside one would let a changed literal hash the
+    same as the original, which is the failure the body hash exists to prevent,
+    so every code rewrite is applied to the code runs only.
+
+    The split is `classify`'s, not a second scanner: a raw string closes on its
+    own `"#` and not on the first `"` inside it, a `b"..."` opens where a plain
+    one does, and a `'"'` is one char and not the start of a string. A hand-
+    rolled `"` walk gets all three wrong, and gets them wrong by treating data
+    as code, which is the direction that hides a change.
     """
-    spans, start, i, n = [], 0, 0, len(text)
-    in_string = False
-    while i < n:
-        if in_string:
-            if text[i] == "\\":
-                i += 2
-                continue
-            if text[i] == '"':
-                spans.append((False, text[start : i + 1]))
-                start, in_string = i + 1, False
-            i += 1
-            continue
-        if text[i] == '"':
-            spans.append((True, text[start:i]))
-            start, in_string = i, True
-        i += 1
-    spans.append((not in_string, text[start:]))
+    cls = classify(text)
+    spans, start = [], 0
+    for i in range(1, len(text) + 1):
+        if i == len(text) or (cls[i] == CODE) != (cls[start] == CODE):
+            spans.append((cls[start] == CODE, text[start:i]))
+            start = i
     return spans
 
 
 DOT = re.compile(r"\s*\.\s*")
 
 
-def elide_groups(text, names):
+def elide_groups(text, names, hops):
     """Delete a group hop from every field-access chain, in code only.
+
+    `hops` is tallied per name, because a name is matched wherever it sits
+    between two dots and nothing anchors it to the receiver it was meant for.
+    An `--elide export` that quietly absorbed a `settings.export.path` on an
+    unrelated type would be invisible otherwise; the count in the header is
+    what a reviewer reads it against.
 
     Two steps, both confined to code:
 
@@ -394,7 +397,7 @@ def elide_groups(text, names):
     """
     if not names:
         return text
-    pattern = re.compile(r"\.(?:%s)\." % "|".join(re.escape(n) for n in sorted(names)))
+    pattern = re.compile(r"\.(%s)\." % "|".join(re.escape(n) for n in sorted(names)))
     out = []
     for is_code, span in code_spans(text):
         if is_code:
@@ -402,6 +405,8 @@ def elide_groups(text, names):
             previous = None
             while previous != span:
                 previous = span
+                for match in pattern.finditer(span):
+                    hops[match.group(1)] += 1
                 span = pattern.sub(".", span)
         out.append(span)
     return "".join(out)
@@ -678,7 +683,7 @@ def parse(src, cls, start, end, container, out):
         i = next_i
 
 
-def provenance(at, paths, lines=None, elide=()):
+def provenance(at, paths, lines=None, elide=(), hops=None):
     """The header that records what a listing was emitted from, and of what.
 
     A listing is 400-odd anonymous lines. Six months later nobody can tell
@@ -698,8 +703,11 @@ def provenance(at, paths, lines=None, elide=()):
     ]
     # Always emitted, empty set included. A listing that is silent about how it
     # was normalized cannot be compared against one that is not, and `compare`
-    # needs the two to say the same thing to know they are comparable.
-    header.append("# elided %s" % (" ".join(sorted(elide)) or "nothing"))
+    # needs the two to say the same thing to know they are comparable. Each name
+    # carries the number of hops it absorbed, which is the only place a name
+    # that matched something it was not meant for would show.
+    counted = " ".join("%s=%d" % (name, (hops or {}).get(name, 0)) for name in sorted(elide))
+    header.append("# elided %s" % (counted or "nothing"))
     if lines is not None:
         census = Counter(line.split("\t")[1] for line in lines)
         header.append(
@@ -714,6 +722,7 @@ def provenance(at, paths, lines=None, elide=()):
 
 def emit(paths, at=None, elide=()):
     lines = []
+    hops = Counter()
     # A single `impl` block legitimately becomes several when its methods move
     # to different files, so container lines are a set: what has to survive is
     # that the block still exists and still holds the same methods, not how
@@ -726,13 +735,13 @@ def emit(paths, at=None, elide=()):
         items = []
         parse(src, cls, 0, len(src), "", items)
         for item in items:
-            item.body = elide_groups(item.body, elide)
+            item.body = elide_groups(item.body, elide, hops)
             if item.kind in CONTAINER_KINDS:
                 containers.add(item.line())
             else:
                 lines.append(item.line())
     listing_lines = sorted(lines + sorted(containers))
-    for line in provenance(at, paths, listing_lines, elide):
+    for line in provenance(at, paths, listing_lines, elide, hops):
         print(line)
     for line in listing_lines:
         print(line)
@@ -781,7 +790,7 @@ FIELDS = 6
 
 
 def listing(path):
-    """A listing's item lines and its elision set, dropping the rest of the header.
+    """A listing's item lines, its elision set and its hop counts.
 
     Item lines are told apart by the field count, not by a `#` prefix: an
     item's container is a signature and a signature carries its attributes, so
@@ -791,22 +800,30 @@ def listing(path):
     and elided nothing.
     """
     items = Counter()
-    elided = ()
+    elided, hops = (), {}
     with open(path, encoding="utf-8") as handle:
         for line in handle.read().splitlines():
             if line.count("\t") == FIELDS - 1:
                 items[line] += 1
             elif line.startswith("# elided "):
                 names = line[len("# elided ") :].split()
-                elided = () if names == ["nothing"] else tuple(sorted(names))
+                if names == ["nothing"]:
+                    elided, hops = (), {}
+                else:
+                    # `name=count`: the names decide comparability, the counts
+                    # are read by a person and legitimately differ between a
+                    # listing taken before the hops existed and one taken after.
+                    pairs = [name.split("=", 1) for name in names]
+                    elided = tuple(sorted(pair[0] for pair in pairs))
+                    hops = {pair[0]: int(pair[1]) for pair in pairs if len(pair) == 2}
             elif not line.startswith("#"):
                 raise SystemExit("%s: neither an item nor a header: %r" % (path, line))
-    return items, elided
+    return items, elided, hops
 
 
 def compare(before_path, after_path):
-    before, before_elided = listing(before_path)
-    after, after_elided = listing(after_path)
+    before, before_elided, before_hops = listing(before_path)
+    after, after_elided, after_hops = listing(after_path)
     # Eliding one side and not the other would rewrite half the bodies and
     # report the rewrite as agreement. The two listings have to have been
     # normalized the same way for their difference to mean anything.
@@ -816,6 +833,14 @@ def compare(before_path, after_path):
             % (" ".join(before_elided) or "nothing", " ".join(after_elided) or "nothing")
         )
     print("elided: %s" % (" ".join(before_elided) or "nothing"))
+    if before_elided:
+        print(
+            "hops absorbed: %s"
+            % ", ".join(
+                "%s %d -> %d" % (name, before_hops.get(name, 0), after_hops.get(name, 0))
+                for name in before_elided
+            )
+        )
     only_before = before - after
     only_after = after - before
 
