@@ -26,6 +26,19 @@ aimed at a way an inventory can be blind:
   * a one-tuple parameter flattened to a plain type on a body-less trait
     method, where the signature is the only thing that can catch it.
 
+`--elide` is a normalization, so it gets its own set. A normalization tuned
+until a diff comes out empty proves nothing, so the cases assert both halves:
+that the rule absorbs a field rerouted through a sub-struct, the rewrap the hop
+provokes, and a chain that gained two hops, and that with the rule in force the
+inventory still reports a lost statement, a changed call, a renamed leaf, a hop
+through a group nobody declared, the group passed whole with nothing after it,
+and a hop spelled inside a literal: a plain string, a raw string, and a string
+that follows a `'"'`. The last three are separate cases because a `"` walk that
+knows nothing of raw strings or char literals passes the first and fails the
+other two, which is what the first alone cannot show. The group is synthetic and
+applied by these cases, so they read the same before a restructuring and after
+one.
+
 The files are passed on the command line, so this keeps working after the split:
 each snippet is located across the set rather than in one file.
 
@@ -115,10 +128,11 @@ EXPECTED_MISSING = "fn toggle_fullscreen"
 EXPECTED_CHANGED = "fn run_canvas_context_command"
 
 
-def inventory(paths, output):
+def inventory(paths, output, elide=()):
+    flags = ["--elide", ",".join(elide)] if elide else []
     with open(output, "w", encoding="utf-8") as handle:
         subprocess.run(
-            [sys.executable, str(INVENTORY), "emit"] + [str(p) for p in paths],
+            [sys.executable, str(INVENTORY), "emit"] + flags + [str(p) for p in paths],
             stdout=handle,
             check=True,
         )
@@ -148,7 +162,7 @@ def flat_name(path):
     return str(path).lstrip("/").replace("/", "__")
 
 
-def report_for(sources, mutated):
+def report_for(sources, mutated, elide=()):
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
         before_dir, after_dir = work / "before", work / "after"
@@ -160,8 +174,8 @@ def report_for(sources, mutated):
             (after_dir / flat_name(path)).write_text(text, encoding="utf-8")
         if len(list(before_dir.iterdir())) != len(sources):
             raise SystemExit("two inputs collided on one copy name")
-        inventory(sorted(before_dir.iterdir()), work / "before.txt")
-        inventory(sorted(after_dir.iterdir()), work / "after.txt")
+        inventory(sorted(before_dir.iterdir()), work / "before.txt", elide)
+        inventory(sorted(after_dir.iterdir()), work / "after.txt", elide)
         return compare(work / "before.txt", work / "after.txt")
 
 
@@ -212,6 +226,235 @@ def move_method(sources):
     )
 
 
+GROUP = "probe_group"
+OTHER_GROUP = "undeclared_group"
+# A field that is read from several bodies, rerouted through a sub-struct the
+# way a restructuring reroutes one. Synthetic, so these cases read the same
+# before a restructuring and after it.
+REGROUPED_FIELD = ".notices"
+
+# Both lines sit in `ShellFrame::dismiss_notice` and each appears once across
+# the files, so a case that rewrites one names exactly one body.
+GUARD = "if index < self.%s.notices.len() {" % GROUP
+REMOVE = "self.%s.notices.remove(index);" % GROUP
+
+# `strip_visibility` and the elision both walk string literals to leave them
+# alone, so the literal that tests it is a two-sided case: the same string with
+# and without a hop spelled inside it. A rule that rewrote data would normalize
+# the two into one and report nothing.
+LITERAL_ANCHOR = '"no files could be chosen: {error}"'
+LITERAL_PLAIN = LITERAL_ANCHOR.replace("chosen:", "chosen.:")
+LITERAL_HOP = LITERAL_ANCHOR.replace("chosen:", "chosen.%s.:" % GROUP)
+
+# A hop lengthens the chain it sits in, so rustfmt breaks the chain across
+# lines. That has to be absorbed, or the rule reports the formatter.
+INLINE_CHAIN = "self.notices.remove(index);"
+WRAPPED_CHAIN = "self\n                .notices\n                .remove(index);"
+
+# The plain-literal case above passes against a scanner that only knows `"`.
+# These two do not: a raw string closes on `"#` and not on the first `"` inside
+# it, and a `'"'` is one char and not the start of a string. Both are whole
+# functions rather than edits to existing ones, so they carry their own context
+# and cannot be broken by an unrelated edit to the file.
+INJECT_AT = "impl Render for ShellFrame {"
+
+
+def injected(body):
+    return "fn probe_literal() -> &'static str {\n%s\n}\n\n%s" % (body, INJECT_AT)
+
+
+RAW_PLAIN = injected('    r#"{"view.zoom-to": "cmd-m"}"#')
+RAW_HOP = injected('    r#"{"view.%s.zoom-to": "cmd-m"}"#' % GROUP)
+CHAR_PLAIN = injected("    let _quote = '\"';\n    \"view.zoom-to\"")
+CHAR_HOP = injected("    let _quote = '\"';\n    \"view.%s.zoom-to\"" % GROUP)
+
+# `&mut self.g` with nothing after it is the group passed whole, which the rule
+# says it leaves alone. Two sides differing only by that trailing hop: a rule
+# that stripped it would report nothing.
+WHOLE_PLAIN = "std::mem::take(&mut self);"
+WHOLE_GROUP = "std::mem::take(&mut self.%s);" % GROUP
+
+# Two hops in one chain, which the fixed-point loop is there for.
+NESTED_ONE = "self.%s.notices.remove(index);" % GROUP
+NESTED_TWO = "self.%s.%s.notices.remove(index);" % (GROUP, GROUP)
+
+# Punctuation inside a body. The trailing comma is what rustfmt adds when the
+# hop lengthens a line past the margin, and absorbing it would empty two thirds
+# of this change's own diff, so the temptation is real and the same
+# normalization is already applied to signatures. The brace is the reason the
+# temptation has to be refused rather than merely resisted: the two snippets
+# below are different programs, and a rule that dropped braces would call them
+# the same body.
+COMMA_PLAIN = injected("    let list = [1, 2, 3];\n    format!(\"{}\", list.len())")
+COMMA_TRAILING = injected("    let list = [1, 2, 3,];\n    format!(\"{}\", list.len())")
+SCOPE_OUT = injected(
+    "    let mut n = 0;\n    if n == 0 {\n        n += 1;\n    }\n"
+    "    n += 2;\n    format!(\"{n}\")"
+)
+SCOPE_IN = injected(
+    "    let mut n = 0;\n    if n == 0 {\n        n += 1;\n        n += 2;\n    }\n"
+    "    format!(\"{n}\")"
+)
+
+
+def regroup(sources, group=GROUP):
+    """Reroute every access to one field through `group`, as a restructuring does."""
+    hop = ".%s%s" % (group, REGROUPED_FIELD)
+    rewritten = {path: text.replace(REGROUPED_FIELD, hop) for path, text in sources.items()}
+    moved = sum(text.count(REGROUPED_FIELD) for text in sources.values())
+    if moved < 10:
+        raise SystemExit("expected the regrouped field in many bodies, found %d" % moved)
+    return rewritten, moved
+
+
+def reported(report):
+    return [line for line in report.splitlines() if line.startswith(REPORTED)]
+
+
+def elision_case(name, left, right, expect_reported, elide=(GROUP,)):
+    report = report_for(left, right, elide)
+    changed = reported(report)
+    print("case: %s" % name)
+    for line in changed:
+        print("  %s" % line.strip())
+    ok = bool(changed) == expect_reported
+    if expect_reported and not changed:
+        print("  NOT REPORTED: the rule is normalizing away a real change")
+    if not expect_reported and changed:
+        print("  REPORTED: the rule failed to absorb the hop it exists for")
+    if not expect_reported and not changed:
+        print("  nothing reported, which is what this case asserts")
+    print()
+    return ok
+
+
+def emitted_header(sources, elide):
+    """The `# elided` line a listing of `sources` carries."""
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        copies = work / "copies"
+        copies.mkdir()
+        for path, text in sources.items():
+            (copies / flat_name(path)).write_text(text, encoding="utf-8")
+        inventory(sorted(copies.iterdir()), work / "listing.txt", elide)
+        for line in (work / "listing.txt").read_text(encoding="utf-8").splitlines():
+            if line.startswith("# elided "):
+                return line
+    raise SystemExit("the listing carries no elision header")
+
+
+def counts_case(regrouped, moved):
+    """The header's hop count has to be a measurement, not a decoration.
+
+    No comparison can catch a counter that lies, because a count legitimately
+    differs between the two sides. So it is checked directly, against a number
+    this file knows independently: the regrouping above introduced exactly one
+    hop per rewritten access.
+    """
+    header = emitted_header(regrouped, (GROUP,))
+    expected = "# elided %s=%d" % (GROUP, moved)
+    print("case: the header counts the hops it absorbed")
+    print("  %s" % header)
+    ok = header == expected
+    if not ok:
+        print("  EXPECTED %s: the count is not a measurement" % expected)
+    print()
+    return ok
+
+
+def elision_cases(sources):
+    """The `--elide` rule: it must absorb the hop and nothing else."""
+    regrouped, moved = regroup(sources)
+
+    # Without the rule the same regrouping is a wall of noise, which is the
+    # reason the rule exists and the reason it has to be shown to still bite.
+    unelided = reported(report_for(sources, regrouped))
+    print("case: a field rerouted through a sub-struct, without --elide")
+    print("  %d item lines differ, from one field moving in %d places" % (len(unelided), moved))
+    print()
+    ok = len(unelided) > 0
+
+    ok &= elision_case(
+        "the same regrouping, with --elide %s" % GROUP, sources, regrouped, False
+    )
+    ok &= elision_case(
+        "a regrouped body that also lost a statement",
+        sources,
+        apply_once(regrouped, REMOVE, "", "statement to delete"),
+        True,
+    )
+    ok &= elision_case(
+        "a regrouped body whose call changed",
+        sources,
+        apply_once(regrouped, REMOVE, REMOVE.replace(".remove(", ".swap_remove("), "call"),
+        True,
+    )
+    ok &= elision_case(
+        "a leaf renamed on the way into the group",
+        sources,
+        apply_once(regrouped, GUARD, GUARD.replace(".notices.", ".warnings."), "leaf to rename"),
+        True,
+    )
+    ok &= elision_case(
+        "a hop through a group that was not declared",
+        sources,
+        regroup(sources, OTHER_GROUP)[0],
+        True,
+    )
+    rewrapped = apply_once(sources, INLINE_CHAIN, WRAPPED_CHAIN, "chain to rewrap")
+    unelided_rewrap = reported(report_for(sources, rewrapped))
+    print("case: a chain the formatter rewrapped, without --elide")
+    print("  %d item lines differ, so the tolerance is opt-in" % len(unelided_rewrap))
+    print()
+    ok &= len(unelided_rewrap) > 0
+    ok &= elision_case("the same rewrap, with --elide %s" % GROUP, sources, rewrapped, False)
+
+    ok &= elision_case(
+        "a hop spelled inside a string literal",
+        apply_once(sources, LITERAL_ANCHOR, LITERAL_PLAIN, "literal to change"),
+        apply_once(sources, LITERAL_ANCHOR, LITERAL_HOP, "literal to change"),
+        True,
+    )
+    ok &= elision_case(
+        "a hop spelled inside a raw string literal",
+        apply_once(sources, INJECT_AT, RAW_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, RAW_HOP, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "a hop in a literal after a quote char literal",
+        apply_once(sources, INJECT_AT, CHAR_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, CHAR_HOP, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "the group passed whole, with nothing after it",
+        apply_once(sources, INLINE_CHAIN, WHOLE_PLAIN, "statement to replace"),
+        apply_once(sources, INLINE_CHAIN, WHOLE_GROUP, "statement to replace"),
+        True,
+    )
+    ok &= elision_case(
+        "two hops in one chain, which needs the fixed point",
+        apply_once(sources, INLINE_CHAIN, NESTED_ONE, "statement to replace"),
+        apply_once(sources, INLINE_CHAIN, NESTED_TWO, "statement to replace"),
+        False,
+    )
+    ok &= elision_case(
+        "a trailing comma in a body, which is not whitespace",
+        apply_once(sources, INJECT_AT, COMMA_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, COMMA_TRAILING, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "a statement moved across a brace, which is a different program",
+        apply_once(sources, INJECT_AT, SCOPE_OUT, "place to inject"),
+        apply_once(sources, INJECT_AT, SCOPE_IN, "place to inject"),
+        True,
+    )
+    ok &= counts_case(regrouped, moved)
+    return ok
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -235,6 +478,8 @@ def main(argv):
         print("  NOT REPORTED: the inventory is blind to this")
     ok &= bool(changed)
     print()
+
+    ok &= elision_cases(sources)
 
     print("MUTATION CHECK: every mutation was reported" if ok else "MUTATION CHECK FAILED")
     return 0 if ok else 1

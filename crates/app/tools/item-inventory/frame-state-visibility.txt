@@ -1,0 +1,60 @@
+# `item_inventory.py audit` at f349359 diffed against 536487a, over the seven
+# files under crates/app/src/shell/chrome/tabs/.
+#
+# `pub(super)` names a different scope in every module, and P0b moves ten
+# fields between modules, so the listing's visibility column cannot answer on
+# its own whether their reach changed. This is the answer: every one of them
+# lands in a module directly under `chrome::tabs`, so `pub(super)` still means
+# `pub(in crate::shell::chrome::tabs)` and reaches exactly what it did. No
+# existing item's visibility changed; every line below is a field arriving at
+# its new container or a struct that did not exist before.
+
+61a62,63
+> crate::shell::chrome::tabs::context	#[derive(Default)] struct ContextMenuState	field	canvas_context_menu	pub(super)
+> crate::shell::chrome::tabs::context	#[derive(Default)] struct ContextMenuState	field	tab_context_menu	pub(super)
+68a71
+> crate::shell::chrome::tabs::context	-	struct	ContextMenuState	pub(super)
+86a90,91
+> crate::shell::chrome::tabs::export	#[derive(Default)] struct ExportState	field	export_job	pub(super)
+> crate::shell::chrome::tabs::export	#[derive(Default)] struct ExportState	field	next_export_id	pub(super)
+98a104
+> crate::shell::chrome::tabs::export	-	struct	ExportState	pub(super)
+122a129
+> crate::shell::chrome::tabs::frame_state	-	struct	PageEntryState	pub(super)
+124a132
+> crate::shell::chrome::tabs::frame_state	-	struct	ToolSearchState	pub(super)
+140a149,150
+> crate::shell::chrome::tabs::frame_state	struct PageEntryState	field	page_entry_error	pub(super)
+> crate::shell::chrome::tabs::frame_state	struct PageEntryState	field	page_input	pub(super)
+142c152
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	canvas_context_menu	pub(super)
+---
+> crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	context_menus	pub(super)
+144c154
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	export_job	pub(super)
+---
+> crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	export	pub(super)
+148c158
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	main_menu_open	pub(super)
+---
+> crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	menus	pub(super)
+150d159
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	next_export_id	pub(super)
+153,154c162
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	page_entry_error	pub(super)
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	page_input	pub(super)
+---
+> crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	page_entry	pub(super)
+157,159d164
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	recent_menu_open	pub(super)
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	search_feedback	pub(super)
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	search_input	pub(super)
+163d167
+< crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	tab_context_menu	pub(super)
+164a169,174
+> crate::shell::chrome::tabs::frame_state	struct ShellFrame	field	tool_search	pub(super)
+> crate::shell::chrome::tabs::frame_state	struct ToolSearchState	field	search_feedback	pub(super)
+> crate::shell::chrome::tabs::frame_state	struct ToolSearchState	field	search_input	pub(super)
+> crate::shell::chrome::tabs::menu	#[derive(Default)] struct MenuOpenState	field	main_menu_open	pub(super)
+> crate::shell::chrome::tabs::menu	#[derive(Default)] struct MenuOpenState	field	recent_menu_open	pub(super)
+> crate::shell::chrome::tabs::menu	-	struct	MenuOpenState	pub(super)

@@ -80,7 +80,7 @@ impl ShellFrame {
         if visibility.tab_bar {
             root = root.child(self.accessible_tabs());
         }
-        if let Some(job) = &self.export_job {
+        if let Some(job) = &self.export.export_job {
             let can_cancel = job.phase.load() == ExportPhaseValue::Running;
             root = root.child(
                 A11yElement::new(
@@ -141,8 +141,8 @@ impl ShellFrame {
             if visibility.page_controls {
                 let mut controls = page_controls::accessible(
                     PageControlsState::from_view(tab.canvas.read(cx).model.view_state()),
-                    self.page_entry_error.as_ref(),
-                    self.page_input.read(cx).query(),
+                    self.page_entry.page_entry_error.as_ref(),
+                    self.page_entry.page_input.read(cx).query(),
                 );
                 self.a11y.rects.place(Surface::PageControls, &mut controls);
                 root = root.child(controls);
@@ -158,16 +158,16 @@ impl ShellFrame {
         if visibility.side_panel {
             root = root.child(side_panel::accessible(self.side_panel_state));
         }
-        if self.main_menu_open {
+        if self.menus.main_menu_open {
             root = root.child(self.accessible_main_menu(cx));
         }
-        if self.recent_menu_open {
+        if self.menus.recent_menu_open {
             root = root.child(self.accessible_recent_menu());
         }
-        if let Some(menu) = self.tab_context_menu {
+        if let Some(menu) = self.context_menus.tab_context_menu {
             root = root.child(self.accessible_tab_context_menu(menu));
         }
-        if self.canvas_context_menu.is_some() {
+        if self.context_menus.canvas_context_menu.is_some() {
             root = root.child(self.accessible_canvas_context_menu(cx));
         }
         if self.search_panel_visible(cx) {
@@ -180,11 +180,12 @@ impl ShellFrame {
         A11yElement::new("global-bar", Role::Toolbar, "Global Bar")
             .child(
                 A11yElement::new("main-menu-button", Role::Button, "Main Menu")
-                    .with_state(A11yState::toggled(self.main_menu_open))
+                    .with_state(A11yState::toggled(self.menus.main_menu_open))
                     .with_activation(Activation::ToggleMainMenu),
             )
             .child(
-                self.search_input
+                self.tool_search
+                    .search_input
                     .read(cx)
                     .accessible("Search Tools Or Document", TextField::Search),
             )
@@ -334,7 +335,7 @@ impl ShellFrame {
                     })
                     .collect(),
             );
-        if let Some(feedback) = self.search_feedback.as_ref() {
+        if let Some(feedback) = self.tool_search.search_feedback.as_ref() {
             panel = panel.child(A11yElement::new(
                 "global-search-feedback",
                 Role::Alert,
@@ -522,9 +523,9 @@ impl ShellFrame {
 
     pub(super) fn text_field(&self, field: TextField) -> &Entity<SearchInput> {
         match field {
-            TextField::Search => &self.search_input,
+            TextField::Search => &self.tool_search.search_input,
             TextField::Find => &self.find_input,
-            TextField::Page => &self.page_input,
+            TextField::Page => &self.page_entry.page_input,
         }
     }
 
@@ -553,10 +554,14 @@ impl ShellFrame {
     /// The id the field publishes, so the ring and the tree name it the same
     /// way.
     pub(super) fn focused_text_field(&self, window: &Window, cx: &App) -> Option<gpui::ElementId> {
-        [&self.search_input, &self.find_input, &self.page_input]
-            .into_iter()
-            .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
-            .map(|input| input.read(cx).element_id().into())
+        [
+            &self.tool_search.search_input,
+            &self.find_input,
+            &self.page_entry.page_input,
+        ]
+        .into_iter()
+        .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        .map(|input| input.read(cx).element_id().into())
     }
 
     pub(super) fn text_field_focused(&self, window: &Window, cx: &App) -> bool {

@@ -88,8 +88,8 @@ impl ShellFrame {
                 Ok(())
             }
             MenuCommand::OpenRecent => {
-                self.main_menu_open = false;
-                self.recent_menu_open = !self.recent_menu_open;
+                self.menus.main_menu_open = false;
+                self.menus.recent_menu_open = !self.menus.recent_menu_open;
                 cx.notify();
                 Ok(())
             }
@@ -110,7 +110,7 @@ impl ShellFrame {
                 Ok(())
             }
             MenuCommand::ZoomTo => {
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.show_dialog(ShellDialog::ZoomTo, cx);
                 Ok(())
             }
@@ -178,7 +178,7 @@ impl ShellFrame {
                 let Some(view) = self.active_view_state(cx) else {
                     return Err(TabError::Unavailable("No document is open"));
                 };
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.run_view_action(
                     command
                         .view_action(view)
@@ -188,7 +188,7 @@ impl ShellFrame {
                 Ok(())
             }
             MenuCommand::ToggleQuickAction(action) => {
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.toggle_quick_action_visibility(action, cx);
                 Ok(())
             }
@@ -211,7 +211,7 @@ impl ShellFrame {
             command @ (MenuCommand::ToggleNavigationPane
             | MenuCommand::TogglePageControls
             | MenuCommand::ReadMode) => {
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.run_shell_view_action(
                     command
                         .shell_view_action()
@@ -221,12 +221,12 @@ impl ShellFrame {
                 Ok(())
             }
             MenuCommand::FullScreen => {
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.toggle_fullscreen(window, cx);
                 Ok(())
             }
             MenuCommand::Export(target) => {
-                self.main_menu_open = false;
+                self.menus.main_menu_open = false;
                 self.start_export(target, cx);
                 Ok(())
             }
@@ -272,9 +272,9 @@ impl ShellFrame {
     }
 
     pub(super) fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
-        self.main_menu_open = !self.main_menu_open;
-        self.tab_context_menu = None;
-        self.canvas_context_menu = None;
+        self.menus.main_menu_open = !self.menus.main_menu_open;
+        self.context_menus.tab_context_menu = None;
+        self.context_menus.canvas_context_menu = None;
         cx.notify();
     }
 
@@ -328,10 +328,10 @@ impl ShellFrame {
     }
 
     pub(super) fn dismiss_menus(&mut self, cx: &mut Context<Self>) {
-        self.main_menu_open = false;
-        self.recent_menu_open = false;
-        self.tab_context_menu = None;
-        self.canvas_context_menu = None;
+        self.menus.main_menu_open = false;
+        self.menus.recent_menu_open = false;
+        self.context_menus.tab_context_menu = None;
+        self.context_menus.canvas_context_menu = None;
         cx.notify();
     }
 
@@ -419,4 +419,16 @@ impl ShellFrame {
         }
         panel
     }
+}
+
+/// Which of the frame's own menus is showing. Two booleans and not one enum
+/// because the recents submenu opens inside the main menu rather than instead
+/// of it.
+///
+/// `MenuState` next door is a different thing: the availability snapshot the
+/// schema is built from, which is derived rather than stored.
+#[derive(Default)]
+pub(super) struct MenuOpenState {
+    pub(super) main_menu_open: bool,
+    pub(super) recent_menu_open: bool,
 }

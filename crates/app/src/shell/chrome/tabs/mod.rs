@@ -91,20 +91,23 @@ impl ShellFrame {
         // emptying the field is what closes it. It never shows at the same
         // time as a menu, so where it sits relative to them does not matter.
         if self.search_panel_visible(cx) {
-            self.search_input
+            self.tool_search
+                .search_input
                 .update(cx, |input, cx| input.set_query("", cx));
             cx.notify();
             return;
         }
-        if self.tab_context_menu.is_some() || self.canvas_context_menu.is_some() {
-            self.tab_context_menu = None;
-            self.canvas_context_menu = None;
+        if self.context_menus.tab_context_menu.is_some()
+            || self.context_menus.canvas_context_menu.is_some()
+        {
+            self.context_menus.tab_context_menu = None;
+            self.context_menus.canvas_context_menu = None;
             cx.notify();
             return;
         }
-        if self.main_menu_open || self.recent_menu_open {
-            self.main_menu_open = false;
-            self.recent_menu_open = false;
+        if self.menus.main_menu_open || self.menus.recent_menu_open {
+            self.menus.main_menu_open = false;
+            self.menus.recent_menu_open = false;
             cx.notify();
             return;
         }
@@ -128,9 +131,9 @@ impl ShellFrame {
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
-        if activate_tab(&mut self.tabs, &mut self.search_feedback, index) {
+        if activate_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index) {
             self.navigation.document_changed();
-            self.page_entry_error = None;
+            self.page_entry.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
             self.sync_page_entry(cx);
             self.refresh_find(cx);
@@ -180,7 +183,7 @@ impl ShellFrame {
 
     /// Open a recent document by its position in the list.
     pub(in crate::shell) fn open_recent(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.recent_menu_open = false;
+        self.menus.recent_menu_open = false;
         let Some(path) = self
             .settings
             .recents
@@ -261,7 +264,7 @@ impl ShellFrame {
         })
         .detach();
         self.tabs.push(DocumentTab::new(source.clone(), canvas));
-        self.search_feedback = None;
+        self.tool_search.search_feedback = None;
         Ok(source)
     }
 
@@ -348,14 +351,14 @@ impl ShellFrame {
         index: usize,
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
-        self.main_menu_open = false;
-        self.tab_context_menu = None;
+        self.menus.main_menu_open = false;
+        self.context_menus.tab_context_menu = None;
         match command {
             TabCommand::Close => {
                 if let Some(tab) = self.tabs.tabs().get(index) {
                     self.cancel_export_for(tab.canvas.entity_id());
                 }
-                close_tab(&mut self.tabs, &mut self.search_feedback, index)?;
+                close_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
@@ -366,6 +369,7 @@ impl ShellFrame {
             TabCommand::CloseOthers => {
                 if let Some(kept) = self.tabs.tabs().get(index) {
                     if self
+                        .export
                         .export_job
                         .as_ref()
                         .is_some_and(|job| job.origin != kept.canvas.entity_id())
@@ -373,7 +377,7 @@ impl ShellFrame {
                         self.cancel_export(cx);
                     }
                 }
-                close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
+                close_other_tabs(&mut self.tabs, &mut self.tool_search.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
@@ -384,7 +388,7 @@ impl ShellFrame {
             TabCommand::CloseAll => {
                 self.cancel_export(cx);
                 self.tabs.close_all();
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.navigation.document_changed();
                 self.observed_view_state = None;
                 self.refresh_find(cx);
@@ -424,11 +428,13 @@ impl ShellFrame {
 
     fn apply_theme(&mut self, cx: &mut Context<Self>) {
         let theme = self.shell_view_state.tokens();
-        self.search_input
+        self.tool_search
+            .search_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         self.find_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
-        self.page_input
+        self.page_entry
+            .page_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         for tab in self.tabs.tabs() {
             tab.canvas
@@ -489,7 +495,7 @@ impl ShellFrame {
         let Some(view) = self.active_view_state(cx) else {
             return;
         };
-        self.page_input.update(cx, |input, cx| {
+        self.page_entry.page_input.update(cx, |input, cx| {
             input.set_query((view.current_page + 1).to_string(), cx);
         });
     }
@@ -532,7 +538,7 @@ impl ShellFrame {
             return;
         };
         canvas.update(cx, |canvas, cx| canvas.run_view_action(action, cx));
-        self.page_entry_error = None;
+        self.page_entry.page_entry_error = None;
         self.observed_view_state = self.active_view_state(cx);
         self.sync_page_entry(cx);
         refresh_native_menus(cx, self.menu_state(cx));
@@ -543,11 +549,11 @@ impl ShellFrame {
         let Some(view) = self.active_view_state(cx) else {
             return;
         };
-        let input = self.page_input.read(cx).query().to_owned();
+        let input = self.page_entry.page_input.read(cx).query().to_owned();
         match parse_page_entry(&input, view.page_count) {
             Ok(page) => self.run_view_action(ViewAction::GoToPage(page), cx),
             Err(error) => {
-                self.page_entry_error = Some(error);
+                self.page_entry.page_entry_error = Some(error);
                 cx.notify();
             }
         }
@@ -583,8 +589,8 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         self.find.open();
-        self.main_menu_open = false;
-        self.tab_context_menu = None;
+        self.menus.main_menu_open = false;
+        self.context_menus.tab_context_menu = None;
         if let Some(query) = query {
             self.find_input
                 .update(cx, |input, cx| input.set_query(query, cx));
@@ -713,12 +719,12 @@ impl ShellFrame {
                 div()
                     .w(px(320.0))
                     .flex_none()
-                    .child(self.search_input.clone()),
+                    .child(self.tool_search.search_input.clone()),
             )
     }
 
     fn search_results(&self, cx: &App) -> Vec<SearchResult> {
-        let query = self.search_input.read(cx).query().to_owned();
+        let query = self.tool_search.search_input.read(cx).query().to_owned();
         let has_document = self.tabs.active().is_some();
         let mut results = self
             .tabs
@@ -741,7 +747,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         if let Some(unavailable) = unavailable_selection(&result, self.tabs.active().is_some()) {
-            self.search_feedback = Some(unavailable);
+            self.tool_search.search_feedback = Some(unavailable);
             cx.notify();
             return;
         }
@@ -749,16 +755,16 @@ impl ShellFrame {
             SearchResult::Tool { index, name, .. } => {
                 let entry = self.active_rail_entry(index, cx);
                 if self.activate_canvas_tool(index, name, entry, cx) {
-                    self.search_feedback = None;
+                    self.tool_search.search_feedback = None;
                     cx.notify();
                 }
             }
             SearchResult::DocumentSearch { query } => {
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.open_find_bar(Some(query), window, cx);
             }
             SearchResult::Command { id, .. } => {
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.run_registry_command(id, cx);
             }
             // Everything unavailable returned above.
@@ -812,7 +818,7 @@ impl ShellFrame {
             canvas.update(cx, |canvas, cx| canvas.activate_tool(index, cx))
         };
         if result.is_err() {
-            self.search_feedback = Some(SearchResult::Unavailable {
+            self.tool_search.search_feedback = Some(SearchResult::Unavailable {
                 label: name.to_owned(),
                 reason: TOOL_ACTIVATION_FAILED,
             });
@@ -968,9 +974,15 @@ impl ShellFrame {
     /// otherwise leave results hanging under a bar that is no longer there.
     fn search_panel_visible(&self, cx: &App) -> bool {
         self.shell_view_state.visibility().global_bar
-            && !self.main_menu_open
-            && self.tab_context_menu.is_none()
-            && !self.search_input.read(cx).query().trim().is_empty()
+            && !self.menus.main_menu_open
+            && self.context_menus.tab_context_menu.is_none()
+            && !self
+                .tool_search
+                .search_input
+                .read(cx)
+                .query()
+                .trim()
+                .is_empty()
     }
 
     fn render_search_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1017,7 +1029,7 @@ impl ShellFrame {
             );
         }
 
-        if let Some(feedback) = self.search_feedback.as_ref() {
+        if let Some(feedback) = self.tool_search.search_feedback.as_ref() {
             panel = panel.child(
                 div()
                     .mt_1()
@@ -1131,7 +1143,7 @@ impl Render for ShellFrame {
             });
             let find_state = self.find;
             let find_input = self.find_input.clone();
-            let export_progress = self.export_job.as_ref().map(|job| {
+            let export_progress = self.export.export_job.as_ref().map(|job| {
                 (
                     export_progress_label(job),
                     job.phase.load() == ExportPhaseValue::Running,
@@ -1211,8 +1223,8 @@ impl Render for ShellFrame {
                 .when(visibility.page_controls, |column| {
                     column.child(render_page_controls(
                         page_controls_state,
-                        self.page_input.clone(),
-                        self.page_entry_error.as_ref(),
+                        self.page_entry.page_input.clone(),
+                        self.page_entry.page_entry_error.as_ref(),
                         document_bounds.size.width,
                         rects.clone(),
                         theme,
@@ -1266,10 +1278,10 @@ impl Render for ShellFrame {
             .on_action(cx.listener(Self::focus_previous_in_group))
             .on_action(cx.listener(Self::activate_focused))
             .child(frame);
-        if self.main_menu_open
-            || self.recent_menu_open
-            || self.tab_context_menu.is_some()
-            || self.canvas_context_menu.is_some()
+        if self.menus.main_menu_open
+            || self.menus.recent_menu_open
+            || self.context_menus.tab_context_menu.is_some()
+            || self.context_menus.canvas_context_menu.is_some()
         {
             root = root.child(
                 div()
@@ -1292,16 +1304,16 @@ impl Render for ShellFrame {
                     ),
             );
         }
-        if self.main_menu_open {
+        if self.menus.main_menu_open {
             root = root.child(self.render_main_menu(window, cx));
         }
-        if self.recent_menu_open {
+        if self.menus.recent_menu_open {
             root = root.child(self.render_recent_menu(cx));
         }
-        if let Some(menu) = self.tab_context_menu {
+        if let Some(menu) = self.context_menus.tab_context_menu {
             root = root.child(self.render_tab_context_menu(menu, window, cx));
         }
-        if let Some(menu) = self.canvas_context_menu {
+        if let Some(menu) = self.context_menus.canvas_context_menu {
             root = root.child(self.render_canvas_context_menu(menu, window, cx));
         }
         if self.search_panel_visible(cx) {
@@ -1879,7 +1891,7 @@ mod tests {
         });
 
         let entries = cx.update(|_window, app| {
-            assert!(frame.read(app).canvas_context_menu.is_some());
+            assert!(frame.read(app).context_menus.canvas_context_menu.is_some());
             frame.read(app).canvas_context_menu_entries(app)
         });
         let live = |command| {
@@ -1903,7 +1915,10 @@ mod tests {
         });
         cx.update(|_window, app| {
             let frame = frame.read(app);
-            assert!(frame.canvas_context_menu.is_none(), "picking closes it");
+            assert!(
+                frame.context_menus.canvas_context_menu.is_none(),
+                "picking closes it"
+            );
             let model = &frame.tabs.active().unwrap().canvas.read(app).model;
             assert_eq!(
                 model.active_tool(),
@@ -1919,7 +1934,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             let frame = frame.read(app);
-            assert!(frame.canvas_context_menu.is_none());
+            assert!(frame.context_menus.canvas_context_menu.is_none());
             let rotation = frame
                 .tabs
                 .active()
@@ -1952,6 +1967,7 @@ mod tests {
             .update(&mut cx, |frame, _window, _cx| {
                 assert_eq!(
                     frame
+                        .context_menus
                         .canvas_context_menu
                         .expect("the canvas menu remains open")
                         .origin,
@@ -1992,7 +2008,7 @@ mod tests {
 
         window
             .update(&mut cx, |frame, _window, _cx| {
-                assert!(frame.canvas_context_menu.is_none());
+                assert!(frame.context_menus.canvas_context_menu.is_none());
             })
             .unwrap();
     }
@@ -2288,6 +2304,7 @@ mod tests {
                 // A query left in the global bar's field, so the panel it
                 // opens has to go with the bar rather than hang under it.
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("zoom", cx));
                 let tree = frame.accessible(window, cx);
@@ -2361,17 +2378,17 @@ mod tests {
             (
                 "the canvas context menu",
                 |frame, _window, cx| {
-                    frame.canvas_context_menu = Some(CanvasContextMenu {
+                    frame.context_menus.canvas_context_menu = Some(CanvasContextMenu {
                         origin: gpui::point(px(300.0), px(300.0)),
                     });
                     cx.notify();
                 },
-                |frame, _cx| frame.canvas_context_menu.is_some(),
+                |frame, _cx| frame.context_menus.canvas_context_menu.is_some(),
             ),
             (
                 "the main menu",
                 |frame, _window, cx| frame.toggle_main_menu(cx),
-                |frame, _cx| frame.main_menu_open,
+                |frame, _cx| frame.menus.main_menu_open,
             ),
             (
                 "the find bar",
@@ -2398,6 +2415,7 @@ mod tests {
                         // global bar's field, which these modes hide, so it
                         // does not open however much is typed into it.
                         frame
+                            .tool_search
                             .search_input
                             .update(cx, |input, cx| input.set_query("zoom", cx));
                         assert!(
@@ -2762,9 +2780,10 @@ mod tests {
         window
             .update(cx, |frame, window, cx| {
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("find me".to_owned(), cx));
-                window.focus(&frame.search_input.read(cx).focus_handle(cx));
+                window.focus(&frame.tool_search.search_input.read(cx).focus_handle(cx));
             })
             .unwrap();
         cx.run_until_parked();
@@ -2775,7 +2794,7 @@ mod tests {
         window
             .update(cx, |frame, _window, cx| {
                 assert_eq!(
-                    frame.search_input.read(cx).selected_range(),
+                    frame.tool_search.search_input.read(cx).selected_range(),
                     0.."find me".len(),
                     "the field's own Select All did not run"
                 );
@@ -2975,7 +2994,7 @@ mod tests {
             .update(cx, |frame, _window, cx| {
                 frame.open_recent(0, cx);
                 assert_eq!(frame.tabs.tabs().len(), 1);
-                assert!(!frame.recent_menu_open);
+                assert!(!frame.menus.recent_menu_open);
             })
             .unwrap();
     }
@@ -3120,7 +3139,7 @@ mod tests {
             let open = frame.read(app);
             assert!(open.find.is_open());
             assert!(
-                open.search_feedback.is_none(),
+                open.tool_search.search_feedback.is_none(),
                 "the document-text route is live, not a deferred milestone"
             );
             assert_eq!(open.find_input.read(app).query(), "Onionskin");
@@ -3159,7 +3178,7 @@ mod tests {
 
         let results = window
             .update(cx, |frame, _window, cx| {
-                frame.search_input.update(cx, |input, cx| {
+                frame.tool_search.search_input.update(cx, |input, cx| {
                     input.set_query("needle", cx);
                 });
                 frame.search_results(cx)
@@ -4087,7 +4106,7 @@ mod tests {
     #[cfg(feature = "shell-test-support")]
     fn install_test_export_job(frame: &mut ShellFrame, origin: EntityId) -> Arc<ExportPhase> {
         let phase = Arc::new(ExportPhase::new());
-        frame.export_job = Some(ExportJob {
+        frame.export.export_job = Some(ExportJob {
             id: 7,
             origin,
             phase: Arc::clone(&phase),
@@ -4110,7 +4129,7 @@ mod tests {
                 install_test_export_job(frame, origin);
                 frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Complete), cx);
                 let completed = Arc::new(AtomicUsize::new(2));
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 8,
                     origin,
                     phase: Arc::new(ExportPhase::new()),
@@ -4120,9 +4139,9 @@ mod tests {
                 });
 
                 assert_eq!(frame.poll_export_progress(7), (false, false));
-                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 0);
+                assert_eq!(frame.export.export_job.as_ref().unwrap().last_displayed, 0);
                 assert_eq!(frame.poll_export_progress(8), (true, true));
-                assert_eq!(frame.export_job.as_ref().unwrap().last_displayed, 2);
+                assert_eq!(frame.export.export_job.as_ref().unwrap().last_displayed, 2);
             })
             .unwrap();
     }
@@ -4222,7 +4241,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 let canvas = frame.tabs.tabs()[0].canvas.clone();
                 let origin = canvas.entity_id();
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 7,
                     origin,
                     phase: Arc::new(ExportPhase::new()),
@@ -4232,9 +4251,9 @@ mod tests {
                 });
                 assert_eq!(frame.poll_export_progress(7), (true, true));
                 frame.start_export(ExportTarget::Png, cx);
-                assert!(frame.export_job.is_some());
+                assert!(frame.export.export_job.is_some());
                 frame.finish_export(7, origin, &canvas, result, cx);
-                assert!(frame.export_job.is_none());
+                assert!(frame.export.export_job.is_none());
                 assert!(frame
                     .accessible(window, cx)
                     .find(&"export-progress".into())
@@ -4375,7 +4394,7 @@ mod tests {
         window
             .update(cx, |frame, window, cx| {
                 let origin = frame.tabs.tabs()[0].canvas.entity_id();
-                frame.export_job = Some(ExportJob {
+                frame.export.export_job = Some(ExportJob {
                     id: 7,
                     origin,
                     phase: Arc::clone(&phase),
@@ -4413,13 +4432,15 @@ mod tests {
                     .tabs
                     .tabs()
                     .iter()
-                    .find(|tab| tab.canvas.entity_id() == frame.export_job.as_ref().unwrap().origin)
+                    .find(|tab| {
+                        tab.canvas.entity_id() == frame.export.export_job.as_ref().unwrap().origin
+                    })
                     .unwrap()
                     .canvas
                     .clone();
-                let origin = frame.export_job.as_ref().unwrap().origin;
+                let origin = frame.export.export_job.as_ref().unwrap().origin;
                 frame.finish_export(7, origin, &canvas, Ok(ExportOutcome::Cancelled), cx);
-                assert!(frame.export_job.is_none());
+                assert!(frame.export.export_job.is_none());
                 assert!(frame
                     .accessible(window, cx)
                     .find(&"export-progress".into())
@@ -4717,7 +4738,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             assert_eq!(
-                frame.read(app).search_feedback,
+                frame.read(app).tool_search.search_feedback,
                 Some(SearchResult::Unavailable {
                     label: "Absent".to_owned(),
                     reason: TOOL_ACTIVATION_FAILED,
@@ -4728,7 +4749,7 @@ mod tests {
 
         cx.update(|_window, app| {
             frame.update(app, |frame, cx| {
-                frame.search_feedback = None;
+                frame.tool_search.search_feedback = None;
                 frame.select_rail_entry(
                     RailEntry {
                         registry_index: 3,
@@ -4745,7 +4766,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             assert!(
-                frame.read(app).search_feedback.is_some(),
+                frame.read(app).tool_search.search_feedback.is_some(),
                 "the rail dropped the activation error"
             );
         });
@@ -5370,6 +5391,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 assert!(
                     frame
+                        .tool_search
                         .search_input
                         .read(cx)
                         .focus_handle(cx)
@@ -5720,7 +5742,7 @@ mod tests {
         cx.run_until_parked();
         window
             .update(cx, |frame, _window, _cx| {
-                assert!(!frame.main_menu_open, "escape left the menu open");
+                assert!(!frame.menus.main_menu_open, "escape left the menu open");
                 assert!(frame.find.is_open(), "escape closed two things at once");
             })
             .unwrap();
@@ -5745,6 +5767,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 frame.open_find_bar(None, window, cx);
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("zoom", cx));
             })

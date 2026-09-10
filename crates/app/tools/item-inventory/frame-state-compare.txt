@@ -1,0 +1,48 @@
+elided: context_menus export menus page_entry tool_search
+hops absorbed: context_menus ? -> 30, export ? -> 26, menus ? -> 33, page_entry ? -> 13, tool_search ? -> 33
+items before: 463
+items after:  473
+visibility-only changes: 0
+only in before: 15
+  -    #[cfg(test)] mod tests	fn	a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(cx: &mut TestAppContext)	29e09228224beb2c
+  -    #[cfg(test)] mod tests	fn	canvas_context_entries_come_from_the_live_model_and_run_against_it	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext)	25fcc77ff347addf
+  -    -	struct	ShellFrame	pub(in crate::shell)	struct ShellFrame	e9caa9b72ca2fbfb
+  -    impl ShellFrame	fn	focused_text_field	pub(super)	fn focused_text_field(&self,window: &Window,cx: &App) -> Option<gpui::ElementId>	2f4a603effd90b4d
+  -    impl ShellFrame	fn	new	pub(in crate::shell)	fn new(tabs: Vec<(PathBuf,Entity<Canvas>)>,mut shell_view_state: ShellViewState,mut settings: ShellSettings,window: &mut Window,cx: &mut Context<Self>) -> Self	cc36edfd159dceae
+  -    struct ShellFrame	field	canvas_context_menu	pub(super)	canvas_context_menu: Option<CanvasContextMenu>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	export_job	pub(super)	export_job: Option<ExportJob>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	main_menu_open	pub(super)	main_menu_open: bool	e3b0c44298fc1c14
+  -    struct ShellFrame	field	next_export_id	pub(super)	next_export_id: u64	e3b0c44298fc1c14
+  -    struct ShellFrame	field	page_entry_error	pub(super)	page_entry_error: Option<PageEntryError>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	page_input	pub(super)	page_input: Entity<SearchInput>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	recent_menu_open	pub(super)	recent_menu_open: bool	e3b0c44298fc1c14
+  -    struct ShellFrame	field	search_feedback	pub(super)	search_feedback: Option<SearchResult>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	search_input	pub(super)	search_input: Entity<SearchInput>	e3b0c44298fc1c14
+  -    struct ShellFrame	field	tab_context_menu	pub(super)	tab_context_menu: Option<TabContextMenu>	e3b0c44298fc1c14
+only in after:  25
+  +    #[cfg(test)] mod tests	fn	a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(cx: &mut TestAppContext)	957e38ff232a7862
+  +    #[cfg(test)] mod tests	fn	canvas_context_entries_come_from_the_live_model_and_run_against_it	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext)	8a037326e57ef60b
+  +    #[derive(Default)] struct ContextMenuState	field	canvas_context_menu	pub(super)	canvas_context_menu: Option<CanvasContextMenu>	e3b0c44298fc1c14
+  +    #[derive(Default)] struct ContextMenuState	field	tab_context_menu	pub(super)	tab_context_menu: Option<TabContextMenu>	e3b0c44298fc1c14
+  +    #[derive(Default)] struct ExportState	field	export_job	pub(super)	export_job: Option<ExportJob>	e3b0c44298fc1c14
+  +    #[derive(Default)] struct ExportState	field	next_export_id	pub(super)	next_export_id: u64	e3b0c44298fc1c14
+  +    #[derive(Default)] struct MenuOpenState	field	main_menu_open	pub(super)	main_menu_open: bool	e3b0c44298fc1c14
+  +    #[derive(Default)] struct MenuOpenState	field	recent_menu_open	pub(super)	recent_menu_open: bool	e3b0c44298fc1c14
+  +    -	struct	ContextMenuState	pub(super)	#[derive(Default)] struct ContextMenuState	15cfad24b010820b
+  +    -	struct	ExportState	pub(super)	#[derive(Default)] struct ExportState	e31b5d9cfa1bdb46
+  +    -	struct	MenuOpenState	pub(super)	#[derive(Default)] struct MenuOpenState	d39f4f56928107c0
+  +    -	struct	PageEntryState	pub(super)	struct PageEntryState	cb4e8bda43867740
+  +    -	struct	ShellFrame	pub(in crate::shell)	struct ShellFrame	be69004f629333df
+  +    -	struct	ToolSearchState	pub(super)	struct ToolSearchState	7d00ef9b24be2158
+  +    impl ShellFrame	fn	focused_text_field	pub(super)	fn focused_text_field(&self,window: &Window,cx: &App) -> Option<gpui::ElementId>	e9e0c0adf451b3e6
+  +    impl ShellFrame	fn	new	pub(in crate::shell)	fn new(tabs: Vec<(PathBuf,Entity<Canvas>)>,mut shell_view_state: ShellViewState,mut settings: ShellSettings,window: &mut Window,cx: &mut Context<Self>) -> Self	444adebcb3696de2
+  +    struct PageEntryState	field	page_entry_error	pub(super)	page_entry_error: Option<PageEntryError>	e3b0c44298fc1c14
+  +    struct PageEntryState	field	page_input	pub(super)	page_input: Entity<SearchInput>	e3b0c44298fc1c14
+  +    struct ShellFrame	field	context_menus	pub(super)	context_menus: ContextMenuState	e3b0c44298fc1c14
+  +    struct ShellFrame	field	export	pub(super)	export: ExportState	e3b0c44298fc1c14
+  +    struct ShellFrame	field	menus	pub(super)	menus: MenuOpenState	e3b0c44298fc1c14
+  +    struct ShellFrame	field	page_entry	pub(super)	page_entry: PageEntryState	e3b0c44298fc1c14
+  +    struct ShellFrame	field	tool_search	pub(super)	tool_search: ToolSearchState	e3b0c44298fc1c14
+  +    struct ToolSearchState	field	search_feedback	pub(super)	search_feedback: Option<SearchResult>	e3b0c44298fc1c14
+  +    struct ToolSearchState	field	search_input	pub(super)	search_input: Entity<SearchInput>	e3b0c44298fc1c14
+RESULT: sets differ

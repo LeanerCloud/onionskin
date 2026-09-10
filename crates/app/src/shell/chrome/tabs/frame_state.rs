@@ -12,8 +12,9 @@ use std::path::PathBuf;
 
 use gpui::{AppContext as _, Context, Entity, Window};
 
-use super::context::{CanvasContextMenu, TabContextMenu};
-use super::export::ExportJob;
+use super::context::ContextMenuState;
+use super::export::ExportState;
+use super::menu::MenuOpenState;
 use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
@@ -162,17 +163,40 @@ impl<T> TabState<T> {
     }
 }
 
-pub(in crate::shell) struct ShellFrame {
-    pub(super) tabs: TabState<DocumentTab>,
-    pub(super) main_menu_open: bool,
-    pub(super) tab_context_menu: Option<TabContextMenu>,
-    pub(super) canvas_context_menu: Option<CanvasContextMenu>,
+/// The global bar's tool search box, and what the last search there reported.
+pub(super) struct ToolSearchState {
     pub(super) search_input: Entity<SearchInput>,
     pub(super) search_feedback: Option<SearchResult>,
-    pub(super) find: FindBarState,
-    pub(super) find_input: Entity<SearchInput>,
+}
+
+/// The page-number box in the page controls, and why the last number typed
+/// there was refused.
+pub(super) struct PageEntryState {
     pub(super) page_input: Entity<SearchInput>,
     pub(super) page_entry_error: Option<PageEntryError>,
+}
+
+/// Every loose field that had a second field to group with is in a sub-struct
+/// named for the surface it belongs to, and each sub-struct is declared in the
+/// file whose code reads it, so that a package adding to one surface edits that
+/// file rather than this declaration, which every package is also editing.
+///
+/// `ToolSearchState` and `PageEntryState` are the exception and do not deliver
+/// that: their surfaces are `chrome::tool_search` and `chrome::page_controls`,
+/// siblings of `tabs` rather than modules under it, so declaring there would
+/// widen `pub(super)` past what these fields had.
+///
+/// `find` and `find_input` are one surface too and are still two fields: the
+/// only spelling that groups them without a stutter renames a leaf, and this
+/// restructuring's acceptance rests on renaming none.
+pub(in crate::shell) struct ShellFrame {
+    pub(super) tabs: TabState<DocumentTab>,
+    pub(super) menus: MenuOpenState,
+    pub(super) context_menus: ContextMenuState,
+    pub(super) tool_search: ToolSearchState,
+    pub(super) find: FindBarState,
+    pub(super) find_input: Entity<SearchInput>,
+    pub(super) page_entry: PageEntryState,
     pub(super) observed_view_state: Option<CanvasViewState>,
     pub(super) shell_view_state: ShellViewState,
     pub(super) rail_state: RailState,
@@ -185,10 +209,8 @@ pub(in crate::shell) struct ShellFrame {
     /// in the window and dismissed there, not only printed to stderr.
     pub(super) notices: Vec<String>,
     pub(super) dialog: Option<ShellDialog>,
-    pub(super) recent_menu_open: bool,
     pub(super) home: HomeState,
-    pub(super) export_job: Option<ExportJob>,
-    pub(super) next_export_id: u64,
+    pub(super) export: ExportState,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -245,7 +267,7 @@ impl ShellFrame {
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
-            frame.search_feedback = None;
+            frame.tool_search.search_feedback = None;
             cx.notify();
         })
         .detach();
@@ -254,7 +276,7 @@ impl ShellFrame {
         })
         .detach();
         cx.observe(&page_input, |frame, _, cx| {
-            frame.page_entry_error = None;
+            frame.page_entry.page_entry_error = None;
             cx.notify();
         })
         .detach();
@@ -283,15 +305,18 @@ impl ShellFrame {
         let notices = std::mem::take(&mut settings.notices);
         let frame = Self {
             tabs,
-            main_menu_open: false,
-            tab_context_menu: None,
-            canvas_context_menu: None,
-            search_input,
-            search_feedback: None,
+            menus: MenuOpenState::default(),
+            context_menus: ContextMenuState::default(),
+            tool_search: ToolSearchState {
+                search_input,
+                search_feedback: None,
+            },
             find: FindBarState::with_options(settings.preferences.search),
             find_input,
-            page_input,
-            page_entry_error: None,
+            page_entry: PageEntryState {
+                page_input,
+                page_entry_error: None,
+            },
             observed_view_state,
             shell_view_state,
             rail_state: RailState::default(),
@@ -301,10 +326,8 @@ impl ShellFrame {
             settings,
             notices,
             dialog: None,
-            recent_menu_open: false,
             home: HomeState::default(),
-            export_job: None,
-            next_export_id: 0,
+            export: ExportState::default(),
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);

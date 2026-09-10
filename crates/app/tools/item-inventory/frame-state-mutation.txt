@@ -1,0 +1,134 @@
+case 1: one whole method and one match arm deleted
+  method:    ShellFrame::toggle_fullscreen
+  match arm: CanvasContextCommand::RotateClockwise in ShellFrame::run_canvas_context_command
+
+elided: nothing
+items before: 473
+items after:  472
+visibility-only changes: 0
+only in before: 2
+  -    impl ShellFrame	fn	run_canvas_context_command	pub(super)	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	d8d17ccea38a745b
+  -    impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+only in after:  1
+  +    impl ShellFrame	fn	run_canvas_context_command	pub(super)	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	96334c86bd4d9932
+RESULT: sets differ
+
+CASE 1: exactly the two deletions
+
+case: a changed literal inside a body
+  -    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	a52acff9637965ef
+  +    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	d85b49e5ff8eb166
+
+case: a changed literal that contains the word pub
+  -    -	const	TOOL_ACTIVATION_FAILED	private	const TOOL_ACTIVATION_FAILED: &str = "This tool did not activate; the canvas status line has the reason"	e3b0c44298fc1c14
+  +    -	const	TOOL_ACTIVATION_FAILED	private	const TOOL_ACTIVATION_FAILED: &str = "This pub tool did not activate; the canvas status line has the reason"	e3b0c44298fc1c14
+
+case: two match arms swapped, same text in a different order
+  -    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	a52acff9637965ef
+  +    impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	2a3379acace864e8
+
+case: a widened tuple-struct field
+  VIS  struct ExportPhase(AtomicU8) :: field 0: private -> pub
+
+case: an added pub use re-export
+  +    -	use	Debug as Reexported	pub	use std::fmt::Debug as Reexported	e3b0c44298fc1c14
+
+case: a one-tuple parameter flattened on a body-less trait method
+  -    trait ExportObserver: Send + Sync	fn	page_completed	private	fn page_completed(&self,_page: PageIndex)	e3b0c44298fc1c14
+  +    trait ExportObserver: Send + Sync	fn	page_completed	private	fn page_completed(&self,_page: (PageIndex,))	e3b0c44298fc1c14
+
+case: a method moved to impl Render for ShellFrame
+  -    impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+  +    impl Render for ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+
+case: a field rerouted through a sub-struct, without --elide
+  34 item lines differ, from one field moving in 29 places
+
+case: the same regrouping, with --elide probe_group
+  nothing reported, which is what this case asserts
+
+case: a regrouped body that also lost a statement
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	044e441ffc6e2a23
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	e27f8cab3d97e6fb
+
+case: a regrouped body whose call changed
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	044e441ffc6e2a23
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	1a71f42f072b06d9
+
+case: a leaf renamed on the way into the group
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	044e441ffc6e2a23
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	fbb6695432cbc524
+
+case: a hop through a group that was not declared
+  -    #[cfg(test)] mod tests	fn	a_clean_document_opens_without_a_notice	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_clean_document_opens_without_a_notice(cx: &mut TestAppContext)	2ddb32eb4d4e2c3f
+  -    #[cfg(test)] mod tests	fn	a_document_that_will_not_open_is_reported_and_the_rest_still_open	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_document_that_will_not_open_is_reported_and_the_rest_still_open(cx: &mut TestAppContext)	f463c2380c2df780
+  -    #[cfg(test)] mod tests	fn	a_keymap_binding_selects_the_dynamic_zoom_tool	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext)	16c66132046652f8
+  -    #[cfg(test)] mod tests	fn	a_keystroke_the_menus_would_grey_out_says_so_in_the_window	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_keystroke_the_menus_would_grey_out_says_so_in_the_window(cx: &mut TestAppContext)	58d9b59eadadc70c
+  -    #[cfg(test)] mod tests	fn	a_repaired_document_says_so_where_the_user_can_read_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_repaired_document_says_so_where_the_user_can_read_it(cx: &mut TestAppContext)	b94ba38afda104a5
+  -    impl ShellFrame	fn	accessible	pub(super)	fn accessible(&self,window: &Window,cx: &mut Context<Self>) -> A11yElement	33409a17304331b2
+  -    impl ShellFrame	fn	activate_tool_with	private	fn activate_tool_with(&mut self,capability: ToolCapability,label: &str,missing: &str,cx: &mut Context<Self>)	acfc5f489d0c9be9
+  -    impl ShellFrame	fn	change_preference	pub(in crate::shell)	fn change_preference(&mut self,change: PreferenceChange,cx: &mut Context<Self>)	0abcb85f77f34364
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	044e441ffc6e2a23
+  -    impl ShellFrame	fn	new	pub(in crate::shell)	fn new(tabs: Vec<(PathBuf,Entity<Canvas>)>,mut shell_view_state: ShellViewState,mut settings: ShellSettings,window: &mut Window,cx: &mut Context<Self>) -> Self	ca0d812a00d4684f
+  -    impl ShellFrame	fn	open_document	private	fn open_document(&mut self,path: &Path,cx: &mut Context<Self>) -> Result<PathBuf,String>	c5acf9db193e8958
+  -    impl ShellFrame	fn	open_documents	pub(super)	fn open_documents(&mut self,paths: &[PathBuf],cx: &mut Context<Self>)	edc89efa43dd366f
+  -    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	12739e4cd83b23dc
+  -    impl ShellFrame	fn	render_notices	pub(super)	fn render_notices(&self,cx: &mut Context<Self>) -> impl IntoElement	df8fbb8637408d8e
+  -    impl ShellFrame	fn	run_native_command	pub(in crate::shell::chrome)	fn run_native_command(window_handle: WindowHandle<Self>,command: MenuCommand,cx: &mut App)	81fe01a2f23f7a08
+  -    impl ShellFrame	fn	run_registry_command	pub(super)	fn run_registry_command(&mut self,id: &'static str,cx: &mut Context<Self>)	1e6fea9a43687307
+  -    impl ShellFrame	fn	start_export	pub(super)	fn start_export(&mut self,target: ExportTarget,cx: &mut Context<Self>)	f5581829fa2a7700
+  +    #[cfg(test)] mod tests	fn	a_clean_document_opens_without_a_notice	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_clean_document_opens_without_a_notice(cx: &mut TestAppContext)	8abb2a098f26b692
+  +    #[cfg(test)] mod tests	fn	a_document_that_will_not_open_is_reported_and_the_rest_still_open	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_document_that_will_not_open_is_reported_and_the_rest_still_open(cx: &mut TestAppContext)	ddaeaa850bbaf924
+  +    #[cfg(test)] mod tests	fn	a_keymap_binding_selects_the_dynamic_zoom_tool	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext)	a4cf1fd3500c4c1e
+  +    #[cfg(test)] mod tests	fn	a_keystroke_the_menus_would_grey_out_says_so_in_the_window	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_keystroke_the_menus_would_grey_out_says_so_in_the_window(cx: &mut TestAppContext)	a8f93696bfddc487
+  +    #[cfg(test)] mod tests	fn	a_repaired_document_says_so_where_the_user_can_read_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_repaired_document_says_so_where_the_user_can_read_it(cx: &mut TestAppContext)	cc4eab38be9481f4
+  +    impl ShellFrame	fn	accessible	pub(super)	fn accessible(&self,window: &Window,cx: &mut Context<Self>) -> A11yElement	1cd73bd12b1e4640
+  +    impl ShellFrame	fn	activate_tool_with	private	fn activate_tool_with(&mut self,capability: ToolCapability,label: &str,missing: &str,cx: &mut Context<Self>)	78004da34826b8df
+  +    impl ShellFrame	fn	change_preference	pub(in crate::shell)	fn change_preference(&mut self,change: PreferenceChange,cx: &mut Context<Self>)	9921fd49f62c3184
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	1797250ce831f0d7
+  +    impl ShellFrame	fn	new	pub(in crate::shell)	fn new(tabs: Vec<(PathBuf,Entity<Canvas>)>,mut shell_view_state: ShellViewState,mut settings: ShellSettings,window: &mut Window,cx: &mut Context<Self>) -> Self	c0405074eb368410
+  +    impl ShellFrame	fn	open_document	private	fn open_document(&mut self,path: &Path,cx: &mut Context<Self>) -> Result<PathBuf,String>	193b81f58b6317ea
+  +    impl ShellFrame	fn	open_documents	pub(super)	fn open_documents(&mut self,paths: &[PathBuf],cx: &mut Context<Self>)	b7761bd7a7563e26
+  +    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	6116d0a20aae63e8
+  +    impl ShellFrame	fn	render_notices	pub(super)	fn render_notices(&self,cx: &mut Context<Self>) -> impl IntoElement	32d1131820da4bc6
+  +    impl ShellFrame	fn	run_native_command	pub(in crate::shell::chrome)	fn run_native_command(window_handle: WindowHandle<Self>,command: MenuCommand,cx: &mut App)	da4862d0cc8e271f
+  +    impl ShellFrame	fn	run_registry_command	pub(super)	fn run_registry_command(&mut self,id: &'static str,cx: &mut Context<Self>)	8e66a3473ec3cceb
+  +    impl ShellFrame	fn	start_export	pub(super)	fn start_export(&mut self,target: ExportTarget,cx: &mut Context<Self>)	db0880d1ee10cdfa
+
+case: a chain the formatter rewrapped, without --elide
+  2 item lines differ, so the tolerance is opt-in
+
+case: the same rewrap, with --elide probe_group
+  nothing reported, which is what this case asserts
+
+case: a hop spelled inside a string literal
+  -    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	ce6e556fd8324606
+  +    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	03f50dd57425f556
+
+case: a hop spelled inside a raw string literal
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	f40ac89584c97a45
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	bc30c4ece4a21fbf
+
+case: a hop in a literal after a quote char literal
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	9669bbfae6e83918
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	00f9c93e3eed7ed5
+
+case: the group passed whole, with nothing after it
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	0ea210113ea55741
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	95356a42062c5a67
+
+case: two hops in one chain, which needs the fixed point
+  nothing reported, which is what this case asserts
+
+case: a trailing comma in a body, which is not whitespace
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	2bac39218ecb9b1e
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	aa0c20e6c711ea1d
+
+case: a statement moved across a brace, which is a different program
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	8e6db2476dc60a84
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	4c6ec7027f5ee377
+
+case: the header counts the hops it absorbed
+  # elided probe_group=29
+
+MUTATION CHECK: every mutation was reported
