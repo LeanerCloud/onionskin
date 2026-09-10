@@ -662,20 +662,23 @@ say which rows they back. Section 6 is the complete ledger of all 99 rows M3
 was assigned, including the two it hands to M4.
 
 Four numbers (P0, P9, P13, P14) are **umbrella sections**: a shared preamble
-saying why the work splits, then `####` sub-packages that are the real units. A
-sub-package carries every field above unless the umbrella states it once as
-shared, which only P0 does. Thirty-one packages in total.
+saying why the work splits, then `####` sub-packages that are the real units.
+A sub-package carries every field above except where the umbrella already
+carries it: P0 states Rows closed, Depends on, What exists to build on and
+Review risk once for both; P9 and P13 state the shared goal once, and P9a, P9c
+and P13c have no "What exists to build on" because there is nothing in-repo for
+them to build on. Thirty-one packages in total.
 
 ### P0. Split `ShellFrame`, in two packages
 
-**Goal.** Make the seventeen M3 app packages able to run in parallel. This is not
-tidying; it is the precondition for the schedule.
+**Goal.** Make the sixteen M3 packages that touch `crates/app/src/shell` able to
+run in parallel. This is not tidying; it is the precondition for the schedule.
 
 `crates/app/src/shell/chrome/tabs.rs` is **8521 lines** with a single `impl
 ShellFrame` block spanning lines **371 to 2924 (115 methods)** and a 24-field
 struct. M2's own audit named it the recurring conflict point. Every M3 app
 package adds a field, a menu arm, a dialog call site and an accessibility child
-to that one block. Seventeen branches doing that concurrently is seventeen rebases
+to that one block. Sixteen branches doing that concurrently is sixteen rebases
 through a 2500-line `impl`, and a rebase through an `impl` block resolves without
 judgement only until two packages add a method with the same name.
 
@@ -692,9 +695,11 @@ test would mean running neither.
 
 **Rows closed.** None, in either. Neither changes behaviour.
 
-**Depends on.** Nothing. P0a is a day-one root and P0b follows it. Every app
-package below depends on "P0" meaning **P0b**, since that is when the split is
-complete, except P1c, whose only app file is one P0 does not touch.
+**Depends on.** Nothing. P0a is a day-one root and P0b follows it.
+
+Every app package below that writes "P0b" in its own Depends-on line means the
+split being complete. P1c is the one app-touching package that names neither,
+because its only app file is one that neither sub-package rewrites.
 
 **What exists to build on.** `chrome/mod.rs` already re-exports `ShellFrame`
 from `tabs`, so callers outside `chrome` see no change. `accessible.rs`,
@@ -833,9 +838,9 @@ kernel package above depends on.
    that fact that can disagree with the first.
 3. `Document::write_new(objects, trailer) -> Result<Vec<u8>>`: a complete
    document serialization, for the documents Onionskin authors (T8). Named
-   consumers in M3: P12 (combine, split, extract), P14a (create from image),
-   P14b (compress), P10 (the comment summary). This is the `flatten`
-   primitive the crate's charter names; it lands now because it has four real
+   consumers in M3: P12 (combine and split), P11 (extract), P14a (create from
+   image), P14b (compress) and P10 (the comment summary). This is the `flatten`
+   primitive the crate's charter names; it lands now because it has five real
    callers, and M5's `redact` inherits it. Its serializer is `writer.rs`'s
    classic-table path; **it does not gain object streams or a cross-reference
    stream**, which are scoped out in P14b's entry and are not an implicit clause of
@@ -858,9 +863,9 @@ kernel package above depends on.
    complete one: it walks every in-use object in the file and resolves every
    reference it contains against the xref, reporting each `(holder, target)` pair
    whose target is free or absent. It is O(file), it is a query rather than a
-   gate, and it is what P5, P11, P12, P14a and P14b's verification run on every fixture
-   output. Complete checking belongs in the test suite, where paying O(file) once
-   per fixture is exactly right.
+   gate, and it is what the verification of P3, P5, P7, P11, P12, P13b, P14a and
+   P14b runs on every fixture output. Complete checking belongs in the test suite,
+   where paying O(file) once per fixture is exactly right.
 
    **The gate inside `section_for`** is the cheap one, and its scope is stated as
    a contract: *every reference in every object this section writes must resolve,
@@ -889,7 +894,11 @@ kernel work of P3, P5 and P19, which close no rows themselves.
 `crates/cos/tests/sections.rs`, `crates/cos/tests/write_new.rs`; extend
 `crates/cos/tests/delete.rs`.
 
-**Depends on.** Nothing. Day-one root.
+**Depends on.** P1c. Nothing in code: P1 compiles and runs against an empty
+`corpus/external`. But its `sections()` sweep and its `audit_references` sweep
+are both stated over `external/` fixtures, and until P1c's fetch step exists
+those sweeps report a pass over an empty file list, so this package cannot be
+verified before P1c lands.
 
 **What exists to build on.** `prev_startxref` is already a field
 (`document.rs:106`). `writer::incremental_section` (`writer.rs:168`) already
@@ -927,8 +936,9 @@ one's. Whether `section_for` changed any byte `incremental_section` used to emit
 must fail the dangling-reference test; making `audit_references` return an empty
 vector must fail its hand-built fixture; making `sections()` return only the last
 section must fail the partition test; making `section_for` ignore its `overlay`
-argument and read `self.edits` must fail the agreement test on any document with
-a non-empty overlay.
+argument and read `self.edits` must fail the test that hands it an overlay the
+edit map does not contain, which is the half of the refactor check that is not
+true by construction.
 
 ### P1b. cos: empty-user-password decryption
 
@@ -992,9 +1002,9 @@ open-time notice and the editing gate).
 
 **Depends on.** Its `crates/crypto` and `crates/cos` work depends on nothing and
 runs the whole milestone alongside everything else, off the critical path. **Its
-app seam depends on P0b**: the open-time notice and the editing gate land in
-`crates/app/src/shell/chrome/tabs.rs`, which is the file P0 splits, so that seam
-is a separate commit after P0b rather than a concurrent edit to it.
+app seam depends on P0b**, because the open-time notice and the editing gate land
+in the file the split rewrites, so that seam is a separate commit after the split
+rather than a concurrent edit to it.
 
 **What exists to build on.** Nothing in-repo: `crates/crypto` is a four-line
 doc comment. The spike's corpus tally gives the file set, and the refusal is a
@@ -1093,9 +1103,9 @@ means anything.
 
 **Depends on.** Nothing, and **it lands before P1**, because P1's own
 verification names an `external/` sweep. It is the fourth day-one root. It is
-also the one package with a `crates/app` file that does **not** depend on P0:
-`crates/app/tests/guarantees.rs` is a test target, not shell code, and neither
-P0a nor P0b touches it.
+also the one package with a `crates/app` file that depends on neither P0a nor
+P0b: `crates/app/tests/guarantees.rs` is a test target, not shell code, and
+neither sub-package touches it.
 
 **What exists to build on.** `corpus/fetch.sh` already skips a set already on
 disk, so a cache hit makes step 1 a no-op. The `bench` job already demonstrates
@@ -1620,46 +1630,30 @@ behave, and **own guarantee 2 at the level the DoD promises it**.
     `cos::Document::open` and satisfies P1's section gate, with
     `audit_references` clean on the whole output;
   - deterministic given the same inputs.
-- **Guarantee 2, driven by a real tool edit through `core`.** The DoD and
-  PLAN.md both promise this and **no package specified it**. P3 cannot: it says
+- **The registry test is not guarantee 2, and this package says which package
+  is.** The DoD and PLAN.md both promise guarantee 2 "driven by an edit a tool
+  made through `core`", and **no package specified it**. P3 cannot: it says
   "make an edit through `EditSession`", which is `core`'s own API, and
-  `crates/core` cannot depend on a plugin, so a test living there can never
-  drive a tool. The registry-exhaustive test above drives real gestures but
-  asserts only that the result reopens and satisfies the gate, which is a weaker
-  sentence than guarantee 2's.
+  `crates/core` depends on `content`, `cos` and `render` only, so a test living
+  there can never reach a plugin. The property test above drives real gestures
+  but asserts only that the result reopens and satisfies the gate, which is a
+  weaker sentence.
 
-  So it lands here, as a named test in `crates/app/tests/`, because `crates/app`
-  is the only crate that depends on both the registry and `core`: **drive
-  `tools-comment`'s highlight through a real gesture, save through `core`, and
-  assert the output is the original bytes followed by exactly one incremental
-  section, and that truncating at `original_len()` yields the byte-exact
-  original.** That is guarantee 2's own sentence, driven by a tool rather than
-  by a synthetic object write.
+  **P8 owns it**, because P8 is the package that ships the highlight the test
+  drives and it already depends on this one. Putting it here instead would make
+  P7 depend on P8 while P8 depends on P7, which is a cycle rather than a
+  schedule. What this package owns is the contract the test satisfies:
+  `ToolCtx`'s reach into the edit session, and the property suite that says every
+  tool's edit is undoable and serializes.
 
-**Rows closed.** None. Backs every tool and command row in M3, and guarantee 2.
+**Rows closed.** None. Backs every tool and command row in M3.
 
 **Files.** `crates/plugin-api/src/lib.rs`, `crates/plugin-api/src/registry.rs`,
 new `crates/plugin-api/src/requirement.rs`, `crates/app/src/shell/context_menu.rs`
 (deletes its private copy), `crates/plugin-api/tests/contract.rs`,
-`crates/core/src/session.rs` (the `edits()` accessor), new
-`crates/app/tests/tool_edit_guarantee.rs`, and
-**`crates/app/tests/guarantees.rs`**.
+`crates/core/src/session.rs` (the `edits()` accessor).
 
-That last file needs naming because **nobody currently owns editing it** and it
-carries two contracts M3 changes. Guarantee 2's tripwire
-(`an_edit_appends_one_incremental_section_that_truncates_away`) currently names
-`incremental.rs` and its two enforcing tests; this package adds the new app-level
-test to that tripwire's enforcing list and adds the assertion markers it must
-still contain, so deleting the tool-driven test fails the guarantee rather than
-passing quietly. The file also carries
-`acrobat_parity_headline_matches_every_inventory_row`, which is **P15's** to
-change, not this package's; the two edits are in the same file and must not be
-made by one hand assuming the other.
-
-**Depends on.** P0b (`context_menu.rs`'s callers), P2 (`EditSession`), and, for
-the guarantee-2 test only, P3 (save) and P8 (a highlight to drive). The
-`plugin-api` half does not wait on P8; the guarantee test does, and lands with
-P8's merge rather than blocking this package.
+**Depends on.** P0b (`context_menu.rs`'s callers), P2 (`EditSession`).
 
 **What exists to build on.** `ToolCapability` (8 variants) and the
 `tool_with(registry, capability)` query already work and are used by the quick
@@ -1670,11 +1664,9 @@ already exists and only needs a fifth variant and a new home.
 **Verification.**
 - The property tests run against the real `build_registry()` and fail if a tool is added without a group, which is checked by adding a deliberately incomplete tool in a test and asserting the suite rejects it.
 - The "every edit is undoable" test drives each tool's real gesture lifecycle (`on_pointer_down`/`move`/`up`/`on_commit`), not a synthetic `DocumentEdit`, or it proves nothing about the tools.
-- **Guarantee 2's tool-driven test**, as specified above, asserting all three clauses of the guarantee sentence: original prefix intact, exactly one appended section counted by parsing rather than by scanning for `%%EOF`, and byte-exact truncation at `original_len()`.
-- `guarantees.rs`'s guarantee-2 tripwire names the new test and its markers, so removing the test fails the guarantee. Asserted by deleting the test in a scratch branch and observing the failure, recorded in the PR.
 - `cargo test -p onionskin-app --no-default-features` and `--no-default-features --features tools-comment` still pass: guarantee 5 holds with the contract in place.
 - Every `Requirement::Milestone` arm that a shipped M3 plugin now satisfies is gone, asserted by a test that no `Milestone` reason names M3.
-- **Runs.** `cargo test -p onionskin-plugin-api`; `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo test -p onionskin-app --test guarantees`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Runs.** `cargo test -p onionskin-plugin-api`; `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo clippy --workspace --all-targets -- -D warnings`.
 
 **Review risk.** **What `&mut Document` already lets a tool reach**, which is the
 sharper version of "whether `ToolCtx` grew more than `edits`". Today
@@ -1692,12 +1684,10 @@ field".
 Also: whether "every edit is undoable" is asserted on the overlay or on the
 saved bytes, and whether it is run per tool or once. Whether the `Requirement`
 move left the app with a second copy. Whether the degenerate-document test uses
-a document degenerate enough to have caught anything. Whether the guarantee-2
-test drives a gesture or calls the tool's commit directly, which would make it
-P3's test wearing a plugin's name.
+a document degenerate enough to have caught anything.
 **Mutation that must break its tests:** making `EditSession::undo` a no-op must
 fail the property test for every tool, and if it fails for only some, the test is
-not exhaustive; making the save emit two sections must fail the guarantee-2 test.
+not exhaustive.
 
 ### P8. `tools-comment` A: text markup
 
@@ -1716,14 +1706,40 @@ under a write path for the first time. If M2's P3 geometry has a residual error,
 this is where it surfaces, and it is cheaper to find here than under thirteen
 drawing tools.
 
+**This package also owns guarantee 2 at the level the DoD promises it.** PLAN.md
+and the definition of done both say guarantee 2 is "driven by an edit a tool made
+through `core`", and no package specified it. P3 cannot: it drives `EditSession`,
+which is `core`'s own API, and `crates/core` depends on `content`, `cos` and
+`render` only, so nothing there can reach a plugin. P7's property suite drives
+real gestures but asserts a weaker sentence. It lands **here** because this is the
+package that ships the highlight the test drives, and because putting it in P7
+would make P7 depend on P8 while P8 depends on P7.
+
 **Rows closed.** 56 Highlight text, 57 Underline text, 58 Strikethrough,
-59 Insert text at cursor (caret markup), 60 Replace text. **5 rows.**
+59 Insert text at cursor (caret markup), 60 Replace text. **5 rows.** Plus
+guarantee 2, which closes no row and is named against it here.
 
 **Files.** `plugins/tools-comment/src/lib.rs`,
 `plugins/tools-comment/src/{markup,quads}.rs`,
-`plugins/tools-comment/Cargo.toml` (adds `onionskin-core`).
+`plugins/tools-comment/Cargo.toml` (adds `onionskin-core`), new
+`crates/app/tests/tool_edit_guarantee.rs`, and
+**`crates/app/tests/guarantees.rs`**.
 
-**Depends on.** P6, P7.
+That last file needs naming because **nobody currently owns editing it**.
+Guarantee 2's tripwire
+(`an_edit_appends_one_incremental_section_that_truncates_away`) currently names
+`incremental.rs` and its two enforcing tests; this package adds the new app-level
+test to that tripwire's enforcing list along with the assertion markers it must
+still contain, so deleting the tool-driven test fails the guarantee rather than
+passing quietly. The same file carries
+`acrobat_parity_headline_matches_every_inventory_row`, which is **P15's** to
+change; the two edits are in one file and neither should be made assuming the
+other has been.
+
+**Depends on.** P3 (save, for the guarantee-2 test), P6, P7. **Not P0b**: this
+package's two `crates/app` files are test targets, not shell source, and the
+split rewrites neither. It is the second of the two exceptions to "everything
+with a `crates/app` file waits on P0b", the first being P1c.
 
 **What exists to build on.** `tools-basic`'s `select_text` already produces a
 `TextSelection` with quads in page space through M2's P3 transform, and
@@ -1736,7 +1752,9 @@ in-progress drag needs.
 - The last of those is the one that bites: a bounding-rect implementation passes the first three and fails only on a multi-quad selection, so it is not optional.
 - Saved output: the annotation's `/QuadPoints` count is four times the quad count, in the spec's vertex order, and the rendered result covers the glyphs (assert non-background pixels inside each quad and background outside, over the full region, not one pixel).
 - Undo restores the page's `/Annots` by value; redo re-adds the same object.
-- `cargo test -p onionskin-app --no-default-features --features tools-comment` and the P7 property suite.
+- **Guarantee 2, driven by a tool**: drive the highlight through a real gesture, save through `core`, and assert all three clauses of the guarantee sentence: the original bytes survive as a prefix, exactly one section is appended (counted by parsing, not by scanning for `%%EOF`, since the original may legitimately contain one), and truncating at `original_len()` yields the byte-exact original. Ten highlights and one save is still one section.
+- `guarantees.rs`'s guarantee-2 tripwire names that test and its markers, so deleting the test fails the guarantee. Proven by deleting it on a scratch branch and recording the failure in the PR, which is the same demonstration P1c owes its CI pair.
+- `cargo test -p onionskin-app --no-default-features --features tools-comment`, `cargo test -p onionskin-app --test guarantees`, and the P7 property suite.
 - **Corpus.** The real corpus document, the `/Rotate 90` fixture and the two-column fixture are all `external/`, so they run behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether the quad order convention is written down and matches
@@ -1745,7 +1763,8 @@ page maps correctly, which needs a `/Rotate 90` fixture and is the same trap M2'
 P3 documented. Whether Replace text writes a real `/IRT` reply chain or two
 unrelated annotations. Whether the tool holds a borrow of `PageText` across the
 commit. **Mutation that must break its tests:** replacing the quad list with its
-bounding rectangle must fail the two-column test and nothing else.
+bounding rectangle must fail the two-column test and nothing else; making the
+save emit two sections must fail the guarantee-2 test and nothing else.
 
 ### P9. `tools-comment` B: notes, drawing and shapes
 
@@ -1900,8 +1919,10 @@ commit test and nothing else.
 
 ### P10. `tools-comment` C: stamps, attachments and the comment summary
 
-**Goal.** The stamp family, attach-as-comment, comment properties, and the
-summary document.
+**Goal.** The stamp family, attach-as-comment, and the summary document. Comment
+properties is **row 74 and belongs to P20**, which builds the inspector; what
+lives here is `properties.rs`, the plugin-side defaults a stamp or an attachment
+is created with, over P6's `SetAnnotationProperties` verb.
 
 Stamps are `/Stamp` annotations whose appearance stream is the stamp artwork.
 Per Legal posture rule 2 and the parity row's own note, **every stamp is redrawn
@@ -2865,11 +2886,16 @@ was drawn by hand and was wrong about the critical path, about which branches
 were independent, and about whether `crates/app` had one occupant. Redraw it the
 same way after any package's dependencies change; do not edit the picture.
 
-Four roots, all startable on day one: **P0a** (relocating `ShellFrame`'s
-methods, app only), **P1c** (the corpus CI pair, YAML and one test file),
-**P1b** (crypto, ruled in) and, once P1c has landed, **P1** (cos). P1c precedes
-P1 because P1's own verification sweeps `external/`, which CI does not fetch
-today. P0b follows P0a.
+For that to be mechanical, **a "Depends on" paragraph names only this package's
+predecessors**, and anything else about ordering goes in a paragraph after it.
+The umbrella sections (P0, P9, P13, P14) carry no edges of their own except
+where P0 states its shared one.
+
+Three roots startable on day one: **P0a** (relocating `ShellFrame`'s methods,
+app only), **P1c** (the corpus CI pair, YAML and one test file) and **P1b**
+(crypto, ruled in). **P1** (cos) follows P1c, because P1's own verification
+sweeps `external/`, which CI does not fetch today, so P1 cannot be verified
+before P1c lands even though it compiles without it. P0b follows P0a.
 
 ```
 P1c corpus in CI       P0a relocate ShellFrame       P1b crypto (ruled in)
@@ -2938,10 +2964,12 @@ round.
 
 - **P0 neither runs alone in `crates/app` nor blocks nobody.** Both of those
   claims were in the first draft and both are false. `crates/app` files
-  appear in the Files line of P1b, P1c, P7, P9a, P10, P12, P13a, P13b, P13c,
-  P14a, P14b, P17, P18, P19, P20, P21 and P22. All except P1c depend on P0b and
-  land after it; P1c is the exception because its only app file is
-  `crates/app/tests/guarantees.rs`, which neither P0a nor P0b touches.
+  appear in the Files line of P1b, P1c, P7, P8, P9a, P10, P12, P13a, P13b, P13c,
+  P14a, P14b, P17, P18, P19, P20, P21 and P22, which is eighteen. Sixteen of them
+  depend on P0b and land after it. **P1c and P8 are the two exceptions**, and for
+  the same reason: their only `crates/app` files are under `crates/app/tests/`,
+  which is a test target rather than shell source and which neither P0a nor P0b
+  rewrites.
 - P1b touches `crates/app/src/shell/chrome/tabs.rs` directly for the open-time
   notice, which is the exact file P0 splits, so its app seam depends on P0b and
   lands as its own commit after it. Its `crates/crypto` and `crates/cos` work
@@ -2961,8 +2989,8 @@ round.
   moment P3 and P6 land, and it is the head of the whole print track.
 
 **Contention, and the order it forces.** M2's audit named
-`crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and seventeen
-M3 packages have `crates/app` files. After P0a splits it, each app package owns a
+`crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and eighteen
+M3 packages have `crates/app` files, sixteen of them under `src/shell`. After P0a splits it, each app package owns a
 distinct new module, and the remaining shared files are append-only tables:
 `chrome/menu.rs`'s command dispatch, `chrome/context.rs`'s availability table,
 `shell/dialog.rs`'s `ShellDialog` variant list and its two matches,
@@ -3001,6 +3029,13 @@ that later moves beneath it:
 7. **P22 last**, out of depth order and deliberately: it is at depth three, but
    it is nine small changes across many files, which is exactly the shape that
    rebases cleanly under everything and painfully over anything.
+
+**P1b's app seam sits outside this order**, at depth three, and can land any time
+after P0b. It is one notice and one gate in one file and it belongs to a package
+that is otherwise off the critical path entirely, so sequencing it with the
+others would couple the crypto track to the app track for no benefit. It is named
+here so that "the app landing order" is not read as a list of everything that
+touches `crates/app`.
 
 Whoever rebases re-runs `cargo test -p onionskin-app --no-default-features
 --features shell,shell-test-support` rather than trusting the merge, which is
@@ -3173,10 +3208,10 @@ Every abstraction M3 introduces names the caller that exists in M3.
 |---|---|
 | `cos::Document::next_object_number` | `core::edit`'s reservation counter |
 | `cos::Document::sections` | P19's skins panel, P3's `revert_to` |
-| `cos::Document::write_new` | P12 combine and split, P14a create-from-image, P14b compress, P10's comment summary |
+| `cos::Document::write_new` | P12 combine and split, P11 extract, P14a create-from-image, P14b compress, P10's comment summary |
 | `cos::{PendingEdit, Document::section_for, Document::save_overlay_to_path}` | P3's save and P3's `preview_bytes`, which are the same call with the same argument; `incremental_section` and `save_to_path` are re-expressed as callers so there is one serializer, not two |
 | cos's save-time reference gate on `section_for` | every save in M3, as the cheap guard that T5's free-nothing rule was not broken |
-| `cos::Document::audit_references` | the verification of P5, P11, P12, P14a and P14b, which is where the complete O(file) walk belongs |
+| `cos::Document::audit_references` | the verification of P3, P5, P7, P11, P12, P13b, P14a and P14b, which is where the complete O(file) walk belongs |
 | `core::edit::{Overlay, History, DocumentEdit}` | every tool and command from P8 to P14b |
 | `core::preview_bytes(filter)` | the canvas (committed edits, unfiltered) and P15's print filter, which is row 94. There is no third consumer: the "hide all comments" view the first draft named is not an M3 row (T7). |
 | `core::generations` and `revert_to` | P19's skins panel, P18's `File > Revert` |
@@ -3295,8 +3330,11 @@ this session rather than carried forward.
    - **Guarantee 2 gains a second enforcing suite, one level up.** The clause
      PLAN.md and the DoD both promise, "driven by an edit a tool made through
      `core`", is satisfied by nothing that exists: `incremental.rs` drives
-     `cos::set_info_field`. P7 owns the new test and the tripwire edit, and `crates/app/tests/guarantees.rs` is named in
-     P7's file list because nobody currently owns editing it.
+     `cos::set_info_field`. **P8** owns the new test and the tripwire edit, and
+     `crates/app/tests/guarantees.rs` is named in P8's file list because nobody
+     currently owns editing it. P8 rather than P7 because P8 ships the highlight
+     the test drives, and because P8 already depends on P7, so putting it in P7
+     would have been a cycle rather than a schedule.
    - **Every guarantee whose corpus M3 makes load-bearing gains the same
      two-step CI pair**, generate-or-fetch plus a re-run under
      `ONIONSKIN_CORPUS_REQUIRED=1`, asserted from `guarantees.rs` the way
@@ -3642,7 +3680,7 @@ at M4 that the model assumed a grid.
   `crates/print` imports AppKit directly and no GPUI, asserted the same way.
 - **Guarantees 1, 2 and 6 pass at the level the guarantee means.** All three
   already run (`0f1c295`); what M3 owes them is the level, not the switch.
-  Guarantee 2 is driven by an edit a **tool** made through `core`, which is P7's
+  Guarantee 2 is driven by an edit a **tool** made through `core`, which is P8's
   test in `crates/app/tests/`, and its tripwire in `guarantees.rs` names that
   test. Every corpus M3 makes load-bearing has P1c's fetch-and-re-run pair, so
   none of them can repeat guarantee 6's vacuous pass.
@@ -3652,7 +3690,8 @@ at M4 that the model assumed a grid.
 - P4's structure invariant is clean after every M3 edit on every tagged fixture,
   and it **fails** on the deliberately broken fixture in the same suite.
 - P1's reference validator finds nothing on the output of every P5, P11, P12 and
-  P14a and P14b operation over every named fixture.
+  P14a and P14b operation over every named fixture, and `audit_references` is
+  clean on every one of those outputs.
 - P16's manual print acceptance script has run on macOS and its result is
   recorded in that package, including what it failed at. **M3 is not done until
   it has.**
