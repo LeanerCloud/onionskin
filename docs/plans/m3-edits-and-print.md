@@ -3,8 +3,8 @@
 Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
 folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
 on 2026-09-10. P0a merged at `28b311e` and P0b merged at `755842f`.
-P0c's test relocation is committed locally at `fdf875c`, with automated
-verification complete; native smoke, window-only capture and integration remain
+P0c's test relocation is committed locally at `fdf875c`; automated relocation
+checks pass. Native smoke, window-only capture and integration remain
 pending. Editing/printing packages remain outstanding. This document is the
 authoritative decomposition; it supersedes PLAN.md's M3
 paragraph wherever the two disagree, and section 8 lists every disagreement.
@@ -1226,6 +1226,10 @@ acceptance or an integration claim. No Acrobat feature row closes in P0c.
 The exact committed shell build and headless boot also pass, reporting
 12 plugins, 6 tools, 2 commands and 3 codecs. This verifies startup, not native
 window interaction.
+
+The configuration census does not certify external-corpus coverage. That
+coverage was not measured or equalized between worktrees; successful test-result
+entries can conceal internal fixture skips. P1c owns the explicit corpus run.
 
 The description below retains its original planning baseline.
 

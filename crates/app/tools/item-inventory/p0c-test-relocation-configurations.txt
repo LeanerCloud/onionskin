@@ -1,5 +1,11 @@
 # P0c configuration evidence at fdf875c7bcfdc988fc149028b2ef0d90b78904fb
 # Base source: 65d29c6aa4c5fb352a1324b0840e16836ec24801
+# Scope: external-corpus coverage was not measured or equalized. Main has
+# downloaded external sets; the relocation worktree does not. Successful test
+# entries can hide fixture skips, and cached binaries can retain another
+# manifest directory. Equal counts do not certify equal external-fixture work.
+# P1c owns that measurement. The relocated shell tests use tracked seed or
+# synthetic fixtures; production code and their bodies remain unchanged.
 # Identity key: configuration + normalized target + leaf test name + status.
 # Primary census reduces test names to leaves and removes executable hash suffixes.
 # Multiplicity is retained. The supplementary audit below retains full executable
