@@ -266,6 +266,28 @@ fn partitions(path: &Path, tally: &mut Tally) {
         }
     }
 
+    // Every boundary is a point a revert may truncate at, so the bytes before
+    // it have to be a document. A walk that reported a cross-reference table
+    // that is not the end of a generation - a linearized file's first-page
+    // table is one - still partitions the file, so this is the assertion that
+    // separates the two.
+    for section in sections.iter().skip(1) {
+        let prefix = BytesSource::new(bytes[..section.start as usize].to_vec());
+        match Document::open_repairing(Box::new(prefix)).and_then(|(d, _)| d.page_count()) {
+            Ok(_) => {}
+            Err(e) => {
+                return tally.fail(
+                    path,
+                    "prefix-not-a-document",
+                    &format!(
+                        "truncating at {} leaves something that is not: {e}",
+                        section.start
+                    ),
+                )
+            }
+        }
+    }
+
     let last = sections.last().expect("checked above");
     if last.end != bytes.len() as u64 {
         return tally.fail(
@@ -295,10 +317,7 @@ fn named_multi_generation_fixtures_report_every_generation() {
             7,
         ),
         ("7.7 Mathematical expressions/7.7-t01-pass-b.pdf", 6),
-        (
-            "7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf",
-            3,
-        ),
+        ("7.9 Notes and references/7.9-t01-pass-a.pdf", 4),
     ] {
         let path = dir.join(relative);
         let bytes = std::fs::read(&path).expect("the fixture is readable");
@@ -316,6 +335,80 @@ fn named_multi_generation_fixtures_report_every_generation() {
             bytes.len() as u64,
             "{relative}"
         );
+    }
+}
+
+/// A linearized file carries a `%%EOF` after its first-page cross-reference,
+/// at the front of the file, and that marker ends no generation: the bytes
+/// before it are a header and a table. Counting cross-reference sections
+/// rather than generations reports it as one, and the sweep above cannot see
+/// that, because a phantom split still partitions the file.
+#[test]
+fn a_linearized_files_first_page_table_is_not_a_generation() {
+    let Some(root) = corpus_dir("external") else {
+        return;
+    };
+
+    // Linearized, never updated: two `%%EOF` markers, one generation.
+    let once = std::fs::read(root.join("hayro/pdfs/custom/font_standard_2.pdf"))
+        .expect("the fixture is readable");
+    assert_eq!(count(&once, b"%%EOF"), 2, "the fixture must be linearized");
+    assert_eq!(
+        open(&once).sections().expect("the chain walks"),
+        vec![Section {
+            start: 0,
+            end: once.len() as u64
+        }],
+        "a linearized file that was never updated is one generation"
+    );
+
+    // Linearized and updated since: three markers, two generations.
+    let updated = std::fs::read(
+        root.join("verapdf/PDF_UA-1/7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf"),
+    )
+    .expect("the fixture is readable");
+    assert_eq!(count(&updated, b"%%EOF"), 3);
+    let document = open(&updated);
+    let sections = document.sections().expect("the chain walks");
+    assert_eq!(
+        sections.len(),
+        2,
+        "one generation per update, not per table"
+    );
+
+    // The boundary that remains is one a revert may truncate at.
+    let rolled_back = open(&updated[..sections[1].start as usize]);
+    assert_eq!(
+        rolled_back.page_count().ok(),
+        document.page_count().ok(),
+        "truncating at the reported start must leave the document as it was"
+    );
+}
+
+/// A document cos had to rebuild the cross-reference for was not read through
+/// the chain in the file, so it has no generations to report. Handing back
+/// ranges derived from that chain would be reporting a structure this document
+/// does not rest on.
+#[test]
+fn a_document_whose_cross_reference_was_rebuilt_reports_no_chain() {
+    let mut bodies: Vec<&[u8]> = common::skeleton();
+    bodies.push(b"<</Type/Spare/Which 4>>");
+    // The table lies about where the catalog is, which is what sends the open
+    // down the scan. The `startxref` still points at a real table, so a walk
+    // of the chain would succeed and report ranges.
+    let bytes = common::classic_pdf(&bodies, &[(1, 3)]);
+
+    let (document, provenance) = Document::open_repairing(Box::new(BytesSource::new(bytes)))
+        .expect("the file opens by scanning");
+    assert!(!provenance.is_clean());
+    assert_eq!(document.page_count().ok(), Some(1), "the scan recovered it");
+
+    match document.sections() {
+        Err(Error::SectionChain { detail, .. }) => assert!(
+            detail.contains("rebuilt"),
+            "the report must say why there is no chain: {detail}"
+        ),
+        other => panic!("a rebuilt cross-reference has no chain to report, got {other:?}"),
     }
 }
 

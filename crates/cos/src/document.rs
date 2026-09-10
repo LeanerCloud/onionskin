@@ -347,7 +347,28 @@ impl Document {
     /// shorter list: a hostile `/Prev` that loops, one that points at no
     /// section, or a section with no `%%EOF`. Reporting the prefix it managed
     /// to walk would be a list of generations that quietly omits some.
+    ///
+    /// A linearized file is one generation, not two. Its first-page
+    /// cross-reference sits at the front of the file with an `%%EOF` of its
+    /// own, and it names objects that live after that marker, which no
+    /// generation's own table can do. Both halves were written in one pass, so
+    /// that `%%EOF` is not a boundary a caller may truncate at: the bytes
+    /// before it are a header and a table, not a document.
     pub fn sections(&self) -> Result<Vec<Section>> {
+        // The opener rebuilt the table by scanning, which is what a `None`
+        // here means, so the file's own chain is not what this document was
+        // read through. Walking it anyway would report ranges derived from a
+        // chain cos itself rejected, which is exactly the trap
+        // [`Document::recovered_boundaries`] is written to avoid.
+        if self.prev_startxref.is_none() {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "the cross-reference was rebuilt when the file opened, so the file's own \
+                         chain is not the one this document was read through"
+                    .into(),
+            });
+        }
+
         let (tail_base, tail) = self.reader.tail(TAIL_WINDOW)?;
         let Some(startxref) = xref::find_startxref(&tail, tail_base) else {
             return Err(Error::SectionChain {
@@ -357,6 +378,7 @@ impl Document {
         };
 
         let mut visited: BTreeSet<u64> = BTreeSet::new();
+        // The end of each section that ends a generation, in chain order.
         let mut ends: Vec<u64> = Vec::new();
         let mut next = Some(startxref);
         while let Some(value) = next {
@@ -383,7 +405,26 @@ impl Document {
             // does not get to add to them.
             let mut reasons = Vec::new();
             let section = xref::read_section(&self.reader, offset, &mut reasons)?;
-            ends.push(self.end_of_section(offset, section.end)?);
+            let end = self.end_of_section(offset, section.end)?;
+            // A generation's own table can only name objects written before
+            // the `%%EOF` that closes it. A table that names one *after* its
+            // `%%EOF` is describing bytes that are not its own, which is what
+            // a linearized file's first-page cross-reference does (ISO 32000-1
+            // annex F): it sits at the front of the file, it belongs to the
+            // same single pass that wrote the rest, and its `%%EOF` is not a
+            // point a caller may truncate at. Truncating there leaves a file
+            // with no catalog in it.
+            let describes_later_bytes = section.entries.iter().any(|(_, entry)| match entry {
+                // Offsets in a file with junk before its header are short by
+                // exactly that much, which is how `locate` reads them.
+                XrefEntry::InFile { offset, .. } => {
+                    offset.saturating_add(self.reader.header_offset) >= end
+                }
+                XrefEntry::Free { .. } | XrefEntry::InObjectStream { .. } => false,
+            });
+            if !describes_later_bytes {
+                ends.push(end);
+            }
             next = match section.trailer.get(b"Prev") {
                 None => None,
                 Some(Object::Integer(value)) if *value >= 0 => Some(*value as u64),
@@ -428,12 +469,22 @@ impl Document {
     /// The search starts past the table or cross-reference stream rather than
     /// at the table itself, because a stream's compressed data can hold those
     /// five bytes and a section's own body must not be able to end it.
+    ///
+    /// What follows a section's trailer is its `startxref`, its offset and its
+    /// `%%EOF`, so the marker is a few dozen bytes away. The search is capped
+    /// at `SEARCH` rather than running to the end of the file, which is what
+    /// keeps a section with no `%%EOF` at all costing one read instead of a
+    /// pass over the whole document, once per section in the chain.
     fn end_of_section(&self, table: u64, parsed_end: u64) -> Result<u64> {
         const WINDOW: usize = 4096;
+        /// How far past a trailer a `%%EOF` may sit before the section counts
+        /// as unterminated.
+        const SEARCH: u64 = 4096;
         const EOF: &[u8] = b"%%EOF";
+        let limit = self.original_len.min(parsed_end.saturating_add(SEARCH));
         let mut at = parsed_end;
-        while at < self.original_len {
-            let want = ((self.original_len - at) as usize).min(WINDOW);
+        while at < limit {
+            let want = ((limit - at) as usize).min(WINDOW);
             let buf = self.reader.read(at, want)?;
             if let Some(found) = crate::parse::find(&buf, EOF) {
                 let end = at + (found + EOF.len()) as u64;
