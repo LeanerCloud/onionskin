@@ -4,6 +4,13 @@
 # checks that those checks would fail if the rule were wrong, which is the only
 # thing that makes them worth reading. Each break below is one a reviewer
 # proposed against this rule; the suite has to catch every one.
+#
+# The punctuation break is the one to read closely. It is the plausible one: it
+# applies to a body the layout normalization the tool already applies to a
+# signature, and a rule carrying it would report a diff two hunks smaller and
+# tidier than the honest one. That is what "tuned until the diff comes out
+# empty" looks like from the inside, which is why it is a break and not a
+# feature.
 
 the rule as it stands: exit 0
 
@@ -24,5 +31,20 @@ break: stripping the leaf along with the hop
   exit 1, caught
   REPORTED: the rule failed to absorb the hop it exists for
   REPORTED: the rule failed to absorb the hop it exists for
+
+break: canonicalizing a body's punctuation the way a signature's is
+  exit 1, caught
+  NOT REPORTED: the rule is normalizing away a real change
+
+break: dropping every comma
+  exit 1, caught
+  NOT REPORTED: the rule is normalizing away a real change
+
+break: dropping every brace
+  exit 1, caught
+  NOT REPORTED: the rule is normalizing away a real change
+
+break: counting no hops at all
+  exit 1, caught
 
 CALIBRATION: every break is caught

@@ -83,11 +83,37 @@ LEAF_TOO = COLLAPSE + """            span = re.compile(
             ).sub("", span)
 """
 
+# The dangerous one, because it is the one that sounds reasonable: apply to a
+# body the layout normalization `canonical_signature` already applies to a
+# signature. It absorbs two of this change's own three formatter hunks, so a
+# rule carrying it would report a smaller and tidier diff. A body is where a
+# stray comma or brace can be a real change, which is why it is refused.
+PUNCTUATION = COLLAPSE + """            span = re.sub(r"([(\\[{,])\\s+", r"\\1", span)
+            span = re.sub(r",\\s*(?=[)\\]}])", "", span)
+            span = re.sub(r"\\s+(?=[)\\]}])", "", span)
+"""
+
+DROP_COMMAS = COLLAPSE + '            span = span.replace(",", "")\n'
+DROP_BRACES = COLLAPSE + (
+    '            span = " ".join('
+    'span.replace("{", " ").replace("}", " ").split())\n'
+)
+
+# A counter that does not count. No comparison can catch this, because a count
+# legitimately differs between two listings; the mutation suite checks the
+# header against a number it knows independently.
+COUNTING = "                    hops[match.group(1)] += 1\n"
+NOT_COUNTING = "                    hops[match.group(1)] += 0\n"
+
 BREAKS = [
     ("a `\"`-only walk that reads a raw string as code", CURRENT_SPLIT, NAIVE_SPLIT),
     ("one pass rather than a fixed point", FIXED_POINT, ONE_PASS),
     ("stripping the hop at the end of a chain too", COLLAPSE, TRAILING_HOP),
     ("stripping the leaf along with the hop", COLLAPSE, LEAF_TOO),
+    ("canonicalizing a body's punctuation the way a signature's is", COLLAPSE, PUNCTUATION),
+    ("dropping every comma", COLLAPSE, DROP_COMMAS),
+    ("dropping every brace", COLLAPSE, DROP_BRACES),
+    ("counting no hops at all", COUNTING, NOT_COUNTING),
 ]
 
 
@@ -106,10 +132,13 @@ def run(tool, paths):
 
 
 def broken(work, old, new):
+    """A copy of the tool, and only the tool: the records beside it are 250 KB."""
     tool = work / "tool"
     if tool.exists():
         shutil.rmtree(tool)
-    shutil.copytree(HERE, tool)
+    tool.mkdir()
+    for script in HERE.glob("*.py"):
+        shutil.copy2(script, tool / script.name)
     target = tool / "item_inventory.py"
     text = target.read_text(encoding="utf-8")
     if text.count(old) != 1:

@@ -82,11 +82,20 @@ are to be read rather than hashed away.
 Both halves are mutation-tested by `procedure_mutation.py`, which reroutes a
 field through a synthetic group and asserts both that the rule absorbs the hop
 and the rewrap it provokes, and that it still reports a lost statement, a
-changed call, a renamed leaf, an undeclared group, the group passed whole, and
-a hop spelled inside a plain string, a raw string or a string after a `'"'`.
-`rule_calibration.py` is what stops those being decoration: it breaks the rule
-four ways in a scratch copy of the tool and requires the mutation suite to catch
-each. Run both:
+changed call, a renamed leaf, an undeclared group, the group passed whole, a hop
+spelled inside a plain string, a raw string or a string after a `'"'`, a trailing
+comma, and a statement moved across a brace. The last two are the ones a tidier
+rule would absorb: rustfmt adds that comma when the hop pushes a line past the
+margin, absorbing it would empty two thirds of P0b's own diff, and the same
+normalization is already applied to signatures. A body is where a stray comma or
+brace can be a real change, so the refusal is asserted and not merely stated.
+One more case reads the header back and requires the hop count to equal a number
+the suite knows independently, because no comparison can catch a counter that
+lies.
+
+`rule_calibration.py` is what stops all of that being decoration: it breaks the
+rule eight ways in a scratch copy of the tool and requires the mutation suite to
+catch each. Run both:
 
 ```
 python3 procedure_mutation.py <files now>
@@ -109,10 +118,12 @@ fifteen lines out and twenty-five in, and every one of them is accounted for:
 
 The five names absorbed 135 hops between them, counted in the `# elided` header
 and matching the number of reads the change reroutes.
-`frame-state-calibration.txt` is the calibration run over the same files, and
-`frame-state-before.txt` predates the counted header: it was emitted at
-`5ca2be6`, where every count is zero, and re-emitting from that tree with the
-tool as it stands reproduces it line for line.
+`frame-state-calibration.txt` is the calibration run over the same files.
+
+`frame-state-before.txt` predates the counted header, and like every record here
+it is not regenerated. Re-emitting from `5ca2be6`'s tree with the tool as it
+stands reproduces every item line and writes a header this one does not have, so
+`compare` prints that side as `?` rather than as a zero it never measured.
 
 The listing says which items changed; it cannot say a file holds nothing
 authored, because it excludes what is not an item. `frame-state-replay.txt`

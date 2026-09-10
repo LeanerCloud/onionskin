@@ -359,6 +359,12 @@ def code_spans(text):
     one does, and a `'"'` is one char and not the start of a string. A hand-
     rolled `"` walk gets all three wrong, and gets them wrong by treating data
     as code, which is the direction that hides a change.
+
+    `strip_visibility` still walks quotes itself. It runs over headers and over
+    the member lists of structs and enums, where the only quotes are a balanced
+    pair inside something like `#[cfg(feature = "x")]`, so the three shapes
+    above do not reach it. It is nonetheless the last place in this file that
+    guesses at a literal rather than asking `classify`.
     """
     cls = classify(text)
     spans, start = [], 0
@@ -815,10 +821,18 @@ def listing(path):
                     # listing taken before the hops existed and one taken after.
                     pairs = [name.split("=", 1) for name in names]
                     elided = tuple(sorted(pair[0] for pair in pairs))
+                    # A name with no `=` was written before the count existed.
+                    # That is not a count of zero, and reporting it as one would
+                    # print a default where a reader expects a measurement.
                     hops = {pair[0]: int(pair[1]) for pair in pairs if len(pair) == 2}
             elif not line.startswith("#"):
                 raise SystemExit("%s: neither an item nor a header: %r" % (path, line))
     return items, elided, hops
+
+
+def counted(hops, name):
+    """A hop count, or `?` when the listing predates counting them."""
+    return "?" if name not in hops else str(hops[name])
 
 
 def compare(before_path, after_path):
@@ -837,7 +851,7 @@ def compare(before_path, after_path):
         print(
             "hops absorbed: %s"
             % ", ".join(
-                "%s %d -> %d" % (name, before_hops.get(name, 0), after_hops.get(name, 0))
+                "%s %s -> %s" % (name, counted(before_hops, name), counted(after_hops, name))
                 for name in before_elided
             )
         )

@@ -278,6 +278,24 @@ WHOLE_GROUP = "std::mem::take(&mut self.%s);" % GROUP
 NESTED_ONE = "self.%s.notices.remove(index);" % GROUP
 NESTED_TWO = "self.%s.%s.notices.remove(index);" % (GROUP, GROUP)
 
+# Punctuation inside a body. The trailing comma is what rustfmt adds when the
+# hop lengthens a line past the margin, and absorbing it would empty two thirds
+# of this change's own diff, so the temptation is real and the same
+# normalization is already applied to signatures. The brace is the reason the
+# temptation has to be refused rather than merely resisted: the two snippets
+# below are different programs, and a rule that dropped braces would call them
+# the same body.
+COMMA_PLAIN = injected("    let list = [1, 2, 3];\n    format!(\"{}\", list.len())")
+COMMA_TRAILING = injected("    let list = [1, 2, 3,];\n    format!(\"{}\", list.len())")
+SCOPE_OUT = injected(
+    "    let mut n = 0;\n    if n == 0 {\n        n += 1;\n    }\n"
+    "    n += 2;\n    format!(\"{n}\")"
+)
+SCOPE_IN = injected(
+    "    let mut n = 0;\n    if n == 0 {\n        n += 1;\n        n += 2;\n    }\n"
+    "    format!(\"{n}\")"
+)
+
 
 def regroup(sources, group=GROUP):
     """Reroute every access to one field through `group`, as a restructuring does."""
@@ -306,6 +324,40 @@ def elision_case(name, left, right, expect_reported, elide=(GROUP,)):
         print("  REPORTED: the rule failed to absorb the hop it exists for")
     if not expect_reported and not changed:
         print("  nothing reported, which is what this case asserts")
+    print()
+    return ok
+
+
+def emitted_header(sources, elide):
+    """The `# elided` line a listing of `sources` carries."""
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        copies = work / "copies"
+        copies.mkdir()
+        for path, text in sources.items():
+            (copies / flat_name(path)).write_text(text, encoding="utf-8")
+        inventory(sorted(copies.iterdir()), work / "listing.txt", elide)
+        for line in (work / "listing.txt").read_text(encoding="utf-8").splitlines():
+            if line.startswith("# elided "):
+                return line
+    raise SystemExit("the listing carries no elision header")
+
+
+def counts_case(regrouped, moved):
+    """The header's hop count has to be a measurement, not a decoration.
+
+    No comparison can catch a counter that lies, because a count legitimately
+    differs between the two sides. So it is checked directly, against a number
+    this file knows independently: the regrouping above introduced exactly one
+    hop per rewritten access.
+    """
+    header = emitted_header(regrouped, (GROUP,))
+    expected = "# elided %s=%d" % (GROUP, moved)
+    print("case: the header counts the hops it absorbed")
+    print("  %s" % header)
+    ok = header == expected
+    if not ok:
+        print("  EXPECTED %s: the count is not a measurement" % expected)
     print()
     return ok
 
@@ -387,6 +439,19 @@ def elision_cases(sources):
         apply_once(sources, INLINE_CHAIN, NESTED_TWO, "statement to replace"),
         False,
     )
+    ok &= elision_case(
+        "a trailing comma in a body, which is not whitespace",
+        apply_once(sources, INJECT_AT, COMMA_PLAIN, "place to inject"),
+        apply_once(sources, INJECT_AT, COMMA_TRAILING, "place to inject"),
+        True,
+    )
+    ok &= elision_case(
+        "a statement moved across a brace, which is a different program",
+        apply_once(sources, INJECT_AT, SCOPE_OUT, "place to inject"),
+        apply_once(sources, INJECT_AT, SCOPE_IN, "place to inject"),
+        True,
+    )
+    ok &= counts_case(regrouped, moved)
     return ok
 
 

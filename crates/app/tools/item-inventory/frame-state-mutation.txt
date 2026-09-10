@@ -120,4 +120,15 @@ case: the group passed whole, with nothing after it
 case: two hops in one chain, which needs the fixed point
   nothing reported, which is what this case asserts
 
+case: a trailing comma in a body, which is not whitespace
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	2bac39218ecb9b1e
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	aa0c20e6c711ea1d
+
+case: a statement moved across a brace, which is a different program
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	8e6db2476dc60a84
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	4c6ec7027f5ee377
+
+case: the header counts the hops it absorbed
+  # elided probe_group=29
+
 MUTATION CHECK: every mutation was reported
