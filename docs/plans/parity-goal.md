@@ -650,17 +650,31 @@ would otherwise reasonably assume.
    25.001.20438 and nothing else, so every Pro-only toolset (Edit a PDF,
    Organize, Redact, Forms, Protect, Measure, Accessibility, Print Production)
    currently has no capture and no ledger row. This was originally written as a
-   purchasing decision blocking measurement of M3 through M6. That framing was
-   wrong. The free Reader exposes the Pro toolsets in its own interface as
-   entries carrying a purchase link: the rail lists them, the menus carry them,
-   and in many cases a panel or dialog renders before the upsell intervenes. So
-   most of that surface is capturable from the build already installed, using
-   the same private-capture method B7 built, and at higher confidence than any
-   documentation screenshot because it is the pinned version at known DPI,
-   uncropped and unannotated. Adobe's published documentation is the fallback
-   for the states that genuinely sit behind the paywall, where prose often
-   carries exact control labels and dialog field order independently of any
-   image. What remains unowned is the work of doing it, not a licence.
+   purchasing decision blocking measurement of M3 through M6, and that framing
+   was wrong: no purchase is needed. The free Reader exposes the Pro toolsets
+   in its own interface as entries carrying a purchase link, so the rail and
+   every menu entry are capturable from the build already installed, using the
+   same private-capture method B7 built and at higher confidence than any
+   documentation screenshot, because it is the pinned version at known DPI,
+   uncropped and unannotated.
+   A first version of this bullet then estimated that most of the Pro surface
+   was capturable that way. It measured at 9.7 percent reachable and 4.8
+   percent measurable across 145 Pro rows; see
+   docs/plans/pro-toolset-reference-method.md. A minority of toolsets render a
+   panel or dialog before the upsell (Export a PDF in full, Create a PDF's
+   first step); of the toolsets that pass reached, most refuse at the click
+   (Edit a PDF, Organize pages, Combine files), and most were not reached at
+   all. Adobe's published documentation carries control labels, dialog field
+   lists and step order independently of any image, which lifts coverage to
+   about 61 percent for VOCABULARY, the thing the functional board counts, and
+   not at all for geometry, icon grid or colour. So the number governing the
+   look-and-feel half is 4.8 percent, not 61.
+   Two limits in that measurement are environmental rather than fundamental
+   and are worth retrying: the machine was locked for its whole run, which
+   removes live capture entirely, and Adobe's help server returned 403 to this
+   environment, so every documentation verdict rests on search summaries
+   rather than the source pages. What remains unowned is the work of doing it,
+   not a licence.
    One rule for whoever does: Onionskin implements these features fully
    functional with no gate, so a locked panel is captured for its structure,
    naming, grouping and layout, and explicitly not for its lock affordance or
