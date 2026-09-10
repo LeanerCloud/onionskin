@@ -174,6 +174,17 @@ pub(super) struct ToolSearchState {
     pub(super) search_feedback: Option<SearchResult>,
 }
 
+/// The page-number box in the page controls, and why the last number typed
+/// there was refused.
+///
+/// Declared with the frame's own state for the same reason as
+/// `ToolSearchState`: `chrome::page_controls` owns the box and the parsing,
+/// this is the frame's hold on it.
+pub(super) struct PageEntryState {
+    pub(super) page_input: Entity<SearchInput>,
+    pub(super) page_entry_error: Option<PageEntryError>,
+}
+
 pub(in crate::shell) struct ShellFrame {
     pub(super) tabs: TabState<DocumentTab>,
     pub(super) menus: MenuOpenState,
@@ -181,8 +192,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) tool_search: ToolSearchState,
     pub(super) find: FindBarState,
     pub(super) find_input: Entity<SearchInput>,
-    pub(super) page_input: Entity<SearchInput>,
-    pub(super) page_entry_error: Option<PageEntryError>,
+    pub(super) page_entry: PageEntryState,
     pub(super) observed_view_state: Option<CanvasViewState>,
     pub(super) shell_view_state: ShellViewState,
     pub(super) rail_state: RailState,
@@ -262,7 +272,7 @@ impl ShellFrame {
         })
         .detach();
         cx.observe(&page_input, |frame, _, cx| {
-            frame.page_entry_error = None;
+            frame.page_entry.page_entry_error = None;
             cx.notify();
         })
         .detach();
@@ -299,8 +309,10 @@ impl ShellFrame {
             },
             find: FindBarState::with_options(settings.preferences.search),
             find_input,
-            page_input,
-            page_entry_error: None,
+            page_entry: PageEntryState {
+                page_input,
+                page_entry_error: None,
+            },
             observed_view_state,
             shell_view_state,
             rail_state: RailState::default(),

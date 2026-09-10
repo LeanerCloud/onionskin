@@ -141,8 +141,8 @@ impl ShellFrame {
             if visibility.page_controls {
                 let mut controls = page_controls::accessible(
                     PageControlsState::from_view(tab.canvas.read(cx).model.view_state()),
-                    self.page_entry_error.as_ref(),
-                    self.page_input.read(cx).query(),
+                    self.page_entry.page_entry_error.as_ref(),
+                    self.page_entry.page_input.read(cx).query(),
                 );
                 self.a11y.rects.place(Surface::PageControls, &mut controls);
                 root = root.child(controls);
@@ -525,7 +525,7 @@ impl ShellFrame {
         match field {
             TextField::Search => &self.tool_search.search_input,
             TextField::Find => &self.find_input,
-            TextField::Page => &self.page_input,
+            TextField::Page => &self.page_entry.page_input,
         }
     }
 
@@ -557,7 +557,7 @@ impl ShellFrame {
         [
             &self.tool_search.search_input,
             &self.find_input,
-            &self.page_input,
+            &self.page_entry.page_input,
         ]
         .into_iter()
         .find(|input| input.read(cx).focus_handle(cx).is_focused(window))

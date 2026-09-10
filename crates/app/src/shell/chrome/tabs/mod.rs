@@ -133,7 +133,7 @@ impl ShellFrame {
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
         if activate_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index) {
             self.navigation.document_changed();
-            self.page_entry_error = None;
+            self.page_entry.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
             self.sync_page_entry(cx);
             self.refresh_find(cx);
@@ -433,7 +433,8 @@ impl ShellFrame {
             .update(cx, |input, cx| input.set_theme(theme, cx));
         self.find_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
-        self.page_input
+        self.page_entry
+            .page_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         for tab in self.tabs.tabs() {
             tab.canvas
@@ -494,7 +495,7 @@ impl ShellFrame {
         let Some(view) = self.active_view_state(cx) else {
             return;
         };
-        self.page_input.update(cx, |input, cx| {
+        self.page_entry.page_input.update(cx, |input, cx| {
             input.set_query((view.current_page + 1).to_string(), cx);
         });
     }
@@ -537,7 +538,7 @@ impl ShellFrame {
             return;
         };
         canvas.update(cx, |canvas, cx| canvas.run_view_action(action, cx));
-        self.page_entry_error = None;
+        self.page_entry.page_entry_error = None;
         self.observed_view_state = self.active_view_state(cx);
         self.sync_page_entry(cx);
         refresh_native_menus(cx, self.menu_state(cx));
@@ -548,11 +549,11 @@ impl ShellFrame {
         let Some(view) = self.active_view_state(cx) else {
             return;
         };
-        let input = self.page_input.read(cx).query().to_owned();
+        let input = self.page_entry.page_input.read(cx).query().to_owned();
         match parse_page_entry(&input, view.page_count) {
             Ok(page) => self.run_view_action(ViewAction::GoToPage(page), cx),
             Err(error) => {
-                self.page_entry_error = Some(error);
+                self.page_entry.page_entry_error = Some(error);
                 cx.notify();
             }
         }
@@ -1222,8 +1223,8 @@ impl Render for ShellFrame {
                 .when(visibility.page_controls, |column| {
                     column.child(render_page_controls(
                         page_controls_state,
-                        self.page_input.clone(),
-                        self.page_entry_error.as_ref(),
+                        self.page_entry.page_input.clone(),
+                        self.page_entry.page_entry_error.as_ref(),
                         document_bounds.size.width,
                         rects.clone(),
                         theme,
