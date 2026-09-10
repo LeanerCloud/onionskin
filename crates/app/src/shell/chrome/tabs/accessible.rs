@@ -158,10 +158,10 @@ impl ShellFrame {
         if visibility.side_panel {
             root = root.child(side_panel::accessible(self.side_panel_state));
         }
-        if self.main_menu_open {
+        if self.menus.main_menu_open {
             root = root.child(self.accessible_main_menu(cx));
         }
-        if self.recent_menu_open {
+        if self.menus.recent_menu_open {
             root = root.child(self.accessible_recent_menu());
         }
         if let Some(menu) = self.context_menus.tab_context_menu {
@@ -180,7 +180,7 @@ impl ShellFrame {
         A11yElement::new("global-bar", Role::Toolbar, "Global Bar")
             .child(
                 A11yElement::new("main-menu-button", Role::Button, "Main Menu")
-                    .with_state(A11yState::toggled(self.main_menu_open))
+                    .with_state(A11yState::toggled(self.menus.main_menu_open))
                     .with_activation(Activation::ToggleMainMenu),
             )
             .child(

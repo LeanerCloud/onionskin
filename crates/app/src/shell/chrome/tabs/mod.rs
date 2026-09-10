@@ -104,9 +104,9 @@ impl ShellFrame {
             cx.notify();
             return;
         }
-        if self.main_menu_open || self.recent_menu_open {
-            self.main_menu_open = false;
-            self.recent_menu_open = false;
+        if self.menus.main_menu_open || self.menus.recent_menu_open {
+            self.menus.main_menu_open = false;
+            self.menus.recent_menu_open = false;
             cx.notify();
             return;
         }
@@ -182,7 +182,7 @@ impl ShellFrame {
 
     /// Open a recent document by its position in the list.
     pub(in crate::shell) fn open_recent(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.recent_menu_open = false;
+        self.menus.recent_menu_open = false;
         let Some(path) = self
             .settings
             .recents
@@ -350,7 +350,7 @@ impl ShellFrame {
         index: usize,
         cx: &mut Context<Self>,
     ) -> Result<(), TabError> {
-        self.main_menu_open = false;
+        self.menus.main_menu_open = false;
         self.context_menus.tab_context_menu = None;
         match command {
             TabCommand::Close => {
@@ -586,7 +586,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         self.find.open();
-        self.main_menu_open = false;
+        self.menus.main_menu_open = false;
         self.context_menus.tab_context_menu = None;
         if let Some(query) = query {
             self.find_input
@@ -971,7 +971,7 @@ impl ShellFrame {
     /// otherwise leave results hanging under a bar that is no longer there.
     fn search_panel_visible(&self, cx: &App) -> bool {
         self.shell_view_state.visibility().global_bar
-            && !self.main_menu_open
+            && !self.menus.main_menu_open
             && self.context_menus.tab_context_menu.is_none()
             && !self.search_input.read(cx).query().trim().is_empty()
     }
@@ -1269,8 +1269,8 @@ impl Render for ShellFrame {
             .on_action(cx.listener(Self::focus_previous_in_group))
             .on_action(cx.listener(Self::activate_focused))
             .child(frame);
-        if self.main_menu_open
-            || self.recent_menu_open
+        if self.menus.main_menu_open
+            || self.menus.recent_menu_open
             || self.context_menus.tab_context_menu.is_some()
             || self.context_menus.canvas_context_menu.is_some()
         {
@@ -1295,10 +1295,10 @@ impl Render for ShellFrame {
                     ),
             );
         }
-        if self.main_menu_open {
+        if self.menus.main_menu_open {
             root = root.child(self.render_main_menu(window, cx));
         }
-        if self.recent_menu_open {
+        if self.menus.recent_menu_open {
             root = root.child(self.render_recent_menu(cx));
         }
         if let Some(menu) = self.context_menus.tab_context_menu {
@@ -2378,7 +2378,7 @@ mod tests {
             (
                 "the main menu",
                 |frame, _window, cx| frame.toggle_main_menu(cx),
-                |frame, _cx| frame.main_menu_open,
+                |frame, _cx| frame.menus.main_menu_open,
             ),
             (
                 "the find bar",
@@ -2982,7 +2982,7 @@ mod tests {
             .update(cx, |frame, _window, cx| {
                 frame.open_recent(0, cx);
                 assert_eq!(frame.tabs.tabs().len(), 1);
-                assert!(!frame.recent_menu_open);
+                assert!(!frame.menus.recent_menu_open);
             })
             .unwrap();
     }
@@ -5729,7 +5729,7 @@ mod tests {
         cx.run_until_parked();
         window
             .update(cx, |frame, _window, _cx| {
-                assert!(!frame.main_menu_open, "escape left the menu open");
+                assert!(!frame.menus.main_menu_open, "escape left the menu open");
                 assert!(frame.find.is_open(), "escape closed two things at once");
             })
             .unwrap();

@@ -38,7 +38,7 @@ impl ShellFrame {
             );
             return;
         }
-        self.main_menu_open = false;
+        self.menus.main_menu_open = false;
         self.context_menus.canvas_context_menu = None;
         self.context_menus.tab_context_menu = Some(TabContextMenu {
             tab_index: index,
@@ -71,7 +71,7 @@ impl ShellFrame {
         if self.tabs.active().is_none() {
             return;
         }
-        self.main_menu_open = false;
+        self.menus.main_menu_open = false;
         self.context_menus.tab_context_menu = None;
         self.context_menus.canvas_context_menu = Some(CanvasContextMenu {
             origin: event.position,

@@ -14,6 +14,7 @@ use gpui::{AppContext as _, Context, Entity, Window};
 
 use super::context::ContextMenuState;
 use super::export::ExportState;
+use super::menu::MenuOpenState;
 use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
@@ -164,7 +165,7 @@ impl<T> TabState<T> {
 
 pub(in crate::shell) struct ShellFrame {
     pub(super) tabs: TabState<DocumentTab>,
-    pub(super) main_menu_open: bool,
+    pub(super) menus: MenuOpenState,
     pub(super) context_menus: ContextMenuState,
     pub(super) search_input: Entity<SearchInput>,
     pub(super) search_feedback: Option<SearchResult>,
@@ -184,7 +185,6 @@ pub(in crate::shell) struct ShellFrame {
     /// in the window and dismissed there, not only printed to stderr.
     pub(super) notices: Vec<String>,
     pub(super) dialog: Option<ShellDialog>,
-    pub(super) recent_menu_open: bool,
     pub(super) home: HomeState,
     pub(super) export: ExportState,
     /// The accessibility tree the window publishes, its tab order, and the
@@ -281,7 +281,7 @@ impl ShellFrame {
         let notices = std::mem::take(&mut settings.notices);
         let frame = Self {
             tabs,
-            main_menu_open: false,
+            menus: MenuOpenState::default(),
             context_menus: ContextMenuState::default(),
             search_input,
             search_feedback: None,
@@ -298,7 +298,6 @@ impl ShellFrame {
             settings,
             notices,
             dialog: None,
-            recent_menu_open: false,
             home: HomeState::default(),
             export: ExportState::default(),
             a11y: ShellAccessibility::new(cx),
