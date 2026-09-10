@@ -238,24 +238,63 @@ call with the same argument, so they cannot disagree by construction, and no
 scratch document exists.
 
 ```
-core::edit::Overlay  =  { states: BTreeMap<u32, ObjectState>, next_number }  // net state, per object number
+core::edit::Overlay  =  { states: BTreeMap<u32, ObjectState>, trailer: Dict, next_number }
 core::edit::ObjectState = { generation: u16, object: cos::Object }
-core::edit::Change   = { number, before: Option<ObjectState>, after: Option<ObjectState> }
+core::edit::Change   = Object    { number: u32, before: Option<ObjectState>, after: Option<ObjectState> }
+                     | TrailerKey { key: Name,  before: Option<cos::Object>, after: Option<cos::Object> }
 core::edit::Entry    = { label: &'static str, changes: Vec<Change> }
 core::edit::History  = { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 ```
 
-There is **no `Deleted` variant**, because T5's rule is that M3 frees no object
-number: a removal is a rewrite of the referrer, and the removed object simply
-stops being reachable. So `ObjectState` is one shape and `Option<ObjectState>` is
-two states, not three. `generation` is carried because a `cos::Object` written
-back to an existing number has to be written at the generation that number
-already has, and reading it back out of the base at write time would be a second
-source for a fact the change already knows.
+There is **no `Deleted` variant** on `ObjectState`, because T5's rule is that M3
+frees no object number: a removal is a rewrite of the referrer, and the removed
+object simply stops being reachable. So `ObjectState` is one shape and
+`Option<ObjectState>` is two states, not three. `generation` is carried because a
+`cos::Object` written back to an existing number has to be written at the
+generation that number already has, and reading it back out of the base at write
+time would be a second source for a fact the change already knows.
 
-Projecting `Overlay` onto `BTreeMap<u32, cos::PendingEdit>` for `section_for` is
-then a one-to-one map onto `PendingEdit::Set` alone; `PendingEdit::Delete` is
-never produced.
+**The trailer is inside the overlay, and a trailer key is an undoable change.**
+The first draft of this section left it outside both, and `section_for`'s second
+argument (`trailer_edits: &Dict`) had no stated home, no capture rule and no way
+into an `Entry`. That is not a theoretical gap: it is reachable on the **first
+Document Properties edit of an ordinary file**. `cos::set_info_field` on a
+document with no `/Info` does `add_object` **and** `set_trailer_entry("Info", ...)`
+(`document.rs:936-955`), and `crates/cos/tests/incremental.rs:459` is named
+`a_document_with_no_info_dictionary_gains_one` and runs against
+`corpus/seeds/minimal.pdf`, a **tracked** seed, so the path is exercised on every
+CI run rather than only when the external corpus is present.
+
+Since T2 forbids `core` from calling `add_object` or `set_trailer_entry`, `core`
+does both itself: reserve a number, write the new `/Info` dict into the overlay,
+and set the trailer's `/Info` key. With the trailer outside `Change`, two things
+break silently:
+
+- **Undo leaves a dangling trailer.** It drops the `/Info` object from the
+  overlay and leaves the trailer naming it, so the next save emits a trailer
+  pointing at an object the section does not write and the base does not have.
+  `section_for`'s gate as first written covers "every reference in every object
+  this section writes", and **the trailer is not one of those objects**, so the
+  gate does not see it either.
+- **T3's headline claim is false on this path.** "Edit, then undo, then save
+  writes nothing at all" rests on the net overlay being empty, but
+  `has_pending_changes()` includes `!self.trailer_edits.is_empty()`
+  (`document.rs:961-963`), and the collapse-by-value rule has no trailer key to
+  compare against.
+
+So `Overlay` gains `trailer: Dict` and `Change` gains a `TrailerKey` variant. A
+trailer edit is then captured, undone and collapsed by value exactly like an
+object edit, `before: None` means the key was absent exactly as it means the
+number was unreserved, and **`section_for`'s two arguments both come out of one
+undoable structure** rather than one of them coming from nowhere.
+
+The alternative, refusing `SetInfoField` on a document with no `/Info`, is a
+visible cut that P13a would have to state in row 14's Notes, and it is worse: it
+makes "set a Description" fail on the simplest possible file.
+
+Projecting `Overlay` onto `section_for`'s two arguments is then a one-to-one map:
+`states` onto `BTreeMap<u32, cos::PendingEdit>`, using `PendingEdit::Set` alone
+since `PendingEdit::Delete` is never produced, and `trailer` straight through.
 
 Undo applies each `Change`'s `before`; redo applies each `after`. **This is
 deliberately more than "dropping overlay nodes"**, and PLAN.md's phrasing is
@@ -304,7 +343,27 @@ stays empty for the whole session.
 A **transaction** groups a gesture into one stack entry: an ink stroke is
 hundreds of pointer events, one annotation, one `Ctrl+Z`. An annotation is
 three object changes (the annotation dict, its appearance stream, the page dict
-whose `/Annots` gained a reference) and one stack entry. **The referrer change is
+whose `/Annots` gained a reference) and one stack entry.
+
+**Two producers can write into one `Entry`, so the order is a rule and not an
+accident.** A single transaction can carry changes from the verb itself, from
+P4's structure-tree maintenance hook, and now from a trailer key. Undo replays an
+`Entry`'s `before`s and redo its `after`s, so if two producers both touch object
+N the last write wins in each direction and the two directions must agree. The
+rule:
+
+> **Within one `Entry`, at most one `Change` exists per key** (per object number,
+> and per trailer key). A producer that touches a number another producer in the
+> same transaction already touched **updates that `Change`'s `after` and leaves
+> its `before` alone**, because `before` is the state before the transaction, not
+> before the producer.
+
+That makes the order producers run in irrelevant to the result, which is the
+property worth having: the hook runs after the verb today because the verb
+decides what changed, but nothing downstream may depend on that. `transact`
+enforces it by keying its in-flight changes rather than pushing onto a `Vec`,
+and P2 asserts it with a transaction whose verb and hook both rewrite the same
+page dict. **The referrer change is
 not optional bookkeeping: it is the change that makes undo work at all**, since
 under the free-nothing rule reachability is the only thing an undo can alter
 about an object it created.
@@ -319,9 +378,13 @@ Ten edits then one save is one section carrying the net object writes of all ten
 Three consequences the plan states rather than discovers:
 
 - **Edit, then undo, then save writes nothing at all** on a clean document. The
-  net overlay is empty, `section_for` returns `None`, and the save copies the
-  original bytes with no appended section. That is guarantee 1's no-op rule
-  applied to a document the user did edit, and it is a real test.
+  net overlay is empty **including its trailer** (T2), `section_for` returns
+  `None`, and the save copies the original bytes with no appended section. That
+  is guarantee 1's no-op rule applied to a document the user did edit, and it is
+  a real test. The trailer clause is load-bearing rather than decorative:
+  `has_pending_changes()` includes `!trailer_edits.is_empty()`, so a trailer key
+  left behind by an undo makes this claim false, which is exactly what happens on
+  the first Document Properties edit of a file with no `/Info`.
 
   **The exception, which the first draft got wrong:** `has_pending_changes()` is
   `!edits.is_empty() || !trailer_edits.is_empty() || !provenance.is_clean()`
@@ -504,6 +567,12 @@ check it forgot:
   page directly or by name. The outline fix-up walks `/Outlines`; this one walks
   every surviving page's `/Annots`. Both are needed and neither finds the other's
   case.
+- **`/OpenAction` and page-level `/AA`** naming a removed page. Carried in the
+  first draft's list, dropped when this one was rewritten, and restored here
+  because P5 owns the work either way and **this list and P5's are meant to be
+  the same list**: this one is what an adversarial reviewer checks the
+  transformation forgot, so a fix-up present in P5 and absent here is a gap in
+  the check rather than in the code.
 
 Each of these is a distinct fix-up function on the same edit, individually
 testable, and each has a fixture named in P5.
@@ -665,41 +734,64 @@ Four numbers (P0, P9, P13, P14) are **umbrella sections**: a shared preamble
 saying why the work splits, then `####` sub-packages that are the real units.
 A sub-package carries every field above except where the umbrella already
 carries it: P0 states Rows closed, Depends on, What exists to build on and
-Review risk once for both; P9 and P13 state the shared goal once, and P9a, P9c
-and P13c have no "What exists to build on" because there is nothing in-repo for
-them to build on. Thirty-one packages in total.
+Review risk once for all three of P0a, P0b and P0c; P9 and P13 state the shared
+goal once, and P9a, P9c and P13c have no "What exists to build on" because there
+is nothing in-repo for them to build on. Thirty-two packages in total.
 
-### P0. Split `ShellFrame`, in two packages
+### P0. Split `ShellFrame`, in three packages
 
 **Goal.** Make the sixteen M3 packages that touch `crates/app/src/shell` able to
 run in parallel. This is not tidying; it is the precondition for the schedule.
 
+**P0a alone is necessary and not sufficient**, and the plan says which packages
+complete it. After P0a, `tabs/mod.rs` still carries a **4669-line test module**
+that every package adding a shell test must edit, which is the same conflict
+magnet in a new place. **P0c** moves those tests out. **P0b** does the field
+restructuring. "P0" as a precondition means all three.
+
 `crates/app/src/shell/chrome/tabs.rs` is **8521 lines** with a single `impl
-ShellFrame` block spanning lines **371 to 2924 (115 methods)** and a 24-field
-struct. M2's own audit named it the recurring conflict point. Every M3 app
+ShellFrame` block spanning lines **371 to 2924** and a **24-field** struct
+(`tabs.rs:234-264`). The inherent block holds **115** methods; `impl Drop` and
+`impl Render` add one each, for 117 across all three.
+
+**One number is disputed and is left disputed rather than split.** P0a's
+implementation review reports 118 methods and 25 fields. Re-counted here against
+`fa5a194` by two independent patterns, the inherent block has 115 and the struct
+body has 24 named fields, and 8521 matches exactly, so both passes are reading
+the same file. The gap is three methods and one field and it is not reconciled.
+Whoever reconciles it should treat the count as load-bearing: it is the
+denominator of P0a's inventory, and an inventory that starts from the wrong total
+is the failure mode this package exists to prevent. M2's own audit named it the recurring conflict point. Every M3 app
 package adds a field, a menu arm, a dialog call site and an accessibility child
 to that one block. Sixteen branches doing that concurrently is sixteen rebases
 through a 2500-line `impl`, and a rebase through an `impl` block resolves without
 judgement only until two packages add a method with the same name.
 
-**It is two packages, because the acceptance test only works for one of them.**
+**It is three packages. Two of them because the acceptance test only works for
+one, and the third because P0a leaves the tests where they were.**
 The inventory below compares method bodies by normalized hash, on the principle
 that a moved body hashes the same. That holds for pure relocation and fails
 completely for field restructuring: moving a loose field into a sub-struct
 rewrites `self.foo` to `self.state.foo` in every method that touches it, so
 **every body hash changes and the inventory degenerates into noise for exactly
 the transformation it most needs to prove**. Running both under one acceptance
-test would mean running neither.
+test would mean running neither. **P0c** is separate for the opposite reason:
+the inventory certifies it for free, so it needs no acceptance work of its own
+and should not wait behind P0b's.
 
 **Shared by both packages**, stated once rather than twice:
 
-**Rows closed.** None, in either. Neither changes behaviour.
+**Rows closed.** None, in any of the three. None of them changes behaviour.
 
-**Depends on.** Nothing. P0a is a day-one root and P0b follows it.
+**Depends on.** Nothing. P0a is a day-one root; P0c and P0b both follow it and
+are independent of each other, since one moves tests and the other moves fields.
 
 Every app package below that writes "P0b" in its own Depends-on line means the
-split being complete. P1c is the one app-touching package that names neither,
-because its only app file is one that neither sub-package rewrites.
+production split being complete. P1c and P8 name neither, because their only app
+files are test targets none of the three rewrites. **P0c is not in anyone's
+Depends-on line and still gates the schedule in practice**: until it lands, every
+package adding a shell test edits one 4669-line module, so it is a contention
+fact rather than a compile-order fact (section 5).
 
 **What exists to build on.** `chrome/mod.rs` already re-exports `ShellFrame`
 from `tabs`, so callers outside `chrome` see no change. `accessible.rs`,
@@ -721,20 +813,59 @@ to the result.
 
 #### P0a. Relocation only
 
-- The `impl` block splits by concern into `impl ShellFrame` blocks in
-  `chrome/{menu,dialogs,context,export,accessible}.rs`, which Rust permits
-  across files within a crate via inherent impls in the same module tree.
+- The `impl` block splits by concern into `impl ShellFrame` blocks in a **nested
+  `chrome/tabs/` module tree**, which Rust permits via inherent impls in the same
+  module tree. **Nested, not sibling files.** The first draft named
+  `chrome/{menu,dialogs,context,export,accessible}.rs`, and that layout was never
+  implementable, for three reasons P0a's implementation review established:
+
+  1. **It collides on day one.** `crates/app/src/shell/chrome/accessible.rs`
+     **already exists**. Naming it as a new sibling retires the layout on its
+     own, before any argument about visibility.
+  2. **Nesting is what makes the split scope-preserving, which is the entire
+     claim of this package.** `pub(super)` in a child of `chrome::tabs` reaches
+     exactly the set a private item in `chrome::tabs` reached. Under the sibling
+     layout the new modules are peers of `chrome::tabs`, so 120 items would have
+     needed `pub(in crate::shell::chrome)`, which also hands `side_panel`,
+     `rail`, `theme`, `tool_search`, `commands`, `accessible`, `quick_actions`,
+     `page_controls` and `global_bar` direct access to every one of
+     `ShellFrame`'s fields. That is a 120-item encapsulation leak wearing a
+     relocation's name, and it is the opposite of "behaviour-preserving". P0a's
+     reach analysis over the nested tree found **0 of 444 items widened and 50
+     narrowed**.
+  3. **Nesting leaves `chrome/mod.rs` untouched**, so zero Rust files outside
+     `tabs/` changed. Siblings would have needed six new `mod` declarations there
+     plus re-plumbing the `pub(in crate::shell) use tabs::ShellFrame` re-export,
+     which is edits to a shared file in a package whose whole point is not
+     touching shared files.
+
+  This plan's own words, impl blocks "in the same module tree", are satisfied by
+  nesting and violated in spirit by siblings.
 - `run_main_menu_command`'s match and `canvas_context_entries`' match become
   the two extension points M3 packages append to, each in its own file.
-- The export worker (about 4500 lines of free functions and tests after the
-  `impl`) moves to `chrome/export.rs` unchanged.
+- The export worker moves to `chrome/tabs/export.rs` unchanged.
 - **No field moves, no signature changes, no body changes.** Every byte of every
   body is the byte that was there.
 
-**Files.** `crates/app/src/shell/chrome/tabs.rs` (shrinks), new
-`crates/app/src/shell/chrome/{menu,dialogs,context,export}.rs`,
-`crates/app/src/shell/chrome/accessible.rs` (existing, receives the tree-assembly
-methods), `crates/app/src/shell/chrome/mod.rs`.
+**Files.** `crates/app/src/shell/chrome/tabs.rs` becomes
+`crates/app/src/shell/chrome/tabs/`, and **nothing outside it changes**:
+
+| Module | Production lines |
+|---|---|
+| `tabs/mod.rs` | 1407, plus a 4669-line test module (P0c's) |
+| `tabs/export.rs` | 791 |
+| `tabs/accessible.rs` | 618 |
+| `tabs/menu.rs` | 422 |
+| `tabs/context.rs` | 381 |
+| `tabs/frame_state.rs` | 317 |
+| `tabs/dialogs.rs` | 162 |
+
+`chrome/mod.rs` is untouched, `chrome/accessible.rs` is a different, pre-existing
+file and stays where it is, and no file outside `tabs/` is edited.
+
+(Those seven sizes are **as reported by P0a's implementation**, not measured in
+this document's own pass; section 1's footnote rule applies, so re-count them
+before relying on any one of them.)
 
 **The acceptance test, and why the obvious one is not enough.** A green suite
 does not prove an 8521-line split preserved behaviour, because not every branch
@@ -775,8 +906,22 @@ mechanical and does not depend on coverage.
 **Verification.**
 - The item inventory before and after is identical as a set, with the two listings committed to the PR so a reviewer can diff them rather than trust a claim.
 - Every relocated dispatch match compiles without a wildcard arm; every `Vec`-shaped table is length-asserted and variant-exhaustive; no fixed-size table became a `Vec`.
-- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` green at the same test count; `cargo test -p onionskin-app --features shell` green; `cargo clippy -p onionskin-app --no-default-features --features shell,shell-test-support --all-targets -- -D warnings`; `cargo test -p onionskin-app --features a11y-probe --test a11y_probe` on macOS.
-- `cargo test -p onionskin-app --no-default-features` still green: the split must not disturb the feature gating that guarantee 5 rests on.
+- **Runs: every app configuration CI has, named, because a subset is how this package cut itself.** P0a shipped one self-inflicted defect, an import whose only user was feature-gated, which **compiled under all four configurations the first draft listed and not under CI's**. The list is therefore CI's own, from `.github/workflows/ci.yml`: `cargo build -p onionskin-app --features shell`; `cargo test -p onionskin-app --features shell`; `cargo test -p onionskin-app --features shell,shell-test-support`; `cargo test -p onionskin-app --no-default-features`; `cargo test -p onionskin-app --no-default-features --features tools-basic,commands-core`; `cargo clippy -p onionskin-app --features shell,shell-test-support --all-targets -- -D warnings`; and `cargo test -p onionskin-app --features a11y-probe --test a11y_probe` on macOS.
+- **Green means no new diagnostics, not exit code zero.** The reviewer found a second instance of the same class shipping as ten warnings, which every one of the commands above reported and none of them failed on. The check is a diff of the diagnostic set before and after, and a new warning is a finding.
+
+**What goes into CI afterwards, and what does not.** The inventory is a
+**one-shot acceptance artifact**, and the two obvious ways to keep it are both
+wrong for the same reason: regenerating a baseline and maintaining an allow-list
+each try to turn it into a standing invariant, and any such gate fails on the
+first legitimate behaviour change and is disabled within a week. What belongs in
+CI is **`procedure_mutation.py`**: it mutates copies, needs no baseline, runs in
+seconds, and asserts the only thing that needs asserting standing, which is that
+the inventory still bites. It breaks when somebody deletes the mutated method or
+renames a snippet, and **that is the feature**, in exactly the way
+`ONIONSKIN_CORPUS_REQUIRED` turning a silent skip into a failure is the feature
+(P1c). The two listings get a `README` saying what they are: a dated acceptance
+record, not regenerated, expected to differ from the current tree, and a future
+relocation emits its own pair at its own base.
 
 **Mutation that must break its tests.** Not a mutation of the product: a mutation
 of the acceptance procedure itself, because that is the thing being trusted.
@@ -796,8 +941,12 @@ cover.
 have module homes (`find`, `home`, `navigation`, `rail_state`,
 `quick_actions_state`, `side_panel_state`); the loose ones do not.
 
-**Files.** `crates/app/src/shell/chrome/tabs.rs`, new
-`crates/app/src/shell/chrome/frame_state.rs`.
+**Files.** `crates/app/src/shell/chrome/tabs/mod.rs` and
+`crates/app/src/shell/chrome/tabs/frame_state.rs`. Neither is new: P0a already
+shipped `tabs/frame_state.rs` at 317 lines holding the state types that were
+already grouped. P0b moves the **loose** fields into it, which is why its
+acceptance test is the compiler and a normalization rule rather than the
+inventory.
 
 **How it is verified instead**, since the inventory cannot be:
 
@@ -815,8 +964,47 @@ have module homes (`find`, `home`, `navigation`, `rail_state`,
   normalized inventory still reports it. If the normalization swallows that, it
   is normalizing too much and P0b has no acceptance test at all.
 
-**Verification.** The same five invocations as P0a (its four plus the
-guarantee-5 `--no-default-features` run), at the same test count.
+**Verification.** P0a's full CI configuration set, at the same test count, with
+the same rule that green means no new diagnostics rather than exit code zero.
+
+#### P0c. Move the tests out of `tabs/mod.rs`
+
+`tabs/mod.rs` carries **118 test functions in one 4669-line `#[cfg(test)]`
+module**, which is more than three times its production half and is what every
+package adding a shell test has to edit. P0a relocated the production code and
+left this untouched, deliberately, so that its inventory had one thing to prove.
+
+P0c moves those tests into per-file `#[cfg(test)] mod tests` blocks beside the
+code they exercise: `export.rs`, `accessible.rs`, `menu.rs`, `context.rs`,
+`frame_state.rs`, `dialogs.rs` and what remains in `mod.rs`.
+
+**P0a's inventory certifies this for free**, which is why it is a separate
+package rather than a risk. The inventory's container key excludes the file, so a
+pure test relocation compares as **identical sets with zero differences**. No new
+acceptance machinery is needed; the existing procedure is the acceptance.
+
+**The real cost is imports, not tests.** Seven test modules each need their own
+`use` list, each with its own `cfg` pass, and that is where a relocation of this
+shape actually goes wrong: an import whose only user is feature-gated compiles in
+one configuration and not another, which is precisely the defect P0a shipped.
+So P0c runs the same full CI configuration set, with the same
+new-diagnostics-not-exit-code rule.
+
+**Files.** `crates/app/src/shell/chrome/tabs/*.rs`.
+
+**Verification.** The inventory reports zero differences. The test count is
+identical before and after, per configuration and not only in total, since a test
+that stopped compiling under one feature set is exactly what this risks. The full
+CI configuration set from P0a, with no new diagnostics.
+
+**Review risk.** Whether a test moved to a file whose code it does not exercise,
+which the inventory cannot see because it excludes the container. Whether any
+test was quietly deleted rather than moved, which the identical-count check
+catches only if it is per configuration. Whether a shared test helper was
+duplicated into seven modules instead of living in one.
+**Mutation that must break its tests:** deleting one test function must make the
+per-configuration count differ; moving one test without its `use` must fail one
+configuration and not the others, which is the whole point of running all of them.
 
 ### P1. cos: the edit surface M3 needs
 
@@ -868,11 +1056,18 @@ kernel package above depends on.
    where paying O(file) once per fixture is exactly right.
 
    **The gate inside `section_for`** is the cheap one, and its scope is stated as
-   a contract: *every reference in every object this section writes must resolve,
-   after this section, to an object that exists; and no object this section
-   writes may reference a number this section frees.* Both halves are
-   proportional to the edit. The gate refuses with a typed error naming the
-   holder and the target.
+   a contract: *every reference in **the trailer this section emits** and in
+   every object this section writes must resolve, after this section, to an
+   object that exists; and neither the trailer nor any written object may
+   reference a number this section frees.* All of it is proportional to the edit.
+   The gate refuses with a typed error naming the holder and the target.
+
+   **The trailer is named explicitly because it is the one thing the section
+   emits that is not one of its objects**, and it can dangle on its own. A
+   trailer whose `/Info` names an object the section does not write and the base
+   does not have is exactly what an undone "set a Description on a file with no
+   `/Info`" produces (T2), and a gate scoped to "objects this section writes"
+   passes it.
 
    **What the gate cannot see, said out loud:** an object *already in the file*,
    not rewritten by this section, pointing at a number this section frees. No
@@ -916,7 +1111,8 @@ place, so item 4 is a parameter change, not a rewrite.
 - `write_new` output reopens through `Document::open` (not `open_repairing`), has the stated page count, and round-trips: `write_new` then `open` then `save_to_vec` with no edit is byte-identical.
 - **`section_for` is a refactor, not a second serializer.** Two halves, because the obvious test is true by construction and proves nothing: `incremental_section()` delegates to `section_for(&self.edits, &self.trailer_edits)`, so comparing the two always agrees. The half that bites is that **every existing test in `crates/cos/tests/{incremental,delete,roundtrip,repair}.rs` passes byte-for-byte unchanged**, which pins the delegation. The half that exercises the new path is a section built from an overlay the document's own edit map does **not** contain: it reopens through `Document::open` and resolves every written number to the overlay's object, proving the argument is read rather than ignored.
 - **The gate, three cases.** A section whose written object references a number that section frees is refused with the typed error naming both. A section whose written object references a number the *base file* marks free is refused the same way. The legal case, a section that frees an object nothing references, still succeeds, which is what `crates/cos/tests/delete.rs` already exercises and what stops the gate being a constant `Err`.
-- **`audit_references`, three cases.** It is empty on every unmodified `external/` fixture, or it is reporting noise and no package can assert on it. It is non-empty on a hand-built file with one deleted target, naming that exact pair and no other. It finds a reference buried in a nested array inside a stream dictionary, which is the shallow-walk failure mode.
+- **`audit_references`, three cases.** It is empty on a **named sample** of `external/` fixtures with a stated pass floor, in the shape `roundtrip.rs` already uses for its corpus walks, or it is reporting noise and no package can assert on it. It is non-empty on a hand-built file with one deleted target, naming that exact pair and no other. It finds a reference buried in a nested array inside a stream dictionary, which is the shallow-walk failure mode.
+- **The sweep is bounded on purpose.** `audit_references` is O(file), P1c makes `external/` mandatory, and the set is 3300-plus PDFs, so "empty on every unmodified fixture" would put a new unbounded walk over the whole corpus on every CI run. Every other use in this plan is already bounded at three fixtures per package; only this one was not. The sample is named in the test and its size is chosen against the wall-time P1c records, not guessed. A floor rather than an exact count, so a corpus refresh that adds files does not fail the build for adding them.
 - **The two are not the same check**, asserted by construction: build a file whose *unrewritten* object points at a number a section frees, emit that section through `section_for`, and assert the gate accepts it while `audit_references` on the result reports it. That is the honest statement of the gate's limit, as a test rather than as a caveat, and it is what makes T5's free-nothing rule load-bearing rather than decorative.
 - `cargo test -p onionskin-cos`, `ONIONSKIN_CORPUS_REQUIRED=1 cargo test -p onionskin-cos`, and `cargo clippy --workspace --all-targets -- -D warnings`.
 
@@ -992,12 +1188,49 @@ the class no longer being refused outright. It is not a defect to be filed later
 it is the shape of the ruling, and the open-time notice must say so in words a
 user understands rather than naming a milestone alone.
 
+**The rule for authoring a new document from an encrypted source, stated here
+because this package owns the encryption posture and every other package
+references it.** Disabling *editing* does not cover this. Compress, Reduce File
+Size, extract-to-file, split, combine and the comment summary take **no pending
+edit**; they read an encrypted document and produce a new one through
+`cos::write_new(objects, trailer)`, and ruling A puts the permissions-only class
+in reach of exactly that by making it exportable. Nothing said what happens to
+`/Encrypt`, and **both available outcomes are wrong**:
+
+- **Pass the source trailer through** and the output is plaintext objects under
+  an `/Encrypt` trailer. No reader can open it, from a command whose whole
+  promise is a smaller working file.
+- **Strip `/Encrypt`** and the output is a silently decrypted copy with the `/P`
+  bits gone, produced by a milestone that has just told the user it will not let
+  them edit that document because its permissions matter.
+
+> **An operation that would author a new document by copying an encrypted
+> source's object graph is refused at the command, with the same typed reason and
+> the same M6 milestone the edit gate uses.** One predicate, reused: the command
+> reports unavailable through the same `Requirement` query P7 owns, not through a
+> second flag, so the user meets one consistent rule rather than two.
+
+**Print-to-file is deliberately not in that class**, and saying so matters because
+it looks like it. `FileBackend` (P15) authors its trailer fresh: the output is a
+new document of composed sheets with its own catalog, not a copy of the source's
+graph and not a derivation of the source's trailer, so no `/Encrypt` question
+arises. Ruling A grants "print it" in the same breath as "export it", and
+refusing print-to-PDF would take back what the ruling gave.
+
+**One asymmetry this leaves, named rather than discovered.** M3 enforces **no**
+`/P` bit: it disables editing on every encrypted document, which is stricter than
+any permission bit, and it gates nothing else. So a document whose `/P` forbids
+printing can still be printed. That is a real gap against Acrobat in the opposite
+direction from the residual above, it is out of scope for M3 because permission
+enforcement belongs with the write path at M6, and it goes in the
+`known-issues.md` entry the orchestrator lands from this package's measurement.
+
 **Files.** `crates/crypto/src/{lib,standard,algorithms,filters}.rs`,
 `crates/crypto/Cargo.toml`, `crates/cos/src/{document,object,stream}.rs`,
 `crates/cos/Cargo.toml`, new `crates/cos/tests/encrypted.rs`, new
 `crates/cos/tests/encryption_classes.rs` (the measurement), new
 `docs/evidence/encryption-classes.md` (its output),
-`crates/core/src/session.rs` and `crates/app/src/shell/chrome/tabs.rs` (the
+`crates/core/src/session.rs` and `crates/app/src/shell/chrome/tabs/mod.rs` (the
 open-time notice and the editing gate).
 
 **Depends on.** Its `crates/crypto` and `crates/cos` work depends on nothing and
@@ -1015,6 +1248,9 @@ single guarded predicate, so the wiring surface in cos is small.
 - A password-protected fixture is **not** opened by an empty password, asserted, so the handler is not accidentally permissive.
 - Round-trip: opening an encrypted file and saving with no edit is byte-identical (guarantee 1 must hold for this class too, and it is free, because a no-op save writes nothing).
 - A save with a pending edit on an encrypted document is refused with a typed error naming M6, and the edit tools were already disabled at open, asserted in the app.
+- **Compress, Reduce File Size, extract, split, combine and summarize are unavailable on an encrypted document**, asserted through the same `Requirement` query as the edit tools rather than through a second flag, and carrying the same typed reason and the same M6 milestone. Six commands, one predicate, asserted by reading the registry.
+- **Print-to-file is still available** on the same document, asserted the same way, which is what pins the carve-out above as a decision rather than an oversight. Its output opens through `cos::Document::open` and carries no `/Encrypt`.
+- **No `write_new` output ever carries an `/Encrypt` trailer key**, asserted over every operation in the previous two bullets. That is the assertion that fails if somebody later routes a refused operation around the predicate.
 - Known-answer tests against the ISO 32000-2 algorithm vectors for each of `/R` 2, 3, 4 and 6.
 - The measurement's tally is asserted, not printed: the test fails if the number of files in either class changes, so a corpus refresh that alters the picture is visible rather than silent.
 - The open-time notice appears for an encrypted document and names the editing restriction in words, asserted on the notice text; the edit tools report disabled through the same `Requirement` query P7 owns, not through a second flag.
@@ -1029,10 +1265,14 @@ Whether the string-decryption path covers strings inside object streams, which
 are **not** separately encrypted because the container already was, and getting
 that backwards corrupts every object-stream document. Whether the "editing
 disabled" state is derived from the encryption state or from a flag someone can
-forget to set. **Mutation that must break its tests:** returning the file key
-unmodified as every object key must fail the RC4 and AES-128 fixtures while
-still passing AES-256, which is exactly why the fixtures must cover all four
-revisions.
+forget to set. Whether the authoring refusal is derived from the same predicate
+as the edit gate or from a second one that can drift, which is the whole point of
+reusing it. Whether anything reached `write_new` from an encrypted source by a
+route the predicate does not cover. **Mutation that must break its tests:**
+returning the file key unmodified as every object key must fail the RC4 and
+AES-128 fixtures while still passing AES-256, which is exactly why the fixtures
+must cover all four revisions; making the authoring predicate always return
+available must fail all six command tests and leave the print-to-file one green.
 
 ### P1c. CI: make the corpus this plan's fixtures come from reach CI
 
@@ -1141,14 +1381,25 @@ Shapes, per T2:
 /// One overlaid object. There is no `Deleted` variant: M3 frees no object
 /// number (T5), so a removal is a rewrite of the referrer.
 pub struct ObjectState { generation: u16, object: cos::Object }
-/// `before: None` means, and only ever means, "object `number` was not in the
-/// overlay immediately before this change". See the capture rule below.
-pub struct Change { number: u32, before: Option<ObjectState>, after: Option<ObjectState> }
-pub struct Overlay { states: BTreeMap<u32, ObjectState>, next_number: u32 }
+/// `before: None` means, and only ever means, "this key was not in the overlay
+/// immediately before this change" - an unreserved object number, or an absent
+/// trailer key. See the capture rule below.
+pub enum Change {
+    Object { number: u32, before: Option<ObjectState>, after: Option<ObjectState> },
+    TrailerKey { key: Name, before: Option<cos::Object>, after: Option<cos::Object> },
+}
+/// The trailer lives here, not beside here: `section_for`'s two arguments are
+/// `states` and `trailer`, and both have to be undoable (T2).
+pub struct Overlay { states: BTreeMap<u32, ObjectState>, trailer: Dict, next_number: u32 }
 pub struct Entry { label: &'static str, changes: Vec<Change> }
 pub struct History { entries: Vec<Entry>, cursor: usize, saved_mark: Option<usize> }
 pub enum DocumentEdit { /* the typed vocabulary, grown by P5 and P6 */ }
 ```
+
+**`Change::TrailerKey` is not speculative.** `SetInfoField` on a document with no
+`/Info` is one object write **and** one trailer write, and it is the first thing
+`File > Properties` does on `corpus/seeds/minimal.pdf`. Without the variant, undo
+drops the object and leaves the trailer naming it. T2 has the full reasoning.
 
 **The base-capture rule, which is this package's sharpest correctness
 obligation** (T2). Leaving `before: None` to mean "the overlay had no node for
@@ -1157,10 +1408,14 @@ that exists in the file, save, undo, and nothing is restored, because the save
 cleared the overlay and made the base the edited value. That loses data with a
 green suite, and P2's verification as first drafted covered every case except it.
 
-> **`Change::before` for a number that exists in the base document is read
-> through `cos::Document::get` at edit time and stored as a concrete
+> **`Change::Object`'s `before`, for a number that exists in the base document,
+> is read through `cos::Document::get` at edit time and stored as a concrete
 > `Some(ObjectState { generation, object })`.** `None` is produced only by the
 > reservation counter, for a number nothing has ever written.
+>
+> **`Change::TrailerKey`'s `before` is the same rule one level up**: for a key
+> the base trailer has, it is read out of the base trailer and stored concretely;
+> `None` means the base trailer had no such key.
 
 With that, `None` means one thing on both sides of a save and needs no rebasing.
 Projecting `Overlay` onto `cos::PendingEdit::Set` for `section_for` is a
@@ -1233,6 +1488,8 @@ says the edit history "will own its own undo stack").
 **Verification.**
 - Headless property test over a generated sequence of edits: apply N edits then undo N leaves the overlay byte-identical to empty, for N up to a few hundred, including sequences that overwrite the same object repeatedly and sequences that delete an original object. **This is the case PLAN.md's "drop the overlay node" phrasing gets wrong**, so it is the case the test must cover explicitly and by name.
 - **The base-capture rule, by name:** editing an object that exists in the base document records `before` as `Some(ObjectState { .. })` holding the base object by value, asserted on the `Change` itself and not inferred from undo working. A test that only checks undo passes against an implementation that reads the base at undo time, which stops working the moment the base is reopened, which is the whole bug.
+- **The trailer is undone with everything else**, by name: **setting a Description field on a document with no `/Info`, then undoing, leaves the trailer as it was, asserted on the trailer and not on the overlay.** `corpus/seeds/minimal.pdf` is the fixture and it is tracked, so this runs everywhere. Then the consequence: the following save writes nothing at all, which is T3's headline claim on the one path that falsifies it.
+- **Two producers, one `Entry`, one `Change` per key**: a transaction whose verb and whose P4 structure hook both rewrite the same page dict produces exactly one `Change` for that number, whose `before` is the state before the transaction and whose `after` is the hook's. Asserted on the entry, and asserted to hold with the two producers run in either order, which is what makes the ordering rule a rule rather than a description of today's code.
 - **No `Change` ever carries a `before: None` for a number the base document has**, asserted as a property over the generated edit sequences. That is the invariant stated as a check, and it is what makes `None` safe to drop on either side of a save.
 - **The stack's memory bound.** A bench reporting one `Entry`'s resident size for the 1000-page reorder and for a hundred-annotation session, and a test that a session past the bound has dropped its oldest entries, reports a shorter reach in the Edit menu, and has not dropped anything below the saved mark without saying so.
 - Redo after undo restores exactly; a new edit after an undo truncates the redo tail, asserted.
@@ -1244,8 +1501,10 @@ says the edit history "will own its own undo stack").
 the base document, which are different whenever an object has already been
 edited, and getting it wrong makes exactly the second edit of an object
 un-undoable. Whether `before: None` is ever produced for anything other than a
-freshly reserved number, which is the invariant the whole undo-across-a-save
-story rests on. Whether the overlay is cleared on the `Save As` path as well as
+freshly reserved number or an absent trailer key, which is the invariant the
+whole undo-across-a-save story rests on. Whether anything writes the overlay's
+trailer without recording a `Change::TrailerKey`, which is the shape of the
+original defect and would not show up in any object-level test. Whether the overlay is cleared on the `Save As` path as well as
 `Save`, since both reopen. Whether the overlay collapses by value against the original (T3) or
 by a dirty flag, which would make edit-then-undo-then-save append an empty
 section. Whether `DocumentEdit` grew a `Raw(Change)` escape hatch, which would
@@ -1257,7 +1516,9 @@ overwrite sequence; making the overlay collapse a no-op must fail the
 edit-then-undo-then-save test in P3; leaving `before` as `None` for an object the
 base document has must fail both the capture test here and P3's
 `edit, save, undo, save` object-graph comparison, and if it fails only the second
-the unit test is not carrying its weight.
+the unit test is not carrying its weight; **making `Change::TrailerKey`'s undo a
+no-op must fail the no-`/Info` test and nothing else**, which is what proves that
+test is the one carrying the trailer.
 
 ### P3. `core::save`: one section per save, generations, and the preview buffer
 
@@ -1292,6 +1553,22 @@ Four pieces:
    `sections()`, plus `revert_to(generation)`, which truncates and reopens.
    Reverting is refused, loudly, if the document has unsaved edits, or if the
    target is not a trailing section.
+
+   **`revert_to` owns the render worker's lifetime across the truncation, and
+   this package owns that**, which the first draft left as a review-risk question
+   in two packages and a deliverable in neither: both P3 and P19 asked "whether
+   `revert_to` can be reached with the render worker still holding the truncated
+   bytes", and asking twice is not owning once. The worker renders from an
+   `Arc<Vec<u8>>` it was handed, so it does not read the file and cannot observe
+   a truncation directly; what it can do is finish a render against the **old**
+   bytes and deliver tiles for a document that no longer has those pages. The
+   rule: `revert_to` **bumps the document's byte generation before it truncates**,
+   swaps in the reverted `Arc`, and the worker's existing stale-response
+   discipline drops anything in flight against the old one. That is the same
+   mechanism M2 already uses for stale thumbnail and snapshot completions, so
+   this is reusing a solved problem rather than inventing a second one. P19 calls
+   `revert_to` and asserts the user-visible half; it does not re-decide the
+   lifetime.
 4. **Autosave.** A periodic write of the overlay to a recovery file, not to the
    document. `cos::Document` is `!Send` (m2-viewer's candor item 7, now due), so
    the overlay is what crosses the thread boundary, not the document: autosave
@@ -1355,8 +1632,9 @@ whether "one section" is asserted by parsing or by counting `%%EOF` occurrences
 (the original file may legitimately contain one already); whether the reopen
 after save leaves any cache holding a pointer into the old parse; whether the
 preview cache is keyed on something that actually changes with every edit;
-whether `revert_to` can be reached with the render worker still holding the
-truncated bytes; whether autosave's recovery replay can double-apply an edit
+whether `revert_to`'s generation bump really precedes the truncation, since the
+reverse order leaves exactly the window it exists to close; whether autosave's
+recovery replay can double-apply an edit
 that was also saved; whether a `Save As` leaves the generations list describing
 the old file; whether the guarantee-1 carve-out for repaired documents is
 derived from `Provenance` or from a filename list somebody maintains; whether any
@@ -1953,9 +2231,9 @@ new `tools/stamps.py` and the generated `assets/stamps/*.svg`; **and the app
 surface its rows are scored on**: new `crates/app/src/shell/stamps_dialog.rs`
 (rows 83 and 84, Create a custom stamp and Manage stamps),
 `crates/app/src/shell/dialog.rs` (the `ShellDialog` variant),
-`crates/app/src/shell/chrome/menu.rs` (their entries), and
-`crates/app/src/shell/chrome/tabs.rs`'s clipboard read for row 85, since GPUI
-owns the pasteboard and no plugin can reach it.
+`crates/app/src/shell/chrome/tabs/menu.rs` (their entries), and **P14a's
+clipboard image helper** for row 85, called rather than reimplemented: P14a lands first and
+owns it, and this package adds no pasteboard code of its own.
 
 **Depends on.** P0b (the app surface above), P6, P7, P9c (a custom stamp's
 appearance is drawn artwork, and P9c's shapes are where that geometry-to-
@@ -1980,6 +2258,7 @@ PNG, which is what a clipboard image stamp becomes.
 - Every shipped stamp is generated by the script from constants, and a test asserts the committed SVGs match a fresh generation, so nobody hand-edits one into resembling Adobe's artwork.
 - A dynamic stamp's rendered text contains the configured identity and a date matching a clock injected by the test, not the real clock, or the test is unstable and proves nothing.
 - Attach-as-comment: the saved file's embedded stream round-trips byte-identically to the input, and the attachment appears in `core::attachments` after a reopen. Path traversal in the file name is rejected, matching the existing `attachments.rs` rule.
+- **Encrypted sources are refused**, per P1b's authoring rule: this command reports unavailable on an encrypted document through the same `Requirement` query the edit tools use, with the same typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
 - Summary: the generated document opens through `cos::Document::open`, has the expected page count, and its extracted text contains every comment's contents and author.
 - Custom stamp creation from a PDF page and from an image both produce a `/Stamp` whose appearance renders.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo test -p onionskin-core` for the embedded-file writer; `cargo clippy --workspace --all-targets -- -D warnings`.
@@ -2029,6 +2308,7 @@ translating a user's selection into an `order`. `cos::Document::get` and
 - The nine operations, each on a deep-tree fixture and a flat one, each asserted through a fresh parse: page count, page order (compared by extracted text, so a reorder that keeps the count but shuffles nothing is caught), and P1's validator clean.
 - The importer: insert a page from a document with an embedded font, save, reopen, and assert the inserted page renders identically to its render in the source document, pixel-compared with the same tolerance the render tests already use. A shallow importer that copies the page dict and not its resources passes every structural test and fails this one.
 - Import of a page that references an object number already used in the destination: renumbered, asserted by checking the destination's original object at that number is unchanged.
+- **Encrypted sources are refused**, per P1b's authoring rule: this command reports unavailable on an encrypted document through the same `Requirement` query the edit tools use, with the same typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
 - Extract writes a new document through `write_new` whose pages match the source pages by extracted text.
 - Rotate composes: rotating a page that already has `/Rotate 270` by 90 gives 0, not 360.
 - P4's structure invariant clean after each operation on each tagged fixture, and reading order matches page order after a reorder.
@@ -2071,7 +2351,7 @@ the app surface rows 38, 39, 40 and 46 are scored on**: new
 `crates/app/src/shell/combine_dialog.rs` (the list the user builds, with add
 files, add folders, reorder, preview, remove and per-file page expansion),
 `crates/app/src/shell/dialog.rs` (two `ShellDialog` variants, combine and split),
-and `crates/app/src/shell/chrome/menu.rs` (their File menu entries).
+and `crates/app/src/shell/chrome/tabs/menu.rs` (their File menu entries).
 
 **Depends on.** P0b (the app surface above), P1 (`write_new`), P3, P5, P11 (the
 importer).
@@ -2095,7 +2375,8 @@ and reusing it rather than writing a second one is the point.
 - Split by page count on a 10-page file at 3: four files of 3, 3, 3, 1, with the last one asserted, because an off-by-one here produces three files and drops a page.
 - Split at bookmarks: a fixture whose top-level bookmarks are at pages 1, 4 and 9 produces three files with those boundaries, and a bookmark pointing at a page that does not exist is reported, not skipped.
 - Split by file size: the constraint is best-effort and the test asserts what it actually promises (no output exceeds the target unless a single page does), not an exact size.
-- Every output opens through `cos::Document::open` and satisfies P1's validator.
+- **Encrypted sources are refused**, per P1b's authoring rule: this command reports unavailable on an encrypted document through the same `Requirement` query the edit tools use, with the same typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
+- Every output opens through `cos::Document::open` and satisfies P1's validator. For combine, the refusal covers **any** encrypted input, not only the first, which is the case a per-document check written at the wrong loop level would miss.
 - Outputs carry a structure tree if all inputs did, and P4's invariant is clean; if any input is untagged, the output is untagged and says so rather than producing a half-tagged document.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features commands-core`; `cargo test -p onionskin-core` for the assembly primitive; `cargo clippy --workspace --all-targets -- -D warnings`.
 - **Corpus.** The three named combine inputs, the 10-page split fixture and the bookmark-boundary fixture are `external/`, behind P1c's fetch step and its mandatory re-run.
@@ -2144,7 +2425,7 @@ whose disabled reason names "the properties dialog".
 **Files.** `plugins/commands-core/src/properties.rs`, new
 `crates/core/src/metadata.rs` (the XMP packet reader and writer), new
 `crates/app/src/shell/properties_dialog.rs`,
-`crates/app/src/shell/dialog.rs`, `crates/app/src/shell/chrome/menu.rs`,
+`crates/app/src/shell/dialog.rs`, `crates/app/src/shell/chrome/tabs/menu.rs`,
 `crates/app/src/shell/panes/layers.rs` (the enabled `Properties` entry).
 
 **Depends on.** P0b, P3.
@@ -2156,6 +2437,7 @@ already hosts modals, so this is one more variant.
 
 **Verification.**
 - Writing a Description field appears in `/Info` **and** in XMP, and reopening reports the new value from **both readers**, which is why the reader is in scope. The two must agree, or the reader a given consumer uses decides what it sees.
+- **On a document with no `/Info` at all**, which is `corpus/seeds/minimal.pdf` and is the simplest file this command can meet: the edit creates the dictionary, sets the trailer's `/Info` key through `Change::TrailerKey` (T2), and **undo puts the trailer back**, asserted on the trailer. This package is the first caller of the trailer half of the edit model and it is the one that would have shipped the defect.
 - Initial View: setting "open at page 5, fit width" writes `/OpenAction` and reopening in Onionskin honours it, asserted through the session, not through the dialog's own state.
 - Save as Other offers exactly the sub-targets Onionskin supports, asserted against the registry rather than a hardcoded list, and PDF/X and Reader-Extended are absent rather than present-and-disabled.
 - The Security tab is read-only and **looks** read-only, asserted on the controls' accessibility state rather than on a visual claim.
@@ -2226,7 +2508,7 @@ tool.
 Delete, 19 Edit > Copy File to Clipboard. **3 rows.**
 
 **Files.** `plugins/commands-core/src/file_menu.rs`,
-`crates/app/src/shell/chrome/{menu,commands}.rs`.
+`crates/app/src/shell/chrome/tabs/menu.rs`, `crates/app/src/shell/chrome/commands.rs`.
 
 **Depends on.** P0b, P3.
 
@@ -2275,9 +2557,12 @@ images. **6 rows.**
 `crates/plugin-api/src/codec.rs` (the import half of `CodecPlugin`),
 `plugins/codecs-common/Cargo.toml`; **and the app surface its rows are scored
 on**: `crates/app/src/shell/chrome/global_bar.rs` (row 1, the Convert entry
-point), `crates/app/src/shell/chrome/menu.rs` (row 9, `File > Create`), and
-`crates/app/src/shell/chrome/tabs.rs`'s clipboard read for row 36, since GPUI
-owns the pasteboard and no plugin can reach it.
+point), `crates/app/src/shell/chrome/tabs/menu.rs` (row 9, `File > Create`), and **the
+clipboard read**, in `crates/app/src/shell/chrome/tabs/mod.rs`, for row 36, since GPUI owns the pasteboard and no plugin can
+reach it. **This package owns that helper and P10 calls it**: both need an image
+off the pasteboard (row 36 here, row 85 there), the landing order already puts
+P14a at depth eight and P10 at depth nine, and two packages writing a pasteboard
+read into one file is how the second one silently wins.
 
 **Depends on.** P0b (the app surface above), P1 (`write_new`), P3, P12 (page
 assembly).
@@ -2311,6 +2596,13 @@ tests:** fixing the created page's `/MediaBox` to A4 must fail the 300 DPI test.
 #### P14b. Compress a PDF and Reduce File Size
 
 **Goal.** The one deliberately destructive save path M3 ships, with its own gate.
+
+**Encrypted sources are out of scope, per P1b's authoring rule.** Compress on an
+encrypted document would have to either pass `/Encrypt` through, producing a file
+no reader opens, or strip it, producing a silently decrypted copy with the `/P`
+bits gone. It is refused at the command instead, with the same reason and
+milestone the edit gate uses. **Rows 51 and 52 carry that in their Notes**, which
+is a parity edit the totals contract recounts.
 
 **Scope, cut to what `cos` can actually emit, which is the correction that makes
 this package buildable.** The first draft's scope said compress would "write
@@ -2360,6 +2652,7 @@ and a long compress is the same shape.
 - The file is smaller on a fixture chosen because it has recompressible images, and **the output carries no incremental section**, asserted by parsing rather than by counting `%%EOF`.
 - **The output's cross-reference is a classic table**, asserted by parsing, which pins the scope cut above rather than leaving it as prose. A future object-stream writer will have to change this assertion deliberately.
 - A document with nothing to compress **reports that it saved nothing** rather than writing a same-size rewrite, asserted on the reported result and not on the byte count.
+- **Encrypted sources are refused**, per P1b's authoring rule: this command reports unavailable on an encrypted document through the same `Requirement` query the edit tools use, with the same typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
 - The flattening path is unreachable from `File > Save` by any route, asserted by driving `File > Save` on a document and checking the output has an appended section rather than a rewrite.
 - The UI string contains the word that tells the user history is discarded, asserted on the string.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features commands-core,codecs-common`; `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` for the dialog, plus the matching clippy.
@@ -2475,6 +2768,7 @@ doc comment.
 - One end-to-end pixel check per mode, not per option: render the produced sheet and the source page and assert the source page's content appears at the expected sheet coordinates. This is what catches a transform that is structurally plausible and geometrically wrong.
 - Print as Image on a page with a transparency group produces a sheet whose only content is one image XObject, asserted structurally, and whose render matches the direct render within tolerance.
 - Comments and Forms: four modes, four renders, each asserted for the presence and absence of the right annotation subtypes.
+- **Print-to-file works on an encrypted document**, and is the one `write_new` caller P1b's authoring rule deliberately exempts: this backend authors its trailer fresh rather than deriving it from the source, so no `/Encrypt` question arises, and ruling A grants printing. Asserted, so the exemption is a decision with a test rather than a gap.
 - `cargo test -p onionskin-print` runs with no window, no display and no printer, and is in the default `cargo test --workspace` job, which is the whole reason this package exists before P16.
 
 **Review risk.** Whether the transform is built from the crop box or the media
@@ -2556,8 +2850,8 @@ the generator's output printed as extra sheets.
 99 Advanced Print Setup. **7 rows.**
 
 **Files.** New `crates/app/src/shell/print_dialog.rs`,
-`crates/app/src/shell/dialog.rs`, `crates/app/src/shell/chrome/dialogs.rs`
-(P0a's), `crates/app/src/shell/chrome/global_bar.rs` (the Print menu entry and
+`crates/app/src/shell/dialog.rs`, `crates/app/src/shell/chrome/tabs/dialogs.rs`
+(P0a's; note the nesting, `chrome/dialogs.rs` does not exist), `crates/app/src/shell/chrome/global_bar.rs` (the Print menu entry and
 the button), `crates/app/src/shell/context_menu.rs` (`CanvasContextCommand::
 Print`'s `Requirement` becomes a real query), `crates/app/src/shell/chrome/
 commands.rs` (the `file.print` id and its `cmd-p` default), `crates/app/Cargo.toml`
@@ -2610,9 +2904,12 @@ gives them `cmd-s`, `cmd-shift-s`, `cmd-z` and `cmd-shift-z`.
 global bar, 7 Autosave and crash recovery, 10 File > Save, 11 File > Save As,
 13 File > Revert, 17 Edit > Undo / Redo. **7 rows.**
 
-**Files.** `crates/app/src/shell/chrome/{global_bar,commands,menu}.rs`,
-`crates/app/src/shell/chrome/tabs.rs` (the dirty indicator and the close
-confirmation), `crates/app/src/keymap.rs`, `crates/app/src/config.rs` (the
+**Files.** `crates/app/src/shell/chrome/{global_bar,commands}.rs` (both
+pre-existing siblings, untouched by the split),
+`crates/app/src/shell/chrome/tabs/menu.rs` (P0a's, nested),
+`crates/app/src/shell/chrome/tabs/mod.rs` (the dirty indicator field and its
+`render` call site) and `crates/app/src/shell/chrome/tabs/frame_state.rs` (the
+close confirmation's state, once P0b lands), `crates/app/src/keymap.rs`, `crates/app/src/config.rs` (the
 recovery directory), new `crates/app/src/shell/recovery.rs`.
 
 **Depends on.** P0b, P3.
@@ -2669,8 +2966,9 @@ counted. This package closes zero rows and is still the identity of the release,
 which is worth saying out loud so nobody schedules it by row count.
 
 **Files.** New `crates/app/src/shell/skins.rs`,
-`crates/app/src/shell/chrome/{rail,side_panel}.rs`,
-`crates/app/src/shell/chrome/tabs.rs` (state).
+`crates/app/src/shell/chrome/{rail,side_panel}.rs` (pre-existing siblings),
+`crates/app/src/shell/chrome/tabs/frame_state.rs` (state, once P0b lands;
+`tabs/mod.rs` before that).
 
 **Depends on.** P0b, P1 (`sections()`), P3 (`revert_to` and preview).
 
@@ -2692,8 +2990,9 @@ is the data.
 **Review risk.** Whether "preview a generation" opens a second document or
 mutates the current one. Whether rollback is reachable without a confirmation.
 Whether the panel recomputes `sections()` per frame on a file with hundreds of
-generations. Whether a truncation can race the render worker still reading the
-truncated tail. Whether the "not ours" label is derived from something real or
+generations. The render worker's lifetime across a truncation is **P3's**, not
+this package's: it is decided in `revert_to` (generation bump before truncation)
+and this package calls it rather than re-deciding it. Whether the "not ours" label is derived from something real or
 guessed from `/Producer`. **Mutation that must break its tests:** truncating one
 byte off the correct boundary must fail the byte-identity assertion, so the test
 must compare bytes and not just reopen successfully.
@@ -2744,6 +3043,7 @@ updates while work continues. `quick_actions.rs` resolves availability through
 - The pane lists every annotation a corpus file already carries, not only ones Onionskin authored, which is the case a Comments pane built against the edit graph alone would miss.
 - Sort by page, author and date; filter by type, author and status; each asserted by the resulting list order or membership, on a fixture with enough variety to distinguish them.
 - Reply creates an `/IRT` annotation that reopens as a reply; set status writes an Acrobat-compatible `/State` and `/StateModel` annotation, which is how Acrobat models status and is not a property on the parent.
+- **A reply whose `/IRT` parent is on a page P11 removed is listed as orphaned**, with its own contents and author, under a heading that says its parent is gone. Not dropped, because the reply is a comment the user wrote and this pane is where comments live; not re-parented, because there is nothing truthful to re-parent it to. This is not a dangling reference under T5's free-nothing rule (the parent survives in the file as garbage), so no validator catches it and no page-tree test sees it: it is a **reading** defect that only a pane which walks the whole document meets. Acrobat keeps a reply on its parent's page, so this arrives chiefly from foreign files, which is exactly the fixture class this package's first bullet already insists on.
 - "Make current properties default" writes a preference and the next annotation created uses it, asserted end to end through the tool, not through the preference store.
 - The quick action toolbar's Comment, Highlight and Draw are enabled and carry no reason string, asserted, and the assertion reads the registry rather than a list.
 - Find with Include Comments finds text that exists only in an annotation's `/Contents`.
@@ -2845,7 +3145,8 @@ criteria, 22 Automatically Scroll, 23 Line Weights, 24 View > New Window,
 31 Copy with formatting / Export selected text. **9 rows.**
 
 **Files.** `crates/app/src/recents.rs`, `crates/app/src/shell/home.rs`,
-`crates/app/src/shell/chrome/{rail,global_bar,menu}.rs`,
+`crates/app/src/shell/chrome/{rail,global_bar}.rs`,
+`crates/app/src/shell/chrome/tabs/menu.rs`,
 `crates/app/src/shell/{canvas,find_bar}.rs`, `crates/core/src/{viewport,search}.rs`,
 `crates/render/src/base.rs` and `crates/render/Cargo.toml` (the fork rev, if the
 Line Weights commit lands), new `plugins/codecs-common/src/rtf.rs`.
@@ -2954,9 +3255,22 @@ the same convention, so it is shorter than the critical path rather than "the
 same depth" as the first draft said. It is still the natural second track, because it is the longest chain that
 shares nothing with the first past P4.
 
-**The schedule's real hazard** is unchanged and is not the length: P5 and P11 sit
-in the middle of the critical path and are the two packages with the highest
-correctness risk. Everything downstream of them, which is now seven packages
+**The lever, recorded rather than pulled.** P10 is at depth nine, and four
+ten-length paths run through it, but a large part of why it is that deep is
+`core::embedded`, the embedded-file writer, which this plan houses in P10 because
+P10's attach-as-comment was its first named consumer. P13b then waits on P10 for
+it, and P13b is one of the two deepest packages. **Move `core::embedded` into P6
+or give it a kernel slot of its own and the critical path drops from ten to
+about seven**, because P13b would then depend on P3, P5 and that slot rather than
+on the whole stamps-and-summary chain. This is an observation, not a defect: the
+current placement is defensible (one writer, two consumers, and it does sit next
+to the annotation that carries the file), and moving it is a scope change nobody
+has asked for. It is written down so that whoever schedules M3 sees the lever
+before deciding the milestone is ten deep and unavoidably so.
+
+**The schedule's real hazard** is otherwise unchanged and is not the length: P5
+and P11 sit in the middle of the critical path and are the two packages with the
+highest correctness risk. Everything downstream of them, which is now seven packages
 rather than one, waits on the two that are most likely to need a second review
 round.
 
@@ -2970,7 +3284,7 @@ round.
   the same reason: their only `crates/app` files are under `crates/app/tests/`,
   which is a test target rather than shell source and which neither P0a nor P0b
   rewrites.
-- P1b touches `crates/app/src/shell/chrome/tabs.rs` directly for the open-time
+- P1b touches `crates/app/src/shell/chrome/tabs/mod.rs` directly for the open-time
   notice, which is the exact file P0 splits, so its app seam depends on P0b and
   lands as its own commit after it. Its `crates/crypto` and `crates/cos` work
   runs the whole milestone alongside everything else, off the critical path.
@@ -2992,10 +3306,37 @@ round.
 `crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and eighteen
 M3 packages have `crates/app` files, sixteen of them under `src/shell`. After P0a splits it, each app package owns a
 distinct new module, and the remaining shared files are append-only tables:
-`chrome/menu.rs`'s command dispatch, `chrome/context.rs`'s availability table,
-`shell/dialog.rs`'s `ShellDialog` variant list and its two matches,
-`panes/mod.rs`'s `NavigationPane` list, `commands.rs`'s `MenuCommand` table, and
-`Cargo.lock`. A rebase resolves all of those without judgement.
+`chrome/tabs/menu.rs`'s command dispatch, `chrome/tabs/context.rs`'s
+availability table, `shell/dialog.rs`'s `ShellDialog` variant list and its two
+matches, `panes/mod.rs`'s `NavigationPane` list, `chrome/commands.rs`'s
+`MenuCommand` table, and `Cargo.lock`. A rebase resolves all of those without
+judgement.
+
+**The paths above are P0a's nested `chrome/tabs/` tree, not sibling
+`chrome/*.rs` files.** P0a shipped nested for the scope-preservation reason its
+own entry gives, so `chrome/menu.rs`, `chrome/dialogs.rs` and
+`chrome/context.rs` do not exist; `chrome/commands.rs`, `chrome/rail.rs`,
+`chrome/side_panel.rs`, `chrome/global_bar.rs` and `chrome/accessible.rs` are
+pre-existing siblings the split never touched. Any package naming a
+`chrome/<concern>.rs` path is naming a file that is not there.
+
+**`chrome/tabs/mod.rs` belongs on that list too**, which the first draft of this
+paragraph left off even though contention on `tabs.rs` is P0's entire
+justification. Four packages name it after the split: P1b (the open-time
+encryption notice), P14a (the clipboard image helper, which P10 then calls rather
+than duplicating) and P18 (the dirty indicator). What remains in `tabs/mod.rs` is
+1407 production lines, the `ShellFrame` struct and its `Render` impl, so those
+packages are adding **a field and a call site**, not a method to a 2500-line
+`impl`. The resolution rule is the same as for the tables: a field addition and a
+call site in `render` are append-only, a rebase resolves them without judgement,
+and the landing order (P1b any time after P0b, then P14a, then P18) keeps them
+serialised. If any of them finds itself adding a *method* to `tabs/mod.rs`, that
+is the signal it belongs in one of the six concern modules instead.
+
+**`tabs/mod.rs`'s 4669-line test module is the live conflict magnet until P0c
+lands**, because every package adding a shell test edits it. That is why P0a's
+parallelism claim is necessary and not sufficient, and why P0c is a package
+rather than a tidy-up.
 
 `shell/dialog.rs` deserves a note, because the first draft's reviewer suggested
 reordering the app packages so that whichever one "introduces the dialog host
@@ -3168,8 +3509,8 @@ P9a 4, P9b 2, P9c 7, P10 9, P11 9, P12 6, P13a 3, P13b 4, P13c 3, P14a 6,
 P14b 2, P15 7, P16 1, P17 7, P18 7, P20 5, P21 1, P22 9, moved to M4 2.
 **Sum 99, of which M3 ships 97 and M4 gains 2.** P0a, P0b, P1, P1b, P1c, P2, P3,
 P4, P5, P6, P7 and P19 close zero rows and are named against them in section 4.
-**Thirty-one packages**, up from the first draft's twenty-four: P0 split into
-P0a and P0b, P9 into three, P13 into three, P14 into two, and P1c is new.
+**Thirty-two packages**, up from the first draft's twenty-four: P0 split into
+P0a, P0b and P0c, P9 into three, P13 into three, P14 into two, and P1c is new.
 
 **Every row is owned by the package that builds the surface it is scored on.**
 That is a rule rather than an observation, and applying it moved four things.
