@@ -1389,8 +1389,8 @@ So there are two check points and **one predicate**: a single function in `core`
 taking a `&cos::Document` and answering whether its graph may be read out.
 `Requirement::Command` calls it for commands whose input is the active session;
 an explicit **per-input check at execution** calls it for combine's file list,
-insert-from-file and copy-between-open-documents, reporting the same typed reason
-naming M6. The command list is **at least nine**, not six.
+insert-from-file, replace-pages-from-file and copy-between-open-documents,
+reporting the same typed reason naming M6. The command list is **ten**, not six.
 
 **Print-to-file is in the class too, and pass 2's reason for exempting it was
 false.** It said `FileBackend` "authors its trailer fresh: not a copy of the
@@ -1440,7 +1440,7 @@ single guarded predicate, so the wiring surface in cos is small.
 - A password-protected fixture is **not** opened by an empty password, asserted, so the handler is not accidentally permissive.
 - Round-trip: opening an encrypted file and saving with no edit is byte-identical (guarantee 1 must hold for this class too, and it is free, because a no-op save writes nothing).
 - A save with a pending edit on an encrypted document is refused with a typed error naming M6, and the edit tools were already disabled at open, asserted in the app.
-- **Nine commands are unavailable on an encrypted document**: Compress, Reduce File Size, extract-to-file, split, combine, summarize comments, insert-pages-from-file, copy-or-move-pages-between-open-documents, and print-to-file **unless Print as Image is on**. Asserted through the same `Requirement` query as the edit tools rather than through a second flag, carrying the same typed reason and the same M6 milestone. One predicate, asserted by reading the registry.
+- **Ten commands are unavailable on an encrypted document**: Compress, Reduce File Size, extract-to-file, split, combine, summarize comments, insert-pages-from-file, **replace-pages-from-file**, copy-or-move-pages-between-open-documents, and print-to-file **unless Print as Image is on**. Replace-pages is on the list for the same reason as insert: Acrobat's Replace Pages takes its replacements from another file, and P11's own review risk notes it may be built as delete-then-insert, so a rule that covered insert and missed replace would be bypassed by the obvious implementation. Asserted through the same `Requirement` query as the edit tools rather than through a second flag, carrying the same typed reason and the same M6 milestone. One predicate, asserted by reading the registry.
 - **The two check points call one function**, asserted by driving both: a session-scoped refusal (compress on the open document) and an execution-time refusal (combine with an encrypted file in its list), both returning the same typed reason from the same `core` predicate over a `&cos::Document`.
 - **Print-to-file with Print as Image on succeeds** on the same document and its output carries no `/Encrypt`; **with Print as Image off it is refused**. That pair is what makes the ruling a decision with a test rather than a carve-out with a story, and neither half alone proves it.
 - **No output of any of those operations ever contains an object imported from the encrypted source**, asserted on the produced file rather than on the absence of an `/Encrypt` key. The `/Encrypt`-key assertion was the one pass 2 had, and it is exactly the assertion that blessed the print bypass.
