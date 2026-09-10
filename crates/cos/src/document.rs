@@ -1531,7 +1531,9 @@ impl Document {
         // Ordered after the early-out on purpose. An unconditional refusal
         // would make every encrypted document unrenderable, because the canvas
         // draws from the original plus this section: refusing on an empty
-        // overlay would leave nothing to draw.
+        // overlay would leave nothing to draw. Unreachable until decryption
+        // lands, since no encrypted document opens today; the contract and
+        // this ordering are stated by the package that makes it reachable.
         if self.trailer.contains(b"Encrypt") {
             return Err(Error::EncryptedWrite);
         }
