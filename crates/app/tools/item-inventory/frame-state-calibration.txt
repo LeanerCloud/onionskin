@@ -1,0 +1,28 @@
+# `rule_calibration.py` over the seven files at 536487a.
+#
+# `procedure_mutation.py` checks that the inventory reports a change. This
+# checks that those checks would fail if the rule were wrong, which is the only
+# thing that makes them worth reading. Each break below is one a reviewer
+# proposed against this rule; the suite has to catch every one.
+
+the rule as it stands: exit 0
+
+break: a `"`-only walk that reads a raw string as code
+  exit 1, caught
+  NOT REPORTED: the rule is normalizing away a real change
+  NOT REPORTED: the rule is normalizing away a real change
+
+break: one pass rather than a fixed point
+  exit 1, caught
+  REPORTED: the rule failed to absorb the hop it exists for
+
+break: stripping the hop at the end of a chain too
+  exit 1, caught
+  NOT REPORTED: the rule is normalizing away a real change
+
+break: stripping the leaf along with the hop
+  exit 1, caught
+  REPORTED: the rule failed to absorb the hop it exists for
+  REPORTED: the rule failed to absorb the hop it exists for
+
+CALIBRATION: every break is caught

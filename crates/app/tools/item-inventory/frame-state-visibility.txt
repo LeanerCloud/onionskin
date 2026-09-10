@@ -1,4 +1,4 @@
-# `item_inventory.py audit` at f349359 diffed against efb49ee, over the seven
+# `item_inventory.py audit` at f349359 diffed against 536487a, over the seven
 # files under crates/app/src/shell/chrome/tabs/.
 #
 # `pub(super)` names a different scope in every module, and P0b moves ten

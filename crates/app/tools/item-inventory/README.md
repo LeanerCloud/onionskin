@@ -3,8 +3,10 @@
 `item_inventory.py` proves that a file split relocated code without changing
 it, by listing every item with a hash of its normalized body and comparing the
 two listings as multisets. `procedure_mutation.py` mutation-tests the inventory
-itself, `line_multiset.py` checks the same claim without parsing Rust, and
-`item_inventory.py audit` reports what each non-private item reaches.
+itself, `rule_calibration.py` breaks the inventory and checks that
+`procedure_mutation.py` notices, `line_multiset.py` checks the same claim
+without parsing Rust, and `item_inventory.py audit` reports what each
+non-private item reaches.
 
 A record cannot name the commit that contains it, so `# emitted at` names the
 commit whose tree the files were read from, which is the one before the record
@@ -61,22 +63,40 @@ dropped and then `.g.` becomes `.`, to a fixed point. `x.g.field` hashes as
 `x.field` did, however rustfmt rewrapped the chain the hop lengthened. The hop
 goes and the leaf stays, so a field renamed on its way into a group is still a
 difference, as is a group nobody declared, a group passed whole, and a hop
-spelled inside a string literal. The names are on the command line and in the
-`# elided` header, and `compare` refuses two listings elided differently, so a
-diff cannot be emptied by eliding one side of it.
+spelled inside a literal. Code and data are told apart by `classify`, the
+parser's own scanner, so a raw string, a byte string and a `'"'` are literals
+and not a second, weaker guess at them.
+
+The names are on the command line and in the `# elided` header, each with the
+number of hops it absorbed, and `compare` refuses two listings elided by
+different names. So a diff cannot be emptied by eliding one side of it, and a
+name that matched something it was never meant for shows in its count: nothing
+anchors `.g.` to the receiver the group belongs to, so the count is what the
+claim is read against.
 
 What the rule does not absorb, by construction, is the declaration of the state:
 the fields change container, the sub-structs are new items, and a constructor
 that spells the literal out really is a changed body. Those are reported, and
-are to be read rather than hashed away. Both halves are mutation-tested by
-`procedure_mutation.py`, which reroutes a field through a synthetic group and
-asserts both that the rule absorbs the hop and that it still reports a lost
-statement, a changed call, a renamed leaf, an undeclared group and a literal.
+are to be read rather than hashed away.
 
-The seven `frame-state-*.txt` files are the acceptance record for the one change
+Both halves are mutation-tested by `procedure_mutation.py`, which reroutes a
+field through a synthetic group and asserts both that the rule absorbs the hop
+and the rewrap it provokes, and that it still reports a lost statement, a
+changed call, a renamed leaf, an undeclared group, the group passed whole, and
+a hop spelled inside a plain string, a raw string or a string after a `'"'`.
+`rule_calibration.py` is what stops those being decoration: it breaks the rule
+four ways in a scratch copy of the tool and requires the mutation suite to catch
+each. Run both:
+
+```
+python3 procedure_mutation.py <files now>
+python3 rule_calibration.py <files now>
+```
+
+The eight `frame-state-*.txt` files are the acceptance record for the one change
 that has used the rule so far, P0b, which gathered ten of `ShellFrame`'s loose
 fields into five sub-structs. Like the `tabs-split-*` set they are a record and
-are not regenerated. Measured from `f349359` to `efb49ee` the comparison is
+are not regenerated. Measured from `f349359` to `536487a` the comparison is
 fifteen lines out and twenty-five in, and every one of them is accounted for:
 
 * ten field lines leave `struct ShellFrame` and reappear under the five new
@@ -86,6 +106,13 @@ fifteen lines out and twenty-five in, and every one of them is accounted for:
   restructuring itself;
 * three function bodies carry a rustfmt rewrap that adds a brace or a comma,
   listed with their diffs in `frame-state-reflow.txt`.
+
+The five names absorbed 135 hops between them, counted in the `# elided` header
+and matching the number of reads the change reroutes.
+`frame-state-calibration.txt` is the calibration run over the same files, and
+`frame-state-before.txt` predates the counted header: it was emitted at
+`5ca2be6`, where every count is zero, and re-emitting from that tree with the
+tool as it stands reproduces it line for line.
 
 The listing says which items changed; it cannot say a file holds nothing
 authored, because it excludes what is not an item. `frame-state-replay.txt`

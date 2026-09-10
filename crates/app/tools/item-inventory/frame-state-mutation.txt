@@ -105,4 +105,19 @@ case: a hop spelled inside a string literal
   -    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	ce6e556fd8324606
   +    impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	03f50dd57425f556
 
+case: a hop spelled inside a raw string literal
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	f40ac89584c97a45
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	bc30c4ece4a21fbf
+
+case: a hop in a literal after a quote char literal
+  -    -	fn	probe_literal	private	fn probe_literal() -> &'static str	9669bbfae6e83918
+  +    -	fn	probe_literal	private	fn probe_literal() -> &'static str	00f9c93e3eed7ed5
+
+case: the group passed whole, with nothing after it
+  -    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	0ea210113ea55741
+  +    impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	95356a42062c5a67
+
+case: two hops in one chain, which needs the fixed point
+  nothing reported, which is what this case asserts
+
 MUTATION CHECK: every mutation was reported

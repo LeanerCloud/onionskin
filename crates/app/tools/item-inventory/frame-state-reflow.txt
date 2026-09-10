@@ -7,7 +7,7 @@
 # So the three are read instead. Each is rustfmt reformatting a line the hop
 # pushed past 100 columns, and in each the tokens either side are unchanged.
 #
-# Read against efb49ee, base f349359.
+# Read against 536487a, base f349359.
 
 crates/app/src/shell/chrome/tabs/accessible.rs, ShellFrame::focused_text_field
 the three-element array wraps, and a wrapped array takes a trailing comma

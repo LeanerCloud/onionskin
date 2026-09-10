@@ -1,4 +1,5 @@
 elided: context_menus export menus page_entry tool_search
+hops absorbed: context_menus 0 -> 30, export 0 -> 26, menus 0 -> 33, page_entry 0 -> 13, tool_search 0 -> 33
 items before: 463
 items after:  473
 visibility-only changes: 0

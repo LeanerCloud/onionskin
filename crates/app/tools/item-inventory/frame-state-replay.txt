@@ -4,7 +4,7 @@
 # nothing authored, because it excludes what is not an item. So each of the six
 # files was reproduced from its base copy at f349359 by replaying the mechanical
 # `.field` -> `.group.field` rewrite for all five groups and nothing else, then
-# formatting, and the result is compared against what shipped at efb49ee.
+# formatting, and the result is compared against what shipped at 536487a.
 #
 # The comparison drops comments, collapses whitespace and removes the whitespace
 # beside every dot, which is what `--elide` normalizes and no more. rustfmt is

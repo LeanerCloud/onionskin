@@ -1,6 +1,6 @@
-# emitted at efb49ee
+# emitted at 536487a
 # from crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
-# elided context_menus export menus page_entry tool_search
+# elided context_menus=30 export=26 menus=33 page_entry=13 tool_search=33
 # items: 473 = 8 const, 5 enum, 70 field, 330 fn, 15 impl, 1 mod, 21 struct, 1 trait, 2 use, 20 variant
 #[cfg(test)] mod tests	fn	a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(cx: &mut TestAppContext)	957e38ff232a7862
 #[cfg(test)] mod tests	fn	a_blocked_single_file_worker_keeps_the_destination_absent_until_success	private	#[test] fn a_blocked_single_file_worker_keeps_the_destination_absent_until_success()	66fb51b22dd47967
