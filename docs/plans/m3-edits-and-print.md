@@ -904,7 +904,11 @@ user understands rather than naming a milestone alone.
 `crates/core/src/session.rs` and `crates/app/src/shell/chrome/tabs.rs` (the
 open-time notice and the editing gate).
 
-**Depends on.** Nothing. Runs parallel to everything, off the critical path.
+**Depends on.** Its `crates/crypto` and `crates/cos` work depends on nothing and
+runs the whole milestone alongside everything else, off the critical path. **Its
+app seam depends on P0**: the open-time notice and the editing gate land in
+`crates/app/src/shell/chrome/tabs.rs`, which is the file P0 splits, so that seam
+is a separate commit after P0 rather than a concurrent edit to it.
 
 **What exists to build on.** Nothing in-repo: `crates/crypto` is a four-line
 doc comment. The spike's corpus tally gives the file set, and the refusal is a
@@ -1002,7 +1006,10 @@ means anything.
 `corpus/README.md` (which sets CI fetches and why).
 
 **Depends on.** Nothing, and **it lands before P1**, because P1's own
-verification names an `external/` sweep. It is the fourth day-one root.
+verification names an `external/` sweep. It is the fourth day-one root. It is
+also the one package with a `crates/app` file that does **not** depend on P0:
+`crates/app/tests/guarantees.rs` is a test target, not shell code, and P0 does
+not touch it.
 
 **What exists to build on.** `corpus/fetch.sh` already skips a set already on
 disk, so a cache hit makes step 1 a no-op. The `bench` job already demonstrates
@@ -1615,17 +1622,35 @@ Summarize comments generates a new document (T8) through `cos::write_new`: a
 page per source page with the comments listed, or the compact single-list form,
 matching Acrobat's two layouts.
 
-**Rows closed.** 73 Attach a file as a comment, 74 Comment properties,
-76 Summarize comments, 79 Place a stamp, 80 Standard business stamps,
-81 Sign Here stamp category, 82 Dynamic stamps, 83 Create a custom stamp,
-84 Manage stamps, 85 Paste clipboard image as stamp. **10 rows.**
+**Rows closed.** 73 Attach a file as a comment, 76 Summarize comments,
+79 Place a stamp, 80 Standard business stamps, 81 Sign Here stamp category,
+82 Dynamic stamps, 83 Create a custom stamp, 84 Manage stamps, 85 Paste
+clipboard image as stamp. **9 rows.** Row 74 (Comment properties) **moves to
+P20**, which builds the properties inspector in the side panel and already
+carried the row's surface in its goal text while P10 carried the row. P6 owns
+the `SetAnnotationProperties` verb either way.
 
 **Files.** `plugins/tools-comment/src/{stamp,attach,summary,properties}.rs`,
 new `crates/core/src/embedded.rs` (the embedded-file writer, shared with P13),
-new `tools/stamps.py` and the generated `assets/stamps/*.svg`.
+new `tools/stamps.py` and the generated `assets/stamps/*.svg`; **and the app
+surface its rows are scored on**: new `crates/app/src/shell/stamps_dialog.rs`
+(rows 83 and 84, Create a custom stamp and Manage stamps),
+`crates/app/src/shell/dialog.rs` (the `ShellDialog` variant),
+`crates/app/src/shell/chrome/menu.rs` (their entries), and
+`crates/app/src/shell/chrome/tabs.rs`'s clipboard read for row 85, since GPUI
+owns the pasteboard and no plugin can reach it.
 
-**Depends on.** P6, P7, P12 (the summary needs `write_new` and P12's page
-assembly), P14 (paste-as-stamp needs the image import path).
+**Depends on.** P0 (the app surface above), P6, P7, P12 (the summary needs
+`write_new` and P12's page assembly), P14 (paste-as-stamp needs the image import
+path).
+
+**Why the app files are here rather than absent.** The first draft closed rows
+83, 84 and 85 from a package whose Files line named no `crates/app` path and
+whose Depends on line named no P0, so three rows would have been marked
+`implemented` against a dialog and a clipboard read that nobody had scheduled.
+`ACROBAT-PARITY.md` exists to stop exactly that, and its design is worth nothing
+if the ledger scores a row against a capability rather than against the surface a
+user reaches.
 
 **What exists to build on.** `core::attachments` reads embedded files today, so
 the stream structure and the `/Names /EmbeddedFiles` layout are already
@@ -1722,9 +1747,22 @@ PDF, 38 Add files / add folders, 39 Reorder, preview and remove entries,
 40 Expand a file and combine at page granularity, 46 Split. **6 rows.**
 
 **Files.** `plugins/commands-core/src/{lib,combine,split}.rs`, new
-`crates/core/src/pages/assemble.rs`, `plugins/commands-core/Cargo.toml`.
+`crates/core/src/pages/assemble.rs`, `plugins/commands-core/Cargo.toml`; **and
+the app surface rows 38, 39, 40 and 46 are scored on**: new
+`crates/app/src/shell/combine_dialog.rs` (the list the user builds, with add
+files, add folders, reorder, preview, remove and per-file page expansion),
+`crates/app/src/shell/dialog.rs` (two `ShellDialog` variants, combine and split),
+and `crates/app/src/shell/chrome/menu.rs` (their File menu entries).
 
-**Depends on.** P1 (`write_new`), P3, P5, P11 (the importer).
+**Depends on.** P0 (the app surface above), P1 (`write_new`), P3, P5, P11 (the
+importer).
+
+**Why the app files are here rather than absent.** Rows 38 and 39 are *"Add files
+/ add folders"* and *"Reorder, preview and remove entries"*: they are a dialog and
+nothing else. Row 40 is page-granularity expansion inside that dialog, and row 46
+needs a dialog to choose between by-count, by-size and at-bookmarks. The first
+draft closed all four from a package with no `crates/app` path and no P0
+dependency, which is four rows scored against a surface nobody had scheduled.
 
 **What exists to build on.** `core::outline` already resolves bookmark
 destinations to page indices, which is exactly what split-at-bookmarks needs.
@@ -1846,9 +1884,24 @@ to JPEG / JPEG 2000 / TIFF, 54 Export all images. **8 rows.**
 
 **Files.** `plugins/codecs-common/src/{lib,import,jpeg,tiff,images}.rs`,
 `plugins/commands-core/src/compress.rs`, `crates/plugin-api/src/codec.rs` (the
-import half of `CodecPlugin`), `plugins/codecs-common/Cargo.toml`.
+import half of `CodecPlugin`), `plugins/codecs-common/Cargo.toml`; **and the app
+surface its rows are scored on**:
+`crates/app/src/shell/chrome/global_bar.rs` (row 1, the Convert entry point),
+`crates/app/src/shell/chrome/menu.rs` (row 9, `File > Create`),
+new `crates/app/src/shell/compress_dialog.rs` and
+`crates/app/src/shell/dialog.rs` (rows 51 and 52, which need a compatibility
+target, a destination and the words that say history is discarded), and
+`crates/app/src/shell/chrome/tabs.rs`'s clipboard read for row 36, since GPUI
+owns the pasteboard.
 
-**Depends on.** P1 (`write_new`), P3, P12 (page assembly).
+**Depends on.** P0 (the app surface above), P1 (`write_new`), P3, P12 (page
+assembly).
+
+**Why the app files are here rather than absent.** Row 1 is *"Convert (global bar
+entry point)"* and row 9 is *"File > Create"*: both are named after the shell
+surface they are. Rows 51 and 52 are a destructive Save As that has to say so in
+the UI, which is a dialog. Row 36 is the clipboard. The first draft closed six
+rows from a package whose Files line contained no `crates/app` path at all.
 
 **What exists to build on.** `codecs-common` already exports PNG, SVG and text
 with a tested background-worker job model, progress, cancellation and atomic
@@ -2181,9 +2234,13 @@ the comment tools in M3", becomes live here. That also needs
 `SearchResult::Unavailable::reason` widened from `&'static str`, which
 `known-issues.md` records as "widen it after P9 lands".
 
-**Rows closed.** 29 Comments pane, 30 Comments list context menu, 75 Comments
-list sort/filter/reply/status/checkmark/read-unread, 78 Commenting preferences.
-**4 rows.** It also flips two M2 `partial` rows (the quick action toolbar and the
+**Rows closed.** 29 Comments pane, 30 Comments list context menu, 74 Comment
+properties, 75 Comments list sort/filter/reply/status/checkmark/read-unread,
+78 Commenting preferences. **5 rows.** Row 74 moved here from P10: this
+package's goal already said it builds "comment properties including 'make
+current properties default'" and gives the right-hand side panel "its first
+tool-specific content, which is the comment properties inspector", so P10 owned
+the row while P20 owned its surface. It also flips two M2 `partial` rows (the quick action toolbar and the
 right-hand side panel) to `implemented`, which is part of this package's
 definition of done and not a follow-up.
 
@@ -2342,82 +2399,123 @@ New Window must fail the shared-undo test.
 
 ## 5. Dependency graph, order and contention
 
-Three roots, all startable on day one: **P0** (splitting `ShellFrame`, app only),
-**P1** (cos, kernel only) and **P1b** (crypto, ruled in). They touch disjoint
-crates, so day one has three branches and no conflict.
+**Derived, not drawn.** Every edge below comes from a package's own "Depends on"
+line and every app-file claim from its own "Files" line. The first draft's graph
+was drawn by hand and was wrong about the critical path, about which branches
+were independent, and about whether `crates/app` had one occupant. Redraw it the
+same way after any package's dependencies change; do not edit the picture.
+
+Four roots, all startable on day one: **P0** (splitting `ShellFrame`, app only),
+**P1c** (the corpus CI pair, YAML and one test file), **P1b** (crypto, ruled in)
+and, once P1c has landed, **P1** (cos). P1c precedes P1 because P1's own
+verification sweeps `external/`, which CI does not fetch today.
 
 ```
-P0  split ShellFrame                    P1  cos edit surface         P1b crypto (ruled in)   
- │   (app only, no behaviour change)      └── P2  core::edit  (graph, undo/redo)
- │                                             ├── P3  core::save  (section, preview, generations)
- │                                             │    ├── P12 combine + split      (also P5, P11)
- │                                             │    ├── P13 properties/bookmarks (also P0, P5, P10)
- │                                             │    ├── P14 image import/export, compress (also P12)
- │                                             │    └── P15 print: imposition + file backend (also P6)
- │                                             │         └── P16 print: macOS backend
- │                                             ├── P4  core::structure
- │                                             │    ├── P5  core::pages  (the transformation)
- │                                             │    │    └── P11 tools-organize      (also P7)
- │                                             │    └── P6  core::annots
- │                                             │         ├── P8  tools-comment: text markup   (also P7)
- │                                             │         ├── P9  tools-comment: shapes and ink (after P8)
- │                                             │         └── P10 tools-comment: stamps, summary (also P12, P14)
- │                                             └── P7  plugin-api edit contract   (also P0)
- │
- ├── P17 print dialog        (also P15, P16)
- ├── P18 save/undo/dirty/recovery   (also P3)
- ├── P19 skins panel         (also P1, P3)
- ├── P20 comments pane       (also P8, P9, P10)
- ├── P21 organize grid       (also P11)
- └── P22 remaining shell rows
+P1c corpus in CI          P0  split ShellFrame          P1b crypto (ruled in)
+ └── P1  cos edit surface      (app only, no behaviour       (app seam after P0)
+      └── P2  core::edit        change; gates every app
+           ├── P3  core::save     package below)
+           │    ├── P15 print: imposition + file backend (also P6)
+           │    │    └── P16 print: macOS backend
+           │    │         └── P17 print dialog (also P0)
+           │    ├── P18 save/undo/dirty/recovery (also P0)
+           │    └── P19 skins panel (also P0, P1)
+           ├── P4  core::structure
+           │    ├── P5  core::pages (the transformation)
+           │    │    └── P11 tools-organize (also P3, P7)
+           │    │         ├── P21 organize grid (also P0)
+           │    │         └── P12 combine + split (also P0, P1, P3)
+           │    │              └── P14 image import/export, compress (also P0, P1, P3)
+           │    │                   └── P10 stamps, attach, summary (also P0, P6, P7)
+           │    │                        ├── P13 properties/bookmarks/attachments (also P0, P3, P5)
+           │    │                        └── P20 comments pane (also P0, P8, P9)
+           │    └── P6  core::annots
+           │         ├── P8  tools-comment: text markup (also P7)
+           │         └── P9  tools-comment: shapes and ink (after P8)
+           ├── P7  plugin-api edit contract (also P0)
+           └── P22 remaining shell rows (P0 only; drawn here for position)
 ```
 
-**Critical path.** `P1 → P2 → P4 → P5 → P11 → P21`. Six packages, and the two
-longest of them (P5 and P11) are the two with the highest correctness risk, which
-is the schedule's real hazard rather than its length. The print chain
-(`P1 → P2 → P3 → P15 → P16 → P17`) is the same depth and mostly independent, so
-it is the natural second track.
+**Critical path: `P1c → P1 → P2 → P4 → P5 → P11 → P12 → P14 → P10 → P13`, ten
+packages** (P20 ties at ten through the same nine-package prefix). The first
+draft called `P1 → P2 → P4 → P5 → P11 → P21` critical at six, which is four
+short: P21 is at depth seven, and the chain continues past P11 through combine,
+image import, stamps and the summary generator before it reaches P13 and P20.
+
+The picture hid it in two ways, both worth naming because they are how a drawn
+graph lies. P10 was drawn as a child of P6, which is true and is not the whole
+truth: P10 also depends on P12 and P14, which is what puts it at depth nine.
+And P12, P13 and P14 were drawn as siblings while the text said outright that
+they "are three independent branches", which is false twice over: **P14 depends
+on P12**, and **P13 depends on P10, which depends on P14, which depends on P12**.
+They are a chain of four, and it is the tail of the critical path.
+
+The print chain, `P1 → P2 → P4 → P6 → P15 → P16 → P17`, is seven deep, so it is
+shorter than the critical path rather than "the same depth" as the first draft
+said. It is still the natural second track, because it is the longest chain that
+shares nothing with the first past P4.
+
+**The schedule's real hazard** is unchanged and is not the length: P5 and P11 sit
+in the middle of the critical path and are the two packages with the highest
+correctness risk. Everything downstream of them, which is now seven packages
+rather than one, waits on the two that are most likely to need a second review
+round.
 
 **Parallelism.**
 
-- P0 runs alone in `crates/app` from day one and must finish before any of P17
-  through P22 starts. Nothing else touches `crates/app`, so it blocks nobody.
-- P1b touches only `crates/crypto`, a narrow seam in `crates/cos` and one notice
-  in the app, so it runs the whole milestone alongside everything else. Its app
-  seam lands after P0, like every other app change.
+- **P0 does not run alone in `crates/app` and does not block nobody.** Both of
+  those claims were in the first draft and both are false. `crates/app` files
+  appear in the Files line of P1b, P1c, P7, P10, P12, P13, P14, P17, P18, P19,
+  P20, P21 and P22. All except P1c depend on P0 and land after it; P1c is the
+  exception because its only app file is `crates/app/tests/guarantees.rs`, which
+  P0 does not touch.
+- P1b touches `crates/app/src/shell/chrome/tabs.rs` directly for the open-time
+  notice, which is the exact file P0 splits, so its app seam depends on P0 and
+  lands as its own commit after it. Its `crates/crypto` and `crates/cos` work
+  runs the whole milestone alongside everything else, off the critical path.
 - Once P2 lands, P3, P4 and P7 are three independent branches in `crates/core`
   and `crates/plugin-api`.
 - P5 and P6 are independent of each other; both need P4.
 - P8, P9 and P10 are strictly ordered among themselves, on purpose: P8 gives P6's
   appearance generator one consumer's worth of feedback before twelve more
   arrive, and P9 gives the shape P10's stamps reuse.
-- P12, P13 and P14 are three independent branches in `plugins/commands-core` and
-  `plugins/codecs-common`, and they share only `Cargo.lock`.
 - P15 is windowless and in a crate nobody else touches, so it runs from the
-  moment P3 and P6 land.
+  moment P3 and P6 land, and it is the head of the whole print track.
 
 **Contention, and the order it forces.** M2's audit named
-`crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and M3 has
-six packages in `crates/app`. After P0 splits it, each app package owns a
-distinct new module, and the remaining shared files are the two match statements
-(`chrome/menu.rs`'s command dispatch and `chrome/context.rs`'s availability
-table), plus `panes/mod.rs`'s `NavigationPane` list, `commands.rs`'s
-`MenuCommand` table, and `Cargo.lock`. All of those are append-only in these
-packages, so a rebase resolves them without judgement. To keep it that way, the
-app packages land in a fixed order:
+`crates/app/src/shell/chrome/tabs.rs` the recurring conflict point, and thirteen
+M3 packages have `crates/app` files. After P0 splits it, each app package owns a
+distinct new module, and the remaining shared files are append-only tables:
+`chrome/menu.rs`'s command dispatch, `chrome/context.rs`'s availability table,
+`shell/dialog.rs`'s `ShellDialog` variant list and its two matches,
+`panes/mod.rs`'s `NavigationPane` list, `commands.rs`'s `MenuCommand` table, and
+`Cargo.lock`. A rebase resolves all of those without judgement.
 
-1. **P18 first.** It introduces the dirty state, the saved mark's UI reading and
-   four global commands that every other app package reads or extends. A save
-   and undo model rebased under five branches is worse than five branches
-   rebasing under it.
-2. **P19 second.** It is the first consumer of the rail-plus-side-panel surface
-   that P20 also uses, so it sets that shape.
-3. **P20 third**, **P21 fourth**: both add a pane-shaped surface, and P20's is
-   the one that also flips the quick action gates.
-4. **P17 fifth.** It adds a dialog, which is the least entangled of the six, and
-   it depends on the longest chain (P15 and P16), so it is naturally last of the
-   substantial ones.
-5. **P22 last.** Nine small changes across many files is exactly the shape that
+`shell/dialog.rs` deserves a note, because the first draft's reviewer suggested
+reordering the app packages so that whichever one "introduces the dialog host
+shape" lands first. **No package introduces it**: `ShellDialog`
+(`crates/app/src/shell/dialog.rs:27`) already exists with a modal host, four
+variants and its `accessible`/`render` pair, and `preferences_dialog.rs` is the
+worked example. Every new dialog is one more variant in an append-only enum, in
+the same class as the other five shared tables. There is nothing to sequence
+around.
+
+**The app landing order is dependency depth**, so no package rebases over one
+that later moves beneath it:
+
+1. **P18** (depth 5). The dirty state, the saved mark's UI reading and four
+   global commands that every other app package reads or extends. A save and
+   undo model rebased under eight branches is worse than eight rebasing under it.
+2. **P19** (depth 5). The first consumer of the rail-plus-side-panel surface
+   P20 also uses, so it sets that shape.
+3. **P12** (depth 7) and **P21** (depth 7). P12 adds the first new `ShellDialog`
+   variant and P21 the second pane-shaped surface.
+4. **P14** (depth 8) and **P17** (depth 8).
+5. **P10** (depth 9).
+6. **P13** (depth 10) and **P20** (depth 10). P20's is the one that also flips
+   the quick action gates.
+7. **P22 last**, out of depth order and deliberately: it is at depth two, but it
+   is nine small changes across many files, which is exactly the shape that
    rebases cleanly under everything and painfully over anything.
 
 Whoever rebases re-runs `cargo test -p onionskin-app --no-default-features
@@ -2519,7 +2617,7 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY
 | 71 | Add comments | Connected lines (polyline) | P9 |
 | 72 | Add comments | Cloud | P9 |
 | 73 | Add comments | Attach a file as a comment | P10 |
-| 74 | Add comments | Comment properties | P10 |
+| 74 | Add comments | Comment properties | P20 |
 | 75 | Add comments | Comments list: sort, filter, reply, status, read/unread | P20 |
 | 76 | Add comments | Summarize comments | P10 |
 | 77 | Add comments | Print comments | P17 |
@@ -2546,9 +2644,21 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY
 | 98 | Printing | Print to file / print to PDF | P15 |
 | 99 | Printing | Advanced Print Setup dialog | P17 |
 
-**Totals.** P8 5, P9 13, P10 10, P11 9, P12 6, P13 10, P14 8, P15 7, P16 1,
-P17 7, P18 7, P20 4, P21 1, P22 9, moved to M4 2. Sum 99. P0, P1, P1b, P2, P3, P4,
-P5, P6, P7 and P19 close zero rows and are named against them in section 4.
+**Totals.** P8 5, P9 13, P10 9, P11 9, P12 6, P13 10, P14 8, P15 7, P16 1,
+P17 7, P18 7, P20 5, P21 1, P22 9, moved to M4 2. Sum 99, of which **M3 ships 97**
+and M4 gains 2. P0, P1, P1b, P1c, P2, P3, P4, P5, P6, P7 and P19 close zero rows
+and are named against them in section 4.
+
+**Every row is owned by the package that builds the surface it is scored on.**
+That is a rule rather than an observation, and applying it moved four things.
+Row 74's surface is P20's side-panel inspector, so the row moved from P10 to P20.
+Rows 38, 39, 40 and 46 are a dialog, so P12 gained app files and a P0 dependency
+rather than closing them from `plugins/commands-core` alone. Rows 1, 9, 36, 51
+and 52 are a global-bar entry, a menu, a clipboard read and a destructive Save As
+dialog, so P14 gained the same. Rows 83, 84 and 85 are a dialog and a clipboard
+read, so P10 gained the same. Left alone, thirteen rows would have been marked
+`implemented` against surfaces no package had scheduled, which is the
+dishonest-scoreboard failure `ACROBAT-PARITY.md` exists to prevent.
 
 **Rows outside M3's 99 that M3 changes**, which the scoreboard update has to
 carry and which nobody should discover at review time:
