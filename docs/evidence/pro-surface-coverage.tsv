@@ -1,0 +1,170 @@
+# Three-way coverage verdict, one line per in-scope row of the Pro-gated toolset
+# sections of ACROBAT-PARITY.md. Tally with parity/tools/coverage-tally.py.
+#
+# verdict, in descending strength:
+#   Rb reachable and captured: the row's own controls appear in a frame of the
+#      pinned build (source class B). Naming, grouping, ordering, default and
+#      enabled state, relative geometry, iconography and colour are obtainable.
+#      These rows and only these can feed a geometry or token ledger.
+#   Ra reachable by accessibility query: the row's own command is a live entry
+#      the pinned build reports about itself (source class A). Naming, index,
+#      grouping, enabled state and shortcut are obtainable; no geometry, no
+#      iconography, no colour.
+#   D  documentation-sourceable only: Adobe's public prose names the row's
+#      principal controls. Naming, field lists and step order are obtainable;
+#      grouping only inside a verbatim quoted path; no geometry, iconography,
+#      colour, type or motion.
+#   N  neither source established it in this pass. N is a statement about this
+#      pass, not about the world: see section 7.4 of the method document.
+#
+# Rb and Ra together are the "reachable in the installed Reader" bucket. Only Rb
+# supports the token and geometry layers of docs/plans/parity-goal.md.
+#
+# evidence: the shortest thing a reader can re-check.
+#
+# section	row	verdict	evidence
+Edit a PDF	Edit text (line-level)	D	helpx edit-text pages name "Edit text"
+Edit a PDF	Reflowing text edit	N	no Acrobat control of this name surfaced
+Edit a PDF	Change font, size, colour, alignment, spacing of edited text	D	field list of the Format panel: Font, Size, Colour, Alignment, Line spacing
+Edit a PDF	Add text (new text box)	Ra	Reader Edit menu index 6, "Add Text", enabled
+Edit a PDF	Edit images and objects	D	field list of the Objects panel: Flip, Rotate, Arrange, Align, Crop
+Edit a PDF	Replace image	N	not surfaced
+Edit a PDF	Add image	Ra	Reader Edit menu index 7, "Add Image", enabled
+Edit a PDF	Extract / save image	N	not surfaced under Edit
+Edit a PDF	Add or edit links	D	"Link"
+Edit a PDF	Auto-create links from URLs	N	not surfaced
+Edit a PDF	Remove web links	N	not surfaced
+Edit a PDF	Crop pages	D	"Crop pages"
+Edit a PDF	Header and footer	D	"Header & Footer"
+Edit a PDF	Watermark	D	"Watermark"
+Edit a PDF	Background	N	explicitly not surfaced by the probe
+Edit a PDF	Bates numbering	D	"Bates numbering"
+Edit a PDF	Edit a scanned PDF (OCR-then-edit)	N	not surfaced
+Edit a PDF	Edit a signed or certified PDF	N	not surfaced
+Create a PDF	Create from a single image file	Rb	frame 592642c: task view, "Select Files"
+Create a PDF	Create from multiple files	Rb	frame 592642c: task view, "Select Files"
+Create a PDF	Create a blank page	D	"Blank page on the left rail and select Create"
+Create a PDF	Create from the clipboard	D	"File > Create > PDF from clipboard"
+Create a PDF	Create from a scanner	D	"select Scanner from the left rail"
+Combine files	Combine files into a single PDF	D	"Single PDF"
+Combine files	Add files / add folders to the combine list	D	"Add Files", "Add open files"
+Combine files	Reorder, preview and remove entries before combining	D	Move Up / Move Down, drag and drop
+Combine files	Expand a file and combine at page granularity	N	not surfaced
+Combine files	Combine into a PDF Portfolio	D	"PDF Portfolio"
+Organize pages	Rotate pages (left / right)	Ra	Reader Edit menu index 10, "Rotate Pages", enabled
+Organize pages	Reorder / move pages	D	"Move", "arrange pages"
+Organize pages	Insert pages (from file, blank, clipboard)	D	"Insert"; "from a file, clipboard, scanner, web page, or a blank page"
+Organize pages	Delete pages	Ra	Reader Edit menu index 9, "Delete Pages", enabled
+Organize pages	Extract pages	D	"Extract"
+Organize pages	Split	D	"Split"
+Organize pages	Replace pages	D	"Replace"
+Organize pages	Copy or move pages between open documents	N	not surfaced
+Organize pages	Renumber pages / page labels	D	"Organize pages > Page labels"
+Organize pages	Crop pages (from Organize)	D	Set Page Boxes / Crop dialog
+Organize pages	Page thumbnail zoom and multi-select in the Organize grid	N	not surfaced
+Compress a PDF	Compress a PDF (one-click, size level)	D	"Reduce PDF file size"
+Compress a PDF	Reduce File Size (compatibility target)	D	"Reduce PDF file size"
+Compress a PDF	PDF Optimizer	D	field list of "PDF Optimizer": Images, Fonts, Transparency, Discard Objects, Discard User Data, Clean Up
+Compress a PDF	Audit space usage	D	"Audit Space Usage"
+Export a PDF	Export to Microsoft Word (.docx)	Rb	frame 07ffb1d: radio 1, "Microsoft Word", tag DOCX, selected
+Export a PDF	Export to Microsoft Excel (.xlsx)	Rb	frame 07ffb1d: radio 3, "Microsoft Excel", tag XLSX
+Export a PDF	Export to Microsoft PowerPoint (.pptx)	Rb	frame 07ffb1d: radio 2, "Microsoft PowerPoint", tag PPTX
+Export a PDF	Export to Rich Text Format (.rtf)	Rb	frame 07ffb1d: radio 5, "Other format", tag RTF
+Export a PDF	Export to HTML	D	no control in the captured panel offers HTML; Adobe prose names HTML export
+Export a PDF	Export to plain text / accessible text	Ra	Reader File menu index 7, "Save as Text..."
+Export a PDF	Export pages to PNG	D	behind the Image format chevron, not captured; Adobe prose names PNG
+Export a PDF	Export pages to SVG	N	no Acrobat SVG export surfaced by any source in this pass
+Export a PDF	Export pages to JPEG / JPEG2000 / TIFF	Rb	frame 07ffb1d: radio 4, "Image format", tag JPEG; JPEG2000 and TIFF behind the chevron
+Export a PDF	Export all images in a document	D	"Export images or selections from a PDF"
+Export a PDF	Export to XML / XML spreadsheet	N	not surfaced
+Prepare a form	Auto-detect form fields in an existing document	N	not surfaced
+Prepare a form	Text field	D	"Text Field"
+Prepare a form	Check box	D	"Check Box"
+Prepare a form	Radio button	D	"Radio Button"
+Prepare a form	List box	D	"List Box"
+Prepare a form	Dropdown (combo box)	D	"Dropdown"
+Prepare a form	Button (push button)	N	not surfaced as a field type
+Prepare a form	Image field	N	not surfaced
+Prepare a form	Date field	D	"Date"
+Prepare a form	Digital signature field	D	"Digital Signature"
+Prepare a form	Barcode field	D	"Barcode"
+Prepare a form	Field properties: General, Appearance, Position, Options, Actions	D	field list of the Properties dialog: tabs General, Appearance, Options, Actions confirmed; Position not; no order asserted
+Prepare a form	Field properties: Format, Validate, Calculate	D	Format and Calculate confirmed; Validate not
+Prepare a form	Tab order / form field navigation	N	not surfaced
+Prepare a form	Fill in a form (as an end user)	N	not probed
+Prepare a form	Clear form	N	not probed
+Prepare a form	Auto-Complete form entries	N	not probed
+Prepare a form	Import / export form data (FDF, XFDF, XML)	N	not probed
+Redact a PDF	Mark text for redaction	D	"Mark checked results for redaction" (paraphrase, label not verbatim)
+Redact a PDF	Mark images / regions for redaction	N	not surfaced
+Redact a PDF	Mark whole pages for redaction	N	not surfaced
+Redact a PDF	Find text and redact	D	"Search & Remove Text"
+Redact a PDF	Redaction properties	D	"Redaction Tool Properties"
+Redact a PDF	Redaction code sets and the Redaction Code Editor	D	"U.S. FOIA", "U.S. Privacy Act", "Redaction codes"; Code Editor not surfaced
+Redact a PDF	Apply redactions	N	"Apply" not surfaced verbatim
+Redact a PDF	Sanitize document / remove hidden information	D	"Sanitize Document", "Remove Hidden Information"
+Protect a PDF	Protect using a password (open password)	D	"Document Open Password"
+Protect a PDF	Restrict editing and printing (permissions password)	D	"Restrict Editing", "Permissions Password"
+Protect a PDF	Set permission details	D	"Enable Copying Of Text, Images, And Other Content", "Enable Text Access For Screen Reader Devices For The Visually Impaired"
+Protect a PDF	Open an encrypted document	N	not established by any frame or query
+Protect a PDF	Remove security	N	not surfaced
+Protect a PDF	Encrypt with a certificate	N	not surfaced
+Protect a PDF	Encrypt only file attachments	N	not surfaced
+Protect a PDF	Security policies	N	not surfaced
+Protect a PDF	JavaScript preferences	N	not surfaced
+Protect a PDF	Trust Manager	N	not surfaced
+Protect a PDF	Document properties > Security tab	N	Reader File menu index 18 opens the dialog; the tab itself not established
+Use a certificate	Validate an existing signature	N	only "validating" discussed, no control named
+Use a certificate	Signature properties and validation report	N	not surfaced
+Use a certificate	Preserve signature validity across edits	N	not surfaced
+Use a certificate	Digitally sign with a certificate	N	not surfaced verbatim
+Use a certificate	Certify a document (visible or invisible)	D	"Certify (Visible Signature)", "Certify (Invisible Signature)"
+Use a certificate	Manage digital IDs	D	"Digital ID", "Signatures Panel"
+Use a certificate	Create a self-signed digital ID	N	not surfaced
+Use a certificate	Create and manage signature appearances	N	not surfaced
+Use a certificate	Signature verification preferences	N	not surfaced
+Use a certificate	Timestamp a document (RFC 3161)	N	not surfaced
+Use a certificate	Long-term validation (LTV) enablement	N	not surfaced
+Use a certificate	Trusted identities / manage trusted certificates	N	not surfaced
+Use a certificate	Lock a document after signing	N	not surfaced
+Scan & OCR	Scan a document to PDF	D	"select Scanner from the left rail"; scan.html
+Scan & OCR	Scanner presets and settings	N	not surfaced
+Scan & OCR	Recognize text (OCR) in this file	D	"Recognize Text", "In This File"
+Scan & OCR	Recognize text in multiple files	D	"In Multiple Files"
+Scan & OCR	OCR language and output settings	D	"Searchable Image", "Searchable Image (Exact)", "Editable Text & Images", "Settings"
+Scan & OCR	Correct recognized text	D	"Correct Recognize Text"
+Scan & OCR	Enhance a scanned document	N	"Enhance" not surfaced
+Scan & OCR	Enhance a camera image	N	not surfaced
+Measure objects	Distance tool	D	"Distance tool"
+Measure objects	Perimeter tool	D	"Perimeter tool"
+Measure objects	Area tool	D	"Area Tool"
+Measure objects	Scale ratio and units	D	"Change Scale Ratio and Precision"
+Measure objects	2D snap settings	D	"Snap to Paths", "Snap to Endpoints", "Snap to Midpoints", "Snap to Intersections"
+Measure objects	Enable Measurement Markup	N	not surfaced
+Measure objects	Measurement Info panel	D	field list of the "Measurement Info panel": current measurement, delta values, scale ratio
+Prepare for accessibility	Check for accessibility	D	"Accessibility Check" / "Full Check"
+Prepare for accessibility	Accessibility report	D	field list of the "Accessibility Report": statuses Passed, Skipped By User, Needs Manual Check, Failed
+Prepare for accessibility	Automatically tag a PDF (autotag)	D	"Autotag Document"
+Prepare for accessibility	Fix reading order (Reading Order tool)	D	labels "Reading Order" and "Reading Options", no placement asserted
+Prepare for accessibility	Edit structure with the Tags and Content panes	D	labels "Tags panel" and "Content pane options menu", no placement asserted
+Prepare for accessibility	Set alternate text for figures	D	Adobe prose gives "Add alternate text"; whether that supersedes "Set Alternate Text" is open
+Prepare for accessibility	Set document language	N	not surfaced
+Prepare for accessibility	Set document title	N	not surfaced
+Prepare for accessibility	Table editor / table summary	N	not surfaced
+Prepare for accessibility	Keep the structure tree valid through every edit	N	Onionskin obligation, no Acrobat control
+Prepare for accessibility	Read Out Loud (from the accessibility toolset)	Ra	Reader View menu index 12, submenu item 0, "Activate Read Out Loud", enabled; its four siblings are disabled with no document being read
+Prepare for accessibility	Accessibility Setup Assistant	Ra	Reader app menu index 4, "Accessibility Setup Assistant..."
+Use print production	Set Page Boxes (media, crop, bleed, trim, art)	D	"Set Page Boxes (Crop Tool) dialog"; only legacy-version sources surfaced
+Use guided actions	Run a shipped action	D	"Action Steps To Show", "The tasks are run in the order in which they appear"
+Use guided actions	Create a new action	D	"New Action", "Create New Action"
+Use guided actions	Edit, rename, copy, delete an action	D	"Manage Actions", "Copy"
+Use guided actions	Import / export an action	N	not surfaced
+Use guided actions	Choose files to process	N	not surfaced
+Use guided actions	Create and manage custom commands	N	not surfaced
+Use guided actions	Make Accessible action	N	not surfaced
+Compare files	Compare two documents	D	"Compare", "Select File"
+Compare files	Compare text only	N	label not surfaced
+Compare files	Side-by-side and single-file result views	D	"side-by-side view", "single page view"
+Compare files	Navigate changes (first, previous, next)	N	not surfaced
+Compare files	Filter changes by type	D	"Filter" options
+Compare files	Comparison report / change list	D	comparison report / results summary

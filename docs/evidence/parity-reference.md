@@ -8,6 +8,12 @@ are asleep; WindowServer rejects the window rectangle against the inactive
 displays even though capture permission is allowed.
 REPO-010 remains open until all eight incomplete states are captured and recorded.
 
+Companion ledger: `docs/evidence/pro-surface-reader.md` covers the Pro-only
+toolsets, which have no Onionskin counterpart to compare against yet and so
+would be `pending` in every Onionskin column here. Its method and confidence
+model are in `docs/plans/pro-toolset-reference-method.md`. The acceptance rules
+in `docs/plans/parity-goal.md` section 4.4 govern both files unchanged.
+
 ## Privacy Rule
 
 Acrobat reference screenshots and derived comparison images stay local-only under
