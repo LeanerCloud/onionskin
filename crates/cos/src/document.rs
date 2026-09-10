@@ -49,7 +49,14 @@ const COPY_CHUNK: u64 = 64 * 1024;
 
 /// A pending change to one object number. Both variants carry the generation
 /// the appended section will record for it.
-enum Edit {
+///
+/// This is the vocabulary [`Document::section_for`] takes, so a caller holding
+/// its own overlay says what a save would write without the document holding
+/// any of it. `Document`'s own edit map speaks the same type, which is what
+/// makes [`Document::incremental_section`] a caller of `section_for` rather
+/// than a second serializer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PendingEdit {
     Set {
         generation: u16,
         object: Object,
@@ -112,7 +119,7 @@ pub struct Document {
     /// is a fact about the file and does not stop being true.
     recovered_boundaries: RefCell<BTreeMap<u32, RecoveredBoundary>>,
     in_flight: RefCell<BTreeSet<u32>>,
-    edits: BTreeMap<u32, Edit>,
+    edits: BTreeMap<u32, PendingEdit>,
     trailer_edits: Dict,
     next_number: u32,
 }
@@ -261,6 +268,16 @@ impl Document {
         self.original_len
     }
 
+    /// The next object number [`Document::add_object`] would hand out: one
+    /// above everything the file names and everything this session has written.
+    ///
+    /// Consumer: a caller that keeps its own overlay and allocates its own
+    /// numbers, which is how `core` reserves one without calling `add_object`
+    /// speculatively and leaving an edit it cannot withdraw.
+    pub fn next_object_number(&self) -> u32 {
+        self.next_number
+    }
+
     /// Every stream whose data boundary the parser recovered, keyed by object
     /// number, with the container's entry standing for the objects inside it.
     ///
@@ -293,7 +310,7 @@ impl Document {
             return Ok(hit.clone());
         }
         match self.edits.get(&number) {
-            Some(Edit::Set { generation, object }) => {
+            Some(PendingEdit::Set { generation, object }) => {
                 return Ok(Parsed {
                     objref: ObjRef::new(number, *generation),
                     object: object.clone(),
@@ -304,7 +321,7 @@ impl Document {
             // The object still has bytes in the file, and a caller that has
             // not saved yet could read them. Reporting it as present would
             // make the deletion invisible until the save.
-            Some(Edit::Delete { generation }) => {
+            Some(PendingEdit::Delete { generation }) => {
                 return Err(Error::MissingObject(ObjRef::new(number, *generation)))
             }
             None => {}
@@ -838,7 +855,8 @@ impl Document {
         }
         self.forget_parsed_objects();
         self.next_number = self.next_number.max(number.saturating_add(1));
-        self.edits.insert(number, Edit::Set { generation, object });
+        self.edits
+            .insert(number, PendingEdit::Set { generation, object });
         Ok(())
     }
 
@@ -851,7 +869,7 @@ impl Document {
         })?;
         self.edits.insert(
             number,
-            Edit::Set {
+            PendingEdit::Set {
                 generation: 0,
                 object,
             },
@@ -886,10 +904,10 @@ impl Document {
             });
         }
         let live = match self.edits.get(&number) {
-            Some(Edit::Delete { generation }) => {
+            Some(PendingEdit::Delete { generation }) => {
                 return Err(Error::MissingObject(ObjRef::new(number, *generation)))
             }
-            Some(Edit::Set { generation, .. }) => *generation,
+            Some(PendingEdit::Set { generation, .. }) => *generation,
             None => match self.xref.get(number) {
                 Some(XrefEntry::InFile { generation, .. }) => generation,
                 // A compressed object carries no generation of its own; the
@@ -905,7 +923,8 @@ impl Document {
         // stops, rather than wrapping back to a generation that is in use.
         let generation = live.saturating_add(1);
         self.forget_parsed_objects();
-        self.edits.insert(number, Edit::Delete { generation });
+        self.edits
+            .insert(number, PendingEdit::Delete { generation });
         Ok(())
     }
 
@@ -997,8 +1016,8 @@ impl Document {
             .edits
             .iter()
             .filter_map(|(number, edit)| match edit {
-                Edit::Delete { generation } => Some((*number, *generation)),
-                Edit::Set { .. } => None,
+                PendingEdit::Delete { generation } => Some((*number, *generation)),
+                PendingEdit::Set { .. } => None,
             })
             .collect();
         if deleted.is_empty() && !full_table {
@@ -1043,10 +1062,10 @@ impl Document {
             .edits
             .iter()
             .filter_map(|(number, edit)| match edit {
-                Edit::Set { generation, object } => {
+                PendingEdit::Set { generation, object } => {
                     Some((ObjRef::new(*number, *generation), object.clone()))
                 }
-                Edit::Delete { .. } => None,
+                PendingEdit::Delete { .. } => None,
             })
             .collect();
 
