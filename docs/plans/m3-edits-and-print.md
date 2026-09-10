@@ -90,7 +90,7 @@ land on M3's desk rather than M2's:
 | `Copy With Formatting` and `Export Selection As` disabled "Available in M3 with rich-text export" | P22, and see section 8 item 12 for why only half of it can ship |
 | Find bar `Include Comments` disabled, "Comments arrive with the comment tools in M3" | P20 |
 | The encryption class split (`permissions-only` versus password-protected) that m2-viewer section 6 assigned as a `known-issues.md` ledger action **was never written**. `known-issues.md` has no encryption entry at all. | P1b produces the measurement (section 9, ruling A); the orchestrator lands the ledger entry |
-| Textual CI tripwires in `guarantees.rs` are evadable by a softened harness (CR-005, REPO-011) | Section 3, T9: every guarantee M3 un-ignores states the mutation that must break it |
+| Textual CI tripwires in `guarantees.rs` are evadable by a softened harness (CR-005, REPO-011) | Section 3, T9: every guarantee M3 extends states the mutation that must break it. M3 un-ignores none of them, since 1, 2 and 6 already run; it deepens 1, 2 and 6 and leaves 3, 4, 7 and 8 to M5 |
 | `SearchResult::Unavailable::reason` is `&'static str`, to be widened "after P9 lands" | P20 (the comments filter needs a dynamic reason; the "after P9" in the ledger entry now means after P9a, P9b and P9c) |
 
 Two M2 rows are `partial` **because** M3 has not shipped, and flip when it does:
@@ -557,8 +557,16 @@ on the excluded annotations, applied to a preview buffer built for that render
 and never saved.** `/F` is honoured by hayro's annotation loop and by every
 other reader. It composes with T4's preview mechanism at zero additional
 machinery: the print path asks `core` for a preview buffer with a stated
-annotation filter, and gets bytes. The same mechanism gives the Comments pane a
-"hide all comments" view for free.
+annotation filter, and gets bytes.
+
+**The filter argument has exactly one M3 consumer, and it is the print path.**
+The first draft also claimed the Comments pane gets a "hide all comments" view
+"for free" from the same mechanism. That view is **not one of M3's rows**: the
+Comments pane's rows are 29, 30, 74, 75 and 78, and none of them is a
+visibility toggle. Naming it as a second consumer would have been a parameter
+justified by a feature nobody scheduled. One real consumer is enough for a
+parameter that is the entire point of this resolution; a second invented one is
+not an improvement.
 
 Consequence to state plainly: M3 authors **no** `/OC` on any annotation. If a
 later milestone wants layer-controlled annotation visibility, it needs the
@@ -575,7 +583,8 @@ names a `flatten` full rewrite that does not exist).
 Onionskin authors is written complete on its first save, and the invariant
 applies from that point forward. The file Onionskin wrote is the base sheet.
 This is not an exception to non-destructiveness, because nothing existed to
-destroy; it is the only sane reading, and PLAN.md should say it.
+destroy; it is the only sane reading. **PLAN.md now says it**, at `989d8a7`:
+the core invariant carries "A document we author has nothing beneath it".
 
 Mechanically, this needs `cos` to be able to serialize a whole document, which
 is `flatten` under a different name. P1 builds it as
@@ -1138,14 +1147,44 @@ transfer" item 7 already committed to. The cost is that a third-party plugin
 cannot invent an edit, which is not a cost until `plugin-host-wasm` exists
 post-1.0.
 
-P2 lands the machinery plus two variants to prove the shape end to end
-(`SetObjectDictEntry` and `DeleteObject` are not it: something real, and
-`SetInfoField` plus `SetTrailerEntry` are the two cos already supports, which
-`File > Properties` will use). P5 and P6 grow the enum.
+P2 lands the machinery plus two variants to prove the shape end to end, and each
+one names the M3 consumer that reaches it: **`SetInfoField`**, which P13a's
+Description tab writes, and **`SetCatalogEntry`**, which P13a's Initial View tab
+writes (`/OpenAction`, `/PageLayout`, `/PageMode`). `SetObjectDictEntry` and
+`DeleteObject` are deliberately not the two: they are shapes rather than verbs.
+
+`SetTrailerEntry` **is not one of them**, which the first draft had it be.
+`File > Properties` writes `/Info`, which is `SetInfoField`, and Initial View
+writes catalog entries, which the trailer is not; no M3 surface writes a trailer
+key. It would have been a verb with no caller in the package whose whole argument
+for a closed enum is that every verb has one. P5 and P6 grow the enum.
 
 Transactions: `EditSession::transact(label, |tx| ...)` collects changes into one
 `Entry`. An aborted transaction leaves the overlay untouched, including any
 object numbers it reserved.
+
+**The stack is bounded, and the bound is measured rather than guessed.** An
+`ObjectState` holds a fully materialized `cos::Object`, which for a `Stream` is
+its bytes, and a `Change` holds two of them. The worst case in M3 is not an ink
+session: it is **one page reorder on the 1000-page bench file**, where T5's flat
+rewrite produces about a thousand rewritten page dicts as `after` and a thousand
+captured base values as `before`, so roughly **two thousand objects in a single
+`Entry`**. Page dicts are small, but nothing in the design says they have to be,
+and a reorder of a document whose pages carry large inline resources is the same
+shape with a different constant.
+
+So P2 owns three things the first draft left as a review-risk question:
+
+- A bench in `crates/core/benches/` that reports the resident size of one
+  `Entry` for the 1000-page reorder and for a hundred-annotation session, so the
+  bound is derived from a number rather than chosen.
+- A bound expressed as a named constant over **total resident bytes**, not entry
+  count, because one reorder and one thousand highlights are the same entry count
+  and three orders of magnitude apart.
+- An eviction rule that drops the **oldest** entries past the bound and makes the
+  truncation **visible**: the Edit menu's Undo says how far back it can go, and a
+  stack that has forgotten something says so rather than silently having a
+  shorter history than the user expects.
 
 **Rows closed.** None. Backs rows 2, 17 and every editing row in M3.
 
@@ -1165,6 +1204,7 @@ says the edit history "will own its own undo stack").
 - Headless property test over a generated sequence of edits: apply N edits then undo N leaves the overlay byte-identical to empty, for N up to a few hundred, including sequences that overwrite the same object repeatedly and sequences that delete an original object. **This is the case PLAN.md's "drop the overlay node" phrasing gets wrong**, so it is the case the test must cover explicitly and by name.
 - **The base-capture rule, by name:** editing an object that exists in the base document records `before` as `Some(ObjectState { .. })` holding the base object by value, asserted on the `Change` itself and not inferred from undo working. A test that only checks undo passes against an implementation that reads the base at undo time, which stops working the moment the base is reopened, which is the whole bug.
 - **No `Change` ever carries a `before: None` for a number the base document has**, asserted as a property over the generated edit sequences. That is the invariant stated as a check, and it is what makes `None` safe to drop on either side of a save.
+- **The stack's memory bound.** A bench reporting one `Entry`'s resident size for the 1000-page reorder and for a hundred-annotation session, and a test that a session past the bound has dropped its oldest entries, reports a shorter reach in the Edit menu, and has not dropped anything below the saved mark without saying so.
 - Redo after undo restores exactly; a new edit after an undo truncates the redo tail, asserted.
 - The saved mark: it survives undo and redo, and moves only when P3's save moves it.
 - An aborted transaction leaves both the overlay and the reservation counter unchanged, so an abort cannot leak an object number.
@@ -1222,13 +1262,32 @@ Four pieces:
    `sections()`, plus `revert_to(generation)`, which truncates and reopens.
    Reverting is refused, loudly, if the document has unsaved edits, or if the
    target is not a trailing section.
-4. **Autosave.** A periodic write of the overlay to a recovery file beside the
-   config directory, not to the document. `cos::Document` is `!Send`
-   (m2-viewer's candor item 7, now due), so the overlay is what crosses the
-   thread boundary, not the document: autosave serializes the overlay's changes
-   and the recovery path replays them into a freshly opened document. Named
-   here because the alternative, an `Rc` to `Arc` swap in cos, is a bigger
-   change than the feature justifies.
+4. **Autosave.** A periodic write of the overlay to a recovery file, not to the
+   document. `cos::Document` is `!Send` (m2-viewer's candor item 7, now due), so
+   the overlay is what crosses the thread boundary, not the document: autosave
+   serializes the overlay's changes and the recovery path replays them into a
+   freshly opened document. Named here because the alternative, an `Rc` to `Arc`
+   swap in cos, is a bigger change than the feature justifies.
+
+   **The recovery file is the user's document content, and it is treated that
+   way.** This is the correction that matters, because the first draft put it
+   "beside the config directory" as if it were a preference. The overlay's
+   `before` states are objects read out of the user's PDF and its `after` states
+   are what they are about to write: a recovery file for a contract under review
+   contains that contract. `config.rs` creates new directories `0o700` and files
+   `0o600`, but `known-issues.md` records that **a pre-existing config directory
+   keeps its mode, and only newly created ones get `0o700`**, so a user whose
+   config directory predates that rule at `0755` would have their document
+   content written into a world-readable directory. That is a privacy defect, not
+   a permissions nit, and it is not acceptable to inherit it.
+
+   So: recovery files live in their **own** directory, not the config one; the
+   directory's mode is **verified after creation** and the write refused with a
+   visible error if it is not `0o700`, rather than assumed from the create call;
+   each file is `0o600`, verified the same way; and a recovery file is **deleted
+   as soon as its document is saved or its tab closed cleanly**, so the window in
+   which document bytes exist outside the document is as short as the feature
+   allows. All four are asserted, on Unix, by reading the mode back.
 
 **Rows closed.** None directly; P18 surfaces them. Backs rows 2, 3, 7, 10, 11,
 13, 17 and guarantees 1 and 2.
@@ -1257,6 +1316,7 @@ feeding it preview bytes is a new `Arc`, not a new threading model.
 - **The preview cache key includes the filter**, asserted directly: two `preview_bytes` calls at one overlay generation with two different `AnnotationFilter` modes return different bytes, and the same mode twice returns the cached buffer. Without the first half the print dialog shows the wrong Comments-and-Forms mode and every downstream filter test still passes, because none of them asks twice at one generation.
 - Bench, in `crates/core/benches/save.rs`, with a stated budget in the existing `crates/core/benches/` harness shape: preview rebuild after one edit on a clean 1000-page document, and on a **repaired** document, where `needs_full_table()` forces a full-table section. The repaired number is the one that decides whether preview rebuilds need debouncing, and this plan does not guess it.
 - `revert_to` on a document with unsaved edits is refused; on a non-trailing generation it is refused; on a trailing one it truncates and the reopened document matches the pre-save state.
+- **The recovery file's permissions, read back rather than assumed** (Unix): its directory is `0o700` and its file is `0o600`, asserted by reading the mode after the write; a pre-existing directory at `0o755` makes the write **fail visibly** rather than proceed, which is the case `known-issues.md`'s P11 residual describes and the case that would otherwise put document bytes in a world-readable place; and the file is gone after a save and after a clean tab close.
 - **Runs.** `cargo test -p onionskin-core`; `cargo bench -p onionskin-core --bench save`; `cargo test -p onionskin-app --no-default-features` (guarantee 5 with a save path in the workspace); `cargo clippy --workspace --all-targets -- -D warnings`.
 - **Corpus.** The guarantee-1 sweep and its repaired-document half walk `external/`, so both run behind P1c's fetch step and are re-run under `ONIONSKIN_CORPUS_REQUIRED=1`. Without it, guarantee 1 at the `core` level means three tracked seeds.
 
@@ -2252,10 +2312,18 @@ app work, and only one of the two backends can be tested in CI.
 The cut that makes printing verifiable:
 
 ```rust
-pub struct Placement { source: PageIndex, transform: [f64; 6], clip: Option<Rect> }
+pub struct Placement { source: PageIndex, transform: [f64; 6] }
 pub struct Sheet { size: PaperSize, orientation: Orientation, placements: Vec<Placement> }
 pub trait PrintBackend { fn print(&mut self, job: &PrintJob, sheets: &[Sheet]) -> Result<()>; }
 ```
+
+**`Placement` has no `clip` field**, which the first draft gave it. Ruling B moved
+poster and tile to M4, and poster and tile is the only thing that clips a
+placement: Fit and Shrink scale, Custom scale scales, N-up scales, and an
+oversized page at Actual size is bounded by the sheet, which is a property of the
+sheet rather than of one placement on it. So `clip` had no M3 caller, which is
+what section 7 says every abstraction must have. M4 adds it with the feature that
+needs it, on the same `Placement`, which is a field addition and not a reopening.
 
 **Imposition is pure math over page geometry and produces `Vec<Sheet>`.** Page
 range and subset, sizing (Fit, Actual size, Shrink oversized pages, Custom
@@ -2279,8 +2347,27 @@ raster.
 
 **Rows closed.** 87 Page range and subset, 88 Page sizing and handling,
 89 Multiple pages per sheet (N-up), 93 Orientation, 94 Comments & Forms,
-97 Print as image, 98 Print to file / print to PDF. **7 rows.** Booklet (90) and
-Poster / tile (91) were ruled out of M3 and move to M4 (section 9, ruling B):
+97 Print as image, 98 Print to file / print to PDF. **7 rows.**
+
+**This package also lands ruling B's scoreboard move, and it lands atomically.**
+`ACROBAT-PARITY.md` still says `M3` for Booklet and Poster / tile
+(`ACROBAT-PARITY.md:587-588`), and its preamble still says
+`By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.`
+(`ACROBAT-PARITY.md:63`). Both must change in **one commit**, because
+`acrobat_parity_headline_matches_every_inventory_row`
+(`crates/app/tests/guarantees.rs:2959`) recounts the per-milestone totals from
+the rows themselves and asserts the preamble line matches. Moving the two rows
+without the headline fails the build; moving the headline without the rows fails
+it too. After the move: **M3 97, M4 4**, every other milestone unchanged. The
+row Notes carry ruling B's reason.
+
+That edit is P15's rather than the orchestrator's because P15 is the package
+whose scope the ruling defines, and it is called out here because
+`crates/app/tests/guarantees.rs` also carries P7's guarantee-2 tripwire: two
+packages edit that file for unrelated reasons and neither should assume the other
+has been there.
+
+Booklet (90) and Poster / tile (91) move to M4 (section 9, ruling B):
 both are pure imposition math over this package's `Sheet` model, so M4 adds them
 without reopening anything P15 builds. P15 must therefore leave `Sheet` and
 `Placement` able to express a sheet whose placements are not a uniform grid, and
@@ -3019,7 +3106,7 @@ Every abstraction M3 introduces names the caller that exists in M3.
 | cos's save-time reference gate on `section_for` | every save in M3, as the cheap guard that T5's free-nothing rule was not broken |
 | `cos::Document::audit_references` | the verification of P5, P11, P12, P14a and P14b, which is where the complete O(file) walk belongs |
 | `core::edit::{Overlay, History, DocumentEdit}` | every tool and command from P8 to P14b |
-| `core::preview_bytes(filter)` | the canvas (committed edits), P15's print filter, P20's hide-all-comments view |
+| `core::preview_bytes(filter)` | the canvas (committed edits, unfiltered) and P15's print filter, which is row 94. There is no third consumer: the "hide all comments" view the first draft named is not an M3 row (T7). |
 | `core::generations` and `revert_to` | P19's skins panel, P18's `File > Revert` |
 | `core::structure` | P5's page operations, P6's annotation authoring, and M5's guarantee 8 |
 | `core::pages::rewrite_page_tree` | all nine P11 operations, P12's combine and split |
@@ -3061,7 +3148,7 @@ Deferred within M3, with reasons and ledger actions:
 
 | Item | Decision | Ledger action |
 |---|---|---|
-| Booklet (row 90) and Poster / tile (row 91) | **Moved to M4**, per ruling B. Both are pure imposition math over P15's `Sheet` model and land alongside M4's CUPS and Windows backends. | Move both rows to M4 in `ACROBAT-PARITY.md` with the reason. PLAN.md decision 13 names booklet in the M3 print list and is corrected in this branch's PLAN.md commit. |
+| Booklet (row 90) and Poster / tile (row 91) | **Moved to M4**, per ruling B. Both are pure imposition math over P15's `Sheet` model and land alongside M4's CUPS and Windows backends. | **P15 moves both rows to M4 in `ACROBAT-PARITY.md` with the reason, in the same commit as the `By milestone` headline**, since `guarantees.rs` recounts the totals from the rows. PLAN.md decision 13 and the `crates/print` crate entry are already corrected, at `989d8a7`. |
 | Copy With Formatting to the clipboard (half of row 31) | Deferred. `gpui::ClipboardEntry` has only `String` and `Image`, so a rich-text flavour needs a fork addition (section 8, item 12). Export Selection As ships; the row is `partial`. | Add the cut to row 31's Notes; open a fork issue for a custom pasteboard flavour. |
 | `New Bookmarks From Structure` | Not M3. Needs the tagged tree, and its parity row already puts it at M6. P4 makes it cheap when it arrives. | None; the row is already correct. |
 | JPEG 2000 export, if no acceptable pure-Rust encoder exists | Row 53 ships `partial` naming JPEG and TIFF, with the reason. A C dependency is not an acceptable resolution (decision 4). | Split row 53's Notes if it happens; decided in P14a, never carried as both outcomes. |
@@ -3073,11 +3160,22 @@ Deferred within M3, with reasons and ledger actions:
 
 ## 8. Candor: where PLAN.md's M3 text does not survive contact with the code
 
-Each item needs a plan edit or an explicit acceptance before implementation
-starts. Evidence is cited.
+Each item needed a plan edit or an explicit acceptance before implementation
+started. **Six of them landed at `989d8a7`** and are marked so rather than left
+reading as pending, because a candor list that describes fixed things as broken
+is the same defect it exists to prevent. Items 1, 3, 4, 5, 6 and 8 are done in
+PLAN.md; item 2 is done in `guarantees.rs`; item 7 is half done. Evidence is
+cited, and every "landed" claim below was re-checked against `main` at `fa5a194`
+this session rather than carried forward.
 
-1. **The M3 paragraph names seven deliverables; the scoreboard puts 99 rows in
-   M3.** This is M2's candor item 12 repeating: the paragraph names
+1. **LANDED at `989d8a7`. The M3 paragraph named seven deliverables while the
+   scoreboard put 99 rows in M3.** PLAN.md's M3 paragraph now covers the whole
+   milestone, including stamps, document properties, bookmark and attachment
+   authoring, compress, image creation and export, autosave, the Window menu,
+   Line Weights and the Advanced Search extensions. The original finding, kept
+   for the reasoning:
+
+   This is M2's candor item 12 repeating: the paragraph names
    `tools-comment`, `tools-organize`, Combine and split, incremental save,
    undo/redo, the skins panel and `crates/print`. It never mentions stamps
    (seven rows), document properties, bookmark and attachment authoring,
@@ -3089,8 +3187,8 @@ starts. Evidence is cited.
    engineering reason. That is a PLAN.md edit for the orchestrator, not made
    here.
 
-2. **Landed at B6, and this item now describes what M3 inherits rather than
-   what is missing.** The draft of this item said guarantees 1, 2 and 6 were
+2. **LANDED at `0f1c295`, and this item now describes what M3 inherits rather
+   than what is missing.** The draft of this item said guarantees 1, 2 and 6 were
    `#[ignore]`d and `unimplemented!()` in `crates/app/tests/guarantees.rs`.
    **That has not been true since `0f1c295`.** On `main` at `fa5a194` all three run;
    the four that stay ignored are 3, 4, 7 and 8, at `guarantees.rs:119`, `127`,
@@ -3139,7 +3237,12 @@ starts. Evidence is cited.
      moves fail the build unless the headline moves with them. P15 owns that
      edit, atomically with the two rows.
 
-3. **PLAN.md's stated undo model is wrong for two reachable cases.** "What does
+3. **LANDED at `989d8a7`.** "What does not transfer" item 1 now reads "Dropping
+   the overlay node is the common case, not the rule: an edit that overwrites an
+   already-overlaid object has to put back what was there ... The stack holds a
+   before and an after per changed object." The original finding:
+
+   "What does
    not transfer" item 1 and parity row 17 both say undo is "dropping edit-graph
    overlay nodes". Dropping a node is correct only when the edit created the
    node. An edit that overwrites an object a previous edit already overlaid (a
@@ -3148,23 +3251,34 @@ starts. Evidence is cited.
    T2 resolves it with before-and-after states; the plan text should say so, and
    P2's property test covers exactly these two cases by name.
 
-4. **The core invariant conflates generations with undo.** Point 2 of the
+4. **LANDED at `989d8a7`.** The core invariant now carries an "Undo is not
+   truncation" bullet that separates the two by name. The original finding:
+
+   Point 2 of the
    invariant says generations "roll back by truncation", and the milestone list
    says M3 delivers "undo/redo". Read together they imply truncation is undo,
    which is wrong after any save that is not the last thing in the file, wrong
    after a Save As, and destructive of generations the user kept. T1 separates
    them into a session-scoped edit stack and a named, explicit generation
-   rollback. PLAN.md should carry that distinction.
+   rollback. PLAN.md carries that distinction now.
 
-5. **The core invariant has no clause for documents Onionskin authors.** Combine,
+5. **LANDED at `989d8a7`.** The core invariant now carries "A document we author
+   has nothing beneath it". The original finding:
+
+   Combine,
    split, extract, create-from-image and the comment summary all produce a new
    file with nothing underneath to append to, and cos has no write-from-scratch
    API (its charter names a `flatten` that does not exist). T8 proposes the
    clause: a document Onionskin authors is written complete on its first save
-   and the invariant applies from there. That is a PLAN.md edit.
+   and the invariant applies from there. PLAN.md carries that clause now.
 
-6. **Decision 12 says `core` maintains the structure tree on every edit;
-   nothing in the workspace mentions it.** A repository-wide grep for
+6. **LANDED at `989d8a7` in PLAN.md; the code half is still P4's.** The M3
+   paragraph now ends "M3 also owes the tagged structure tree its reader, its
+   maintenance hook and its invariant (decision 12), three milestones before
+   guarantee 8." The repository-wide grep still returns nothing, which is what
+   P4 changes. The original finding:
+
+   A repository-wide grep for
    `StructTreeRoot`, `ParentTree`, `StructParents`, `MarkInfo` and `MCID`
    returns one incidental comment in `crates/content/src/interpret.rs:33`.
    PLAN.md assigns guarantee 8 to M5 and says nothing about M3's obligation,
@@ -3173,8 +3287,17 @@ starts. Evidence is cited.
    inheriting shipped M3 builds that broke the tree, plus a revisit of every M3
    tool.
 
-7. **The known dangling-reference debt is assigned to `tools-organize`, which is
-   the wrong owner.** `known-issues.md` and `document.rs:868` both say "M3's
+7. **HALF LANDED. PLAN.md is fixed; the ledger entry is not, and its wording now
+   needs to change more than the first draft said.** PLAN.md's `core` crate entry
+   now reads "organize, combine, split and redact all need the same repairs, so
+   no plugin owns them". `known-issues.md` and `document.rs:868` still say "M3's
+   `tools-organize` has to fix up the page tree itself", and under T5's
+   free-nothing rule that is not merely mis-owned but **describes work M3 does
+   not do**: the fix-up is not "after `delete_object`", it is "instead of it",
+   and `cos::delete_object` gains no M3 caller at all. The ledger entry should
+   say that, and the orchestrator lands it. The original finding:
+
+   `known-issues.md` and `document.rs:868` both say "M3's
    `tools-organize` has to fix up the page tree itself". A plugin is the last
    place that knowledge should live: `commands-core`'s combine and split need
    exactly the same fixups, and so will `redact` at M5. This plan puts the
@@ -3182,8 +3305,11 @@ starts. Evidence is cited.
    surface that calls it, and adds the guard in cos (P1) so the mistake is loud
    wherever it is made. The ledger entry's wording should move with it.
 
-8. **`crates/print` "lands with the macOS backend and the Acrobat print dialog"
-   understates it by three of five parts.** The five are a page-selection model,
+8. **LANDED at `989d8a7`.** PLAN.md's M3 paragraph now says `crates/print`
+   "lands in the five parts its crate entry names, with the print-to-file backend
+   first". The original finding:
+
+   The five are a page-selection model,
    an imposition engine, a sheet renderer, the backend trait with two
    implementations, and the dialog. The crate today has six lines of doc comment
    and no `[dependencies]` section. Only the dialog is app work, and only the
@@ -3231,6 +3357,31 @@ starts. Evidence is cited.
     the measurement (section 9, ruling A) as a committed table under
     `docs/evidence/` whose tally a test asserts; the orchestrator lands the
     ledger entry from it, and no package here edits that file.
+
+15. **PLAN.md's workspace layout puts the print command in `commands-core`; this
+    plan puts it in `crates/app`, and `crates/app` is right.** PLAN.md's
+    `plugins/commands-core` crate comment lists its contents as "menu commands:
+    Combine files, compress/flatten export, document properties, bookmark and
+    attachment authoring, generation rollback, **print (via `crates/print`)**".
+    P17 puts `file.print` in `crates/app/src/shell/chrome/commands.rs` and its
+    entry points in `global_bar.rs` and `context_menu.rs`, with no
+    `commands-core` file at all.
+
+    The plan is right and PLAN.md's line is wrong, for the reason PLAN.md itself
+    gives four lines earlier in the `print` crate entry: "Only the dialog is app
+    work." Invoking print **is** opening the dialog, and a `CommandPlugin`
+    cannot: no crate outside `crates/app` may import GPUI, so a command living in
+    `commands-core` could do nothing but ask the shell to open a dialog, which is
+    a shell command with an extra hop. The same argument applies to two more
+    entries on that line: **generation rollback** is P19's skins panel, which is
+    app surface, and the **Combine** and **compress** file-list dialogs are P12's
+    and P14b's app files. `commands-core` keeps the document-level work behind
+    all of them.
+
+    **Resolution: a PLAN.md edit for the orchestrator**, narrowing that crate
+    comment to the commands that act on the document rather than on a window.
+    Not made here; recorded here so it is not discovered as a contradiction at
+    P17's review.
 
 ---
 
@@ -3359,8 +3510,12 @@ products, and leaving it out of "the identity release" is a visible gap in a
 way poster and tile is not.
 
 **The recommendation, which was taken: move both to M4, and take the plan edit
-rather than the silent cut.** PLAN.md decision 13 is corrected in this branch's
-PLAN.md commit so the deferral is recorded where the promise was made. The road
+rather than the silent cut.** PLAN.md decision 13 was corrected at `989d8a7`
+("Booklet and poster/tile are imposition over the same sheet model and ship with
+the later backends, not with the first one"), along with the `crates/print` crate
+entry, so the deferral is recorded where the promise was made. What is still
+outstanding is `ACROBAT-PARITY.md`, which still reads `M3` for both rows; that is
+P15's atomic edit. The road
 not taken was a fourth print package delivering booklet imposition alone with
 creep compensation excluded; it is named here only so nobody re-derives it as a
 new idea.
@@ -3376,9 +3531,13 @@ at M4 that the model assumed a grid.
 
 ## 10. Definition of done for M3
 
-- All 99 `ACROBAT-PARITY.md` M3 rows are `implemented`, `partial` with a stated
-  cut in their Notes, or moved to a later milestone with a reason recorded in a
-  review. The scoreboard's executable totals contract recounts and passes.
+- **All 97 `ACROBAT-PARITY.md` rows M3 ships** are `implemented` or `partial`
+  with a stated cut in their Notes; rows 90 and 91 are at M4 with ruling B's
+  reason recorded. Ninety-seven, not ninety-nine: the milestone was given 99 and
+  ruling B moved two, so M3 is 97 and M4 is 4. The scoreboard's executable totals
+  contract (`acrobat_parity_headline_matches_every_inventory_row`,
+  `guarantees.rs:2959`) recounts and passes, which means the "By milestone" line
+  in `ACROBAT-PARITY.md`'s preamble moved with the two rows.
 - The three M2 rows M3 unblocks are flipped (right-hand side panel, quick action
   toolbar, Page Thumbnails context menu), and the Layers pane's `Properties`
   entry is live.
@@ -3396,10 +3555,12 @@ at M4 that the model assumed a grid.
   window, no display and no printer.
 - No crate outside `crates/app` imports GPUI, asserted by the existing test.
   `crates/print` imports AppKit directly and no GPUI, asserted the same way.
-- **Guarantees 1, 2 and 6 pass at the level the guarantee means**, not one layer
-  down: guarantee 2 is driven by an edit a tool made through `core`, and every
-  guarantee M3 un-ignores has a CI step that makes its corpus mandatory, so none
-  of them can repeat guarantee 6's vacuous pass.
+- **Guarantees 1, 2 and 6 pass at the level the guarantee means.** All three
+  already run (`0f1c295`); what M3 owes them is the level, not the switch.
+  Guarantee 2 is driven by an edit a **tool** made through `core`, which is P7's
+  test in `crates/app/tests/`, and its tripwire in `guarantees.rs` names that
+  test. Every corpus M3 makes load-bearing has P1c's fetch-and-re-run pair, so
+  none of them can repeat guarantee 6's vacuous pass.
 - P7's registry-exhaustive property tests pass over the real `build_registry()`:
   every registered tool and command is undoable, serializes to a section a fresh
   parse accepts, survives degenerate documents, and is deterministic.
@@ -3416,13 +3577,23 @@ at M4 that the model assumed a grid.
   gate.
 - Every new keyboard route is proven with `cx.simulate_keystrokes` on a real
   window.
-- `known-issues.md` has every M3-deadline entry removed or narrowed: the cos
-  dangling-reference entry (reassigned to `core::pages` and closed by P1's
-  validator and P5's transformation), the Line Weights entry, the
-  `Include Comments` entry, the `SearchResult::Unavailable::reason` widening;
-  plus the new entries M3 earns (the encryption class split and ruling A's
+- `known-issues.md` has every M3-deadline entry it actually contains removed or
+  narrowed. **Two of the four the first draft named do not exist**: there is no
+  Line Weights entry and no `Include Comments` entry in that file today, and
+  listing them as things to remove would have produced a definition of done with
+  two items nobody could satisfy. The two that do exist are the **cos
+  dangling-reference entry** (`known-issues.md`, "M3's `tools-organize` has to
+  fix up the page tree itself"), whose wording changes per section 8 item 7
+  because under T5's rule the fix-up replaces `delete_object` rather than
+  following it, and the **`SearchResult::Unavailable::reason` widening**, nested
+  in the P10/foundation bullet and marked "widen it after P9 lands". The Line
+  Weights and `Include Comments` deadlines live in their menu items' asserted
+  disabled reasons, not in the ledger, and P22 and P20 flip those.
+
+  Plus the new entries M3 earns: the encryption class split and ruling A's
   accepted regression for documents whose `/P` bits allow modification, the
-  `/OC` annotation-visibility consequence, and any deferral from section 7).
+  `/OC` annotation-visibility consequence, T5's free-nothing rule and what it
+  means for "delete page" not being removal, and any deferral from section 7.
 - P1b's measurement table is committed under `docs/evidence/` and its tally is
   asserted by a test, so the orchestrator can land the `known-issues.md`
   encryption entry from a number that cannot go stale silently.
