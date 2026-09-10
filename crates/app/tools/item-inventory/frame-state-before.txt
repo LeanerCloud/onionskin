@@ -1,0 +1,467 @@
+# emitted at 5ca2be6
+# from crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
+# elided context_menus export menus page_entry tool_search
+# items: 463 = 8 const, 5 enum, 65 field, 330 fn, 15 impl, 1 mod, 16 struct, 1 trait, 2 use, 20 variant
+#[cfg(test)] mod tests	fn	a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(cx: &mut TestAppContext)	29e09228224beb2c
+#[cfg(test)] mod tests	fn	a_blocked_single_file_worker_keeps_the_destination_absent_until_success	private	#[test] fn a_blocked_single_file_worker_keeps_the_destination_absent_until_success()	66fb51b22dd47967
+#[cfg(test)] mod tests	fn	a_chosen_name_with_no_extension_still_numbers_its_pages	private	#[test] fn a_chosen_name_with_no_extension_still_numbers_its_pages()	088c45e1f6a5c28b
+#[cfg(test)] mod tests	fn	a_clean_document_opens_without_a_notice	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_clean_document_opens_without_a_notice(cx: &mut TestAppContext)	2ddb32eb4d4e2c3f
+#[cfg(test)] mod tests	fn	a_codec_failure_removes_every_per_page_output	private	#[test] fn a_codec_failure_removes_every_per_page_output()	4127c5e35635d0d7
+#[cfg(test)] mod tests	fn	a_context_menu_never_opens_outside_the_window	private	#[test] fn a_context_menu_never_opens_outside_the_window()	c0e9efca37993b57
+#[cfg(test)] mod tests	fn	a_dangling_derived_symlink_fails_before_any_page_runs	private	#[cfg(unix)] #[test] fn a_dangling_derived_symlink_fails_before_any_page_runs()	57cec4d445fb2f00
+#[cfg(test)] mod tests	fn	a_document_opened_from_home_gets_a_thumbnail_without_a_second_toggle	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_document_opened_from_home_gets_a_thumbnail_without_a_second_toggle(cx: &mut TestAppContext)	5ca8b9875e4f9933
+#[cfg(test)] mod tests	fn	a_document_that_will_not_open_is_reported_and_the_rest_still_open	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_document_that_will_not_open_is_reported_and_the_rest_still_open(cx: &mut TestAppContext)	f463c2380c2df780
+#[cfg(test)] mod tests	fn	a_dotted_name_numbers_on_its_last_extension_only	private	#[test] fn a_dotted_name_numbers_on_its_last_extension_only()	35a4c9e2bb9f950c
+#[cfg(test)] mod tests	fn	a_field_that_binds_a_keystroke_keeps_it_while_it_has_focus	private	#[cfg(all(feature = "shell-test-support",feature = "commands-core"))] #[gpui::test] fn a_field_that_binds_a_keystroke_keeps_it_while_it_has_focus(cx: &mut TestAppContext)	a85265f4d64f64bb
+#[cfg(test)] mod tests	fn	a_keymap_binding_on_a_bare_arrow_still_runs	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_keymap_binding_on_a_bare_arrow_still_runs(cx: &mut TestAppContext)	4639c00998e1689b
+#[cfg(test)] mod tests	fn	a_keymap_binding_opens_the_zoom_to_dialog	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_keymap_binding_opens_the_zoom_to_dialog(cx: &mut TestAppContext)	7ad708bbbf4d7c98
+#[cfg(test)] mod tests	fn	a_keymap_binding_selects_the_dynamic_zoom_tool	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn a_keymap_binding_selects_the_dynamic_zoom_tool(cx: &mut TestAppContext)	16c66132046652f8
+#[cfg(test)] mod tests	fn	a_keystroke_the_menus_would_grey_out_says_so_in_the_window	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_keystroke_the_menus_would_grey_out_says_so_in_the_window(cx: &mut TestAppContext)	58d9b59eadadc70c
+#[cfg(test)] mod tests	fn	a_late_cancel_cannot_override_per_page_publication	private	#[test] fn a_late_cancel_cannot_override_per_page_publication()	c4549e8fbded3ac4
+#[cfg(test)] mod tests	fn	a_late_cancel_cannot_override_single_file_publication	private	#[test] fn a_late_cancel_cannot_override_single_file_publication()	3eb6fce25ab3463b
+#[cfg(test)] mod tests	fn	a_many_page_worker_never_has_more_than_one_destination_writer_open	private	#[test] fn a_many_page_worker_never_has_more_than_one_destination_writer_open()	115d8d30b174d150
+#[cfg(test)] mod tests	fn	a_one_file_export_keeps_the_name_the_user_chose	private	#[test] fn a_one_file_export_keeps_the_name_the_user_chose()	13646f1e21104f80
+#[cfg(test)] mod tests	fn	a_page_s_text_is_not_extracted_until_a_screen_reader_attaches	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_page_s_text_is_not_extracted_until_a_screen_reader_attaches(cx: &mut TestAppContext)	0b11f0527170f335
+#[cfg(test)] mod tests	fn	a_per_page_export_numbers_one_based_beside_the_chosen_name	private	#[test] fn a_per_page_export_numbers_one_based_beside_the_chosen_name()	9651fb465455b018
+#[cfg(test)] mod tests	fn	a_per_page_worker_streams_pages_in_absolute_order	private	#[test] fn a_per_page_worker_streams_pages_in_absolute_order()	999457f24c868c2b
+#[cfg(test)] mod tests	fn	a_preference_change_reaches_the_window_and_the_file	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_preference_change_reaches_the_window_and_the_file(cx: &mut TestAppContext)	f99fc79a78fae8ed
+#[cfg(test)] mod tests	fn	a_repaired_document_says_so_where_the_user_can_read_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_repaired_document_says_so_where_the_user_can_read_it(cx: &mut TestAppContext)	b94ba38afda104a5
+#[cfg(test)] mod tests	fn	a_screen_reader_cursor_moves_the_shell_s_focus	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_screen_reader_cursor_moves_the_shell_s_focus(cx: &mut TestAppContext)	cb34e54a18fff11a
+#[cfg(test)] mod tests	fn	a_screen_reader_cursor_on_a_text_field_gives_it_the_keys	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_screen_reader_cursor_on_a_text_field_gives_it_the_keys(cx: &mut TestAppContext)	1caaaaaf0b69a0c7
+#[cfg(test)] mod tests	fn	a_screen_reader_cursor_takes_the_keys_off_a_text_field	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_screen_reader_cursor_takes_the_keys_off_a_text_field(cx: &mut TestAppContext)	13c548b317de40a7
+#[cfg(test)] mod tests	fn	a_screen_reader_press_runs_the_control_it_named_without_waiting_for_a_frame	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_screen_reader_press_runs_the_control_it_named_without_waiting_for_a_frame(cx: &mut TestAppContext)	d2b35f87f5f96a0b
+#[cfg(test)] mod tests	fn	a_second_export_is_refused_before_opening_another_prompt	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn a_second_export_is_refused_before_opening_another_prompt(cx: &mut TestAppContext)	9d87d8a81e457faa
+#[cfg(test)] mod tests	fn	a_second_right_click_inside_the_document_repositions_the_canvas_menu	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_second_right_click_inside_the_document_repositions_the_canvas_menu(cx: &mut TestAppContext)	3d6c2204163f8fbd
+#[cfg(test)] mod tests	fn	a_second_right_click_outside_the_document_dismisses_the_canvas_menu	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_second_right_click_outside_the_document_dismisses_the_canvas_menu(cx: &mut TestAppContext)	55bdc4007f83dd74
+#[cfg(test)] mod tests	fn	a_tool_that_will_not_activate_says_so_in_the_chrome	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_tool_that_will_not_activate_says_so_in_the_chrome(cx: &mut TestAppContext)	b7bd256f7f80f713
+#[cfg(test)] mod tests	fn	a_view_keystroke_reaches_the_canvas	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_view_keystroke_reaches_the_canvas(cx: &mut TestAppContext)	0314a9d8054af644
+#[cfg(test)] mod tests	fn	activating_another_tab_clears_search_feedback	private	#[test] fn activating_another_tab_clears_search_feedback()	14585f289960ee2f
+#[cfg(test)] mod tests	fn	an_arrow_moves_inside_the_page_controls_and_tab_leaves_them	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn an_arrow_moves_inside_the_page_controls_and_tab_leaves_them(cx: &mut TestAppContext)	1f99b0e8a4a1fd9c
+#[cfg(test)] mod tests	fn	an_existing_derived_file_fails_before_any_page_runs	private	#[test] fn an_existing_derived_file_fails_before_any_page_runs()	4ba410a8837de665
+#[cfg(test)] mod tests	fn	an_old_progress_timer_cannot_poll_a_rapidly_relaunched_export	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn an_old_progress_timer_cannot_poll_a_rapidly_relaunched_export(cx: &mut TestAppContext)	af926f9858f31e40
+#[cfg(test)] mod tests	fn	an_open_dialog_is_the_only_thing_the_tree_offers	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn an_open_dialog_is_the_only_thing_the_tree_offers(cx: &mut TestAppContext)	f458829369901398
+#[cfg(test)] mod tests	fn	an_out_of_range_context_target_fails_loudly	private	#[test] fn an_out_of_range_context_target_fails_loudly()	2ceefacdec46909f
+#[cfg(test)] mod tests	fn	an_unwritable_destination_is_reported_on_the_document	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn an_unwritable_destination_is_reported_on_the_document(cx: &mut TestAppContext)	b60c7212acfb5cdc
+#[cfg(test)] mod tests	fn	bound_window	private	#[cfg(feature = "shell-test-support")] fn bound_window(seeds: &[&str],cx: &mut TestAppContext) -> (gpui::WindowHandle<ShellFrame>,Vec<crate::keymap::Binding>)	2c21b613cea2e155
+#[cfg(test)] mod tests	fn	bound_window_from_bytes	private	#[cfg(feature = "shell-test-support")] fn bound_window_from_bytes(documents: Vec<(&str,Vec<u8>)>,cx: &mut TestAppContext) -> (gpui::WindowHandle<ShellFrame>,Vec<crate::keymap::Binding>)	0748ac5db2b929d0
+#[cfg(test)] mod tests	fn	bound_window_in	private	#[cfg(feature = "shell-test-support")] fn bound_window_in(seeds: &[&str],paths: crate::config::ConfigPaths,cx: &mut TestAppContext) -> (gpui::WindowHandle<ShellFrame>,Vec<crate::keymap::Binding>)	fa34bb269c127bef
+#[cfg(test)] mod tests	fn	bound_window_with_models	private	#[cfg(feature = "shell-test-support")] fn bound_window_with_models(tabs: Vec<(PathBuf,CanvasModel)>,paths: crate::config::ConfigPaths,cx: &mut TestAppContext) -> (gpui::WindowHandle<ShellFrame>,Vec<crate::keymap::Binding>)	68d3d32b4c8f578d
+#[cfg(test)] mod tests	fn	cancellation_after_page_one_removes_it_and_stops_before_page_three	private	#[test] fn cancellation_after_page_one_removes_it_and_stops_before_page_three()	afb5200eeb9be528
+#[cfg(test)] mod tests	fn	cancellation_after_the_only_codec_return_publishes_nothing	private	#[test] fn cancellation_after_the_only_codec_return_publishes_nothing()	a58a654c21f4bc5e
+#[cfg(test)] mod tests	fn	cancellation_preserves_an_existing_single_destination	private	#[test] fn cancellation_preserves_an_existing_single_destination()	04b7c13337ab84e5
+#[cfg(test)] mod tests	fn	canvas_context_entries_come_from_the_live_model_and_run_against_it	private	#[cfg(all(feature = "shell-test-support",feature = "tools-basic"))] #[gpui::test] fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext)	25fcc77ff347addf
+#[cfg(test)] mod tests	fn	canvas_for_export	private	#[cfg(feature = "shell-test-support")] fn canvas_for_export(registry: PluginRegistry,cx: &mut TestAppContext) -> (Entity<Canvas>,onionskin_render::BaseRaster,&mut VisualTestContext,)	2ec0c655bfe25d7d
+#[cfg(test)] mod tests	fn	choosing_a_magnification_applies_it_and_closes_the_chooser	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn choosing_a_magnification_applies_it_and_closes_the_chooser(cx: &mut TestAppContext)	e581c62358777139
+#[cfg(test)] mod tests	fn	chrome	private	fn chrome(rail: bool,side_panel: bool,page_controls: bool) -> SurfaceVisibility	915f68a0cba66c79
+#[cfg(test)] mod tests	fn	close_all_leaves_no_invalid_active_tab	private	#[test] fn close_all_leaves_no_invalid_active_tab()	8726054c2407efb5
+#[cfg(test)] mod tests	fn	close_others_and_close_all_cancel_a_removed_origin	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn close_others_and_close_all_cancel_a_removed_origin(cx: &mut TestAppContext)	0a393fb9695c58e9
+#[cfg(test)] mod tests	fn	close_others_explains_why_it_is_disabled_for_a_single_tab	private	#[test] fn close_others_explains_why_it_is_disabled_for_a_single_tab()	4efd4bd1eeb82447
+#[cfg(test)] mod tests	fn	close_others_leaves_exactly_the_selected_tab	private	#[test] fn close_others_leaves_exactly_the_selected_tab()	876035184d537344
+#[cfg(test)] mod tests	fn	closing_other_tabs_from_an_inactive_tab_clears_search_feedback	private	#[test] fn closing_other_tabs_from_an_inactive_tab_clears_search_feedback()	fdc7c2bd0eae5c29
+#[cfg(test)] mod tests	fn	closing_the_active_tab_clears_search_feedback	private	#[test] fn closing_the_active_tab_clears_search_feedback()	2808ebac5cdb26fe
+#[cfg(test)] mod tests	fn	closing_the_last_document_returns_to_home	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn closing_the_last_document_returns_to_home(cx: &mut TestAppContext)	79db5fc280cd2e09
+#[cfg(test)] mod tests	fn	closing_the_origin_tab_cancels_its_export	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn closing_the_origin_tab_cancels_its_export(cx: &mut TestAppContext)	5456bbcd4ab8d358
+#[cfg(test)] mod tests	fn	composite_layout_origin_reaches_canvas_pointer_mapping	private	#[test] fn composite_layout_origin_reaches_canvas_pointer_mapping()	a7e5ceb5807ac7f7
+#[cfg(test)] mod tests	fn	current_page	private	#[cfg(feature = "shell-test-support")] fn current_page(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext) -> usize	64cfc12e3e6c9c3f
+#[cfg(test)] mod tests	fn	document_search_without_an_open_document_renders_its_unavailable_reason	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn document_search_without_an_open_document_renders_its_unavailable_reason(cx: &mut TestAppContext)	7e4cc41c4a13759b
+#[cfg(test)] mod tests	fn	draw_window	private	#[cfg(feature = "shell-test-support")] fn draw_window(cx: &mut VisualTestContext)	70a775ab588fd7a4
+#[cfg(test)] mod tests	fn	duplicate_per_page_destinations_fail_preflight	private	#[test] fn duplicate_per_page_destinations_fail_preflight()	e6f49512e71cf3c4
+#[cfg(test)] mod tests	fn	duplicate_titles_keep_distinct_path_identity	private	#[test] fn duplicate_titles_keep_distinct_path_identity()	7b08ecaf3c54f9bc
+#[cfg(test)] mod tests	fn	enter_in_the_find_field_finds_rather_than_pressing_the_focused_control	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn enter_in_the_find_field_finds_rather_than_pressing_the_focused_control(cx: &mut TestAppContext)	8762a4b3e857f543
+#[cfg(test)] mod tests	fn	enter_on_a_focused_control_runs_what_clicking_it_runs	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn enter_on_a_focused_control_runs_what_clicking_it_runs(cx: &mut TestAppContext)	b83b4468e3c3cfa5
+#[cfg(test)] mod tests	fn	enter_with_nothing_focused_changes_nothing	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn enter_with_nothing_focused_changes_nothing(cx: &mut TestAppContext)	1dd1b335f76949c5
+#[cfg(test)] mod tests	fn	escape_closes_a_dialog	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn escape_closes_a_dialog(cx: &mut TestAppContext)	5a94138e0563847a
+#[cfg(test)] mod tests	fn	escape_closes_an_overlay_before_it_leaves_a_chromeless_mode	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn escape_closes_an_overlay_before_it_leaves_a_chromeless_mode(cx: &mut TestAppContext)	387733f6e78ebba2
+#[cfg(test)] mod tests	fn	escape_closes_the_menu_first_and_then_the_find_bar	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn escape_closes_the_menu_first_and_then_the_find_bar(cx: &mut TestAppContext)	b40026d0c349e536
+#[cfg(test)] mod tests	fn	escape_closes_the_search_panel_before_the_find_bar	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn escape_closes_the_search_panel_before_the_find_bar(cx: &mut TestAppContext)	fb6afd6f41a532d3
+#[cfg(test)] mod tests	fn	every_open_navigation_pane_body_gets_rendered_bounds	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn every_open_navigation_pane_body_gets_rendered_bounds(cx: &mut TestAppContext)	593b391c2104170d
+#[cfg(test)] mod tests	fn	every_published_stop_can_be_reached_from_the_keyboard	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn every_published_stop_can_be_reached_from_the_keyboard(cx: &mut TestAppContext)	18ef5509140ed269
+#[cfg(test)] mod tests	fn	every_tab_context_action_targets_the_clicked_tab	private	#[test] fn every_tab_context_action_targets_the_clicked_tab()	2cf423bf51a1e6ec
+#[cfg(test)] mod tests	fn	every_tab_stop_carries_an_activation	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn every_tab_stop_carries_an_activation(cx: &mut TestAppContext)	04aba8c80d269231
+#[cfg(test)] mod tests	fn	everything_with_an_action_is_reachable_or_disabled	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn everything_with_an_action_is_reachable_or_disabled(cx: &mut TestAppContext)	54e3d81e5e8ce87b
+#[cfg(test)] mod tests	fn	export_dir	private	#[cfg(feature = "shell-test-support")] fn export_dir(name: &str) -> PathBuf	2bc30dd34ecab2d4
+#[cfg(test)] mod tests	fn	export_progress_and_cancellation_are_accessible	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn export_progress_and_cancellation_are_accessible(cx: &mut TestAppContext)	18a82856501a65fc
+#[cfg(test)] mod tests	fn	exporting_without_the_codec_installed_says_which_one_is_missing	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn exporting_without_the_codec_installed_says_which_one_is_missing(cx: &mut TestAppContext)	c33b75f9436017df
+#[cfg(test)] mod tests	fn	extracted_pages	private	#[cfg(feature = "shell-test-support")] fn extracted_pages(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext) -> usize	d897503f078aae75
+#[cfg(test)] mod tests	fn	focused_key	private	#[cfg(feature = "shell-test-support")] fn focused_key(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext) -> Option<String>	6249c1620126614f
+#[cfg(test)] mod tests	fn	focusing_a_text_field_moves_the_published_cursor_onto_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn focusing_a_text_field_moves_the_published_cursor_onto_it(cx: &mut TestAppContext)	589eca206ed1ae1c
+#[cfg(test)] mod tests	fn	full_screen_leaves_no_chrome_described_and_escape_answers_it_first	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn full_screen_leaves_no_chrome_described_and_escape_answers_it_first(cx: &mut TestAppContext)	43e5e3d3a530feae
+#[cfg(test)] mod tests	fn	fullscreen_command_updates_the_real_window_and_mirrored_menu_state	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn fullscreen_command_updates_the_real_window_and_mirrored_menu_state(cx: &mut TestAppContext)	a28f5aaedae1587e
+#[cfg(test)] mod tests	fn	hidden_document_chrome_returns_its_space_to_the_canvas	private	#[test] fn hidden_document_chrome_returns_its_space_to_the_canvas()	ca28f3839ff8c537
+#[cfg(test)] mod tests	fn	home_lists_the_recents_and_switches_to_thumbnails	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn home_lists_the_recents_and_switches_to_thumbnails(cx: &mut TestAppContext)	6f11437062658680
+#[cfg(test)] mod tests	fn	immediate_prepublication_cancellation_wins_for_both_output_kinds	private	#[test] fn immediate_prepublication_cancellation_wins_for_both_output_kinds()	e7e8f95c29655ace
+#[cfg(test)] mod tests	fn	install_test_export_job	private	#[cfg(feature = "shell-test-support")] fn install_test_export_job(frame: &mut ShellFrame,origin: EntityId) -> Arc<ExportPhase>	29baffedea776eb9
+#[cfg(test)] mod tests	fn	junk_header_pdf	private	#[cfg(feature = "shell-test-support")] fn junk_header_pdf(name: &str) -> PathBuf	5a89feb71ce002ac
+#[cfg(test)] mod tests	fn	keystroke_for	private	#[cfg(feature = "shell-test-support")] fn keystroke_for(bindings: &[crate::keymap::Binding],id: &str) -> String	665e86233f485d12
+#[cfg(test)] mod tests	fn	lowering_the_recents_limit_drops_the_extra_entries	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn lowering_the_recents_limit_drops_the_extra_entries(cx: &mut TestAppContext)	f33e23f0dc68b572
+#[cfg(test)] mod tests	fn	no_two_nodes_in_the_published_tree_share_a_key	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn no_two_nodes_in_the_published_tree_share_a_key(cx: &mut TestAppContext)	04c813a33313f24c
+#[cfg(test)] mod tests	fn	nothing_in_the_tree_is_announced_without_a_name	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn nothing_in_the_tree_is_announced_without_a_name(cx: &mut TestAppContext)	f5523c08c514a532
+#[cfg(test)] mod tests	fn	opening_a_document_records_it_and_open_recent_opens_it_again	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn opening_a_document_records_it_and_open_recent_opens_it_again(cx: &mut TestAppContext)	d076a81a982b060d
+#[cfg(test)] mod tests	fn	out_of_range_operations_fail_loudly	private	#[test] fn out_of_range_operations_fail_loudly()	a2cef053e9962290
+#[cfg(test)] mod tests	fn	page_bounds	private	#[cfg(feature = "shell-test-support")] fn page_bounds(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext) -> accesskit::Rect	a41da61cfd65876c
+#[cfg(test)] mod tests	fn	page_text	private	#[cfg(feature = "shell-test-support")] fn page_text(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext) -> Vec<String>	025fee3905d25228
+#[cfg(test)] mod tests	fn	prepared_worker_export	private	fn prepared_worker_export(kind: ExportOutputKind,calls: Arc<Mutex<Vec<PageIndex>>>,fail_on: Option<PageIndex>,cancel_on: Option<(PageIndex,Arc<ExportPhase>)>,page_count: usize) -> PreparedExport	0e9e500c460888f4
+#[cfg(test)] mod tests	fn	publication_preserves_an_existing_single_destination	private	#[test] fn publication_preserves_an_existing_single_destination()	36cf0ffb2ee07a36
+#[cfg(test)] mod tests	fn	rails_and_the_side_panel_adjust_document_bounds_once	private	#[test] fn rails_and_the_side_panel_adjust_document_bounds_once()	59dd3a6002f113bf
+#[cfg(test)] mod tests	fn	read_mode_takes_the_top_bars_out_of_the_tree_and_keeps_the_page_controls	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn read_mode_takes_the_top_bars_out_of_the_tree_and_keeps_the_page_controls(cx: &mut TestAppContext)	a3e6af7f360c8434
+#[cfg(test)] mod tests	fn	rollback_never_deletes_a_completed_page_replaced_by_a_directory	private	#[test] fn rollback_never_deletes_a_completed_page_replaced_by_a_directory()	b8295f51a79c15c7
+#[cfg(test)] mod tests	fn	rollback_preserves_a_completed_page_replaced_by_a_symlink	private	#[cfg(unix)] #[test] fn rollback_preserves_a_completed_page_replaced_by_a_symlink()	c9ae54b4e218bc9b
+#[cfg(test)] mod tests	fn	rollback_preserves_a_completed_page_replaced_by_another_writer	private	#[test] fn rollback_preserves_a_completed_page_replaced_by_another_writer()	7cab7e4778f0f61e
+#[cfg(test)] mod tests	fn	run_export	private	#[cfg(feature = "shell-test-support")] fn run_export(canvas: &Entity<Canvas>,target: ExportTarget,path: &Path,cx: &mut App)	790ea14f4bf3da3d
+#[cfg(test)] mod tests	fn	serving_a_screen_reader_publishes_the_tree_without_a_frame	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn serving_a_screen_reader_publishes_the_tree_without_a_frame(cx: &mut TestAppContext)	ccc5bf29f91a16d4
+#[cfg(test)] mod tests	fn	stale_attachment_prompt_after_closing_the_tab_writes_nothing	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn stale_attachment_prompt_after_closing_the_tab_writes_nothing(cx: &mut TestAppContext)	391bbc7f1f96395e
+#[cfg(test)] mod tests	fn	stale_attachment_prompt_after_switching_tabs_writes_nothing	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn stale_attachment_prompt_after_switching_tabs_writes_nothing(cx: &mut TestAppContext)	bcf5fd6d061b1d91
+#[cfg(test)] mod tests	fn	stale_export_prompt_after_closing_the_tab_writes_nothing	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn stale_export_prompt_after_closing_the_tab_writes_nothing(cx: &mut TestAppContext)	60065860e837d5cc
+#[cfg(test)] mod tests	fn	stale_export_prompt_after_switching_tabs_writes_nothing	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn stale_export_prompt_after_switching_tabs_writes_nothing(cx: &mut TestAppContext)	5b3d0dc31113fd55
+#[cfg(test)] mod tests	fn	stops_under	private	#[cfg(feature = "shell-test-support")] fn stops_under(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext,container: &'static str) -> Vec<String>	5ba7d4c8cc2ede34
+#[cfg(test)] mod tests	fn	sweep	private	#[cfg(feature = "shell-test-support")] fn sweep(window: gpui::WindowHandle<ShellFrame>,cx: &mut TestAppContext,across: &str,along: &str)	257393e43c28d793
+#[cfg(test)] mod tests	fn	switching_and_closing_tabs_keeps_a_valid_active_index	private	#[test] fn switching_and_closing_tabs_keeps_a_valid_active_index()	1180072359ec9cdc
+#[cfg(test)] mod tests	fn	switching_tabs_does_not_cancel_the_origin_export	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn switching_tabs_does_not_cancel_the_origin_export(cx: &mut TestAppContext)	bafcd57652c37db0
+#[cfg(test)] mod tests	fn	tab_out_of_a_text_field_takes_the_keys_with_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn tab_out_of_a_text_field_takes_the_keys_with_it(cx: &mut TestAppContext)	9073188d42f873af
+#[cfg(test)] mod tests	fn	tab_steps_over_an_open_pane_rather_than_through_its_rows	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn tab_steps_over_an_open_pane_rather_than_through_its_rows(cx: &mut TestAppContext)	9d9a7e1940311a09
+#[cfg(test)] mod tests	fn	tab_switching_exposes_the_active_documents_page_control_values	private	#[test] fn tab_switching_exposes_the_active_documents_page_control_values()	4ba1b903512c48a6
+#[cfg(test)] mod tests	fn	tab_walks_the_chrome_in_reading_order_and_shift_tab_walks_back	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn tab_walks_the_chrome_in_reading_order_and_shift_tab_walks_back(cx: &mut TestAppContext)	ed729a8a1bcf8c24
+#[cfg(test)] mod tests	fn	the_arrows_walk_the_find_bar_out_of_its_own_field	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_arrows_walk_the_find_bar_out_of_its_own_field(cx: &mut TestAppContext)	e9ed2a613a678a8b
+#[cfg(test)] mod tests	fn	the_close_keystroke_closes_the_active_tab	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_close_keystroke_closes_the_active_tab(cx: &mut TestAppContext)	b4c5aab284526b52
+#[cfg(test)] mod tests	fn	the_document_is_in_the_tree_and_in_the_tab_order	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_document_is_in_the_tree_and_in_the_tab_order(cx: &mut TestAppContext)	ed4da2d6c49a1340
+#[cfg(test)] mod tests	fn	the_document_search_route_opens_the_find_bar_and_escape_closes_it	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_document_search_route_opens_the_find_bar_and_escape_closes_it(cx: &mut TestAppContext)	f13abffeb3831c37
+#[cfg(test)] mod tests	fn	the_export_phase_has_one_terminal_race_winner	private	#[test] fn the_export_phase_has_one_terminal_race_winner()	708d4ba569bcc1bd
+#[cfg(test)] mod tests	fn	the_find_field_keeps_the_arrows_that_move_its_caret	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_find_field_keeps_the_arrows_that_move_its_caret(cx: &mut TestAppContext)	82bd9f1fbfd0b932
+#[cfg(test)] mod tests	fn	the_find_keystroke_opens_the_find_bar	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_find_keystroke_opens_the_find_bar(cx: &mut TestAppContext)	fe35f365ef29cea3
+#[cfg(test)] mod tests	fn	the_fit_visible_keystroke_fits_the_pages_marks	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_fit_visible_keystroke_fits_the_pages_marks(cx: &mut TestAppContext)	b18f932ec9b1e90b
+#[cfg(test)] mod tests	fn	the_navigation_column_moves_the_document_and_narrows_it_by_the_same_amount	private	#[test] fn the_navigation_column_moves_the_document_and_narrows_it_by_the_same_amount()	ba7f1a1c797be254
+#[cfg(test)] mod tests	fn	the_page_and_its_words_keep_their_places_after_the_view_moves	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_page_and_its_words_keep_their_places_after_the_view_moves(cx: &mut TestAppContext)	c7087749df6b47ba
+#[cfg(test)] mod tests	fn	the_page_publishes_its_own_words_under_the_page_they_are_on	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_page_publishes_its_own_words_under_the_page_they_are_on(cx: &mut TestAppContext)	5b1312d83c4e1203
+#[cfg(test)] mod tests	fn	the_png_menu_entry_writes_the_canvas_paths_own_pixels	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn the_png_menu_entry_writes_the_canvas_paths_own_pixels(cx: &mut TestAppContext)	91f53a27e925e3f5
+#[cfg(test)] mod tests	fn	the_quit_keystroke_does_not_leave_the_frame_mid_flight	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_quit_keystroke_does_not_leave_the_frame_mid_flight(cx: &mut TestAppContext)	1104bab4c1241513
+#[cfg(test)] mod tests	fn	the_select_all_keystroke_runs_the_registered_command	private	#[cfg(all(feature = "shell-test-support",feature = "commands-core"))] #[gpui::test] fn the_select_all_keystroke_runs_the_registered_command(cx: &mut TestAppContext)	6507cd4db073cc58
+#[cfg(test)] mod tests	fn	the_shortcut_reference_names_the_commands_the_menus_name	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_shortcut_reference_names_the_commands_the_menus_name(cx: &mut TestAppContext)	0c9572186405c8e4
+#[cfg(test)] mod tests	fn	the_text_menu_entry_writes_one_file_at_the_chosen_name	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn the_text_menu_entry_writes_one_file_at_the_chosen_name(cx: &mut TestAppContext)	5c55ce3b8a120421
+#[cfg(test)] mod tests	fn	the_view_menus_theme_is_the_preference	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn the_view_menus_theme_is_the_preference(cx: &mut TestAppContext)	f9e73c345e380230
+#[cfg(test)] mod tests	fn	two_pending_export_prompts_install_only_one_worker	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn two_pending_export_prompts_install_only_one_worker(cx: &mut TestAppContext)	de905d974af0efab
+#[cfg(test)] mod tests	fn	worker_failure_releases_progress_and_the_export_guard	private	#[cfg(all(feature = "shell-test-support",feature = "codecs-common"))] #[gpui::test] fn worker_failure_releases_progress_and_the_export_guard(cx: &mut TestAppContext)	ef820f18ac7148fd
+#[cfg(test)] mod tests	impl	-	private	impl CodecPlugin for BlockingCodec	e3b0c44298fc1c14
+#[cfg(test)] mod tests	impl	-	private	impl CodecPlugin for WorkerCodec	e3b0c44298fc1c14
+#[cfg(test)] mod tests	impl	-	private	impl ExportObserver for RecordingExportObserver	e3b0c44298fc1c14
+#[cfg(test)] mod tests	impl	-	private	impl ToolPlugin for OriginRecordingTool	e3b0c44298fc1c14
+#[cfg(test)] mod tests	struct	BlockingCodec	private	struct BlockingCodec	e6739de60a83883f
+#[cfg(test)] mod tests	struct	OriginRecordingTool	private	struct OriginRecordingTool	90e829648dd32404
+#[cfg(test)] mod tests	struct	RecordingExportObserver	private	#[derive(Default)] struct RecordingExportObserver	00aff42b39da74dc
+#[cfg(test)] mod tests	struct	WorkerCodec	private	struct WorkerCodec	8953de03146cea29
+#[cfg(test)] mod tests > #[derive(Default)] struct RecordingExportObserver	field	after_publish_started	private	after_publish_started: Option<Arc<dyn Fn() + Send + Sync>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > #[derive(Default)] struct RecordingExportObserver	field	before_publish	private	before_publish: Option<Arc<dyn Fn() + Send + Sync>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > #[derive(Default)] struct RecordingExportObserver	field	max_open_writers	private	max_open_writers: AtomicUsize	e3b0c44298fc1c14
+#[cfg(test)] mod tests > #[derive(Default)] struct RecordingExportObserver	field	open_writers	private	open_writers: AtomicUsize	e3b0c44298fc1c14
+#[cfg(test)] mod tests > #[derive(Default)] struct RecordingExportObserver	field	page_completed	private	page_completed: Option<Arc<dyn Fn(PageIndex) + Send + Sync>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > impl CodecPlugin for BlockingCodec	fn	export_page	private	fn export_page(&self,_doc: &mut Document,_request: &ExportRequest,page: PageIndex,_first_in_request: bool) -> Result<Vec<u8>,ExportError>	818b66463b484081
+#[cfg(test)] mod tests > impl CodecPlugin for BlockingCodec	fn	extension	private	fn extension(&self) -> &'static str	4d967a30111bf29f
+#[cfg(test)] mod tests > impl CodecPlugin for BlockingCodec	fn	id	private	fn id(&self) -> &'static str	17a4f486c8c638ed
+#[cfg(test)] mod tests > impl CodecPlugin for BlockingCodec	fn	name	private	fn name(&self) -> &'static str	081e2c2a4ffaa31d
+#[cfg(test)] mod tests > impl CodecPlugin for BlockingCodec	fn	output_kind	private	fn output_kind(&self) -> ExportOutputKind	57087a30e1fe0974
+#[cfg(test)] mod tests > impl CodecPlugin for WorkerCodec	fn	export_page	private	fn export_page(&self,_doc: &mut Document,_request: &ExportRequest,page: PageIndex,_first_in_request: bool) -> Result<Vec<u8>,ExportError>	24dabb817d6fd5ae
+#[cfg(test)] mod tests > impl CodecPlugin for WorkerCodec	fn	extension	private	fn extension(&self) -> &'static str	4d967a30111bf29f
+#[cfg(test)] mod tests > impl CodecPlugin for WorkerCodec	fn	id	private	fn id(&self) -> &'static str	da9ca7fea26d98ac
+#[cfg(test)] mod tests > impl CodecPlugin for WorkerCodec	fn	name	private	fn name(&self) -> &'static str	0ff475bcf60cece8
+#[cfg(test)] mod tests > impl CodecPlugin for WorkerCodec	fn	output_kind	private	fn output_kind(&self) -> ExportOutputKind	57087a30e1fe0974
+#[cfg(test)] mod tests > impl ExportObserver for RecordingExportObserver	fn	after_publish_started	private	fn after_publish_started(&self)	e3a78e446a1d4440
+#[cfg(test)] mod tests > impl ExportObserver for RecordingExportObserver	fn	before_publish	private	fn before_publish(&self)	89de35b167cc22f6
+#[cfg(test)] mod tests > impl ExportObserver for RecordingExportObserver	fn	page_completed	private	fn page_completed(&self,page: PageIndex)	9e9a73f397416ca2
+#[cfg(test)] mod tests > impl ExportObserver for RecordingExportObserver	fn	writer_closed	private	fn writer_closed(&self)	3c7097dac6105302
+#[cfg(test)] mod tests > impl ExportObserver for RecordingExportObserver	fn	writer_opened	private	fn writer_opened(&self)	6a1ab9c86e43d381
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	icon	private	fn icon(&self) -> &'static str	6e02f14175a5081f
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	id	private	fn id(&self) -> &'static str	6e02f14175a5081f
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	name	private	fn name(&self) -> &'static str	a4f9aa3b110c1ffa
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	on_pointer_down	private	fn on_pointer_down(&mut self,_ctx: &mut ToolCtx,input: PointerInput)	bef7b860e5407ada
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	on_pointer_move	private	fn on_pointer_move(&mut self,_ctx: &mut ToolCtx,_input: PointerInput)	e3b0c44298fc1c14
+#[cfg(test)] mod tests > impl ToolPlugin for OriginRecordingTool	fn	on_pointer_up	private	fn on_pointer_up(&mut self,_ctx: &mut ToolCtx,_input: PointerInput)	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct BlockingCodec	field	block_on	private	block_on: PageIndex	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct BlockingCodec	field	calls	private	calls: Arc<Mutex<Vec<PageIndex>>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct BlockingCodec	field	kind	private	kind: ExportOutputKind	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct BlockingCodec	field	release	private	release: Arc<(Mutex<bool>, Condvar)>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct BlockingCodec	field	started	private	started: Mutex<Option<mpsc::Sender<()>>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct OriginRecordingTool	field	inputs	private	inputs: Arc<Mutex<Vec<PointerInput>>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct WorkerCodec	field	calls	private	calls: Arc<Mutex<Vec<PageIndex>>>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct WorkerCodec	field	cancel_on	private	cancel_on: Option<(PageIndex, Arc<ExportPhase>)>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct WorkerCodec	field	fail_on	private	fail_on: Option<PageIndex>	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct WorkerCodec	field	kind	private	kind: ExportOutputKind	e3b0c44298fc1c14
+#[cfg(test)] mod tests > struct WorkerCodec	field	on_page	private	on_page: Option<Arc<dyn Fn(PageIndex) + Send + Sync>>	e3b0c44298fc1c14
+#[derive(Clone,Copy,PartialEq,Eq)] struct FileIdentity	field	file	private	file: u64	e3b0c44298fc1c14
+#[derive(Clone,Copy,PartialEq,Eq)] struct FileIdentity	field	volume	private	volume: u64	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	AlreadyInProgress	private	AlreadyInProgress	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Cancelled	private	Cancelled	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Cleanup { primary	private	Cleanup { primary: Box<ExportFailure>, path: PathBuf, source: std::io::Error, }	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Codec	private	Codec(CanvasError)	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Duplicate { path	private	Duplicate { path: PathBuf, }	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Exists { path	private	Exists { path: PathBuf, }	e3b0c44298fc1c14
+#[derive(Debug)] enum ExportFailure	variant	Write { path	private	Write { path: PathBuf, source: std::io::Error, }	e3b0c44298fc1c14
+#[derive(Debug)] struct ExportCleanupFailure	field	path	private	path: PathBuf	e3b0c44298fc1c14
+#[derive(Debug)] struct ExportCleanupFailure	field	source	private	source: std::io::Error	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy)] struct CanvasContextMenu	field	origin	pub(super)	origin: Point<Pixels>	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy)] struct TabContextMenu	field	origin	pub(super)	origin: Point<Pixels>	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy)] struct TabContextMenu	field	tab_index	pub(super)	tab_index: usize	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] #[repr(u8)] enum ExportPhaseValue	variant	Cancelling	private	Cancelling	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] #[repr(u8)] enum ExportPhaseValue	variant	Publishing	private	Publishing	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] #[repr(u8)] enum ExportPhaseValue	variant	Running	private	Running	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum ExportOutcome	variant	Cancelled	private	Cancelled	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum ExportOutcome	variant	Complete	private	Complete	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	variant	Close	private	Close	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	variant	CloseAll	private	CloseAll	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	variant	CloseOthers	private	CloseOthers	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	variant	CopyPath	private	CopyPath	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	variant	RevealPath	private	RevealPath	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabError	variant	CommandUnavailable	private	CommandUnavailable	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabError	variant	OutOfRange { index	private	OutOfRange { index: usize, count: usize, }	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabError	variant	Unavailable	private	Unavailable(&'static str)	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] struct TabContextEntry	field	availability	pub(in crate::shell::chrome)	availability: MenuAvailability	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] struct TabContextEntry	field	command	pub(in crate::shell::chrome)	command: TabCommand	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] struct TabContextEntry	field	label	pub(in crate::shell::chrome)	label: &'static str	e3b0c44298fc1c14
+#[derive(Debug,Clone,Copy,PartialEq,Eq)] struct TabContextEntry	field	tab_index	pub(in crate::shell::chrome)	tab_index: usize	e3b0c44298fc1c14
+-	const	CANVAS_CONTEXT_MENU_WIDTH	pub(super)	const CANVAS_CONTEXT_MENU_WIDTH: f32 = 300.0	e3b0c44298fc1c14
+-	const	CONTEXT_MENU_PADDING	pub(super)	const CONTEXT_MENU_PADDING: f32 = 4.0	e3b0c44298fc1c14
+-	const	CONTEXT_MENU_ROW_HEIGHT	pub(super)	const CONTEXT_MENU_ROW_HEIGHT: f32 = 30.0	e3b0c44298fc1c14
+-	const	EXPORT_DPI	pub(super)	const EXPORT_DPI: f32 = 150.0	e3b0c44298fc1c14
+-	const	GLOBAL_BAR_HEIGHT	private	const GLOBAL_BAR_HEIGHT: f32 = 40.0	e3b0c44298fc1c14
+-	const	TAB_BAR_HEIGHT	private	const TAB_BAR_HEIGHT: f32 = 36.0	e3b0c44298fc1c14
+-	const	TAB_CONTEXT_MENU_WIDTH	pub(super)	const TAB_CONTEXT_MENU_WIDTH: f32 = 230.0	e3b0c44298fc1c14
+-	const	TOOL_ACTIVATION_FAILED	private	const TOOL_ACTIVATION_FAILED: &str = "This tool did not activate; the canvas status line has the reason"	e3b0c44298fc1c14
+-	enum	ExportFailure	pub(super)	#[derive(Debug)] enum ExportFailure	72248da5f4860516
+-	enum	ExportOutcome	pub(super)	#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum ExportOutcome	68fbf24b78d9e8a6
+-	enum	ExportPhaseValue	pub(super)	#[derive(Debug,Clone,Copy,PartialEq,Eq)] #[repr(u8)] enum ExportPhaseValue	bce49c52e6059f64
+-	enum	TabCommand	pub(in crate::shell)	#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabCommand	e227944679963a07
+-	enum	TabError	pub(in crate::shell::chrome)	#[derive(Debug,Clone,Copy,PartialEq,Eq)] enum TabError	f5d6ee351db1fed3
+-	fn	activate_tab	pub(super)	fn activate_tab<T>(tabs: &mut TabState<T>,search_feedback: &mut Option<SearchResult>,index: usize) -> bool	dadd0b04e19273ea
+-	fn	cancel_find_on	private	fn cancel_find_on(canvas: &Entity<Canvas>,cx: &mut Context<ShellFrame>)	23ed7f1b0734aea8
+-	fn	cancel_per_page	private	fn cancel_per_page(paths: Vec<OwnedExport>,quarantine: TempDir) -> Result<ExportOutcome,ExportFailure>	9c7b5946a2f6b73e
+-	fn	close_other_tabs	pub(super)	fn close_other_tabs<T>(tabs: &mut TabState<T>,search_feedback: &mut Option<SearchResult>,index: usize) -> Result<(),TabError>	d9a81224a69fb216
+-	fn	close_tab	pub(super)	fn close_tab<T>(tabs: &mut TabState<T>,search_feedback: &mut Option<SearchResult>,index: usize) -> Result<bool,TabError>	8216db3a80503070
+-	fn	context_menu_origin	pub(super)	fn context_menu_origin(click: Point<Pixels>,size: gpui::Size<Pixels>,viewport: gpui::Size<Pixels>) -> Point<Pixels>	875a7af8cdc62259
+-	fn	document_view_bounds	private	fn document_view_bounds(viewport: gpui::Size<Pixels>,visibility: SurfaceVisibility,rail_expanded: bool,navigation_width: Pixels,side_panel_state: SidePanelState) -> gpui::Bounds<Pixels>	5b49a3e7ce65256a
+-	fn	export_path	pub(super)	fn export_path(chosen: &Path,page: Option<PageIndex>,count: usize) -> PathBuf	a8303de2dfbbca0d
+-	fn	export_per_page	private	fn export_per_page(prepared: PreparedExport,chosen: &Path,phase: &ExportPhase,completed: &AtomicUsize,observer: &dyn ExportObserver) -> Result<ExportOutcome,ExportFailure>	c054552ccc62435f
+-	fn	export_progress_label	pub(super)	fn export_progress_label(job: &ExportJob) -> String	9b995401741dce17
+-	fn	export_single	private	fn export_single(prepared: PreparedExport,chosen: &Path,phase: &ExportPhase,completed: &AtomicUsize,observer: &dyn ExportObserver) -> Result<ExportOutcome,ExportFailure>	be25fff7b0520c85
+-	fn	fail_per_page	private	fn fail_per_page(failure: ExportFailure,paths: Vec<OwnedExport>,quarantine: TempDir) -> Result<ExportOutcome,ExportFailure>	c69dbd768b0a3efe
+-	fn	header_height	private	fn header_height(visibility: SurfaceVisibility) -> Pixels	478ed580da0fd7be
+-	fn	preflight_export_paths	pub(super)	fn preflight_export_paths(paths: &[PathBuf]) -> Result<(),ExportFailure>	5c0d4da0b6585212
+-	fn	remove_export_paths	private	fn remove_export_paths(paths: Vec<OwnedExport>,quarantine: TempDir) -> Result<(),ExportCleanupFailure>	24272cbe901f8dee
+-	fn	remove_owned_export	private	fn remove_owned_export(owned: &OwnedExport,quarantine: &Path) -> std::io::Result<()>	1995db4f4d348f7c
+-	fn	report_export_failure	pub(super)	fn report_export_failure(canvas: &Entity<Canvas>,failure: impl fmt::Display,cx: &mut App)	7b6eb2952a8793b5
+-	fn	restore_quarantined_export	private	fn restore_quarantined_export(quarantine: &Path,destination: &Path) -> std::io::Result<()>	8e0da5cbc00c32c1
+-	fn	run_export_worker	pub(super)	fn run_export_worker(prepared: PreparedExport,chosen: &Path,phase: &ExportPhase,completed: &AtomicUsize) -> Result<ExportOutcome,ExportFailure>	878244cecaaef695
+-	fn	run_export_worker_observed	pub(super)	fn run_export_worker_observed(prepared: PreparedExport,chosen: &Path,phase: &ExportPhase,completed: &AtomicUsize,observer: &dyn ExportObserver) -> Result<ExportOutcome,ExportFailure>	f139a1c1b0c7bb34
+-	fn	tab_context_entries	pub(in crate::shell::chrome)	fn tab_context_entries(tab_index: usize,tab_count: usize) -> Result<Vec<TabContextEntry>,TabError>	0c1c3f4fe6c24efd
+-	fn	tab_element_id	private	fn tab_element_id(path: &Path) -> Arc<Path>	ec226e02d42788e4
+-	fn	tab_title	private	fn tab_title(path: &Path) -> String	67942b3fa9fd4d04
+-	impl	-	private	impl DocumentTab	e3b0c44298fc1c14
+-	impl	-	private	impl Drop for ShellFrame	e3b0c44298fc1c14
+-	impl	-	private	impl ExportObserver for NoopExportObserver	e3b0c44298fc1c14
+-	impl	-	private	impl ExportPhase	e3b0c44298fc1c14
+-	impl	-	private	impl FileIdentity	e3b0c44298fc1c14
+-	impl	-	private	impl Render for ShellFrame	e3b0c44298fc1c14
+-	impl	-	private	impl ShellFrame	e3b0c44298fc1c14
+-	impl	-	private	impl fmt::Display for ExportFailure	e3b0c44298fc1c14
+-	impl	-	private	impl fmt::Display for TabError	e3b0c44298fc1c14
+-	impl	-	private	impl std::error::Error for TabError	e3b0c44298fc1c14
+-	impl	-	private	impl<T> TabState<T>	e3b0c44298fc1c14
+-	mod	-	private	#[cfg(test)] mod tests	e3b0c44298fc1c14
+-	struct	CanvasContextMenu	pub(super)	#[derive(Debug,Clone,Copy)] struct CanvasContextMenu	69bdc6d35da57d48
+-	struct	DocumentTab	pub(super)	struct DocumentTab	37fa1f474015f9d5
+-	struct	ExportCleanupFailure	private	#[derive(Debug)] struct ExportCleanupFailure	95ce3fd9c25e6ddc
+-	struct	ExportJob	pub(super)	struct ExportJob	16cec602df1b639c
+-	struct	ExportPhase	pub(super)	struct ExportPhase(AtomicU8)	e3b0c44298fc1c14
+-	struct	FileIdentity	private	#[derive(Clone,Copy,PartialEq,Eq)] struct FileIdentity	fcfb220357e4c381
+-	struct	NoopExportObserver	private	struct NoopExportObserver	e3b0c44298fc1c14
+-	struct	OwnedExport	private	struct OwnedExport	c5223099ce51d6ad
+-	struct	ShellFrame	pub(in crate::shell)	struct ShellFrame	e9caa9b72ca2fbfb
+-	struct	TabContextEntry	pub(in crate::shell::chrome)	#[derive(Debug,Clone,Copy,PartialEq,Eq)] struct TabContextEntry	6497871053153feb
+-	struct	TabContextMenu	pub(super)	#[derive(Debug,Clone,Copy)] struct TabContextMenu	a4653023e9ac4538
+-	struct	TabState	pub(super)	struct TabState<T>	fa72f1d1d7e9073e
+-	trait	-	pub(super)	trait ExportObserver: Send + Sync	e3b0c44298fc1c14
+-	use	ShellFrame	pub(in crate::shell)	use self::frame_state::ShellFrame	e3b0c44298fc1c14
+-	use	TabError	pub(super)	use self::frame_state::TabError	e3b0c44298fc1c14
+impl DocumentTab	fn	new	pub(super)	fn new(source: PathBuf,canvas: Entity<Canvas>) -> Self	f16a3cf04b2b8a1e
+impl DocumentTab	fn	title	pub(super)	fn title(&self) -> &str	227070101a4a3772
+impl Drop for ShellFrame	fn	drop	private	fn drop(&mut self)	7793aaaf68d4a7cb
+impl ExportPhase	fn	begin_publishing	pub(super)	fn begin_publishing(&self) -> bool	9f5b967022bf5940
+impl ExportPhase	fn	cancel	pub(super)	fn cancel(&self) -> bool	fb55bcdda9ad398c
+impl ExportPhase	fn	is_cancelling	pub(super)	fn is_cancelling(&self) -> bool	e594b684cdf7a71a
+impl ExportPhase	fn	load	pub(super)	fn load(&self) -> ExportPhaseValue	b444c7cf6c7fb835
+impl ExportPhase	fn	new	pub(super)	fn new() -> Self	b2ad0b5bc2a83679
+impl FileIdentity	fn	from_file	private	#[cfg(not(any(unix,windows)))] fn from_file(_file: &File) -> std::io::Result<Self>	e378c3f77248f274
+impl FileIdentity	fn	from_file	private	#[cfg(unix)] fn from_file(file: &File) -> std::io::Result<Self>	f8434c8aa5bf110f
+impl FileIdentity	fn	from_file	private	#[cfg(windows)] fn from_file(file: &File) -> std::io::Result<Self>	f8434c8aa5bf110f
+impl FileIdentity	fn	from_metadata	private	#[cfg(not(any(unix,windows)))] fn from_metadata(_metadata: &std::fs::Metadata) -> std::io::Result<Self>	e378c3f77248f274
+impl FileIdentity	fn	from_metadata	private	#[cfg(unix)] fn from_metadata(metadata: &std::fs::Metadata) -> std::io::Result<Self>	1db040cdf5be298c
+impl FileIdentity	fn	from_metadata	private	#[cfg(windows)] fn from_metadata(metadata: &std::fs::Metadata) -> std::io::Result<Self>	6fdff2c7ee1f0866
+impl FileIdentity	fn	from_path	private	fn from_path(path: &Path) -> std::io::Result<Self>	bc298bd098a943af
+impl Render for ShellFrame	fn	render	private	fn render(&mut self,window: &mut Window,cx: &mut Context<Self>) -> impl IntoElement	6593fbf5507fe327
+impl ShellFrame	fn	accessible	pub(super)	fn accessible(&self,window: &Window,cx: &mut Context<Self>) -> A11yElement	78356e043f37a323
+impl ShellFrame	fn	accessible_canvas_context_menu	pub(super)	fn accessible_canvas_context_menu(&self,cx: &App) -> A11yElement	0f64036122ec65af
+impl ShellFrame	fn	accessible_global_bar	pub(super)	fn accessible_global_bar(&self,cx: &App) -> A11yElement	b06082986c32a118
+impl ShellFrame	fn	accessible_main_menu	pub(super)	fn accessible_main_menu(&self,cx: &App) -> A11yElement	24ee1ad32b7303c6
+impl ShellFrame	fn	accessible_recent_menu	pub(super)	fn accessible_recent_menu(&self) -> A11yElement	042b2d9367a053d1
+impl ShellFrame	fn	accessible_search_results	pub(super)	fn accessible_search_results(&self,cx: &App) -> A11yElement	5af0e44b40e16da4
+impl ShellFrame	fn	accessible_tab_context_menu	pub(super)	fn accessible_tab_context_menu(&self,menu: TabContextMenu) -> A11yElement	76bf0879581cbb73
+impl ShellFrame	fn	accessible_tabs	pub(super)	fn accessible_tabs(&self) -> A11yElement	d13248decedaa985
+impl ShellFrame	fn	activate	private	fn activate(&mut self,index: usize,cx: &mut Context<Self>)	c202c3962e71c42e
+impl ShellFrame	fn	activate_canvas_tool	private	fn activate_canvas_tool(&mut self,index: usize,name: &str,entry: Option<RailEntry>,cx: &mut Context<Self>) -> bool	688558857d31f382
+impl ShellFrame	fn	activate_focused	pub(super)	fn activate_focused(&mut self,_: &ActivateFocused,window: &mut Window,cx: &mut Context<Self>)	4557383694afc5f0
+impl ShellFrame	fn	activate_tool_with	private	fn activate_tool_with(&mut self,capability: ToolCapability,label: &str,missing: &str,cx: &mut Context<Self>)	acfc5f489d0c9be9
+impl ShellFrame	fn	active_canvas	pub(in crate::shell)	#[cfg(all(test,feature = "shell-test-support"))] fn active_canvas(&self) -> Option<&Entity<Canvas>>	9d729768ebc80a04
+impl ShellFrame	fn	active_index	private	fn active_index(&self) -> Result<usize,TabError>	6ab79005968de23b
+impl ShellFrame	fn	active_rail_entry	private	fn active_rail_entry(&self,index: usize,cx: &App) -> Option<RailEntry>	6297f1790eb41c61
+impl ShellFrame	fn	active_view_state	private	fn active_view_state(&self,cx: &App) -> Option<CanvasViewState>	bd383c8808c1b753
+impl ShellFrame	fn	all_quick_action_entries	private	fn all_quick_action_entries(&self,cx: &App) -> Vec<QuickActionEntry>	f7bd283fd1e27812
+impl ShellFrame	fn	apply_find_option	pub(in crate::shell)	fn apply_find_option(&mut self,option: FindOption,cx: &mut Context<Self>)	9c7cfa75db4cb304
+impl ShellFrame	fn	apply_shell_view_action	private	fn apply_shell_view_action(&mut self,action: ShellViewAction,cx: &mut Context<Self>) -> bool	4def6b20260a3e27
+impl ShellFrame	fn	apply_theme	private	fn apply_theme(&mut self,cx: &mut Context<Self>)	371cacf1fdb67518
+impl ShellFrame	fn	arm_export_poll	pub(super)	fn arm_export_poll(&mut self,id: u64,cx: &mut Context<Self>)	2f16c20574137bd7
+impl ShellFrame	fn	cancel_export	pub(super)	fn cancel_export(&mut self,cx: &mut Context<Self>)	2bf4df1f02575f88
+impl ShellFrame	fn	cancel_export_for	pub(super)	fn cancel_export_for(&mut self,origin: EntityId)	35d8d046299c5692
+impl ShellFrame	fn	canvas_context_menu_entries	pub(super)	fn canvas_context_menu_entries(&self,cx: &App) -> Vec<CanvasContextEntry>	a311c3b46e207e14
+impl ShellFrame	fn	canvas_view_changed	private	fn canvas_view_changed(&mut self,cx: &mut Context<Self>)	2ad7aff4a23ac8b1
+impl ShellFrame	fn	canvases	private	fn canvases(&self) -> Vec<Entity<Canvas>>	61917bde8d261433
+impl ShellFrame	fn	change_preference	pub(in crate::shell)	fn change_preference(&mut self,change: PreferenceChange,cx: &mut Context<Self>)	0abcb85f77f34364
+impl ShellFrame	fn	choose_search_result	private	fn choose_search_result(&mut self,result: SearchResult,window: &mut Window,cx: &mut Context<Self>)	c88f8d7ac5802cde
+impl ShellFrame	fn	close_dialog	pub(in crate::shell)	fn close_dialog(&mut self,cx: &mut Context<Self>)	80a2125a27958b0d
+impl ShellFrame	fn	collect_thumbnails	pub(in crate::shell)	fn collect_thumbnails(&mut self,cx: &mut Context<Self>)	790713a1d5e3edf8
+impl ShellFrame	fn	command_unavailable	pub(super)	fn command_unavailable(&self,command: MenuCommand,cx: &App) -> Option<&'static str>	cd29da66a8f14109
+impl ShellFrame	fn	dismiss_find_bar	pub(in crate::shell)	fn dismiss_find_bar(&mut self,cx: &mut Context<Self>)	867656fceec889b3
+impl ShellFrame	fn	dismiss_layer_right_click	pub(super)	fn dismiss_layer_right_click(&mut self,event: &MouseDownEvent,document_bounds: Bounds<Pixels>,cx: &mut Context<Self>)	af0c53de2048d5d7
+impl ShellFrame	fn	dismiss_menus	pub(super)	fn dismiss_menus(&mut self,cx: &mut Context<Self>)	c108c634b263b537
+impl ShellFrame	fn	dismiss_notice	pub(in crate::shell)	fn dismiss_notice(&mut self,index: usize,cx: &mut Context<Self>)	044e441ffc6e2a23
+impl ShellFrame	fn	dismiss_overlay	pub(in crate::shell)	fn dismiss_overlay(&mut self,_: &Dismiss,window: &mut Window,cx: &mut Context<Self>)	ae513fed3cae3a78
+impl ShellFrame	fn	drag_quick_actions	pub(super)	fn drag_quick_actions(&mut self,id: u64,pointer: Point<Pixels>,window: &mut Window,cx: &mut Context<Self>)	f2a4b4d7f652360e
+impl ShellFrame	fn	find_next_match	pub(in crate::shell)	fn find_next_match(&mut self,_: &FindNextMatch,_: &mut Window,cx: &mut Context<Self>)	1441b847ad377471
+impl ShellFrame	fn	find_previous_match	pub(in crate::shell)	fn find_previous_match(&mut self,_: &FindPreviousMatch,_: &mut Window,cx: &mut Context<Self>)	58458a2b978ad070
+impl ShellFrame	fn	find_query_changed	private	fn find_query_changed(&mut self,cx: &mut Context<Self>)	56ada1b2b279fd41
+impl ShellFrame	fn	finish_export	pub(super)	fn finish_export(&mut self,id: u64,origin: EntityId,canvas: &Entity<Canvas>,result: Result<ExportOutcome,ExportFailure>,cx: &mut Context<Self>)	b6b8fbb58bc49396
+impl ShellFrame	fn	focus_next	pub(super)	fn focus_next(&mut self,_: &FocusNext,window: &mut Window,cx: &mut Context<Self>)	9cb0ecf3f473266f
+impl ShellFrame	fn	focus_next_in_group	pub(super)	fn focus_next_in_group(&mut self,_: &FocusNextInGroup,window: &mut Window,cx: &mut Context<Self>)	e6c1e2653e071840
+impl ShellFrame	fn	focus_previous	pub(super)	fn focus_previous(&mut self,_: &FocusPrevious,window: &mut Window,cx: &mut Context<Self>)	6c1abbb94e885ec7
+impl ShellFrame	fn	focus_previous_in_group	pub(super)	fn focus_previous_in_group(&mut self,_: &FocusPreviousInGroup,window: &mut Window,cx: &mut Context<Self>)	ee42c0cc8ea29a08
+impl ShellFrame	fn	focus_ring_target	pub(super)	fn focus_ring_target(&mut self,window: &mut Window,cx: &mut Context<Self>)	868917c9eb661c72
+impl ShellFrame	fn	focused_text_field	pub(super)	fn focused_text_field(&self,window: &Window,cx: &App) -> Option<gpui::ElementId>	2f4a603effd90b4d
+impl ShellFrame	fn	is_active_canvas	pub(in crate::shell)	fn is_active_canvas(&self,origin: EntityId) -> bool	8f552ae2f457a5d4
+impl ShellFrame	fn	launch_export	pub(super)	fn launch_export(&mut self,origin: EntityId,canvas: Entity<Canvas>,path: PathBuf,prepared: PreparedExport,cx: &mut Context<Self>)	bec64915c6cd5c3a
+impl ShellFrame	fn	menu_state	pub(super)	fn menu_state(&self,cx: &App) -> MenuState	fd29683da829d8db
+impl ShellFrame	fn	navigation	pub(in crate::shell)	#[cfg(all(test,feature = "shell-test-support"))] fn navigation(&self) -> &NavigationPanesState	eb48a32b838e3c5b
+impl ShellFrame	fn	navigation_mut	pub(in crate::shell)	#[cfg(all(test,feature = "shell-test-support"))] fn navigation_mut(&mut self) -> &mut NavigationPanesState	a45e8ae4bc2e20fa
+impl ShellFrame	fn	navigation_width	private	fn navigation_width(&self,visible: bool) -> Pixels	5d35b7cec7375024
+impl ShellFrame	fn	new	pub(in crate::shell)	fn new(tabs: Vec<(PathBuf,Entity<Canvas>)>,mut shell_view_state: ShellViewState,mut settings: ShellSettings,window: &mut Window,cx: &mut Context<Self>) -> Self	cc36edfd159dceae
+impl ShellFrame	fn	open_canvas_context_menu	pub(super)	fn open_canvas_context_menu(&mut self,event: &MouseDownEvent,cx: &mut Context<Self>)	3f5821333cf60d64
+impl ShellFrame	fn	open_document	private	fn open_document(&mut self,path: &Path,cx: &mut Context<Self>) -> Result<PathBuf,String>	83ee61630c0f419d
+impl ShellFrame	fn	open_documents	pub(super)	fn open_documents(&mut self,paths: &[PathBuf],cx: &mut Context<Self>)	edc89efa43dd366f
+impl ShellFrame	fn	open_find_bar	pub(super)	fn open_find_bar(&mut self,query: Option<String>,window: &mut Window,cx: &mut Context<Self>)	5f29096521300578
+impl ShellFrame	fn	open_from_home	pub(in crate::shell)	fn open_from_home(&mut self,window: &mut Window,cx: &mut Context<Self>)	56039b75f087b067
+impl ShellFrame	fn	open_recent	pub(in crate::shell)	fn open_recent(&mut self,index: usize,cx: &mut Context<Self>)	57bf94a49d537e26
+impl ShellFrame	fn	open_tab_context_menu	pub(super)	fn open_tab_context_menu(&mut self,index: usize,event: &MouseDownEvent,cx: &mut Context<Self>)	961b8e17c8c6d40e
+impl ShellFrame	fn	poll_export_progress	pub(super)	fn poll_export_progress(&mut self,id: u64) -> (bool,bool)	2280903a92094021
+impl ShellFrame	fn	preferences	pub(in crate::shell)	fn preferences(&self) -> &Preferences	404972ea1ebe0aa2
+impl ShellFrame	fn	prompt_for_documents	private	fn prompt_for_documents(&mut self,cx: &mut Context<Self>)	12739e4cd83b23dc
+impl ShellFrame	fn	quick_action_entries	private	fn quick_action_entries(&self,cx: &App) -> Vec<QuickActionEntry>	a0d7fd218cae84c3
+impl ShellFrame	fn	rail_entries	private	fn rail_entries(&self,cx: &App) -> Vec<RailEntry>	a420ea1b7afac0e2
+impl ShellFrame	fn	refresh_find	private	fn refresh_find(&mut self,cx: &mut Context<Self>)	b2a8b2fedfefae24
+impl ShellFrame	fn	registry_facts	pub(super)	fn registry_facts(&self,cx: &App) -> RegistryFacts	45d9cb498670d871
+impl ShellFrame	fn	render_canvas_context_menu	pub(super)	fn render_canvas_context_menu(&self,menu: CanvasContextMenu,window: &Window,cx: &mut Context<Self>) -> impl IntoElement	8150050cde2de181
+impl ShellFrame	fn	render_global_bar	private	fn render_global_bar(&self,cx: &mut Context<Self>) -> impl IntoElement	14b4f2e6c20d0b9c
+impl ShellFrame	fn	render_main_menu	pub(super)	fn render_main_menu(&self,window: &Window,cx: &mut Context<Self>) -> impl IntoElement	37badccc97ad8008
+impl ShellFrame	fn	render_notices	pub(super)	fn render_notices(&self,cx: &mut Context<Self>) -> impl IntoElement	df8fbb8637408d8e
+impl ShellFrame	fn	render_recent_menu	pub(super)	fn render_recent_menu(&self,cx: &mut Context<Self>) -> impl IntoElement	d26dcd2bf916a798
+impl ShellFrame	fn	render_search_results	private	fn render_search_results(&self,cx: &mut Context<Self>) -> impl IntoElement	5743a654d16f5998
+impl ShellFrame	fn	render_tab_context_menu	pub(super)	fn render_tab_context_menu(&self,menu: TabContextMenu,window: &Window,cx: &mut Context<Self>) -> impl IntoElement	cf59a50fb4cb2d4e
+impl ShellFrame	fn	report_pane_failure	pub(in crate::shell)	fn report_pane_failure(&mut self,failure: Option<String>,cx: &mut Context<Self>)	29fea50d94687c85
+impl ShellFrame	fn	run_accessibility_requests	pub(super)	fn run_accessibility_requests(&mut self,window: &mut Window,cx: &mut Context<Self>)	e2b2f04afaf1f8ca
+impl ShellFrame	fn	run_activation	pub(in crate::shell)	fn run_activation(&mut self,activation: Activation,window: &mut Window,cx: &mut Context<Self>)	584ae2bcced0141f
+impl ShellFrame	fn	run_canvas_context_command	pub(super)	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	0123d6586732a2be
+impl ShellFrame	fn	run_find_query	private	fn run_find_query(&mut self,cx: &mut Context<Self>)	c9852d0e82a7c097
+impl ShellFrame	fn	run_main_menu_command	pub(super)	fn run_main_menu_command(&mut self,command: MenuCommand,window: &mut Window,cx: &mut Context<Self>) -> Result<(),TabError>	1c589cf015ade0ed
+impl ShellFrame	fn	run_native_command	pub(in crate::shell::chrome)	fn run_native_command(window_handle: WindowHandle<Self>,command: MenuCommand,cx: &mut App)	81fe01a2f23f7a08
+impl ShellFrame	fn	run_pane_action	pub(in crate::shell)	fn run_pane_action(&mut self,action: PaneAction,cx: &mut Context<Self>)	6a7e131aa902c196
+impl ShellFrame	fn	run_registry_command	pub(super)	fn run_registry_command(&mut self,id: &'static str,cx: &mut Context<Self>)	1e6fea9a43687307
+impl ShellFrame	fn	run_shell_view_action	private	fn run_shell_view_action(&mut self,action: ShellViewAction,cx: &mut Context<Self>)	22c01f2f8c1cc6e9
+impl ShellFrame	fn	run_tab_command	private	fn run_tab_command(&mut self,command: TabCommand,index: usize,cx: &mut Context<Self>) -> Result<(),TabError>	f18ccad2c2a0102b
+impl ShellFrame	fn	run_view_action	pub(super)	fn run_view_action(&mut self,action: ViewAction,cx: &mut Context<Self>)	cd0998ab41cd53ca
+impl ShellFrame	fn	search_panel_visible	private	fn search_panel_visible(&self,cx: &App) -> bool	b1961974975ad812
+impl ShellFrame	fn	search_results	private	fn search_results(&self,cx: &App) -> Vec<SearchResult>	35b4e5fefcbd406e
+impl ShellFrame	fn	select_quick_action	pub(super)	fn select_quick_action(&mut self,entry: QuickActionEntry,cx: &mut Context<Self>)	f3170ee1b9071edf
+impl ShellFrame	fn	select_rail_entry	pub(super)	fn select_rail_entry(&mut self,entry: RailEntry,cx: &mut Context<Self>)	7bbd5851201d8146
+impl ShellFrame	fn	serve_accessibility	pub(in crate::shell)	fn serve_accessibility(&mut self,window: &mut Window,cx: &mut Context<Self>)	7684ff4b4d38335b
+impl ShellFrame	fn	set_home_view	pub(in crate::shell)	fn set_home_view(&mut self,view: HomeView,cx: &mut Context<Self>)	595d4e10ed5e823d
+impl ShellFrame	fn	set_theme	pub(super)	fn set_theme(&mut self,theme: ThemePreference,cx: &mut Context<Self>)	e0114278086b932b
+impl ShellFrame	fn	shortcut_rows	pub(in crate::shell)	fn shortcut_rows(&self,cx: &App) -> Vec<(String,String)>	8a050c39e28388f0
+impl ShellFrame	fn	show_dialog	pub(super)	fn show_dialog(&mut self,dialog: ShellDialog,cx: &mut Context<Self>)	95c1225242ebb143
+impl ShellFrame	fn	show_preferences	pub(in crate::shell)	fn show_preferences(&mut self,category: PreferenceCategory,cx: &mut Context<Self>)	b86e9df8ab5a3d9f
+impl ShellFrame	fn	start_export	pub(super)	fn start_export(&mut self,target: ExportTarget,cx: &mut Context<Self>)	193ced1948d2b3a0
+impl ShellFrame	fn	step_find	pub(in crate::shell)	fn step_find(&mut self,direction: FindDirection,cx: &mut Context<Self>)	63465206653fe111
+impl ShellFrame	fn	step_focus	pub(super)	fn step_focus(&mut self,step: A11yStep,window: &mut Window,cx: &mut Context<Self>)	976b971e0662259d
+impl ShellFrame	fn	step_focus_within	pub(super)	fn step_focus_within(&mut self,step: A11yStep,window: &mut Window,cx: &mut Context<Self>)	113a9d356ca7fb52
+impl ShellFrame	fn	submit_page_entry	pub(super)	fn submit_page_entry(&mut self,cx: &mut Context<Self>)	0c4722bb0f43386c
+impl ShellFrame	fn	sync_page_entry	private	fn sync_page_entry(&self,cx: &mut Context<Self>)	366e403c4fbb9af6
+impl ShellFrame	fn	tab_source	private	fn tab_source(&self,index: usize) -> Result<&Path,TabError>	4aca116b06a2237a
+impl ShellFrame	fn	take_a_snapshot	private	fn take_a_snapshot(&mut self,cx: &mut Context<Self>)	85fb98824b6d017c
+impl ShellFrame	fn	text_field	pub(super)	fn text_field(&self,field: TextField) -> &Entity<SearchInput>	ca74fe812593155d
+impl ShellFrame	fn	text_field_focused	pub(super)	fn text_field_focused(&self,window: &Window,cx: &App) -> bool	eac668e1d2cb63f5
+impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+impl ShellFrame	fn	toggle_main_menu	pub(super)	fn toggle_main_menu(&mut self,cx: &mut Context<Self>)	3b7c8b405ec8b46a
+impl ShellFrame	fn	toggle_quick_action_customization	pub(super)	fn toggle_quick_action_customization(&mut self,cx: &mut Context<Self>)	a8e493a13d805b06
+impl ShellFrame	fn	toggle_quick_action_visibility	pub(super)	fn toggle_quick_action_visibility(&mut self,action: QuickAction,cx: &mut Context<Self>)	a81e7145b2384481
+impl ShellFrame	fn	toggle_rail_expanded	pub(super)	fn toggle_rail_expanded(&mut self,cx: &mut Context<Self>)	1287a5a0a1676b5b
+impl ShellFrame	fn	toggle_side_panel	pub(super)	fn toggle_side_panel(&mut self,cx: &mut Context<Self>)	4af9185a3888b098
+impl ShellFrame	fn	window_appearance_changed	private	fn window_appearance_changed(&mut self,window: &mut Window,cx: &mut Context<Self>)	c6862619fc81ea92
+impl ShellFrame	fn	window_bounds_changed	private	fn window_bounds_changed(&mut self,window: &mut Window,cx: &mut Context<Self>)	905463f788689406
+impl fmt::Display for ExportFailure	fn	fmt	private	fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result	20fd2ee0e7ebb39d
+impl fmt::Display for TabError	fn	fmt	private	fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result	f31a054b1140fcae
+impl<T> TabState<T>	fn	activate	pub	fn activate(&mut self,index: usize) -> Result<bool,TabError>	e4d5916e784ad52a
+impl<T> TabState<T>	fn	active	pub	fn active(&self) -> Option<&T>	21f1f4595c428a1b
+impl<T> TabState<T>	fn	active_index	pub	fn active_index(&self) -> Option<usize>	0cf86a50aa88f554
+impl<T> TabState<T>	fn	close	pub	fn close(&mut self,index: usize) -> Result<T,TabError>	6a912fd2a8f68ab7
+impl<T> TabState<T>	fn	close_all	pub	fn close_all(&mut self) -> Vec<T>	0c6b793d58270bcd
+impl<T> TabState<T>	fn	close_others	pub	fn close_others(&mut self,index: usize) -> Result<Vec<T>,TabError>	3728ec3d07b5bd5f
+impl<T> TabState<T>	fn	is_empty	pub	fn is_empty(&self) -> bool	cd00a36ab11e9b35
+impl<T> TabState<T>	fn	new	pub	fn new(tabs: Vec<T>) -> Self	c321125536cedf73
+impl<T> TabState<T>	fn	push	pub	fn push(&mut self,tab: T) -> usize	75899c4f1a089e11
+impl<T> TabState<T>	fn	tabs	pub	fn tabs(&self) -> &[T]	30a7b608d50a6427
+struct DocumentTab	field	canvas	pub(super)	canvas: Entity<Canvas>	e3b0c44298fc1c14
+struct DocumentTab	field	source	pub(super)	source: PathBuf	e3b0c44298fc1c14
+struct DocumentTab	field	title	pub(super)	title: String	e3b0c44298fc1c14
+struct ExportJob	field	completed	pub(super)	completed: Arc<AtomicUsize>	e3b0c44298fc1c14
+struct ExportJob	field	id	pub(super)	id: u64	e3b0c44298fc1c14
+struct ExportJob	field	last_displayed	pub(super)	last_displayed: usize	e3b0c44298fc1c14
+struct ExportJob	field	origin	pub(super)	origin: EntityId	e3b0c44298fc1c14
+struct ExportJob	field	phase	pub(super)	phase: Arc<ExportPhase>	e3b0c44298fc1c14
+struct ExportJob	field	total	pub(super)	total: usize	e3b0c44298fc1c14
+struct ExportPhase(AtomicU8)	field	0	private	AtomicU8	e3b0c44298fc1c14
+struct OwnedExport	field	identity	private	identity: Option<FileIdentity>	e3b0c44298fc1c14
+struct OwnedExport	field	path	private	path: PathBuf	e3b0c44298fc1c14
+struct ShellFrame	field	a11y	pub(super)	a11y: ShellAccessibility	e3b0c44298fc1c14
+struct ShellFrame	field	canvas_context_menu	pub(super)	canvas_context_menu: Option<CanvasContextMenu>	e3b0c44298fc1c14
+struct ShellFrame	field	dialog	pub(super)	dialog: Option<ShellDialog>	e3b0c44298fc1c14
+struct ShellFrame	field	export_job	pub(super)	export_job: Option<ExportJob>	e3b0c44298fc1c14
+struct ShellFrame	field	find	pub(super)	find: FindBarState	e3b0c44298fc1c14
+struct ShellFrame	field	find_input	pub(super)	find_input: Entity<SearchInput>	e3b0c44298fc1c14
+struct ShellFrame	field	home	pub(super)	home: HomeState	e3b0c44298fc1c14
+struct ShellFrame	field	main_menu_open	pub(super)	main_menu_open: bool	e3b0c44298fc1c14
+struct ShellFrame	field	navigation	pub(super)	navigation: NavigationPanesState	e3b0c44298fc1c14
+struct ShellFrame	field	next_export_id	pub(super)	next_export_id: u64	e3b0c44298fc1c14
+struct ShellFrame	field	notices	pub(super)	notices: Vec<String>	e3b0c44298fc1c14
+struct ShellFrame	field	observed_view_state	pub(super)	observed_view_state: Option<CanvasViewState>	e3b0c44298fc1c14
+struct ShellFrame	field	page_entry_error	pub(super)	page_entry_error: Option<PageEntryError>	e3b0c44298fc1c14
+struct ShellFrame	field	page_input	pub(super)	page_input: Entity<SearchInput>	e3b0c44298fc1c14
+struct ShellFrame	field	quick_actions_state	pub(super)	quick_actions_state: QuickActionsState	e3b0c44298fc1c14
+struct ShellFrame	field	rail_state	pub(super)	rail_state: RailState	e3b0c44298fc1c14
+struct ShellFrame	field	recent_menu_open	pub(super)	recent_menu_open: bool	e3b0c44298fc1c14
+struct ShellFrame	field	search_feedback	pub(super)	search_feedback: Option<SearchResult>	e3b0c44298fc1c14
+struct ShellFrame	field	search_input	pub(super)	search_input: Entity<SearchInput>	e3b0c44298fc1c14
+struct ShellFrame	field	settings	pub(super)	settings: ShellSettings	e3b0c44298fc1c14
+struct ShellFrame	field	shell_view_state	pub(super)	shell_view_state: ShellViewState	e3b0c44298fc1c14
+struct ShellFrame	field	side_panel_state	pub(super)	side_panel_state: SidePanelState	e3b0c44298fc1c14
+struct ShellFrame	field	tab_context_menu	pub(super)	tab_context_menu: Option<TabContextMenu>	e3b0c44298fc1c14
+struct ShellFrame	field	tabs	pub(super)	tabs: TabState<DocumentTab>	e3b0c44298fc1c14
+struct TabState<T>	field	active	private	active: Option<usize>	e3b0c44298fc1c14
+struct TabState<T>	field	tabs	private	tabs: Vec<T>	e3b0c44298fc1c14
+trait ExportObserver: Send + Sync	fn	after_publish_started	private	fn after_publish_started(&self)	e3b0c44298fc1c14
+trait ExportObserver: Send + Sync	fn	before_publish	private	fn before_publish(&self)	e3b0c44298fc1c14
+trait ExportObserver: Send + Sync	fn	page_completed	private	fn page_completed(&self,_page: PageIndex)	e3b0c44298fc1c14
+trait ExportObserver: Send + Sync	fn	writer_closed	private	fn writer_closed(&self)	e3b0c44298fc1c14
+trait ExportObserver: Send + Sync	fn	writer_opened	private	fn writer_opened(&self)	e3b0c44298fc1c14
