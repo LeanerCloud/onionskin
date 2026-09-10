@@ -6,6 +6,11 @@ two listings as multisets. `procedure_mutation.py` mutation-tests the inventory
 itself, `line_multiset.py` checks the same claim without parsing Rust, and
 `item_inventory.py audit` reports what each non-private item reaches.
 
+A record cannot name the commit that contains it, so `# emitted at` names the
+commit whose tree the files were read from, which is the one before the record
+lands. `git diff <that sha>..<the record's sha> -- <the listed paths>` is
+expected to be empty, and is the check that the header is honest.
+
 Each emitted listing carries a `# items:` census, because the item count is the
 denominator any claim about it is read against and a reader counting by hand
 will count something else. Two rules in particular: a trait's default methods
