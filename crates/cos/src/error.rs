@@ -48,6 +48,16 @@ pub enum Error {
     DepthExceeded {
         detail: String,
     },
+    /// The chain of cross-reference sections could not be walked from the
+    /// file's `startxref` back to its first table: a `/Prev` that points at no
+    /// section, one that returns to a section already visited, or a section
+    /// with no `%%EOF` to end it. Reported rather than silently truncating the
+    /// list, because a caller showing generations would otherwise show fewer
+    /// than the file has.
+    SectionChain {
+        offset: u64,
+        detail: String,
+    },
     /// A page index the page tree does not reach. `count` is how far the walk
     /// got: leaves it reached, plus the declared size of any subtree it skipped
     /// by `/Count` on the way. It is what the tree yields, which a root
@@ -88,6 +98,9 @@ impl fmt::Display for Error {
             Error::UnsupportedFilter(name) => write!(f, "unsupported filter /{name}"),
             Error::Filter { filter, detail } => write!(f, "filter /{filter} failed: {detail}"),
             Error::DepthExceeded { detail } => write!(f, "depth limit exceeded: {detail}"),
+            Error::SectionChain { offset, detail } => {
+                write!(f, "cross-reference chain at byte {offset}: {detail}")
+            }
             Error::NoSuchPage { index, count } => {
                 write!(f, "page {index} requested, the page tree reaches {count}")
             }
@@ -128,6 +141,7 @@ impl Error {
             Error::UnsupportedFilter(_) => "unsupported-filter",
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",
+            Error::SectionChain { .. } => "section-chain",
             Error::NoSuchPage { .. } => "no-such-page",
             Error::InvalidPageCount { .. } => "invalid-page-count",
         }

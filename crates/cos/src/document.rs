@@ -68,6 +68,31 @@ pub enum PendingEdit {
     },
 }
 
+/// One generation of a file: the byte range it occupies, from the first byte
+/// after the previous generation to the end of its own `%%EOF`.
+///
+/// There is no `prev` field and no `startxref` field. The `Vec` a walk returns
+/// *is* the chain, in file order, so a section's predecessor is the element
+/// before it; storing that fact twice is storing two things that can disagree.
+/// The offset of a table inside a section is likewise not handed out: a caller
+/// showing generations wants ranges and sizes, and one rolling a generation
+/// back truncates at a `start`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Section {
+    pub start: u64,
+    pub end: u64,
+}
+
+impl Section {
+    pub fn len(&self) -> u64 {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 struct ObjectStream {
     data: Vec<u8>,
     /// `(object number, offset of its data within `data`)`, in stream order.
@@ -276,6 +301,141 @@ impl Document {
     /// speculatively and leaving an edit it cannot withdraw.
     pub fn next_object_number(&self) -> u32 {
         self.next_number
+    }
+
+    /// Every generation in the file, oldest first, as byte ranges that
+    /// partition it: the first starts at 0, each one starts where the previous
+    /// ended, and the last ends at the end of the file.
+    ///
+    /// Consumers: the generations panel, which shows the ranges and their
+    /// sizes, and a revert, which truncates at a `start`.
+    ///
+    /// This reports what is **in the file**, not what opening it produced. It
+    /// walks the file's own `startxref` and `/Prev` chain again rather than
+    /// reading the merged table, because the merged table is the union of every
+    /// section and cannot say which section any of it came from. The cost is
+    /// one re-read of each cross-reference section, which is what opening the
+    /// document already paid.
+    ///
+    /// A chain that cannot be followed is [`Error::SectionChain`] rather than a
+    /// shorter list: a hostile `/Prev` that loops, one that points at no
+    /// section, or a section with no `%%EOF`. Reporting the prefix it managed
+    /// to walk would be a list of generations that quietly omits some.
+    pub fn sections(&self) -> Result<Vec<Section>> {
+        let (tail_base, tail) = self.reader.tail(TAIL_WINDOW)?;
+        let Some(startxref) = xref::find_startxref(&tail, tail_base) else {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "the file's tail has no startxref".into(),
+            });
+        };
+
+        let mut visited: BTreeSet<u64> = BTreeSet::new();
+        let mut ends: Vec<u64> = Vec::new();
+        let mut next = Some(startxref);
+        while let Some(value) = next {
+            let Some(offset) = xref::section_start(&self.reader, value) else {
+                return Err(Error::SectionChain {
+                    offset: value,
+                    detail: "does not point at a cross-reference section".into(),
+                });
+            };
+            if !visited.insert(offset) {
+                return Err(Error::SectionChain {
+                    offset,
+                    detail: "the chain returns to a section it has already walked".into(),
+                });
+            }
+            if visited.len() > xref::MAX_SECTIONS {
+                return Err(Error::SectionChain {
+                    offset,
+                    detail: format!("the chain runs past {} sections", xref::MAX_SECTIONS),
+                });
+            }
+            // The reasons a re-read collects are already in this document's
+            // provenance from the open that produced it; a walk of the chain
+            // does not get to add to them.
+            let mut reasons = Vec::new();
+            let section = xref::read_section(&self.reader, offset, &mut reasons)?;
+            ends.push(self.end_of_section(offset, section.end)?);
+            next = match section.trailer.get(b"Prev") {
+                None => None,
+                Some(Object::Integer(value)) if *value >= 0 => Some(*value as u64),
+                Some(other) => {
+                    return Err(Error::SectionChain {
+                        offset,
+                        detail: format!("/Prev is {other:?}, which names no offset"),
+                    })
+                }
+            };
+        }
+
+        ends.sort_unstable();
+        let mut sections = Vec::with_capacity(ends.len());
+        let mut start = 0u64;
+        for (index, end) in ends.iter().enumerate() {
+            // Whatever follows the last `%%EOF` belongs to the newest
+            // generation: it is in the file, and truncating to a `start` has to
+            // recover everything written before that start whether or not the
+            // producer left bytes after its own end marker.
+            let end = if index + 1 == ends.len() {
+                self.original_len
+            } else {
+                *end
+            };
+            if end <= start {
+                return Err(Error::SectionChain {
+                    offset: start,
+                    detail: format!("a section ending at {end} does not follow the one before it"),
+                });
+            }
+            sections.push(Section { start, end });
+            start = end;
+        }
+        Ok(sections)
+    }
+
+    /// The end of the section whose cross-reference starts at `table`: the
+    /// first `%%EOF` at or after `parsed_end`, plus the end-of-line that
+    /// follows it.
+    ///
+    /// The search starts past the table or cross-reference stream rather than
+    /// at the table itself, because a stream's compressed data can hold those
+    /// five bytes and a section's own body must not be able to end it.
+    fn end_of_section(&self, table: u64, parsed_end: u64) -> Result<u64> {
+        const WINDOW: usize = 4096;
+        const EOF: &[u8] = b"%%EOF";
+        let mut at = parsed_end;
+        while at < self.original_len {
+            let want = ((self.original_len - at) as usize).min(WINDOW);
+            let buf = self.reader.read(at, want)?;
+            if let Some(found) = crate::parse::find(&buf, EOF) {
+                let end = at + (found + EOF.len()) as u64;
+                return Ok(self.past_eol(end));
+            }
+            // Overlap by four bytes so a marker split across two reads is
+            // still found, and stop when a window that small cannot hold one.
+            if buf.len() < EOF.len() {
+                break;
+            }
+            at += (buf.len() - (EOF.len() - 1)) as u64;
+        }
+        Err(Error::SectionChain {
+            offset: table,
+            detail: "no %%EOF closes this section".into(),
+        })
+    }
+
+    /// `at`, plus the one end-of-line sequence that follows it, if any.
+    fn past_eol(&self, at: u64) -> u64 {
+        let Ok(next) = self.reader.read(at, 2) else {
+            return at;
+        };
+        match next.first() {
+            Some(b'\r') if next.get(1) == Some(&b'\n') => at + 2,
+            Some(b'\r') | Some(b'\n') => at + 1,
+            _ => at,
+        }
     }
 
     /// Every stream whose data boundary the parser recovered, keyed by object
