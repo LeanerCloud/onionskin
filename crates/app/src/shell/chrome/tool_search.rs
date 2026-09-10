@@ -505,13 +505,13 @@ fn field_node(
         }
         TextField::Search | TextField::Find => accesskit::Role::SearchInput,
     };
-    super::accessible::Element::new(id, role, label)
-        .with_description(if query.is_empty() {
-            placeholder.to_owned()
-        } else {
-            query.to_owned()
-        })
-        .with_activation(Activation::Focus(field))
+    let mut node = super::accessible::Element::new(id, role, label)
+        .with_value(query)
+        .with_activation(Activation::Focus(field));
+    if query.is_empty() {
+        node = node.with_description(placeholder);
+    }
+    node
 }
 
 fn single_line(text: &str) -> String {
@@ -1145,7 +1145,9 @@ mod tests {
             Some("Search tools or document")
         );
         assert_eq!(typed.label, "Search");
-        assert_eq!(typed.description.as_deref(), Some("rotate"));
+        assert_eq!(empty.value.as_deref(), Some(""));
+        assert_eq!(typed.value.as_deref(), Some("rotate"));
+        assert_eq!(typed.description, None);
         assert_eq!(typed.activation, Some(Activation::Focus(TextField::Search)));
         assert_eq!(typed.key, ElementId::from("global-search-input"));
     }
@@ -1177,7 +1179,9 @@ mod tests {
             input.set_query("7", cx);
             input.accessible("Page Number", TextField::Page)
         });
-        assert_eq!(typed.description.as_deref(), Some("7"));
+        assert_eq!(empty.value.as_deref(), Some(""));
+        assert_eq!(typed.value.as_deref(), Some("7"));
+        assert_eq!(typed.description, None);
         assert_eq!(typed.activation, Some(Activation::Focus(TextField::Page)));
     }
 }

@@ -334,13 +334,18 @@ fn describe(item: Item, state: PageControlsState, page_entry: &str) -> Element {
             }
             element
         }
-        Item::PageEntry => Element::new(PAGE_ENTRY_ID, Role::NumberInput, "Page Number")
-            .with_description(if page_entry.is_empty() {
-                format!("Page {} of {}", state.current_page, state.page_count)
-            } else {
-                page_entry.to_owned()
-            })
-            .with_activation(Activation::Focus(TextField::Page)),
+        Item::PageEntry => {
+            let mut node = Element::new(PAGE_ENTRY_ID, Role::NumberInput, "Page Number")
+                .with_value(page_entry)
+                .with_activation(Activation::Focus(TextField::Page));
+            if page_entry.is_empty() {
+                node = node.with_description(format!(
+                    "Page {} of {}",
+                    state.current_page, state.page_count
+                ));
+            }
+            node
+        }
         Item::PageCount => Element::new(
             "page-count",
             Role::Label,
@@ -709,14 +714,12 @@ mod tests {
         let empty = empty.find(&PAGE_ENTRY_ID.into()).unwrap();
         assert_eq!(empty.label, "Page Number");
         assert_eq!(empty.description.as_deref(), Some("Page 1 of 12"));
+        assert_eq!(empty.value.as_deref(), Some(""));
         assert_eq!(
-            typed
-                .find(&PAGE_ENTRY_ID.into())
-                .unwrap()
-                .description
-                .as_deref(),
+            typed.find(&PAGE_ENTRY_ID.into()).unwrap().value.as_deref(),
             Some("7")
         );
+        assert_eq!(typed.find(&PAGE_ENTRY_ID.into()).unwrap().description, None);
     }
 
     /// The click listener and the accessible description read `activation()`

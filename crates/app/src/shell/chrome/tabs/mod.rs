@@ -1424,6 +1424,8 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 mod tests {
     #[cfg(feature = "shell-test-support")]
     mod export_settings;
+    #[cfg(feature = "shell-test-support")]
+    mod input_values;
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names
     // go unused. The names below are explicit now, so each one carries the

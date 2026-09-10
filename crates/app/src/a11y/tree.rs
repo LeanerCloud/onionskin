@@ -68,6 +68,7 @@ pub(crate) struct Element<A> {
     pub(crate) key: ElementId,
     pub(crate) role: Role,
     pub(crate) label: String,
+    pub(crate) value: Option<String>,
     /// Why a disabled control is disabled, or anything else worth hearing
     /// after the name. Announced by VoiceOver after the label.
     pub(crate) description: Option<String>,
@@ -88,6 +89,7 @@ impl<A> Element<A> {
             key: key.into(),
             role,
             label: label.into(),
+            value: None,
             description: None,
             role_description: role_description(role),
             state: State::default(),
@@ -109,6 +111,11 @@ impl<A> Element<A> {
 
     pub(crate) fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    pub(crate) fn with_value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
         self
     }
 
@@ -304,6 +311,9 @@ fn push<A>(element: &Element<A>, ids: &mut Ids, nodes: &mut Vec<(NodeId, Node)>)
     let id = ids.id_for(&element.key);
     let mut node = Node::new(element.role);
     node.set_label(element.label.clone());
+    if let Some(value) = &element.value {
+        node.set_value(value.clone());
+    }
     // The key doubles as the element's `accessibilityIdentifier`, which is
     // how the automated probe reads a specific control back out of the tree
     // rather than matching on a label a copy edit can change.

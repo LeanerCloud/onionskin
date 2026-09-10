@@ -351,13 +351,15 @@ pub(in crate::shell) fn accessible(
 
 fn describe(item: Item, summary: &FindSummary, query: &str) -> Element {
     match item {
-        Item::Field => Element::new(FIND_INPUT_ID, Role::SearchInput, "Find In Document")
-            .with_description(if query.is_empty() {
-                FIND_PLACEHOLDER.to_owned()
-            } else {
-                query.to_owned()
-            })
-            .with_activation(Activation::Focus(TextField::Find)),
+        Item::Field => {
+            let mut node = Element::new(FIND_INPUT_ID, Role::SearchInput, "Find In Document")
+                .with_value(query)
+                .with_activation(Activation::Focus(TextField::Find));
+            if query.is_empty() {
+                node = node.with_description(FIND_PLACEHOLDER);
+            }
+            node
+        }
         // The count keeps its place with nothing to count, because the row
         // draws it either way and the rectangles are paired by position.
         Item::Count => Element::new(
@@ -844,15 +846,13 @@ mod tests {
         assert_eq!(empty.role, Role::SearchInput);
         assert_eq!(empty.label, "Find In Document");
         assert_eq!(empty.description.as_deref(), Some(FIND_PLACEHOLDER));
+        assert_eq!(empty.value.as_deref(), Some(""));
         assert_eq!(empty.activation, Some(Activation::Focus(TextField::Find)));
         assert_eq!(
-            typed
-                .find(&FIND_INPUT_ID.into())
-                .unwrap()
-                .description
-                .as_deref(),
+            typed.find(&FIND_INPUT_ID.into()).unwrap().value.as_deref(),
             Some("ink")
         );
+        assert_eq!(typed.find(&FIND_INPUT_ID.into()).unwrap().description, None);
     }
 
     /// A walk that died and a page that could not be read are both on screen,
