@@ -25,8 +25,9 @@ use self::canvas::{
 };
 use self::chrome::accessible::{Activation, Element as A11yElement, Rects};
 use self::chrome::{
-    command_defaults, command_for_id, install_native_menus, install_search_keybindings, MenuState,
-    QuickAction, RegistryFacts, RunCommand, ShellFrame, ShellViewState, ThemeTokens,
+    command_defaults, command_for_id, install_export_keybindings, install_native_menus,
+    install_search_keybindings, MenuState, QuickAction, RegistryFacts, RunCommand, ShellFrame,
+    ShellViewState, ThemeTokens,
 };
 use crate::config::ConfigPaths;
 use crate::keymap::{platform_keystroke, Binding, Keymap};
@@ -806,6 +807,7 @@ where
 
     Application::new().run(move |cx: &mut App| {
         install_search_keybindings(cx);
+        install_export_keybindings(cx);
         find_bar::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);

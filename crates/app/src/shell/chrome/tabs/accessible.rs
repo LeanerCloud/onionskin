@@ -49,7 +49,12 @@ impl ShellFrame {
         let mut root = A11yElement::new("window", Role::Window, format!("Onionskin, {title}"));
 
         if let Some(dialog) = self.dialog {
-            return root.child(crate::shell::dialog::accessible(self, dialog, cx));
+            return root.child(crate::shell::dialog::accessible(
+                self,
+                dialog,
+                &self.a11y.rects,
+                cx,
+            ));
         }
 
         let visibility = self.shell_view_state.visibility();
@@ -390,7 +395,7 @@ impl ShellFrame {
             // choosing one dismisses it. Every other view action reaches
             // here from a surface that stays where it is.
             Activation::View(action @ ViewAction::ZoomTo(_)) => {
-                self.close_dialog(cx);
+                self.close_dialog(window, cx);
                 self.run_view_action(action, cx);
             }
             Activation::View(action) => self.run_view_action(action, cx),
@@ -401,12 +406,15 @@ impl ShellFrame {
             Activation::DismissFindBar => self.dismiss_find_bar(cx),
             Activation::SetHomeView(view) => self.set_home_view(view, cx),
             Activation::OpenFromHome => self.open_from_home(window, cx),
-            Activation::ShowPreferences(category) => self.show_preferences(category, cx),
+            Activation::ShowPreferences(category) => self.show_preferences(category, window, cx),
             Activation::ChangePreference(change) => self.change_preference(change, cx),
-            Activation::CloseDialog => self.close_dialog(cx),
+            Activation::CloseDialog => self.close_dialog(window, cx),
+            Activation::SubmitExport => self.submit_export(window, cx),
             Activation::CancelExport => self.cancel_export(cx),
             Activation::Focus(field) => {
-                window.focus(&self.text_field(field).read(cx).focus_handle(cx));
+                if let Some(input) = self.text_field(field) {
+                    window.focus(&input.read(cx).focus_handle(cx));
+                }
             }
             // The page keys are bound window-wide, so landing on the
             // document is about where the ring is, not about a focus handle
@@ -468,7 +476,12 @@ impl ShellFrame {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.a11y.step(step) {
+        let moved = if self.dialog == Some(crate::shell::dialog::ShellDialog::Export) {
+            self.a11y.step_within(step)
+        } else {
+            self.a11y.step(step)
+        };
+        if !moved {
             cx.propagate();
             return;
         }
@@ -508,7 +521,9 @@ impl ShellFrame {
     pub(super) fn focus_ring_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.a11y.focused_activation() {
             Some(Activation::Focus(field)) => {
-                window.focus(&self.text_field(field).read(cx).focus_handle(cx));
+                if let Some(input) = self.text_field(field) {
+                    window.focus(&input.read(cx).focus_handle(cx));
+                }
             }
             // A wildcard over twenty-five-odd `Activation` variants, and here
             // the catch-all is the rule rather than a fallthrough: everything
@@ -521,11 +536,21 @@ impl ShellFrame {
         }
     }
 
-    pub(super) fn text_field(&self, field: TextField) -> &Entity<SearchInput> {
+    pub(super) fn text_field(&self, field: TextField) -> Option<&Entity<SearchInput>> {
         match field {
-            TextField::Search => &self.tool_search.search_input,
-            TextField::Find => &self.find_input,
-            TextField::Page => &self.page_entry.page_input,
+            TextField::Search => Some(&self.tool_search.search_input),
+            TextField::Find => Some(&self.find_input),
+            TextField::Page => Some(&self.page_entry.page_input),
+            TextField::ExportFirst => self.export.dialog.as_ref().map(|dialog| &dialog.first),
+            TextField::ExportLast => self.export.dialog.as_ref().map(|dialog| &dialog.last),
+            TextField::ExportDpi => self
+                .export
+                .dialog
+                .as_ref()
+                .filter(|dialog| {
+                    dialog.target == crate::shell::chrome::global_bar::ExportTarget::Png
+                })
+                .map(|dialog| &dialog.dpi),
         }
     }
 
@@ -554,6 +579,17 @@ impl ShellFrame {
     /// The id the field publishes, so the ring and the tree name it the same
     /// way.
     pub(super) fn focused_text_field(&self, window: &Window, cx: &App) -> Option<gpui::ElementId> {
+        if self.dialog.is_some() {
+            return [
+                TextField::ExportFirst,
+                TextField::ExportLast,
+                TextField::ExportDpi,
+            ]
+            .into_iter()
+            .filter_map(|field| self.text_field(field))
+            .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            .map(|input| input.read(cx).element_id().into());
+        }
         [
             &self.tool_search.search_input,
             &self.find_input,

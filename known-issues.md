@@ -32,6 +32,14 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- Dialog accessibility geometry, found 2026-09-10: About, Keyboard Shortcuts,
+  Zoom To, and Preferences publish controls without position bounds. The modal
+  branch in `shell/chrome/tabs/accessible.rs` returns before geometry placement;
+  `Surface::Dialog` measurements from the older dialog bodies are not consumed.
+  Keyboard focus identity is published, but older modal buttons also lack a
+  visible keyboard-focus style. Correct and verify those bodies during their
+  next accessibility pass; C1.2's export-modal work is scoped separately.
+
 - B0 restored `crates/content/src/filter.rs`, `shell_spike.rs`, and
   `a11y_spike.rs` byte-for-byte as retained historical references after earlier
   sessions deleted them. Production decoding continues through

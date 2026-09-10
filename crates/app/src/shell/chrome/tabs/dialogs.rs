@@ -9,7 +9,7 @@
 
 use gpui::{
     div, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
+    StatefulInteractiveElement as _, Styled as _, Window,
 };
 
 use super::ShellFrame;
@@ -20,6 +20,10 @@ use crate::shell::dialog::ShellDialog;
 use crate::shell::preferences_dialog::PreferenceChange;
 
 impl ShellFrame {
+    pub(in crate::shell) fn dialog_focus(&self) -> Option<&gpui::ElementId> {
+        self.a11y.focused()
+    }
+
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
         &self.settings.preferences
     }
@@ -32,19 +36,28 @@ impl ShellFrame {
     pub(in crate::shell) fn show_preferences(
         &mut self,
         category: PreferenceCategory,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_dialog(ShellDialog::Preferences(category), cx);
+        self.show_dialog(ShellDialog::Preferences(category), window, cx);
     }
 
-    pub(super) fn show_dialog(&mut self, dialog: ShellDialog, cx: &mut Context<Self>) {
+    pub(super) fn show_dialog(
+        &mut self,
+        dialog: ShellDialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_dialog(window, cx);
         self.dismiss_menus(cx);
         self.dialog = Some(dialog);
         cx.notify();
     }
 
-    pub(in crate::shell) fn close_dialog(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::shell) fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(self.a11y.focus_handle());
         self.dialog = None;
+        self.export.dialog = None;
         cx.notify();
     }
 

@@ -12,18 +12,24 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use gpui::{App, AppContext as _, Context, Entity, EntityId, Timer};
-use onionskin_plugin_api::{ExportOutputKind, PageIndex};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, Focusable as _, Timer, Window};
+use onionskin_plugin_api::{ExportOutputKind, ExportRequest, PageIndex};
 use tempfile::{NamedTempFile, TempDir};
 
 use super::{tab_title, ShellFrame};
 use crate::shell::canvas::{CanvasError, PreparedExport};
+use crate::shell::chrome::export_dialog::{ExportDialogState, ValidationError};
 use crate::shell::chrome::global_bar::ExportTarget;
+use crate::shell::dialog::ShellDialog;
 use crate::shell::{Canvas, POLL_INTERVAL};
 
 impl ShellFrame {
-    /// Ask where the export goes, then install one background job.
-    pub(super) fn start_export(&mut self, target: ExportTarget, cx: &mut Context<Self>) {
+    pub(super) fn start_export(
+        &mut self,
+        target: ExportTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tab) = self.tabs.active() else {
             return;
         };
@@ -33,16 +39,94 @@ impl ShellFrame {
             return;
         }
         let origin = canvas.entity_id();
-        let extension = canvas
+        let has_codec = canvas
             .read(cx)
             .model
             .registry()
             .codec(target.codec())
-            .map(|codec| codec.extension());
-        let Some(extension) = extension else {
+            .is_some();
+        if !has_codec {
+            report_export_failure(&canvas, CanvasError::UnknownCodec(target.codec()), cx);
+            return;
+        }
+        let page_count = canvas.read(cx).model.view_state().page_count;
+        self.close_dialog(window, cx);
+        let dialog = ExportDialogState::new(
+            target,
+            origin,
+            page_count,
+            self.shell_view_state.tokens(),
+            cx,
+        );
+        for input in [&dialog.first, &dialog.last, &dialog.dpi] {
+            let mut previous = input.read(cx).query().to_owned();
+            cx.observe(input, move |frame, input, cx| {
+                let query = input.read(cx).query();
+                if query != previous {
+                    previous = query.to_owned();
+                    if let Some(dialog) = frame.export.dialog.as_mut() {
+                        dialog.error = None;
+                        cx.notify();
+                    }
+                }
+            })
+            .detach();
+        }
+        window.focus(&dialog.first.read(cx).focus_handle(cx));
+        self.export.dialog = Some(dialog);
+        self.dialog = Some(ShellDialog::Export);
+        self.dismiss_menus(cx);
+        cx.notify();
+    }
+
+    pub(in crate::shell) fn export_dialog(&self) -> Option<&ExportDialogState> {
+        self.export.dialog.as_ref()
+    }
+
+    pub(in crate::shell) fn submit_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dialog) = self.export.dialog.as_ref() else {
+            return;
+        };
+        let origin = dialog.origin;
+        if !self.is_active_canvas(origin) {
+            self.close_dialog(window, cx);
+            return;
+        }
+        if self.export.export_job.is_some() {
+            self.export.dialog.as_mut().expect("dialog exists").error =
+                Some(ValidationError::AlreadyInProgress);
+            cx.notify();
+            return;
+        }
+        let request = match dialog.request(cx) {
+            Ok(request) => request,
+            Err(error) => {
+                self.export.dialog.as_mut().expect("dialog exists").error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        let target = dialog.target;
+        self.close_dialog(window, cx);
+        self.prompt_export(target, origin, request, cx);
+    }
+
+    fn prompt_export(
+        &mut self,
+        target: ExportTarget,
+        origin: EntityId,
+        request: ExportRequest,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        let canvas = tab.canvas.clone();
+        let Some(codec) = canvas.read(cx).model.registry().codec(target.codec()) else {
             report_export_failure(&canvas, CanvasError::UnknownCodec(target.codec()), cx);
             return;
         };
+        let extension = codec.extension();
         let directory = tab
             .source
             .parent()
@@ -76,7 +160,7 @@ impl ShellFrame {
                             return;
                         }
                         let prepared = canvas.update(cx, |canvas, _cx| {
-                            canvas.model.prepare_export(target.codec(), EXPORT_DPI)
+                            canvas.model.prepare_export(target.codec(), request)
                         });
                         match prepared {
                             Ok(prepared) => {
@@ -263,6 +347,7 @@ impl ExportPhase {
 /// counter that names the next one.
 #[derive(Default)]
 pub(super) struct ExportState {
+    pub(super) dialog: Option<ExportDialogState>,
     pub(super) export_job: Option<ExportJob>,
     pub(super) next_export_id: u64,
 }
@@ -289,11 +374,8 @@ pub(super) fn export_progress_label(job: &ExportJob) -> String {
     }
 }
 
-/// Resolution for a raster export. M2 has no export-settings dialog, so this
-/// is Acrobat's own default rather than a number picked here; the codec API
-/// takes the resolution as an argument so the dialog that lands with M3's
-/// `File > Export To` has somewhere to put the user's choice.
-pub(super) const EXPORT_DPI: f32 = 150.0;
+#[cfg(all(test, feature = "shell-test-support"))]
+pub(super) const EXPORT_DPI: f32 = crate::shell::chrome::export_dialog::DEFAULT_EXPORT_DPI;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExportOutcome {

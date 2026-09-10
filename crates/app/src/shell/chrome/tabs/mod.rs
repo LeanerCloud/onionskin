@@ -84,7 +84,7 @@ impl ShellFrame {
         // In the order the frame stacks them, topmost first, so Escape always
         // closes the thing the user is looking at.
         if self.dialog.is_some() {
-            self.close_dialog(cx);
+            self.close_dialog(window, cx);
             return;
         }
         // The panel is open because the search field has something in it, so
@@ -436,6 +436,9 @@ impl ShellFrame {
         self.page_entry
             .page_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
+        if let Some(dialog) = &self.export.dialog {
+            dialog.set_theme(theme, cx);
+        }
         for tab in self.tabs.tabs() {
             tab.canvas
                 .update(cx, |canvas, cx| canvas.set_theme(theme, cx));
@@ -1419,6 +1422,8 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "shell-test-support")]
+    mod export_settings;
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names
     // go unused. The names below are explicit now, so each one carries the
@@ -1498,7 +1503,13 @@ mod tests {
     #[cfg(feature = "shell-test-support")]
     fn run_export(canvas: &Entity<Canvas>, target: ExportTarget, path: &Path, cx: &mut App) {
         let prepared = canvas.update(cx, |canvas, _cx| {
-            canvas.model.prepare_export(target.codec(), EXPORT_DPI)
+            canvas.model.prepare_export(
+                target.codec(),
+                ExportRequest {
+                    pages: PageRange::whole(canvas.model.view_state().page_count).unwrap(),
+                    dpi: EXPORT_DPI,
+                },
+            )
         });
         let result = match prepared {
             Ok(prepared) => {
@@ -2140,6 +2151,7 @@ mod tests {
         cx.update(|cx| {
             crate::shell::chrome::install_search_keybindings(cx);
             crate::shell::find_bar::install_keybindings(cx);
+            crate::shell::chrome::export_dialog::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);
             super::super::global_bar::install_native_menus(cx, window, state);
@@ -2372,7 +2384,7 @@ mod tests {
         let stages: [(&str, Arm, IsOpen); 4] = [
             (
                 "the Zoom To dialog",
-                |frame, _window, cx| frame.show_dialog(ShellDialog::ZoomTo, cx),
+                |frame, window, cx| frame.show_dialog(ShellDialog::ZoomTo, window, cx),
                 |frame, _cx| frame.dialog.is_some(),
             ),
             (
@@ -4169,10 +4181,11 @@ mod tests {
         let (window, _) = bound_window(&["hello.pdf"], cx);
 
         window
-            .update(cx, |frame, _window, cx| {
+            .update(cx, |frame, window, cx| {
                 let origin = frame.tabs.tabs()[0].canvas.entity_id();
                 install_test_export_job(frame, origin);
-                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
 
@@ -4197,9 +4210,11 @@ mod tests {
         let second = dir.path().join("second.png");
 
         window
-            .update(cx, |frame, _window, cx| {
-                frame.start_export(ExportTarget::Png, cx);
-                frame.start_export(ExportTarget::Png, cx);
+            .update(cx, |frame, window, cx| {
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
         cx.simulate_new_path_selection(|_| Some(first.clone()));
@@ -4250,7 +4265,8 @@ mod tests {
                     last_displayed: 0,
                 });
                 assert_eq!(frame.poll_export_progress(7), (true, true));
-                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
                 assert!(frame.export.export_job.is_some());
                 frame.finish_export(7, origin, &canvas, result, cx);
                 assert!(frame.export.export_job.is_none());
@@ -4258,7 +4274,8 @@ mod tests {
                     .accessible(window, cx)
                     .find(&"export-progress".into())
                     .is_none());
-                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
 
@@ -4355,7 +4372,7 @@ mod tests {
     fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(
         cx: &mut TestAppContext,
     ) {
-        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let window = export_settings::settings_window(cx);
         let dir = tempfile::tempdir().expect("the test directory opens");
         let chosen = dir.path().join("blocked.test");
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -4427,7 +4444,8 @@ mod tests {
         assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
         window
             .update(cx, |frame, window, cx| {
-                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
                 let canvas = frame
                     .tabs
                     .tabs()
@@ -4445,7 +4463,8 @@ mod tests {
                     .accessible(window, cx)
                     .find(&"export-progress".into())
                     .is_none());
-                frame.start_export(ExportTarget::Png, cx);
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
         assert!(cx.did_prompt_for_new_path());
@@ -4461,8 +4480,9 @@ mod tests {
         let chosen = dir.join("hello.png");
 
         window
-            .update(cx, |frame, _window, cx| {
-                frame.start_export(ExportTarget::Png, cx);
+            .update(cx, |frame, window, cx| {
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
         assert!(cx.did_prompt_for_new_path());
@@ -4487,8 +4507,9 @@ mod tests {
         let chosen = dir.join("hello.png");
 
         window
-            .update(cx, |frame, _window, cx| {
-                frame.start_export(ExportTarget::Png, cx);
+            .update(cx, |frame, window, cx| {
+                frame.start_export(ExportTarget::Png, window, cx);
+                frame.submit_export(window, cx);
             })
             .unwrap();
         assert!(cx.did_prompt_for_new_path());
@@ -5796,8 +5817,8 @@ mod tests {
     fn escape_closes_a_dialog(cx: &mut TestAppContext) {
         let (window, _) = bound_window(&["hello.pdf"], cx);
         window
-            .update(cx, |frame, _window, cx| {
-                frame.show_preferences(PreferenceCategory::General, cx);
+            .update(cx, |frame, window, cx| {
+                frame.show_preferences(PreferenceCategory::General, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -5914,8 +5935,8 @@ mod tests {
         );
 
         window
-            .update(cx, |frame, _window, cx| {
-                frame.show_preferences(PreferenceCategory::General, cx);
+            .update(cx, |frame, window, cx| {
+                frame.show_preferences(PreferenceCategory::General, window, cx);
             })
             .unwrap();
         cx.run_until_parked();

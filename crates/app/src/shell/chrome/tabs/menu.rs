@@ -98,20 +98,20 @@ impl ShellFrame {
                 Ok(())
             }
             MenuCommand::Preferences => {
-                self.show_preferences(PreferenceCategory::General, cx);
+                self.show_preferences(PreferenceCategory::General, window, cx);
                 Ok(())
             }
             MenuCommand::About => {
-                self.show_dialog(ShellDialog::About, cx);
+                self.show_dialog(ShellDialog::About, window, cx);
                 Ok(())
             }
             MenuCommand::KeyboardShortcuts => {
-                self.show_dialog(ShellDialog::KeyboardShortcuts, cx);
+                self.show_dialog(ShellDialog::KeyboardShortcuts, window, cx);
                 Ok(())
             }
             MenuCommand::ZoomTo => {
                 self.menus.main_menu_open = false;
-                self.show_dialog(ShellDialog::ZoomTo, cx);
+                self.show_dialog(ShellDialog::ZoomTo, window, cx);
                 Ok(())
             }
             // A drag, not a command: the entry selects the tool, which is
@@ -227,7 +227,7 @@ impl ShellFrame {
             }
             MenuCommand::Export(target) => {
                 self.menus.main_menu_open = false;
-                self.start_export(target, cx);
+                self.start_export(target, window, cx);
                 Ok(())
             }
             MenuCommand::Find => {

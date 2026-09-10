@@ -503,13 +503,11 @@ impl CanvasModel {
     pub(super) fn prepare_export(
         &self,
         codec: &'static str,
-        dpi: f32,
+        request: ExportRequest,
     ) -> Result<PreparedExport, CanvasError> {
         let page_count = self.document.page_count();
-        let request = ExportRequest {
-            pages: PageRange::whole(page_count)?,
-            dpi,
-        };
+        let pages = request.pages.pages();
+        PageRange::new(*pages.start(), *pages.end(), page_count)?;
         let codec = self
             .registry
             .codec(codec)

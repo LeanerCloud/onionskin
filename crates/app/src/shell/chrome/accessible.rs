@@ -39,6 +39,9 @@ pub(in crate::shell) enum TextField {
     Find,
     /// The page number next to the page controls.
     Page,
+    ExportFirst,
+    ExportLast,
+    ExportDpi,
 }
 
 /// What activating an accessible element does.
@@ -74,6 +77,7 @@ pub(in crate::shell) enum Activation {
     ShowPreferences(PreferenceCategory),
     ChangePreference(PreferenceChange),
     CloseDialog,
+    SubmitExport,
     CancelExport,
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
@@ -98,6 +102,8 @@ pub(in crate::shell) enum Surface {
     FindBar,
     Home,
     Dialog,
+    ExportDialog,
+    DialogHeader,
 }
 
 /// Where the last frame painted each measured surface's children.
@@ -276,7 +282,6 @@ impl ShellAccessibility {
         &self.focus
     }
 
-    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn focused(&self) -> Option<&gpui::ElementId> {
         self.ring.focused()
     }

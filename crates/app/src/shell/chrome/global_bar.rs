@@ -64,7 +64,7 @@ impl ExportTarget {
 
     /// Acrobat words these "Export To ..."; the text entry says what it does
     /// and does not, because document order is not reading order.
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Text => "Export To Plain Text (Document Order)…",
             Self::Png => "Export Pages To PNG…",

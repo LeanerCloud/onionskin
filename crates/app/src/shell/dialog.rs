@@ -12,6 +12,7 @@
 //! local reference is not).
 
 use accesskit::Role;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
@@ -26,6 +27,7 @@ use crate::preferences::PreferenceCategory;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum ShellDialog {
     Preferences(PreferenceCategory),
+    Export,
     About,
     KeyboardShortcuts,
     ZoomTo,
@@ -35,6 +37,7 @@ impl ShellDialog {
     pub(in crate::shell) fn title(self) -> &'static str {
         match self {
             Self::Preferences(_) => "Preferences",
+            Self::Export => "Export",
             Self::About => "About Onionskin",
             Self::KeyboardShortcuts => "Keyboard Shortcuts",
             Self::ZoomTo => "Zoom To",
@@ -100,6 +103,7 @@ pub(in crate::shell) fn shortcut_rows(
 pub(in crate::shell) fn accessible(
     frame: &ShellFrame,
     dialog: ShellDialog,
+    rects: &Rects,
     cx: &gpui::App,
 ) -> Element {
     let body = match dialog {
@@ -110,6 +114,11 @@ pub(in crate::shell) fn accessible(
         ShellDialog::About => {
             row_labels(about_lines().into_iter().map(|line| (line, String::new())))
         }
+        ShellDialog::Export => super::chrome::export_dialog::accessible(
+            frame.export_dialog().expect("export dialog has state"),
+            rects,
+            cx,
+        ),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -120,10 +129,12 @@ pub(in crate::shell) fn accessible(
             .collect(),
     };
 
-    let mut described = Element::new("dialog", Role::Dialog, dialog.title()).child(
-        Element::new("dialog-close", Role::Button, "Close")
-            .with_activation(Activation::CloseDialog),
-    );
+    let mut close = Element::new("dialog-close", Role::Button, "Close")
+        .with_activation(Activation::CloseDialog);
+    if dialog == ShellDialog::Export {
+        close.bounds = rects.of(Surface::DialogHeader).get(1).copied();
+    }
+    let mut described = Element::new("dialog", Role::Dialog, dialog.title()).child(close);
     for row in body {
         described = described.child(row);
     }
@@ -154,6 +165,8 @@ pub(in crate::shell) fn render_dialog(
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
+    let header_rects = rects.clone();
+    let focused = frame.dialog_focus();
     let body = match dialog {
         ShellDialog::Preferences(category) => {
             super::preferences_dialog::render_preferences(frame, category, theme, cx)
@@ -164,6 +177,14 @@ pub(in crate::shell) fn render_dialog(
             rects,
         )
         .text_color(theme.text)
+        .into_any_element(),
+        ShellDialog::Export => super::chrome::export_dialog::render(
+            frame.export_dialog().expect("export dialog has state"),
+            rects,
+            focused,
+            theme,
+            cx,
+        )
         .into_any_element(),
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
@@ -181,7 +202,7 @@ pub(in crate::shell) fn render_dialog(
         .items_center()
         .justify_center()
         .occlude()
-        .on_click(cx.listener(|frame, _event, _window, cx| frame.close_dialog(cx)))
+        .on_click(cx.listener(|frame, _event, window, cx| frame.close_dialog(window, cx)))
         .child(
             div()
                 .id("dialog")
@@ -197,6 +218,11 @@ pub(in crate::shell) fn render_dialog(
                 .occlude()
                 .child(
                     div()
+                        .on_children_prepainted(move |bounds, window, _cx| {
+                            if dialog == ShellDialog::Export {
+                                header_rects.record(Surface::DialogHeader, &bounds, window);
+                            }
+                        })
                         .flex()
                         .items_center()
                         .justify_between()
@@ -208,6 +234,11 @@ pub(in crate::shell) fn render_dialog(
                                 .px_2()
                                 .cursor_pointer()
                                 .rounded_sm()
+                                .when(
+                                    dialog == ShellDialog::Export
+                                        && focused == Some(&"dialog-close".into()),
+                                    |button| button.bg(theme.selected),
+                                )
                                 .hover(move |button| button.bg(theme.subtle_hover))
                                 .on_click(cx.listener(|frame, _event, window, cx| {
                                     frame.run_activation(Activation::CloseDialog, window, cx);

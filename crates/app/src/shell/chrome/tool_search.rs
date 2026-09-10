@@ -500,7 +500,9 @@ fn field_node(
     field: TextField,
 ) -> super::accessible::Element {
     let role = match field {
-        TextField::Page => accesskit::Role::NumberInput,
+        TextField::Page | TextField::ExportFirst | TextField::ExportLast | TextField::ExportDpi => {
+            accesskit::Role::NumberInput
+        }
         TextField::Search | TextField::Find => accesskit::Role::SearchInput,
     };
     super::accessible::Element::new(id, role, label)
