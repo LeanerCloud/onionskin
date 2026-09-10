@@ -27,7 +27,15 @@ GPUI. `crates/print` is GPUI-free; `app` supplies only the dialog.
 
 ## 1. Ground truth
 
-**Re-measured against `main` at `fa5a194` on 2026-09-10.** The first draft of this
+**Re-measured against `main` at `fa5a194` on 2026-09-10, which is the baseline
+P0a started from and therefore PREDATES P0a's own merge at `28b311e`.** That is
+deliberate: this section describes the tree the plan was written against, and
+every package below is scoped against it. **One consequence to carry:
+`crates/app/src/shell/chrome/tabs.rs` no longer exists** - P0a replaced it with
+the nested `chrome/tabs/` tree, so every `tabs.rs:NNNN` citation in this document
+is a citation into the pre-split file and resolves in `tabs/mod.rs` or one of the
+six concern modules after it. The figures are still the right denominators for
+P0a's inventory, which is what they are for. The first draft of this
 section was taken at `81f802f`, 69 commits earlier, while four sibling agents were
 closing M2 out on unmerged branches. Their work landed, and it moved numbers this
 plan reasoned from: `crates/core` grew by half, `crates/app` by three thousand
@@ -471,10 +479,15 @@ Three consequences the plan states rather than discovers:
   and then deleting it in the same session must write nothing, and the rule as
   first stated does not achieve that.
 
-  1. **Value comparison against the base.** An overlay entry whose value equals
-     the base document's object at that number drops out. Not a dirty flag, or
-     the file grows a section that changes nothing. This is what puts the page's
-     `/Annots` back and takes the page dict out of the overlay.
+  1. **Value comparison against the base**, for objects **and for trailer keys**.
+     An overlay entry whose value equals the base document's object at that
+     number drops out; an overlay **trailer** entry equal to the base trailer's
+     state for that key drops out too, where **`Cleared` equals the base not
+     having the key** and `Set(v)` equals the base having `v`. Not a dirty flag,
+     or the file grows a section that changes nothing. This is what puts the
+     page's `/Annots` back and takes the page dict out of the overlay, and it is
+     what stops a pre-save undo of a new `/Info` writing `/Info null` onto a
+     document that never had one.
   2. **Unreachable-creation collapse**, which rule 1 cannot do because **a
      session-created object has no base object to compare against**. An overlay
      entry for a number with **no base object**, referenced by **nothing in the
@@ -495,8 +508,9 @@ Three consequences the plan states rather than discovers:
   "clear".** Left unspecified this has three readings and one of them destroys
   the catalog, so:
 
-  > `states.clear()`, `trailer.clear()`, and **`next_number` reseeded from the
-  > reopened document's `next_object_number()`** and never reset.
+  > `states.clear()`, `trailer.clear()`, and **`next_number` reseeded to
+  > `max(reopened.next_object_number(), 1 + the highest object number named
+  > anywhere in `History`, including the redo tail)`**, never reset.
 
   `Overlay::default()` would give `next_number` zero, so the next annotation
   would be written at object 0 or 1 and **silently overwrite the catalog**, and
@@ -505,10 +519,22 @@ Three consequences the plan states rather than discovers:
   colliding number; and `audit_references` finds every reference resolving,
   because they do. A green suite over a destroyed catalog.
 
-  The reseed is always safe: `next_number` is initialized to
-  `max(/Size, xref.max_number() + 1, 1)` (`document.rs:204-211`) and
-  `incremental_section` writes `Size = highest + 1`, so the reopened document's
-  value is always at least the one the session was using.
+  **The `History` term is not belt and braces; without it two objects alias onto
+  one number.** `incremental_section` writes `Size = highest + 1` over the
+  numbers it **wrote**, not over the session's counter, and this plan explicitly
+  lets the counter run ahead of what was written ("an undo that drops an
+  allocation simply leaves a gap"). So: add annotation A (objects 4 and 5), add
+  annotation C (6 and 7), undo C, save - the save writes 4 and 5, `Size` is 6,
+  and a reseed from the reopened document alone gives `next_number = 6`. Now redo
+  C, which puts 6 and 7 back into the overlay, and add annotation D, which
+  allocates **6**. D overwrites C, the page's `/Annots` names 6 twice, and every
+  reference resolves. The redo tail is live state the file has never seen, so the
+  file cannot be the only source for the high-water mark.
+
+  With the `History` term the reseed is safe in both directions: it is at least
+  the reopened document's value, which is at least
+  `max(/Size, xref.max_number() + 1, 1)` (`document.rs:204-211`), and at least
+  one above anything the session has named but not yet written.
 
   **The history needs no rebasing**, which is what T2's base-capture rule buys:
   `before: None` means the same thing on both sides of a save. The caches keyed
@@ -560,11 +586,26 @@ the copy and every later one pays the section length. The buffer is the
 `Arc<Vec<u8>>` the worker holds, so reuse means allocating a fresh `Arc` only
 when the old one is still referenced.
 
-State also **which cache keys survive a preview-generation bump**: page geometry
-and extracted text for unedited pages survive, tiles for unedited pages survive,
-and anything keyed on the byte buffer's identity does not. Getting that list
-wrong is a full re-render per keystroke, which is the same failure in a different
-place.
+State also **which state survives a preview-generation bump, over
+`core::Document`'s full field list rather than a sample of three.** The same
+discipline T1's overlay table uses, and for the same reason: a list that samples
+is a list that misses the field nobody thought about.
+
+| Field | On a generation bump |
+|---|---|
+| `bytes` / preview buffer | replaced; this **is** the bump |
+| `cos` | unchanged until a save reopens it |
+| `page_count` | no longer a field at all; a method over the overlay's page set (P3) |
+| geometry cache | keyed on `(generation, page)`; unedited pages' entries still hit |
+| text cache | same |
+| tiles | unedited pages survive; edited pages evict |
+| `outline`, `attachments`, `signatures`, `layers` | dropped and re-read; each is an `Option` today, so this is invalidation |
+| `selection` | survives, **clamped** to the new page set |
+| search worker | re-seeded; it holds the original bytes and page bounds |
+| render worker handle | survives; it is handed the new `Arc` |
+
+Getting that list wrong in one direction is a full re-render per keystroke, and
+in the other is a pane showing a document that no longer exists.
 
 Two costs the naive design would have added and this one does not: `section_for`
 takes `&self`, so **neither cos cache is dropped** (the old projection called
@@ -710,12 +751,14 @@ check it forgot:
   outliving beads that no live page reaches. The ring has to be re-linked past
   the removed page's beads, and a thread all of whose beads are gone has to be
   dropped from `/Threads`.
-- **Link annotations on surviving pages whose destination is a removed page.**
-  This is a different object from the outline entries already listed: a
-  `/Link` annotation with `/A` a `/GoTo` action, or `/Dest` naming a removed
-  page directly or by name. The outline fix-up walks `/Outlines`; this one walks
-  every surviving page's `/Annots`. Both are needed and neither finds the other's
-  case.
+- **Actions on surviving pages naming a removed page**, which is wider than the
+  first draft's "link annotations" and is a different object from the outline
+  entries already listed. The scope is **every annotation's `/A` and `/AA`, not
+  only `/Link`'s**, following `/Next` action chains: a `/Widget` pushbutton with
+  a `GoTo` is the most ordinary form control there is, and it sits on the same
+  form fixture the `/AcroForm` bullet already mandates. Plus **the catalog's own
+  `/AA`**. The outline fix-up walks `/Outlines`; this one walks every surviving
+  page's `/Annots` and the catalog. Neither finds the other's case.
 - **`/OpenAction` and page-level `/AA`** naming a removed page. Carried in the
   first draft's list, dropped when this one was rewritten, and restored here
   because P5 owns the work either way and **this list and P5's are meant to be
@@ -815,14 +858,14 @@ the core invariant carries "A document we author has nothing beneath it".
 
 Mechanically, this needs `cos` to be able to serialize a whole document, which
 is `flatten` under a different name. P1 builds it as
-`Document::write_new(objects, trailer) -> Result<Vec<u8>>` used by P12, P14a, P14b and
+`Document::write_new(objects, trailer) -> Result<Vec<u8>>` used by P11, P12, P14a, P14b, P15 and
 the comment summary, and it is the same primitive `redact` and compress will
 use at M5. Naming a real M3 consumer is what lets it exist now (§ YAGNI).
 
 **T9. Verification discipline, learned expensively in M2.**
 
 Every package's verification section obeys these, and they are stated once here
-rather than repeated thirty-one times:
+rather than repeated thirty-two times:
 
 - **Feature configurations are named, never assumed.** `cargo test --workspace`
   does **not** compile `crates/app/src/shell`: it is behind the `shell` feature,
@@ -837,7 +880,9 @@ rather than repeated thirty-one times:
   Ctrl+F twice. A global action listener body that calls `window_handle.update()`
   fails with "window not found" and must be wrapped in `cx.defer`. Every new M3
   command with a keystroke gets a test in the shape of
-  `the_find_keystroke_opens_the_find_bar` (`tabs.rs:4579`).
+  `the_find_keystroke_opens_the_find_bar` (pre-split `tabs.rs:4579`; after P0a it
+  is in `tabs/mod.rs`'s test module, and after P0c in the module for its
+  concern).
 - **Every test must fail when the behaviour it names is removed.** Each package's
   review-risk list names the specific mutation that must break its tests, and
   the reviewer runs it. A test that passes against a no-op is a defect.
@@ -1181,10 +1226,11 @@ kernel package above depends on.
    `startxref` to follow the chain; it just does not hand the result out.
 3. `Document::write_new(objects, trailer) -> Result<Vec<u8>>`: a complete
    document serialization, for the documents Onionskin authors (T8). Named
-   consumers in M3: P12 (combine and split), P11 (extract), P14a (create from
-   image), P14b (compress) and P10 (the comment summary). This is the `flatten`
-   primitive the crate's charter names; it lands now because it has five real
-   callers, and M5's `redact` inherits it. Its serializer is `writer.rs`'s
+   consumers in M3, five of them: P12 (combine and split), P11 (extract), P14a
+   (create from image), P14b (compress) and P10 (the comment summary), plus
+   P15's `FileBackend`, which composes sheets rather than copying a graph and is
+   the sixth. This is the `flatten` primitive the crate's charter names; it lands
+   now because it has six real callers, and M5's `redact` inherits it. Its serializer is `writer.rs`'s
    classic-table path; **it does not gain object streams or a cross-reference
    stream**, which are scoped out in P14b's entry and are not an implicit clause of
    any word in this plan.
@@ -1374,8 +1420,41 @@ in reach of exactly that by making it exportable. Nothing said what happens to
 > document other than that source.** Refused with the same typed reason and the
 > same M6 milestone the edit gate uses.
 
-**The rule is over inputs, not over authorship**, and that is the second attempt
-at it. Stated as "would author a new document", it missed **four** commands whose
+**And no section may be written to an encrypted document at all**, which is a
+second rule and not a restatement, because it is reachable with an **empty
+overlay**. `section_for` early-outs on an empty overlay only when provenance is
+`Clean`. On a document that is both **encrypted and repaired**, provenance is
+`Repaired`, `needs_full_table()` is true, and the full-table branch re-serializes
+every compressed object by calling `self.get`, which after this package returns
+the **decrypted** in-memory `Object` with nothing re-encrypting it. The result of
+a **no-op save** is plaintext objects under a trailer that still names
+`/Encrypt`: unopenable by any conforming reader, **and** a plaintext disclosure
+of a protected document, from a save the user believes changed nothing.
+
+So: **a document whose trailer carries `/Encrypt` gets a typed refusal from
+`section_for` rather than a section**, on an empty overlay as much as a full one,
+naming M6. Writing to an encrypted document is M6's whole job and M3 has no
+business emitting one byte into one.
+
+**The rule's scope is "every operation reachable in an M3 build", and the sweep
+that enforces it walks the registry rather than a list somebody maintains.** That
+is the third attempt at this rule and the first structural one. A hand-kept list
+missed **print-to-file** two passes ago, on the argument that it authors its
+trailer fresh, and the same list misses **SVG export** now: SVG is a vector
+transcription of the source's content streams, paths, text and images into
+another document, and this plan's own argument for closing print-to-file applies
+to it verbatim. **Attachment extraction** is a twelfth, writing an embedded file
+byte-for-byte decrypted to disk. Both are newly reachable *because* of ruling A,
+and neither was on any list. There is no reason to believe eleven is closed
+either.
+
+So the assertion is: **walk every registered command and every registered codec,
+and require each to be either refused on an encrypted document or provably
+raster-only.** A new command or codec that is neither fails the test by existing,
+which is the only form of this check that survives the next feature.
+
+**And the rule is over inputs, not over authorship**, which was the second
+attempt at it. Stated as "would author a new document", it missed **four** commands whose
 input is a file rather than the session:
 
 - **Combine's file list is chosen after the command is invoked**, so a
@@ -1458,7 +1537,11 @@ single guarded predicate, so the wiring surface in cos is small.
 - A save with a pending edit on an encrypted document is refused with a typed error naming M6, and the edit tools were already disabled at open, asserted in the app.
 - **The `core` predicate itself**, over a `&cos::Document`: it answers "may this graph be read out" for an encrypted document and for a plain one, and the two check points call it rather than duplicating it. That is what this package can prove at its own depth.
 - **The two check points**, asserted by driving both: a session-scoped refusal through `Requirement::Command`, and an execution-time per-input refusal, both returning the same typed reason naming M6 from that one predicate.
-- **The ten-command sweep is not asserted here.** Ten commands are unavailable on an encrypted document (Compress, Reduce File Size, extract-to-file, split, combine, summarize comments, insert-pages-from-file, **replace-pages-from-file**, copy-or-move-pages-between-open-documents, and print-to-file **unless Print as Image is on**), and replace-pages is on the list for the same reason as insert: Acrobat's Replace Pages takes its replacements from another file, and P11's own review risk notes it may be built as delete-then-insert, so a rule covering insert and missing replace is bypassed by the obvious implementation. But **this package cannot assert that sweep**: its only app invocation is `--no-default-features --features shell,shell-test-support`, which registers **no plugin**, so none of those commands is in the registry at all, and eight of the ten ship at depths six to nine. **The registry-wide sweep belongs to a late app package** running `--features commands-core,tools-organize,codecs-common`, where all ten exist; P20 is the natural home, being the last of the deep app packages. Each of the ten also asserts its own refusal in its own package, which is where the per-command coverage actually lives.
+- **The sweep is not a list and is not asserted here.** It is **exhaustive over
+  the registry**, and this package's only app invocation
+  (`--no-default-features --features shell,shell-test-support`) registers **no
+  plugin**, so nothing is in the registry to sweep. P20 owns it; each package
+  also asserts its own refusal, which is where the per-command coverage lives.
 - **Print-to-file with Print as Image on succeeds** on the same document and its output carries no `/Encrypt`; **with Print as Image off it is refused**. That pair is what makes the ruling a decision with a test rather than a carve-out with a story, and neither half alone proves it.
 - **No output of any of those operations ever contains an object imported from the encrypted source**, asserted on the produced file rather than on the absence of an `/Encrypt` key. The `/Encrypt`-key assertion was the one pass 2 had, and it is exactly the assertion that blessed the print bypass.
 - Known-answer tests against the ISO 32000-2 algorithm vectors for each of `/R` 2, 3, 4 and 6.
@@ -1542,12 +1625,39 @@ and asserts it everywhere else.
    is needed, rather than a fifth near-duplicate of the same file. The four
    existing copies are not this package's to consolidate, but nothing new copies
    them.
-3. A third step re-running the suites those fixtures live in under
-   `ONIONSKIN_CORPUS_REQUIRED: 1`, **enumerating every suite by name with its
-   feature flags** rather than naming two crates: `cargo test -p onionskin-cos`,
-   `cargo test -p onionskin-core`, `cargo test -p onionskin-app --features
-   shell,shell-test-support`, `cargo test -p onionskin-print`, the plugin
-   targets, and P1b's encryption suite once it lands. Generating or fetching a set is not proof it was measured; only this
+3. A third step re-running under `ONIONSKIN_CORPUS_REQUIRED: 1`, **enumerated
+   per SUITE with `--test`, never per crate**. Per-crate is not a shortcut, it is
+   three separate red builds:
+
+   - `cargo test -p onionskin-core` **panics**: `crates/core/tests/search.rs`
+     requires `external/hayro-corpus`, which this package deliberately does not
+     fetch (159 MB for 41 files, and it stays with the bench job).
+   - `cargo test -p onionskin-cos` **panics**: `crates/cos/tests/pages.rs`
+     requires `corpus/bench/pages-1000.pdf`, generated only by
+     `corpus/make-bench.py`, which the `test` job never runs. Today this is
+     invisible because CI's re-run is scoped to `--test repair`; widening it to
+     the crate is what exposes it.
+
+   So: `cargo test -p onionskin-cos --test roundtrip --test incremental --test
+   delete`, `cargo test -p onionskin-core --test <the ones that do not need the
+   bench file>`, and so on, each suite named because each suite's corpus needs
+   are different.
+
+4. **A deliverable for the suites the fetch newly switches on**, which is a
+   separate hazard from the re-run and does not involve the env var at all.
+   `crates/cos/tests/lazy.rs` returns early today because `external/` is absent;
+   with the `verapdf` set present it **runs and fails on real data** -
+   `isartor-6-1-12-t01-fail-a.pdf` reads 46% of the file against a 25% budget -
+   so **plain `cargo test --workspace` goes red the moment step 1 lands**, with
+   no env var in the picture. Fetching a corpus turns on every suite that was
+   silently skipping, and this package owns triaging that set before it lands:
+   `lazy.rs`'s budget in particular is either widened with a stated reason or
+   the file is excluded with one. A reproduction corpus root is at
+   `/tmp/claude/ci_corpus`.
+
+   This is the same class as guarantee 6 pointing the other way: a skip that
+   flipped to a pass hid a gap, and a skip that flips to a failure hides a real
+   defect nobody has looked at. Generating or fetching a set is not proof it was measured; only this
    step turns a silent skip into a failure, which is what makes disabling the
    fetch visible.
 
@@ -1555,17 +1665,27 @@ and asserts it everywhere else.
    list as part of its definition of done**, the way P4 already does. Twelve carry
    an explicit `Corpus.` bullet: **P1b, P3, P4 and P6** reach `external/` from
    `crates/cos` and `crates/core`, where helpers already exist, and **P8, P11,
-   P12, P13b, P14a, P14b, P19 and P20 are the eight that need the new one**,
-   because their assertions live in `crates/app/tests/` or plugin targets. **P1
+   P12, P13b, P14a, P14b, P15, P19 and P20 are the nine that need the new one**,
+   because their assertions live in `crates/app/tests/`, `crates/print/tests/` or
+   plugin targets. P15 joined that list when its encrypted-fixture Corpus bullet
+   landed. **P1
    and P5 also sweep `external/`**, inside other verification bullets rather than
    a `Corpus.` one, and both are in crates that already have a helper. P4 is
    currently the only package naming its command at all, and it should be the
    pattern rather than the exception.
 
-Both pinned to `runner.os == 'Linux'`, like the two that exist, and for the
-reason those give: corpus assertions are byte and structure work with no platform
-dimension, and running the fetch on the three-way matrix is three caches and
-three chances to flake for one claim.
+The corpus steps are pinned to `runner.os == 'Linux'`, like the two that
+exist, and for the reason those give: corpus assertions are byte and structure
+work with no platform dimension, and running the fetch on the three-way matrix is
+three caches and three chances to flake for one claim.
+
+**The app suite is the exception and goes in the `shell` job on macOS**, not in
+the `test` job. The `test` job installs none of GPUI's Linux dependencies and has
+never built the shell on Linux at all; putting `cargo test -p onionskin-app
+--features shell,shell-test-support` there fails at link time before it reaches a
+fixture. The `shell` job already runs the windowed tests on macOS, so the app
+half of this package's re-run lands beside them, with its own fetch step, and the
+cache key is shared.
 
 **The tripwire, or this package is itself deletable.** It asserts the re-run
 step's **command set matches the enumerated list**, so a suite added to the plan
@@ -1675,11 +1795,26 @@ green suite, and P2's verification as first drafted covered every case except it
 > `Some(ObjectState { generation, object })`.** `None` is produced only by the
 > reservation counter, for a number nothing has ever written.
 >
-> **`Change::TrailerKey`'s `before` is the same rule one level up, in
-> `TrailerState`**: for a key the live base trailer has, it is read out at edit
-> time and stored as `Set(value)`; `NotInOverlay` means the key was not in the
-> overlay; and `Cleared` is the state an undo across a save produces, which is
-> the case `Option` could not express and which is why the type is three-way.
+> **`Change::TrailerKey`'s `before` is the same rule one level up, and it reads
+> the LIVE BASE TRAILER, not the overlay**: a key the base trailer has is stored
+> as `Set(value)`; a key the base trailer **lacks** is stored as **`Cleared`**.
+> **`NotInOverlay` is never a captured `before`.** It is a value the overlay map
+> can hold, not a state a change can have captured.
+
+That last sentence is the whole fix, and getting it wrong moves the failure
+rather than closing it. Storing `NotInOverlay` for a key the base lacks - the
+obvious reading, and the one the first draft of this rule had - means undo
+**removes the key from the overlay map** instead of clearing it, so across a save
+the base still has `/Info` and the Description survives. That is the same silent
+no-op T1 built `Cleared` to prevent, one level down from where it was fixed.
+
+**And the collapse rule has to cover the trailer, or the pre-save case breaks
+instead.** `section_for`'s early-out requires the trailer map empty, so an undo
+that correctly leaves `{Info: Cleared}` in a *pre-save* session - where the base
+never had `/Info` - would write a section saying `/Info null` on a document that
+never had one. T3's collapse gains the matching clause: an overlay trailer entry
+equal to the base's state for that key drops out, where **`Cleared` equals
+absent** and `Set(v)` equals a base value of `v`.
 
 With that, `None` means one thing on both sides of a save and needs no rebasing.
 Projecting `Overlay` onto `cos::PendingEdit::Set` for `section_for` is a
@@ -1816,10 +1951,60 @@ Four pieces:
    P15's verification would pass because it never asks twice at one generation.
    The cache holds at most one entry per live filter, which is bounded by the
    four `AnnotationFilter` modes plus the canvas's unfiltered one.
-3. **Generations.** `Document::generations() -> &[Generation]` over P1's
+3. **Every read path becomes overlay-aware, which is the piece nobody
+   specified.** `preview_bytes` was `core`'s only overlay-aware output, and
+   everything else reads the document as it was opened:
+
+   - `page_count` is a **field**, set once at open (`session.rs:186`, `221`).
+   - `page_geometry`, `page_text`, `outline`, `attachments`, `signatures` and
+     `layers` all read `&self.cos` (`session.rs:280`, `330`, `401`, `409`, `440`,
+     `452`).
+   - `check_page` and `start_search` bound on `self.page_count`
+     (`session.rs:389`, `544`), and the search worker spawns on the **original**
+     bytes.
+
+   So after deleting page 3 of ten: `page_count` still reports 10,
+   `check_page(9)` still succeeds, `page_geometry(3)` returns the **old** page
+   3's metrics beside the **new** page 3's raster, `outline()` returns the
+   pre-fixup bookmarks, and search still hits the deleted page. **P18's
+   definition of done ("the page is back on the canvas, in the file on disk, and
+   in the thumbnails pane") and P21's ("the grid and the canvas agree on page
+   order without a manual refresh") both fail against the design as specified**,
+   and T4 rules out a scratch `cos::Document` to read through, so there was no
+   mechanism anywhere. Two packages asserted the outcome; none owned the how.
+
+   This package owns it, beside `preview_bytes` because it is the same
+   generation:
+
+   - **The page set derives from the overlay** when the overlay holds a flat
+     `/Pages` node (P5 always rewrites it), falling back to `self.cos` when it
+     does not. `page_count` becomes a **method** over that, and every bound check
+     goes through it.
+   - **Geometry and text caches are keyed on `(preview generation, page)`**
+     rather than on page alone, so an edited page's entry cannot be served after
+     the edit.
+   - **`outline`, `attachments`, `layers` and `signatures` are re-read on a
+     generation bump** rather than memoised once. They are `Option<Vec<..>>`
+     fields today, so this is invalidation, not new machinery.
+   - **The search worker is re-seeded** on a generation bump, since it holds the
+     original bytes and its page bounds.
+
+4. **Generations.** `Document::generations() -> &[Generation]` over P1's
    `sections()`, plus `revert_to(generation)`, which truncates and reopens.
    Reverting is refused, loudly, if the document has unsaved edits, or if the
    target is not a trailing section.
+
+   **`revert_to` clears `History` in both directions and sets `saved_mark` to
+   `Some(0)`.** After it, undo and redo are both unavailable and the tab reports
+   clean. Left unstated, the stack and the saved mark go on describing bytes that
+   **no longer exist**: every captured `before` was read against a base the
+   truncation just removed, so an undo after a revert restores objects into a
+   document that never had them. Refusing on unsaved edits does not cover this,
+   because the entries below the saved mark are exactly the ones that survive it.
+
+   `revert_to` also truncates a **file**, and `core::Document` has **no `path`
+   field**. It takes the path, or the session grows one; either way it is named
+   here rather than discovered.
 
    **`revert_to` owns the render worker's lifetime across the truncation, and
    this package owns that**, which the first draft left as a review-risk question
@@ -1836,7 +2021,7 @@ Four pieces:
    this is reusing a solved problem rather than inventing a second one. P19 calls
    `revert_to` and asserts the user-visible half; it does not re-decide the
    lifetime.
-4. **Autosave.** A periodic write of the overlay to a recovery file, not to the
+5. **Autosave.** A periodic write of the overlay to a recovery file, not to the
    document. `cos::Document` is `!Send` (m2-viewer's candor item 7, now due), so
    the overlay is what crosses the thread boundary, not the document: autosave
    serializes the overlay's changes and the recovery path replays them into a
@@ -1873,7 +2058,14 @@ preview bytes), new `crates/core/tests/save.rs` (about fourteen tests, including
 this round's create-save-create-save and the four-shape edit-save-undo-save),
 `crates/core/benches/save.rs`.
 
-**Depends on.** P1, P2.
+**Depends on.** P1, P2, **P6**.
+
+P6 is not optional and not merely for the filter's behaviour: `preview_bytes`'s
+signature **names `AnnotationFilter`**, which P6 defines, so without it this
+package's central API does not compile. The first draft had this package landing
+a depth **before** P6, which would have been discovered by `cargo build` in
+minute one. The alternative, defining `AnnotationFilter` here and having P6 take
+it over, splits one type across two packages for no gain.
 
 **What exists to build on.** P1's `section_for` and `save_overlay_to_path`,
 `save_to_path`'s temp-file-and-rename with permission preservation, and
@@ -1925,9 +2117,13 @@ from the preview cache key must fail the two-filters-one-generation test.
 **Goal.** Build what T6 says M3 owes: read the tree, keep it valid through every
 M3 edit, and prove that with an invariant rather than with M5's checker.
 
-- Readers for `/StructTreeRoot`, the `/ParentTree` number tree, per-page
-  `/StructParents`, per-annotation `/StructParent`, `/StructParentsNext` on the
-  root, `/MarkInfo`, and the `/K` element hierarchy. Depth-capped and
+- Readers for `/StructTreeRoot`, the `/ParentTree` number tree, **`/IDTree`**,
+  per-page `/StructParents`, per-annotation `/StructParent`,
+  `/StructParentsNext` on the root, `/MarkInfo`, the `/K` element hierarchy, and
+  **each `/StructElem`'s own `/Pg`**. The last two are the ones a page removal
+  reaches that `/K` alone does not: a surviving element's `/Pg` can name a
+  removed page without any `/K` entry pointing at it, so the invariant below
+  misses it, and `/IDTree` can name an element that is gone. Depth-capped and
   cycle-guarded, like every other reader in `core`.
 - A maintenance hook that every `DocumentEdit` passes through, with three
   operations M3 needs: remove a page's elements and their `/ParentTree` entries;
@@ -1937,8 +2133,11 @@ M3 edit, and prove that with an invariant rather than with M5's checker.
   every operation is a no-op and says so.
 - The M3 invariant, callable from every editing package's tests: after an edit,
   the `/ParentTree` is a well-formed number tree, every `/StructParent` and
-  `/StructParents` index resolves through it, and no `/K` entry references a
-  removed page or a freed object number.
+  `/StructParents` index resolves through it, **every surviving element's `/Pg`
+  names a surviving page**, **every `/IDTree` entry resolves to an element that
+  is still there**, and no `/K` entry references a removed page or a freed object
+  number. The `/Pg` clause is the one a `/K`-only invariant passes while the tree
+  points at a page that is gone.
 - `corpus/tagged/` gets populated, since it is a README today.
   `verapdf/PDF_UA-1` and `PDF_UA-2` are the raw material `corpus/README.md`
   already names, and P1c already fetches the `verapdf` set, so this is a
@@ -2057,16 +2256,39 @@ new `crates/core/src/pages/tree.rs` (the number-tree and name-tree rebuild helpe
 **Depends on.** P2, P4. Also needs P1's reference validator to be the thing that
 catches its mistakes.
 
-**What exists to build on.** `cos::Document::page(index)` already resolves the
-four inheritable attributes against ancestors (M2's P1 built it), so the
-materialization step is a read from an existing accessor rather than a new
-walk. `content::Page` normalizes on top of it. `outline.rs` already resolves
+**What exists to build on.** `cos::Document::page(index)` already walks the tree
+and resolves the four inheritable attributes against ancestors (M2's P1 built
+it), **but its resolved view is lossy for exactly the two attributes
+materialization exists to preserve**, so the materialization reads
+`PageNode.dict` and the ancestors' raw dicts rather than `PageNode`'s convenience
+fields:
+
+- **`/Resources` comes back as a `Dict` value, not the `Object::Ref` the file
+  had** (`document.rs:627`, which stores `resolved(&dict, b"Resources")`).
+  Materializing from it **inlines a full copy of a shared `/Resources` into every
+  rewritten page dict**. A document whose 1000 pages inherit one resource
+  dictionary gets 1000 copies of it, and that is precisely the section-size
+  number P5's bench is meant to decide T5's fallback on, so materializing this
+  way would make the bench measure the bug.
+- **`rectangle()` policy-filters** (`document.rs:702-722`): a degenerate or
+  non-finite box yields `None`. A page whose own `/MediaBox` is degenerate
+  therefore has `media_box: None`, and materializing from that emits a page with
+  **no `/MediaBox` at all** under a flat `/Pages` node that has none either -
+  turning a page with a bad box into a page with no box.
+
+Both are invisible to a before-and-after comparison that reads through the same
+accessor, which is what the first draft's verification did. P1 adds a raw
+inheritable-entry accessor, or this package descends `PageNode.dict` itself;
+either way the rule is **preserve `Object::Ref` and preserve the entry as
+written**. `content::Page` normalizes on top of it. `outline.rs` already resolves
 bookmark destinations to page indices and already knows the O(pages) sweep it
 does, which this package must not make worse.
 
 **Verification.**
 - A corpus sweep, run as part of this package and not afterwards, listing every `external/` file whose page tree is more than one level deep, every file with `/PageLabels`, every file with `/AcroForm /Fields`, every file with `/Threads`, and every file with an intra-document `/Link`. Pick three of each as named fixtures. If the plan cannot name the fixture files, the transformation is unproven. **The sweep and every fixture below live behind P1c's CI corpus step**: `corpus/external` is gitignored and the `test` job fetches nothing, so without that step this entire verification section runs over an empty file list and reports a pass. This is the highest-correctness-risk package in M3 and it is the one whose fixtures CI currently never sees.
 - For each deep-tree fixture: delete a page, and assert through a fresh parse of the saved output that every surviving page's four inheritable attributes are **identical to what they resolved to before**. This is the bug the flat rewrite exists to prevent and it is invisible in a shallow-tree fixture.
+- **A shared `/Resources` stays shared**, asserted on the saved bytes: on a fixture whose pages inherit one resource dictionary, every rewritten page's `/Resources` is the **same `Object::Ref`**, and the section does not contain N copies of it. Comparing resolved values passes on the inlined form, which is why this assertion reads the reference.
+- **A degenerate `/MediaBox` survives as it was written**, not as `rectangle()` reports it: on a fixture with a zero-area or non-finite box, the rewritten page still carries that `/MediaBox` entry byte-for-byte, rather than losing it because the accessor filtered it to `None`. "Unimplemented means untouched" applies to values the parser dislikes.
 - **`audit_references` (P1) reports nothing on the whole output file** after every operation over every fixture, and `section_for`'s gate accepts every section. The first is the complete check and is the one that matters here; the second is free. A run that trips either is a failure of this package, not of the check.
 - **No section this package emits carries a free entry other than the object-0 list head, and none naming a number any object references**, asserted by parsing the output's last cross-reference table. The exception is not a hedge: `free_list_rows` returns the object-0 head unconditionally for a full-table section (`document.rs:1004-1015`), which is every repaired document, so "no free entry at all" fails on any repaired fixture regardless of what this package does. Fixtures are partitioned by `Provenance`, the same way P3's guarantee-1 sweep partitions.
 - `/PageLabels`: a fixture with roman-then-arabic labels keeps each surviving page's label after a reorder and after a delete, compared as resolved label strings, not as tree structure.
@@ -2198,7 +2420,9 @@ behave, and **own guarantee 2 at the level the DoD promises it**.
 - `Requirement` moves from `crates/app/src/shell/context_menu.rs:47` into
   `plugin-api` and gains a `Command(&'static str)` variant, so the
   `Requirement::Milestone` arms that `context_menu.rs`'s own module
-  doc calls "guesses" become registry queries. That module doc names this as the
+  doc calls "guesses" become registry queries. There are **seven** such arms and
+  **four name M3** (rich-text export, Add Bookmark, Print, Page Commands); the
+  other three name M5 and stay. That module doc names this as the
   work: "When those plugins contribute commands, `requirement()` is where the
   guesses become queries."
 - **The registry-exhaustive property tests** PLAN.md's testing strategy item 1
@@ -2248,7 +2472,7 @@ already exists and only needs a fifth variant and a new home.
 - The "every edit is undoable" test drives each tool's real gesture lifecycle (`on_pointer_down`/`move`/`up`/`on_commit`), not a synthetic `DocumentEdit`, or it proves nothing about the tools.
 - `cargo test -p onionskin-app --no-default-features` and `--no-default-features --features tools-comment` still pass: guarantee 5 holds with the contract in place.
 - Every `Requirement::Milestone` arm that a shipped M3 plugin now satisfies is gone, asserted by a test that no `Milestone` reason names M3.
-- **Runs.** `cargo test -p onionskin-plugin-api`; `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Runs.** `cargo test -p onionskin-plugin-api`; `cargo test -p onionskin-app --no-default-features --features tools-comment`; **`cargo test -p onionskin-app --no-default-features --features shell,shell-test-support`** for the `context_menu.rs` change, which is shell code and compiles nowhere without it; `cargo clippy --workspace --all-targets -- -D warnings`.
 
 **Review risk.** **What `&mut Document` already lets a tool reach**, which is the
 sharper version of "whether `ToolCtx` grew more than `edits`". Today
@@ -2318,10 +2542,14 @@ passing quietly. The same file carries
 change; the two edits are in one file and neither should be made assuming the
 other has been.
 
-**Depends on.** P3 (save, for the guarantee-2 test), P6, P7. **Not P0b**: this
-package's two `crates/app` files are test targets, not shell source, and the
-split rewrites neither. It is the second of the two exceptions to "everything
-with a `crates/app` file waits on P0b", the first being P1c.
+**Depends on.** P1c, P3, P6, P7.
+
+P3 is for the guarantee-2 test's save, and P1c for the `external/` fixtures that
+test drives. **Not P0b**: this package's two `crates/app` files are test targets,
+not shell source, and the split rewrites neither. It is the second of the two
+exceptions to "everything with a `crates/app` file waits on P0b", the first being
+P1c. That is ordering prose and sits below the blank line, because section 5
+derives edges from the paragraph above it.
 
 **What exists to build on.** `tools-basic`'s `select_text` already produces a
 `TextSelection` with quads in page space through M2's P3 transform, and
@@ -2345,8 +2573,11 @@ page maps correctly, which needs a `/Rotate 90` fixture and is the same trap M2'
 P3 documented. Whether Replace text writes a real `/IRT` reply chain or two
 unrelated annotations. Whether the tool holds a borrow of `PageText` across the
 commit. **Mutation that must break its tests:** replacing the quad list with its
-bounding rectangle must fail the two-column test and nothing else; making the
-save emit two sections must fail the guarantee-2 test and nothing else.
+bounding rectangle must fail the two-column test; making the save emit two
+sections must fail the guarantee-2 test. Neither says "and nothing else": both
+tests share fixtures with the rest of this package's suite, so a mutation that
+breaks one plausibly disturbs a neighbour, and the claim to check is that the
+named test **does** fail, not that it fails alone.
 
 ### P9. `tools-comment` B: notes, drawing and shapes
 
@@ -2436,7 +2667,7 @@ name, and whether the Base 14 substitution rule from Legal posture rule 6 is
 honoured. Whether a `/FreeText` annotation's `/DA` and its appearance stream can
 disagree about the font, which is what makes a text box render differently in
 Acrobat. **Mutation that must break its tests:** dropping `/CL` must fail the
-callout test and nothing else.
+callout test.
 
 #### P9b. Ink
 
@@ -2497,7 +2728,7 @@ and one appearance call, or are seven small renderers. Whether this package
 reached back into `canvas.rs` after all, which would mean P9a's seam was
 incomplete and is worth knowing rather than patching. **Mutation that must break its tests:** dropping `/BE` must fail the
 cloud test; drawing the Oval preview as a circle must fail the preview-matches-
-commit test and nothing else.
+commit test.
 
 ### P10. `tools-comment` C: stamps, attachments and the comment summary
 
@@ -2566,7 +2797,7 @@ PNG, which is what a clipboard image stamp becomes.
 - **Encrypted sources are refused**, per P1b's input rule: Summarize comments reads the open document, so it is a **session-scoped** refusal through `Requirement::Command`, carrying P1b's typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
 - Summary: the generated document opens through `cos::Document::open`, has the expected page count, and its extracted text contains every comment's contents and author.
 - Custom stamp creation from a PDF page and from an image both produce a `/Stamp` whose appearance renders.
-- **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-comment`; `cargo test -p onionskin-core` for the embedded-file writer; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support,tools-comment` for the stamps dialog and the clipboard call site, which are shell code; `cargo test -p onionskin-core` for the embedded-file writer; the matching clippy.
 
 **Review risk.** Whether any stamp resembles Adobe's artwork, which is a legal
 question the reviewer must actually look at rather than take on trust. Whether
@@ -2636,7 +2867,7 @@ The importer allocates from `Overlay.next_number` and writes `ObjectState`s into
 - Extract writes a new document through `write_new` whose pages match the source pages by extracted text.
 - Rotate composes: rotating a page that already has `/Rotate 270` by 90 gives 0, not 360.
 - P4's structure invariant clean after each operation on each tagged fixture, and reading order matches page order after a reorder.
-- `cargo test -p onionskin-app --no-default-features --features tools-organize`; the thumbnails context menu's M3 entries become enabled and their disabled reasons are gone, asserted in P21.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features tools-organize`, plus `--features shell,shell-test-support,tools-organize` for the disabled-reason assertions, which read shell state; the thumbnails context menu's M3 entries become enabled and their reasons gone, asserted in P21.
 - **Corpus.** The deep-tree fixtures, the flat ones and the embedded-font source document for the importer comparison are all `external/`, behind P1c's fetch step and its mandatory re-run. The importer render comparison is the assertion that catches a one-level-deep importer and it is the one CI currently never runs.
 
 **Review risk.** Whether the importer is transitive or one level deep, which is
@@ -2703,7 +2934,7 @@ and reusing it rather than writing a second one is the point.
 - **Encrypted sources are refused**, per P1b's input rule, in **both** of its shapes: split reads the open document and is a **session-scoped** refusal through `Requirement::Command`, while combine's file list is chosen after invocation and needs a **per-input check at execution**. Both call P1b's one `core` predicate and report the same typed reason naming M6.
 - Every output opens through `cos::Document::open` and satisfies P1's validator. For combine, the refusal covers **any** encrypted input, not only the first, which is the case a per-document check written at the wrong loop level would miss.
 - Outputs carry a structure tree if all inputs did, and P4's invariant is clean; if any input is untagged, the output is untagged and says so rather than producing a half-tagged document.
-- **Runs.** `cargo test -p onionskin-app --no-default-features --features commands-core`; `cargo test -p onionskin-core` for the assembly primitive; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support,commands-core` for the combine and split dialogs, which are the surface rows 38, 39, 40 and 46 are scored on; `cargo test -p onionskin-core` for the assembly primitive; the matching clippy.
 - **Corpus.** The three named combine inputs, the 10-page split fixture and the bookmark-boundary fixture are `external/`, behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether combine holds every input document in memory at once (a
@@ -2886,7 +3117,7 @@ point), `crates/app/src/shell/chrome/tabs/menu.rs` (row 9, `File > Create`), and
 clipboard read**, in `crates/app/src/shell/chrome/tabs/mod.rs`, for row 36, since GPUI owns the pasteboard and no plugin can
 reach it. **This package owns that helper and P10 calls it**: both need an image
 off the pasteboard (row 36 here, row 85 there), the landing order already puts
-P14a at depth eight and P10 at depth nine, and two packages writing a pasteboard
+P14a at depth nine and P10 at depth ten, and two packages writing a pasteboard
 read into one file is how the second one silently wins.
 
 **Depends on.** P0b (the app surface above), P1 (`write_new`), P3, P12 (page
@@ -2908,7 +3139,8 @@ package numbering, not this plan's).
 - Export to each format: dimensions correct, file decodable by an independent decoder, and for JPEG a quality setting that actually changes the output size.
 - Export all images: on a fixture with a known image count, the count matches and each output decodes; an inline image (`BI`/`ID`/`EI`) is either included or explicitly out of scope and stated.
 - `CodecPlugin`'s import half is shaped by its three real consumers and no more.
-- **Runs.** `cargo test -p onionskin-app --no-default-features --features codecs-common`; `cargo clippy --workspace --all-targets -- -D warnings`.
+- **`crates/app/tests/kernel_emptiness.rs` is updated in this commit.** It asserts `registry.codecs().count() == 3` under `codecs-common` (`kernel_emptiness.rs:70-80`), and this package adds JPEG, JPEG 2000 and TIFF. No package named that file, so the count would have gone red on merge. P22's `rtf.rs` changes it again and names it too.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support,codecs-common` for the Convert entry, the File > Create menu and the clipboard read, which are the surfaces rows 1, 9 and 36 are scored on; the matching clippy.
 - **Corpus.** The known-image-count fixture and the CMYK fixture are `external/`, behind P1c's fetch step and its mandatory re-run.
 
 **Review risk.** Whether image downsampling honours the image's own colour space
@@ -2980,7 +3212,7 @@ and a long compress is the same shape.
 - **Encrypted sources are refused**, per P1b's input rule: compress reads the open document, so it is a **session-scoped** refusal through `Requirement::Command`, carrying P1b's typed reason naming M6. Asserted here as well as in P1b, because a package that can reach `write_new` and does not check is the way that rule gets a hole.
 - The flattening path is unreachable from `File > Save` by any route, asserted by driving `File > Save` on a document and checking the output has an appended section rather than a rewrite.
 - The UI string contains the word that tells the user history is discarded, asserted on the string.
-- **Runs.** `cargo test -p onionskin-app --no-default-features --features commands-core,codecs-common`; `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` for the dialog, plus the matching clippy.
+- **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support,commands-core,codecs-common`, one invocation rather than two, since the compress dialog and the command have to be compiled together for the dialog's assertions to reach it; plus the matching clippy.
 - **Corpus.** The recompressible-images fixture is `external/`, behind P1c's fetch step and its mandatory re-run. Compress is the one destructive path M3 ships and its only correctness evidence is a fixture CI does not currently fetch.
 
 **Review risk.** Whether the scope cut above survived contact with a reviewer who
@@ -3046,7 +3278,27 @@ raster.
 89 Multiple pages per sheet (N-up), 93 Orientation, 94 Comments & Forms,
 97 Print as image, 98 Print to file / print to PDF. **7 rows.**
 
-**This package also lands ruling B's scoreboard move, and it lands atomically.**
+**The executable parity-totals contract has no owner, and this package is not
+enough of one.** `acrobat_parity_headline_matches_every_inventory_row`
+(`guarantees.rs:2959`) asserts a literal line of counters that **every row flip
+changes**; nineteen packages in this plan close rows; and **no package's Files
+line names `ACROBAT-PARITY.md`** - including this one, whose body says it lands
+that edit. The line is also **not append-only**, so two packages flipping rows on
+two branches resolve their rebase only by recounting 403 rows by hand.
+
+So, as a rule rather than a note: **every row-closing package names
+`ACROBAT-PARITY.md` in its Files line and flips its own rows in the same commit
+that closes them, together with the headline recount.** The recount is one `awk`
+invocation, given in section 6, and running it is cheaper than resolving a
+conflict on the counter line afterwards.
+
+**And the arithmetic in the definition of done is wrong.** P1b moves `Open an
+encrypted document` (`ACROBAT-PARITY.md:460`) from `planned`/`M6` to
+`partial`/`M3`, which the DoD records as a scoreboard change and then does not
+count. With ruling B's two rows out of M3 and that one in, the recount is
+**M3 98, M4 4, M6 45**, not the stated M3 97 / M4 4.
+
+**This package lands ruling B's scoreboard move atomically.**
 `ACROBAT-PARITY.md` still says `M3` for Booklet and Poster / tile
 (`ACROBAT-PARITY.md:587-588`), and its preamble still says
 `By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.`
@@ -3062,9 +3314,10 @@ already correct either side of this commit and needs no change here.
 
 That edit is P15's rather than the orchestrator's because P15 is the package
 whose scope the ruling defines, and it is called out here because
-`crates/app/tests/guarantees.rs` also carries P7's guarantee-2 tripwire: two
-packages edit that file for unrelated reasons and neither should assume the other
-has been there.
+`crates/app/tests/guarantees.rs` is edited by **three** packages for unrelated
+reasons and none should assume the others have been there: **P8** owns the
+guarantee-2 tripwire (not P7, which the first draft of this note said), **P1c**
+owns the corpus re-run assertions, and this package owns the parity totals.
 
 Booklet (90) and Poster / tile (91) move to M4 (section 9, ruling B):
 both are pure imposition math over this package's `Sheet` model, so M4 adds them
@@ -3073,7 +3326,9 @@ without reopening anything P15 builds. P15 must therefore leave `Sheet` and
 a test asserting one hand-built such sheet composes correctly is this package's
 only concession to them.
 
-**Files.** `crates/print/src/{lib,job,impose,sheet,render,backend}.rs`, new
+**Files.** `ACROBAT-PARITY.md` (rows 90 and 91, and the `By milestone` headline,
+in one commit), `crates/app/tests/guarantees.rs` (the totals contract it
+recounts), `crates/print/src/{lib,job,impose,sheet,render,backend}.rs`, new
 `crates/print/src/backend/file.rs`, `crates/print/Cargo.toml` (which today has
 no `[dependencies]` section at all: it gains `onionskin-core`,
 `onionskin-render`, `onionskin-cos`), `crates/print/tests/impose.rs`,
@@ -3376,7 +3631,7 @@ updates while work continues. `quick_actions.rs` resolves availability through
 - "Make current properties default" writes a preference and the next annotation created uses it, asserted end to end through the tool, not through the preference store.
 - The quick action toolbar's Comment, Highlight and Draw are enabled and carry no reason string, asserted, and the assertion reads the registry rather than a list.
 - Find with Include Comments finds text that exists only in an annotation's `/Contents`.
-- **The encrypted-source refusal sweep, over all ten commands**, which P1b defines and cannot assert: its own app invocation registers no plugin, and eight of the ten ship at depths six to nine. This package is the last of the deep app packages, so it is the first point at which `--features commands-core,tools-organize,codecs-common` puts all ten in the registry at once. Open an encrypted document and assert each of Compress, Reduce File Size, extract-to-file, split, combine, summarize comments, insert-pages-from-file, replace-pages-from-file and copy-or-move-pages-between-open-documents reports unavailable with P1b's typed reason naming M6, and that print-to-file reports available with Print as Image on and unavailable with it off. Read from the registry, not from a list this test carries, so a tenth command added later without the check fails here.
+- **The encrypted-source refusal sweep, exhaustive over the registry**, which P1b defines and cannot assert (its own app invocation registers no plugin). This package is the last of the deep app packages, so it is the first point at which `--features commands-core,tools-organize,codecs-common` has everything registered at once. Open an encrypted document and **iterate `registry.commands()` and `registry.codecs()`**, asserting each is either refused with P1b's typed reason naming M6 or on a short, in-test allowlist of provably raster-only operations, each entry of which names why. Print-to-file is the worked example: available with Print as Image on, refused with it off. **A command or codec added later that is neither refused nor allowlisted fails this test by existing**, which is the only property that survives the next feature - a hand list missed print-to-file at one pass and SVG export at the next.
 - Pane rows and menu entries are in the accessibility tree; the pane's rows leave it when the pane closes.
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-core` for the widened reason type.
 - **Corpus.** The fixture carrying comments Onionskin did not author is `external/`, behind P1c's fetch step and its mandatory re-run. It is the fixture that distinguishes a Comments pane from a view of the edit graph, so a skipped run leaves the package's central claim unmeasured.
@@ -3479,7 +3734,9 @@ criteria, 22 Automatically Scroll, 23 Line Weights, 24 View > New Window,
 `crates/app/src/shell/chrome/tabs/menu.rs`,
 `crates/app/src/shell/{canvas,find_bar}.rs`, `crates/core/src/{viewport,search}.rs`,
 `crates/render/src/base.rs` and `crates/render/Cargo.toml` (the fork rev, if the
-Line Weights commit lands), new `plugins/codecs-common/src/rtf.rs`.
+Line Weights commit lands), new `plugins/codecs-common/src/rtf.rs`,
+`crates/app/tests/kernel_emptiness.rs` (whose `codecs().count()` assertion `rtf`
+changes, after P14a has already changed it).
 
 **Depends on.** P0b.
 
@@ -3535,70 +3792,80 @@ sweeps `external/`, which CI does not fetch today, so P1 cannot be verified
 before P1c lands even though it compiles without it. P0b follows P0a.
 
 ```
-P1c corpus in CI       P0a relocate ShellFrame       P1b crypto (ruled in)
- └── P1  cos            └── P0b field restructuring       (app seam after P0b)
-      └── P2  core::edit     (gates every app package below)
-           ├── P3  core::save
-           │    ├── P15 print: imposition + file backend (also P6)
-           │    │    └── P16 print: macOS backend
-           │    │         └── P17 print dialog (also P0b)
-           │    ├── P13a document properties (also P0b)
-           │    ├── P13c File and Edit menu remainder (also P0b)
-           │    ├── P18 save/undo/dirty/recovery (also P0b)
-           │    └── P19 skins panel (also P0b, P1)
-           ├── P4  core::structure
-           │    ├── P5  core::pages (the transformation)
-           │    │    └── P11 tools-organize (also P3, P7)
-           │    │         ├── P21 organize grid (also P0b)
-           │    │         └── P12 combine + split (also P0b, P1, P3)
-           │    │              └── P14a image import/export (also P0b, P1, P3)
-           │    │                   ├── P14b compress (also P0b, P1, P3)
-           │    │                   └── P10 stamps, attach, summary (also P0b, P6, P7)
-           │    │                        ├── P13b bookmark + attachment authoring (also P0b, P3, P5)
-           │    │                        └── P20 comments pane (also P0b, P8, P9a, P9b, P9c)
-           │    └── P6  core::annots
-           │         └── P8  tools-comment: text markup (also P7)
-           │              └── P9a notes, free text, the overlay painters (also P0b)
-           │                   ├── P9b ink
-           │                   └── P9c shapes ──┐ (P10 also hangs here)
-           ├── P7  plugin-api edit contract (also P0b)
-           └── P22 remaining shell rows (P0b only; drawn here for position)
+P1c corpus in CI          P0a relocate ShellFrame
+ └── P1  cos               └── P0b field restructuring  (gates every app package)
+      └── P2  core::edit        └── P7  plugin-api edit contract (also P2)
+           │                         └── P1b crypto, ruled in  (app seam)
+           ├── P22 remaining shell rows (P0b only; drawn here for position)
+           └── P4  core::structure
+                ├── P5  core::pages (the transformation)
+                └── P6  core::annots
+                     └── P3  core::save  (also P1, P2; P6 for AnnotationFilter)
+                          ├── P13a document properties      (also P0b)
+                          ├── P13c File and Edit remainder  (also P0b)
+                          ├── P18 save/undo/dirty/recovery  (also P0b)
+                          ├── P19 skins panel               (also P0b, P1)
+                          ├── P15 print: imposition + file backend (also P1b, P6)
+                          │    └── P16 print: macOS backend
+                          │         └── P17 print dialog    (also P0b)
+                          ├── P8  tools-comment: text markup (also P0b, P1c, P6, P7)
+                          │    └── P9a notes, free text, overlay painters (also P0b)
+                          │         ├── P9b ink
+                          │         └── P9c shapes ──┐
+                          └── P11 tools-organize (also P1b, P5, P7)
+                               ├── P21 organize grid (also P0b)
+                               └── P12 combine + split (also P0b, P1, P1b, P5)
+                                    └── P14a image import/export (also P0b, P1)
+                                         ├── P14b compress (also P0b, P1, P1b)
+                                         └── P10 stamps, attach, summary
+                                              │    (also P0b, P1b, P6, P7, P9c ──┘)
+                                              ├── P13b bookmark + attachment authoring
+                                              └── P20 comments pane (also P1b, P8, P9a/b/c)
 ```
 
-**Critical path: `P1c → P1 → P2 → P4 → P5 → P11 → P12 → P14a → P10 → P13b`, ten
-packages.** Three others tie at ten and all four converge on P10: P20 through the
-same nine-package prefix, and both P13b and P20 again through the annotation
-branch `P4 → P6 → P8 → P9a → P9c → P10`, since a custom stamp's appearance needs
-P9c's shapes. **P10 is the join**, which is the scheduling fact that matters: it
-waits on the page branch and the annotation branch both, and nothing downstream
-of it starts until the later of the two lands.
+**Critical path: `P1c → P1 → P2 → P4 → P6 → P3 → P8 → P9a → P9c → P10 → P13b`,
+eleven packages**, with three others tying at eleven: `→ P20` through the same
+ten-package prefix, and both again through the **page** branch
+`P3 → P11 → P12 → P14a → P10`, since a custom stamp needs P9c's shapes and the
+comment summary needs P12's page assembly. **P10 is still the join**: it waits on the annotation branch and the page
+branch both, and nothing downstream starts until the later lands.
 
-The first draft called `P1 → P2 → P4 → P5 → P11 → P21` critical at six, which is
-four short: P21 is at depth seven, and the chain continues past P11 through
-combine, image import, stamps and the summary generator before it reaches P13b
-and P20.
+**The path moved, and it moved because of a fix.** `preview_bytes`'s signature
+names `AnnotationFilter`, which P6 defines, so **P3 depends on P6** and the whole
+save-and-preview subtree sits one level below the annotation reader rather than
+beside it. That single edge lifted P3 from four to six and everything under it
+with it. It is not a scheduling choice to be undone: without it P3's central API
+does not compile at P3's landing. The alternative is defining `AnnotationFilter`
+in P3 and having P6 take it over, which splits one type across two packages for
+no gain.
+
+Two earlier readings of this path were wrong in the same direction, and both were
+hand-drawn: the first draft called `P1 → P2 → P4 → P5 → P11 → P21` critical at
+six, and the second `P1c → … → P12 → P14a → P10 → P13b` at ten. Re-derive from
+the Depends-on paragraphs after any dependency changes; the picture above is
+output, not input.
 
 The picture hid it in two ways, both worth naming because they are how a drawn
 graph lies. P10 was drawn as a child of P6, which is true and is not the whole
-truth: P10 also depends on P12 and P14a, which is what puts it at depth nine.
+truth: P10 also depends on P12, P14a and P9c, which is what puts it at depth ten.
 And P12, P13 and P14 were drawn as siblings while the text said outright that
 they "are three independent branches", which is false twice over: **P14 depends
 on P12**, and **P13 depends on P10, which depends on P14, which depends on P12**.
 They are a chain of four, and it is the tail of the critical path.
 
-The print chain, `P1c → P1 → P2 → P4 → P6 → P15 → P16 → P17`, is eight deep on
-the same convention, so it is shorter than the critical path rather than "the
+The print chain, `P1c → P1 → P2 → P4 → P6 → P3 → P15 → P16 → P17`, is nine deep
+on the same convention, so it is shorter than the critical path rather than "the
 same depth" as the first draft said. It is still the natural second track, because it is the longest chain that
 shares nothing with the first past P4.
 
-**The lever, recorded rather than pulled.** P10 is at depth nine, and four
-ten-length paths run through it, but a large part of why it is that deep is
+**The lever, recorded rather than pulled.** P10 is at depth ten and both
+eleven-length paths run through it, but a large part of why it is that deep is
 `core::embedded`, the embedded-file writer, which this plan houses in P10 because
 P10's attach-as-comment was its first named consumer. P13b then waits on P10 for
 it, and P13b is one of the two deepest packages. **Move `core::embedded` into P6
-or give it a kernel slot of its own and the critical path drops from ten to
-about seven**, because P13b would then depend on P3, P5 and that slot rather than
-on the whole stamps-and-summary chain. This is an observation, not a defect: the
+or give it a kernel slot of its own and the critical path drops by three or
+four**, because P13b would then depend on P3, P5 and that slot rather than on the
+whole stamps-and-summary chain. This is an observation, not a defect: the
 current placement is defensible (one writer, two consumers, and it does sit next
 to the annotation that carries the file), and moving it is a scope change nobody
 has asked for. It is written down so that whoever schedules M3 sees the lever
@@ -3688,27 +3955,29 @@ that later moves beneath it:
 
 1. **P7** (depth 4). It deletes `context_menu.rs`'s private `Requirement` and
    moves it into `plugin-api`, which every later availability query reads.
-2. **P13a**, **P13c**, **P18** and **P19** (all depth 5). P18 first among them:
+2. **P1b's app seam** (depth 5), whenever convenient after P7; it is one notice
+   and one gate in one file.
+3. **P13a**, **P13c**, **P18** and **P19** (all depth 7). P18 first among them:
    the dirty state, the saved mark's UI reading and four global commands that
    every other app package reads or extends. A save and undo model rebased under
    twelve branches is worse than twelve rebasing under it. P19 next, as the first
    consumer of the rail-plus-side-panel surface P20 also uses.
-3. **P9a**, **P12** and **P21** (all depth 7). **P9a first among them**: it is
-   the only app package that changes `plugin_api::Overlay` and adds four
+4. **P9a**, **P12** and **P21** (depths 8, 8 and 8). **P9a first among them**: it
+   is the only app package that changes `plugin_api::Overlay` and adds four
    `OverlayPaint` variants with their painters, and it removes `map_overlay`'s
    `Err` arms, so anything else touching `canvas.rs` should rebase over it rather
    than under it. P12 then adds the first new `ShellDialog` variants and P21 the
    second pane-shaped surface.
-4. **P14a** and **P17** (both depth 8).
-5. **P10** and **P14b** (both depth 9).
-6. **P13b** and **P20** (both depth 10). P20's is the one that also flips the
-   quick action gates.
-7. **P22 last**, out of depth order and deliberately: it is at depth three, but
+5. **P14a** and **P17** (both depth 9).
+6. **P10** and **P14b** (both depth 10).
+7. **P13b** and **P20** (both depth 11). P20's is the one that also flips the
+   quick action gates and owns the registry-exhaustive encryption sweep.
+8. **P22 last**, out of depth order and deliberately: it is at depth three, but
    it is nine small changes across many files, which is exactly the shape that
    rebases cleanly under everything and painfully over anything.
 
-**P1b's app seam sits outside this order**, at depth five, and can land any time
-after P0b. It is one notice and one gate in one file and it belongs to a package
+**P1b's app seam is step 2 above**, at depth five, and can land any time after
+P0b and P7. It is one notice and one gate in one file and it belongs to a package
 that is otherwise off the critical path entirely, so sequencing it with the
 others would couple the crypto track to the app track for no benefit. It is named
 here so that "the app landing order" is not read as a list of everything that
@@ -3840,6 +4109,14 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$4); if ($4=="M3") print $2}' ACROBAT-PARITY
 | 98 | Printing | Print to file / print to PDF | P15 |
 | 99 | Printing | Advanced Print Setup dialog | P17 |
 
+**Every row-closing package names `ACROBAT-PARITY.md` in its Files line** and
+flips its own rows in the commit that closes them, together with the `By
+milestone` headline the executable contract recounts
+(`guarantees.rs:2959`). That line is **not append-only**: two packages flipping
+rows on two branches resolve their rebase only by recounting 403 rows, so the
+recount `awk` below is part of landing a package rather than a periodic chore.
+Nineteen packages close rows and none named the file.
+
 **Totals**, recounted from the table above rather than carried forward. P8 5,
 P9a 4, P9b 2, P9c 7, P10 9, P11 9, P12 6, P13a 3, P13b 4, P13c 3, P14a 6,
 P14b 2, P15 7, P16 1, P17 7, P18 7, P20 5, P21 1, P22 9, moved to M4 2.
@@ -3885,10 +4162,10 @@ Every abstraction M3 introduces names the caller that exists in M3.
 |---|---|
 | `cos::Document::next_object_number` | `core::edit`'s reservation counter |
 | `cos::Document::sections` | P19's skins panel, P3's `revert_to` |
-| `cos::Document::write_new` | P12 combine and split, P11 extract, P14a create-from-image, P14b compress, P10's comment summary |
+| `cos::Document::write_new` | six callers: P12 combine and split, P11 extract, P14a create-from-image, P14b compress, P10's comment summary, P15's `FileBackend` |
 | `cos::{PendingEdit, Document::section_for, Document::save_overlay_to_path}` | P3's save and P3's `preview_bytes`, which are the same call with the same argument; `incremental_section` and `save_to_path` are re-expressed as callers so there is one serializer, not two |
 | cos's save-time reference gate on `section_for` | every save in M3, as the cheap guard that T5's free-nothing rule was not broken |
-| `cos::Document::audit_references` | the verification of P3, P5, P7, P11, P12, P13b, P14a and P14b, which is where the complete O(file) walk belongs |
+| `cos::Document::audit_references` | the verification of P3, P5, P7, P11, P12, P13b, P14a and P14b - eight packages, and the definition of done says the same eight |
 | `core::edit::{Overlay, History, DocumentEdit}` | every tool and command from P8 to P14b |
 | `core::preview_bytes(filter)` | the canvas (committed edits, unfiltered) and P15's print filter, which is row 94. There is no third consumer: the "hide all comments" view the first draft named is not an M3 row (T7). |
 | `core::generations` and `revert_to` | P19's skins panel, P18's `File > Revert` |
@@ -3899,7 +4176,7 @@ Every abstraction M3 introduces names the caller that exists in M3.
 | `core::annots` and its appearance generator | P8's five tools, P9a/P9b/P9c's thirteen, P10's stamps |
 | `core::embedded` (the embedded-file writer) | P10's attach-as-comment, P13b's Attachments pane |
 | `core::Document::edits()` | every M3 tool and command, reached through the `&mut Document` `ToolCtx` and `CommandCtx` already carry; there is no second field, because `EditSession` is a field of `Document` and two mutable borrows of it do not compile |
-| `Requirement::Command` in `plugin-api` | the six `Requirement::Milestone` arms `context_menu.rs` calls "guesses" |
+| `Requirement::Command` in `plugin-api` | the **seven** `Requirement::Milestone` arms in `context_menu.rs`'s `requirement()` (lines 115, 117-122), of which **four name M3** and become registry queries; the other three name M5 |
 | `plugin_api::Overlay::Ellipse` (replacing `Circle`) and `Polyline { closed }` | P9c's Oval, Polygon and Cloud. `Circle` had no consumer at all, so this is a replacement, not an addition |
 | `canvas::OverlayPaint::{Rect, Polyline, Line, Ellipse}` and their painters | P9a's text box and callout, P9b's ink, P9c's seven shapes. Today four of six `Overlay` variants render as a status string instead of a preview |
 | `print::{Sheet, Placement, PrintBackend}` | the file backend, the macOS backend, and P17's preview |
@@ -4353,8 +4630,14 @@ at M4 that the model assumed a grid.
   holds with an edit graph, a print crate and three new plugins in the workspace.
 - `cargo test -p onionskin-print` runs in the default workspace job, with no
   window, no display and no printer.
-- No crate outside `crates/app` imports GPUI, asserted by the existing test.
-  `crates/print` imports AppKit directly and no GPUI, asserted the same way.
+- **No crate outside `crates/app` imports GPUI, asserted by a test this
+  milestone has to write**, because **there is no such test today**: the only
+  artifacts are three doc comments. The DoD asserted "the existing test" two
+  bullets after congratulating itself for catching exactly this class, which is
+  the failure mode being loud about a failure mode does not prevent. `crates/print`
+  imports AppKit directly and no GPUI, asserted by the same new test, which reads
+  each kernel crate's manifest and its resolved dependency tree rather than
+  grepping sources.
 - **Guarantees 1, 2 and 6 pass at the level the guarantee means.** All three
   already run (`0f1c295`); what M3 owes them is the level, not the switch.
   Guarantee 2 is driven by an edit a **tool** made through `core`, which is P8's
@@ -4366,9 +4649,9 @@ at M4 that the model assumed a grid.
   parse accepts, survives degenerate documents, and is deterministic.
 - P4's structure invariant is clean after every M3 edit on every tagged fixture,
   and it **fails** on the deliberately broken fixture in the same suite.
-- P1's reference validator finds nothing on the output of every P5, P11, P12 and
-  P14a and P14b operation over every named fixture, and `audit_references` is
-  clean on every one of those outputs.
+- `audit_references` is clean on the output of every operation in **P3, P5, P7,
+  P11, P12, P13b, P14a and P14b** over every named fixture, and `section_for`'s
+  cheap gate accepts every section those packages emit.
 - P16's manual print acceptance script has run on macOS and its result is
   recorded in that package, including what it failed at. **M3 is not done until
   it has.**
