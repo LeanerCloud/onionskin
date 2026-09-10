@@ -421,16 +421,12 @@ impl ShellFrame {
     }
 }
 
-/// Which of the frame's own menus is showing.
+/// Which of the frame's own menus is showing. Two booleans and not one enum
+/// because the recents submenu opens inside the main menu rather than instead
+/// of it.
 ///
-/// `MenuState` next door is a different thing: it is the availability
-/// snapshot the schema is built from, and it is derived rather than stored.
-/// This is the stored half, and it is two booleans because the recents
-/// submenu opens inside the main menu rather than instead of it.
-///
-/// Declared here rather than among `ShellFrame`'s fields so that a package
-/// adding a menu edits this file and not the frame's declaration, which every
-/// other package is also editing.
+/// `MenuState` next door is a different thing: the availability snapshot the
+/// schema is built from, which is derived rather than stored.
 #[derive(Default)]
 pub(super) struct MenuOpenState {
     pub(super) main_menu_open: bool,

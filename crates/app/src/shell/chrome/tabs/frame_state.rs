@@ -163,12 +163,7 @@ impl<T> TabState<T> {
     }
 }
 
-/// The global bar's tool search box, and what the last search there
-/// reported.
-///
-/// Declared with the frame's own state rather than in `chrome::tool_search`,
-/// which owns the box itself and not the frame's hold on it: this side is
-/// built from `ShellFrame::new`'s context and observed by the frame.
+/// The global bar's tool search box, and what the last search there reported.
 pub(super) struct ToolSearchState {
     pub(super) search_input: Entity<SearchInput>,
     pub(super) search_feedback: Option<SearchResult>,
@@ -176,15 +171,24 @@ pub(super) struct ToolSearchState {
 
 /// The page-number box in the page controls, and why the last number typed
 /// there was refused.
-///
-/// Declared with the frame's own state for the same reason as
-/// `ToolSearchState`: `chrome::page_controls` owns the box and the parsing,
-/// this is the frame's hold on it.
 pub(super) struct PageEntryState {
     pub(super) page_input: Entity<SearchInput>,
     pub(super) page_entry_error: Option<PageEntryError>,
 }
 
+/// Every loose field that had a second field to group with is in a sub-struct
+/// named for the surface it belongs to, and each sub-struct is declared in the
+/// file whose code reads it, so that a package adding to one surface edits that
+/// file rather than this declaration, which every package is also editing.
+///
+/// `ToolSearchState` and `PageEntryState` are the exception and do not deliver
+/// that: their surfaces are `chrome::tool_search` and `chrome::page_controls`,
+/// siblings of `tabs` rather than modules under it, so declaring there would
+/// widen `pub(super)` past what these fields had.
+///
+/// `find` and `find_input` are one surface too and are still two fields: the
+/// only spelling that groups them without a stutter renames a leaf, and this
+/// restructuring's acceptance rests on renaming none.
 pub(in crate::shell) struct ShellFrame {
     pub(super) tabs: TabState<DocumentTab>,
     pub(super) menus: MenuOpenState,

@@ -261,10 +261,6 @@ impl ExportPhase {
 
 /// The frame's export state: the one job that can be in flight, and the
 /// counter that names the next one.
-///
-/// Declared here rather than among `ShellFrame`'s fields so that a package
-/// adding to the export surface edits this file and not the frame's
-/// declaration, which every other package is also editing.
 #[derive(Default)]
 pub(super) struct ExportState {
     pub(super) export_job: Option<ExportJob>,

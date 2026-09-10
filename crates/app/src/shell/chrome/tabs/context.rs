@@ -302,13 +302,9 @@ pub(in crate::shell::chrome) struct TabContextEntry {
     pub(in crate::shell::chrome) availability: MenuAvailability,
 }
 
-/// Which context menu is open, if either. Only one can be, but they are
-/// opened from different surfaces and answer different commands, so each
-/// keeps its own field.
-///
-/// Declared here rather than among `ShellFrame`'s fields so that a package
-/// adding a context surface edits this file and not the frame's declaration,
-/// which every other package is also editing.
+/// Which context menu is open, if either. Only one can be, but they are opened
+/// from different surfaces and answer different commands, so each keeps its own
+/// field.
 #[derive(Default)]
 pub(super) struct ContextMenuState {
     pub(super) tab_context_menu: Option<TabContextMenu>,
