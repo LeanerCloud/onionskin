@@ -36,6 +36,8 @@ def main(argv):
     after = lines(argv[split + 1 :])
     only_before = before - after
     only_after = after - before
+    print("# before: %s" % " ".join(argv[1:split]))
+    print("# after:  %s" % " ".join(argv[split + 1 :]))
     print("lines before: %d" % sum(before.values()))
     print("lines after:  %d" % sum(after.values()))
     print("only in before: %d" % sum(only_before.values()))

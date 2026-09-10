@@ -509,6 +509,13 @@ impl ShellFrame {
             Some(Activation::Focus(field)) => {
                 window.focus(&self.text_field(field).read(cx).focus_handle(cx));
             }
+            // A wildcard over twenty-five-odd `Activation` variants, and here
+            // the catch-all is the rule rather than a fallthrough: everything
+            // that is not a text field leaves the keys with the chrome. What
+            // keeps it safe as variants are added is that a text field is not
+            // one of them. `TextField` is its own enum and `text_field` below
+            // matches it exhaustively, so a fourth field is added there and
+            // fails to compile, not added to `Activation` and routed here.
             _ => window.focus(self.a11y.focus_handle()),
         }
     }

@@ -1,3 +1,5 @@
+# before: /tmp/claude/p0/tabs_5ac2085.rs
+# after:  crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
 lines before: 7236
 lines after:  7311
 only in before: 25

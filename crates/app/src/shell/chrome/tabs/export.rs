@@ -222,6 +222,11 @@ impl ExportPhase {
             value if value == ExportPhaseValue::Running as u8 => ExportPhaseValue::Running,
             value if value == ExportPhaseValue::Cancelling as u8 => ExportPhaseValue::Cancelling,
             value if value == ExportPhaseValue::Publishing as u8 => ExportPhaseValue::Publishing,
+            // The one wildcard the split kept in a dispatch position, and the
+            // one place in this module where adding a variant is not a compile
+            // error: the arms are guards over a `u8`, which rustc cannot prove
+            // exhaustive, so a fourth `ExportPhaseValue` would arrive here and
+            // panic. Loud rather than silent, but loud at runtime.
             _ => unreachable!("export phase is written only from ExportPhaseValue"),
         }
     }

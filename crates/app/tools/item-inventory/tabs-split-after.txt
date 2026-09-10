@@ -1,3 +1,6 @@
+# emitted at 176e4fb
+# from crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
+# items: 463 = 8 const, 5 enum, 65 field, 330 fn, 15 impl, 1 mod, 16 struct, 1 trait, 2 use, 20 variant
 #[cfg(test)] mod tests	fn	a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page	private	#[cfg(feature = "shell-test-support")] #[gpui::test] fn a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page(cx: &mut TestAppContext)	7bb2131bc2079452
 #[cfg(test)] mod tests	fn	a_blocked_single_file_worker_keeps_the_destination_absent_until_success	private	#[test] fn a_blocked_single_file_worker_keeps_the_destination_absent_until_success()	d3d653864a119ed7
 #[cfg(test)] mod tests	fn	a_chosen_name_with_no_extension_still_numbers_its_pages	private	#[test] fn a_chosen_name_with_no_extension_still_numbers_its_pages()	088c45e1f6a5c28b

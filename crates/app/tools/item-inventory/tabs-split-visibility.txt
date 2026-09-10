@@ -1,3 +1,5 @@
+# emitted at 176e4fb
+# from crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs
 module	container	kind	name	visibility
 crate::shell::chrome::tabs	-	enum	TabCommand	pub(in crate::shell)
 crate::shell::chrome::tabs	-	use	ShellFrame	pub(in crate::shell)

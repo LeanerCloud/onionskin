@@ -143,6 +143,11 @@ def apply_once(sources, old, new, what):
     return mutated
 
 
+def flat_name(path):
+    """A copy's file name, keeping the whole path so two `mod.rs` cannot collide."""
+    return str(path).lstrip("/").replace("/", "__")
+
+
 def report_for(sources, mutated):
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
@@ -150,9 +155,11 @@ def report_for(sources, mutated):
         before_dir.mkdir()
         after_dir.mkdir()
         for path, text in sources.items():
-            (before_dir / Path(path).name).write_text(text, encoding="utf-8")
+            (before_dir / flat_name(path)).write_text(text, encoding="utf-8")
         for path, text in mutated.items():
-            (after_dir / Path(path).name).write_text(text, encoding="utf-8")
+            (after_dir / flat_name(path)).write_text(text, encoding="utf-8")
+        if len(list(before_dir.iterdir())) != len(sources):
+            raise SystemExit("two inputs collided on one copy name")
         inventory(sorted(before_dir.iterdir()), work / "before.txt")
         inventory(sorted(after_dir.iterdir()), work / "after.txt")
         return compare(work / "before.txt", work / "after.txt")

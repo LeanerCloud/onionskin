@@ -30,9 +30,12 @@ instead of the widening being either invisible or drowned in noise. What
 deliberately does not record, so `audit` reports that separately.
 
 Usage:
-    item_inventory.py emit FILE...            write the listing to stdout
-    item_inventory.py audit FILE...           non-private items and their modules
-    item_inventory.py compare BEFORE AFTER    diff two listings as multisets
+    item_inventory.py emit [--at REV] FILE...   write the listing to stdout
+    item_inventory.py audit [--at REV] FILE...  non-private items and their modules
+    item_inventory.py compare BEFORE AFTER      diff two listings as multisets
+
+`--at` records the revision the files were read at, in a header `compare`
+skips. Pass it: a listing without one cannot be placed later.
 """
 
 from __future__ import annotations
@@ -578,7 +581,37 @@ def parse(src, cls, start, end, container, out):
         i = next_i
 
 
-def emit(paths):
+def provenance(at, paths, lines=None):
+    """The header that records what a listing was emitted from, and of what.
+
+    A listing is 400-odd anonymous lines. Six months later nobody can tell
+    which revision it describes, and the commit message that said so is not
+    where anyone looks. `compare` tells the header from an item by the field
+    count, so the header costs nothing.
+
+    The census is there because the item count is the denominator any claim
+    about the listing is read against, and a reader who counts by hand will
+    count something else. Note in particular that a trait's default methods are
+    items under that trait, not under any `impl`, and that `impl` and `mod`
+    headers are deduplicated across files.
+    """
+    header = [
+        "# emitted at %s" % (at or "an unrecorded revision"),
+        "# from %s" % " ".join(str(path) for path in paths),
+    ]
+    if lines is not None:
+        census = Counter(line.split("\t")[1] for line in lines)
+        header.append(
+            "# items: %d = %s"
+            % (
+                len(lines),
+                ", ".join("%d %s" % (count, kind) for kind, count in sorted(census.items())),
+            )
+        )
+    return header
+
+
+def emit(paths, at=None):
     lines = []
     # A single `impl` block legitimately becomes several when its methods move
     # to different files, so container lines are a set: what has to survive is
@@ -596,7 +629,10 @@ def emit(paths):
                 containers.add(item.line())
             else:
                 lines.append(item.line())
-    for line in sorted(lines + sorted(containers)):
+    listing_lines = sorted(lines + sorted(containers))
+    for line in provenance(at, paths, listing_lines):
+        print(line)
+    for line in listing_lines:
         print(line)
     return 0
 
@@ -611,7 +647,7 @@ def module_path(path):
     return "::".join(["crate"] + parts)
 
 
-def audit(paths):
+def audit(paths, at=None):
     """Every item that is not private, with the module that declares it.
 
     `pub(super)` names a different scope in every module, so the listing's
@@ -619,6 +655,8 @@ def audit(paths):
     module is deliberately not part of the inventory, because a split changes
     it by design, so it is reported here instead.
     """
+    for line in provenance(at, paths):
+        print(line)
     print("\t".join(["module", "container", "kind", "name", "visibility"]))
     rows = []
     for path in paths:
@@ -637,11 +675,30 @@ def audit(paths):
     return 0
 
 
+FIELDS = 6
+
+
+def listing(path):
+    """A listing's item lines, dropping the provenance header.
+
+    Told apart by the field count, not by a `#` prefix: an item's container is
+    a signature and a signature carries its attributes, so a perfectly ordinary
+    item line can start with `#[derive(...)]`. Anything that is neither an item
+    nor a header is an error rather than something to skip quietly.
+    """
+    items = Counter()
+    with open(path, encoding="utf-8") as handle:
+        for line in handle.read().splitlines():
+            if line.count("\t") == FIELDS - 1:
+                items[line] += 1
+            elif not line.startswith("#"):
+                raise SystemExit("%s: neither an item nor a header: %r" % (path, line))
+    return items
+
+
 def compare(before_path, after_path):
-    with open(before_path, encoding="utf-8") as handle:
-        before = Counter(handle.read().splitlines())
-    with open(after_path, encoding="utf-8") as handle:
-        after = Counter(handle.read().splitlines())
+    before = listing(before_path)
+    after = listing(after_path)
     only_before = before - after
     only_after = after - before
 
@@ -696,10 +753,13 @@ def compare(before_path, after_path):
 
 
 def main(argv):
+    at = None
+    if len(argv) >= 3 and argv[2] == "--at":
+        at, argv = argv[3], argv[:2] + argv[4:]
     if len(argv) >= 3 and argv[1] == "emit":
-        return emit(argv[2:])
+        return emit(argv[2:], at)
     if len(argv) >= 3 and argv[1] == "audit":
-        return audit(argv[2:])
+        return audit(argv[2:], at)
     if len(argv) == 4 and argv[1] == "compare":
         return compare(argv[2], argv[3])
     print(__doc__, file=sys.stderr)
