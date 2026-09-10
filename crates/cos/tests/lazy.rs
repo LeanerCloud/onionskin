@@ -3,10 +3,13 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use common::{corpus_dir, corpus_root, pdfs_in};
-use onionskin_cos::{BytesSource, CountingSource, Document, FileSource, Origin, Provenance};
+use onionskin_cos::{
+    BytesSource, CountingSource, Document, FileSource, Origin, Provenance, Result, Source,
+};
 
 /// Only files this big make the claim interesting; below it, one read window
 /// covers the document anyway.
@@ -14,6 +17,65 @@ const INTERESTING: u64 = 1024 * 1024;
 /// Reading a quarter of a multi-megabyte file to show its first page would
 /// already mean the laziness bet had failed.
 const BUDGET_PERCENT: u64 = 25;
+
+/// Where the ranges are recorded, shared between the wrapper handing them out
+/// and the test reading them back.
+type Ranges = Arc<Mutex<Vec<(u64, u64)>>>;
+
+/// The byte ranges the parser asked for, so a range asked for twice counts
+/// once.
+///
+/// The budget is a claim about how much of the file an open has to *look at*.
+/// `CountingSource` totals every byte handed out, and `Reader` parses an object
+/// by reading a window and quadrupling it until the object fits, re-reading
+/// from the object's start each time. Those re-reads are real I/O and are
+/// printed below, but they are a caching question rather than a laziness one,
+/// and totalling them answers both at once and neither correctly.
+struct SeenRanges {
+    inner: Box<dyn Source>,
+    seen: Ranges,
+}
+
+impl SeenRanges {
+    fn wrap(inner: Box<dyn Source>) -> (Self, Ranges) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let source = SeenRanges {
+            inner,
+            seen: Arc::clone(&seen),
+        };
+        (source, seen)
+    }
+}
+
+impl Source for SeenRanges {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let bytes = self.inner.read_at(offset, len)?;
+        self.seen
+            .lock()
+            .expect("the range log outlives every reader")
+            .push((offset, offset + bytes.len() as u64));
+        Ok(bytes)
+    }
+}
+
+/// How much of the file the ranges cover, counting each byte once.
+fn covered(mut ranges: Vec<(u64, u64)>) -> u64 {
+    ranges.sort_unstable();
+    let mut total = 0;
+    let mut reached = 0u64;
+    for (start, end) in ranges {
+        let start = start.max(reached);
+        if end > start {
+            total += end - start;
+            reached = end;
+        }
+    }
+    total
+}
 
 #[test]
 fn opening_a_large_document_reads_far_less_than_the_whole_file() {
@@ -34,13 +96,18 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
     }
     candidates.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
 
+    // Every candidate rather than the largest few: which files the largest few
+    // are depends on which corpus sets happen to be fetched, and the one file
+    // in the corpus that comes anywhere near this budget is 4 MB sitting among
+    // 10 MB neighbours.
     let mut measured = 0usize;
-    for (len, path) in candidates.iter().take(8) {
+    for (len, path) in candidates.iter() {
         let file = FileSource::open(path).expect("corpus file opens");
         let (counting, stats) = CountingSource::new(Box::new(file));
+        let (source, ranges) = SeenRanges::wrap(Box::new(counting));
 
         let started = Instant::now();
-        let Ok((document, provenance)) = Document::open_repairing(Box::new(counting)) else {
+        let Ok((document, provenance)) = Document::open_repairing(Box::new(source)) else {
             continue;
         };
         // A repaired open scans the whole file by design; that is the price of
@@ -53,23 +120,27 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         }
         let elapsed = started.elapsed();
 
-        let read = stats.total();
-        let percent = read * 100 / len;
+        let handed_out = stats.total();
+        let looked_at = covered(
+            ranges
+                .lock()
+                .expect("the range log outlives every reader")
+                .clone(),
+        );
+        let percent = looked_at * 100 / len;
         println!(
-            "{}: {} bytes read of {} ({percent}%), {} pages, first page in {:?}",
+            "{}: looked at {looked_at} of {len} bytes ({percent}%), {handed_out} handed out, {} pages, first page in {:?}",
             path.file_name().unwrap_or_default().to_string_lossy(),
-            read,
-            len,
             document.page_count().unwrap_or(-1),
             elapsed
         );
         assert!(
-            read < *len,
-            "opening read {read} bytes of a {len} byte file: that is the whole file"
+            handed_out < *len,
+            "opening read {handed_out} bytes of a {len} byte file: that is the whole file"
         );
         assert!(
             percent <= BUDGET_PERCENT,
-            "opening read {percent}% of the file, over the {BUDGET_PERCENT}% budget"
+            "opening looked at {percent}% of the file, over the {BUDGET_PERCENT}% budget"
         );
         measured += 1;
     }
