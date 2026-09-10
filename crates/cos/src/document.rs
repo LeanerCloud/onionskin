@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::{Error, Result};
 use crate::filters;
 use crate::object::{
-    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
+    Dict, Holder, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };
 use crate::parse::Lexer;
 use crate::reader::Reader;
@@ -81,34 +81,6 @@ pub enum PendingEdit {
 pub struct Section {
     pub start: u64,
     pub end: u64,
-}
-
-impl Section {
-    pub fn len(&self) -> u64 {
-        self.end.saturating_sub(self.start)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-/// Where a reference was found. The trailer is a holder of its own because it
-/// is the one thing a section emits that is not one of its objects, and it can
-/// dangle on its own.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Holder {
-    Trailer,
-    Object(u32),
-}
-
-impl std::fmt::Display for Holder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Holder::Trailer => write!(f, "the trailer"),
-            Holder::Object(number) => write!(f, "object {number}"),
-        }
-    }
 }
 
 /// A reference whose target is free or absent: who names it, and what it
@@ -1302,52 +1274,83 @@ impl Document {
     }
 
     /// The gate: refuses to emit a section that would leave a reference in its
-    /// own bytes pointing at nothing.
+    /// own bytes pointing at nothing. It is the same walk
+    /// [`Document::audit_references`] uses, over the objects this section
+    /// writes and the trailer it emits rather than over the whole file.
     ///
-    /// Its scope is proportional to the edit, and stated as a contract: every
-    /// reference in **the trailer this section emits** and in **every object
-    /// this section writes** must resolve, after this section, to an object
-    /// that exists, and neither may name a number this section frees. It is
-    /// the same walk [`Document::audit_references`] uses.
+    /// One rule, in two halves, because a section is answerable for what it
+    /// writes and not for what it carries forward:
     ///
-    /// Two places where the walk is narrower than that sentence, both because
-    /// the alternative refuses to save files that were already like that:
+    /// - **What the section introduces** - an object the overlay writes, a
+    ///   trailer key the section sets - must resolve, after this section, to
+    ///   an object that exists.
+    /// - **What it carries forward** - a trailer key it inherits, a copy of a
+    ///   base object a repaired document's full table has to re-serialize -
+    ///   must at least not name a number this section frees. Refusing those
+    ///   for absence instead would make a document whose trailer already names
+    ///   an `/Info` nothing defines uneditable, and files like that are real:
+    ///   a section that never touched `/Info` did not make that true.
     ///
-    /// - A trailer key this section does **not** set is checked only against
-    ///   the numbers this section or the file has freed, not against absence.
-    ///   Files whose trailer names an `/Info` nothing defines are real, and a
-    ///   section that does not touch `/Info` did not make that true; refusing
-    ///   would make such a document uneditable. What the section may not do is
-    ///   free the object an inherited key names, and that is checked.
-    /// - The copies of base objects a repaired document's full table carries
-    ///   are not walked. They are the file's own objects, re-serialized
-    ///   because a rebuilt table cannot point into an object stream, so their
-    ///   references predate the section and walking them would make the gate
-    ///   O(file) on every preview of a repaired document. `audit_references`
-    ///   is the check that sees them.
+    /// The carried-forward copies are walked only when the section frees
+    /// something, since freeing is the only way it can make one of them
+    /// dangle. Under the free-nothing rule that is never, so the gate stays
+    /// proportional to the edit rather than O(file) on every preview of a
+    /// repaired document.
+    ///
+    /// **What it still cannot see**: an object already in the file that this
+    /// section does not write, pointing at a number this section frees. No
+    /// walk bounded by the edit can. `audit_references` over the result is
+    /// what finds that one.
     fn refuse_dangling_references(
         &self,
         overlay: &BTreeMap<u32, PendingEdit>,
+        objects: &[(ObjRef, Object)],
         trailer: &Dict,
         trailer_edits: &BTreeMap<Name, Option<Object>>,
     ) -> Result<()> {
+        // The file has already marked this number free, in a section that is
+        // on disk, and an append-only save cannot re-link a free list it
+        // cannot rewrite. `set_object` refuses this at its own door; an
+        // overlay comes straight from a caller, so this is the same refusal at
+        // the other one.
+        for (number, edit) in overlay {
+            if let PendingEdit::Set { generation, .. } = edit {
+                if matches!(self.xref.get(*number), Some(XrefEntry::Free { .. })) {
+                    return Err(Error::FreedObject(ObjRef::new(*number, *generation)));
+                }
+            }
+        }
+
         let resolves = |number: u32| self.in_use(overlay, number);
-        let not_freed = |number: u32| {
-            !matches!(overlay.get(&number), Some(PendingEdit::Delete { .. }))
-                && !matches!(self.xref.get(number), Some(XrefEntry::Free { .. }))
-        };
+        let not_freed_here =
+            |number: u32| !matches!(overlay.get(&number), Some(PendingEdit::Delete { .. }));
+        // The copies of base objects a repaired document's full table carries
+        // are worth walking only when the section frees something, because
+        // freeing is the only way this section can make one of them dangle.
+        // Under the free-nothing rule that is every M3 section, so the gate
+        // stays proportional to the edit.
+        let frees = overlay
+            .values()
+            .any(|edit| matches!(edit, PendingEdit::Delete { .. }));
 
         let mut found = Vec::new();
-        for (number, edit) in overlay {
-            if let PendingEdit::Set { object, .. } = edit {
-                collect_dangling(Holder::Object(*number), object, &resolves, &mut found);
+        for (objref, object) in objects {
+            let introduced = overlay.contains_key(&objref.number);
+            if !introduced && !frees {
+                continue;
             }
+            let test: &dyn Fn(u32) -> bool = if introduced {
+                &resolves
+            } else {
+                &not_freed_here
+            };
+            collect_dangling(Holder::Object(objref.number), object, test, &mut found);
         }
         for (key, value) in trailer.iter() {
             let test: &dyn Fn(u32) -> bool = if trailer_edits.contains_key(key) {
                 &resolves
             } else {
-                &not_freed
+                &not_freed_here
             };
             collect_dangling(Holder::Trailer, value, test, &mut found);
         }
@@ -1572,7 +1575,7 @@ impl Document {
 
         // Before a byte is serialized: a section that would index a reference
         // into nothing is refused rather than written and discovered later.
-        self.refuse_dangling_references(overlay, &trailer, trailer_edits)?;
+        self.refuse_dangling_references(overlay, &objects, &trailer, trailer_edits)?;
 
         let mut section = lead.to_vec();
         section.extend_from_slice(&writer::incremental_section(
@@ -1711,9 +1714,14 @@ impl Document {
     /// trailer stripping. It emits a classic table, never a cross-reference
     /// stream, and it never writes object streams.
     ///
-    /// Three refusals, because each of them produces a file no reader opens:
-    /// a trailer with no `/Root`, an object numbered 0 (the free-list head is
-    /// not a document object), and two objects sharing a number.
+    /// Four refusals, because each of them produces a file no reader opens: a
+    /// trailer with no `/Root`, an object numbered 0 (the free-list head is
+    /// not a document object), two objects sharing a number, and a reference
+    /// to a number the document does not contain. The last one is the same
+    /// check [`Document::section_for`]'s gate runs, and here it is complete
+    /// rather than bounded: a document written from scratch is the whole of
+    /// its own object graph, so every reference in it either resolves inside
+    /// that graph or resolves to nothing at all.
     pub fn write_new(objects: &[(ObjRef, Object)], trailer: Dict) -> Result<Vec<u8>> {
         // The binary comment (ISO 32000-1 7.5.2) is what makes a transfer that
         // sniffs content treat the file as binary rather than as text.
@@ -1751,6 +1759,25 @@ impl Document {
         let highest = objects.last().map_or(0, |(r, _)| r.number);
         let mut trailer = writer::trailer_for_new_section(&trailer);
         trailer.set("Size", Object::Integer(i64::from(highest) + 1));
+
+        let numbers: BTreeSet<u32> = objects.iter().map(|(objref, _)| objref.number).collect();
+        let resolves = |number: u32| numbers.contains(&number);
+        let mut found = Vec::new();
+        for (objref, object) in &objects {
+            collect_dangling(Holder::Object(objref.number), object, &resolves, &mut found);
+        }
+        collect_dangling(
+            Holder::Trailer,
+            &Object::Dict(trailer.clone()),
+            &resolves,
+            &mut found,
+        );
+        if let Some(dangling) = found.first() {
+            return Err(Error::DanglingReference {
+                holder: dangling.holder,
+                target: dangling.target,
+            });
+        }
 
         let mut out = HEADER.to_vec();
         out.extend_from_slice(&writer::incremental_section(

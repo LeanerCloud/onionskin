@@ -7,7 +7,7 @@ mod common;
 use std::collections::BTreeMap;
 
 use common::{classic_pdf, corpus_dir, skeleton};
-use onionskin_cos::{BytesSource, Document, Name, Object, PendingEdit, Provenance};
+use onionskin_cos::{BytesSource, Document, Error, Holder, Name, Object, PendingEdit, Provenance};
 
 fn fixture() -> Vec<u8> {
     let mut bodies: Vec<&[u8]> = skeleton();
@@ -125,9 +125,8 @@ fn with_junk_before_the_header(bytes: &[u8]) -> Vec<u8> {
 /// a repaired document is the one whose section carries a table over every
 /// object, and a compressed object is the one that table cannot point at, so
 /// the section has to carry a copy of it.
-fn repaired_with_compressed_objects() -> Vec<u8> {
+fn repaired_with_compressed_objects(six: &[u8]) -> Vec<u8> {
     let five: &[u8] = b"<</Type/Spare/Which 5>>";
-    let six: &[u8] = b"<</Type/Spare/Which 6>>";
     let header = format!("5 0 6 {} ", five.len() + 1);
     let first = header.len();
     let mut data = header.into_bytes();
@@ -291,7 +290,7 @@ fn spare(which: i64) -> Object {
 /// written into the file and then indexed away, and nothing else notices.
 #[test]
 fn an_overlay_over_a_compressed_object_in_a_repaired_document_is_the_one_indexed() {
-    let original = repaired_with_compressed_objects();
+    let original = repaired_with_compressed_objects(b"<</Type/Spare/Which 6>>");
     let (document, provenance) =
         Document::open_repairing(Box::new(BytesSource::new(original.clone())))
             .expect("the fixture opens by repair");
@@ -352,4 +351,59 @@ fn the_next_object_number_is_one_above_everything_the_file_names() {
         6,
         "rewriting an existing object takes no new number"
     );
+}
+
+/// The other half of the gate's rule, on the one path where a section writes
+/// an object it did not author: a repaired document's full table has to
+/// re-serialize every compressed object, so an object the caller never touched
+/// goes into the section, and freeing what it names would leave the section
+/// carrying a reference to a number nothing can resolve.
+#[test]
+fn a_section_may_not_free_what_a_copy_it_carries_forward_still_names() {
+    let original = repaired_with_compressed_objects(b"<</Type/Referrer/Points 5 0 R>>");
+    let (document, provenance) =
+        Document::open_repairing(Box::new(BytesSource::new(original.clone())))
+            .expect("the fixture opens by repair");
+    assert!(matches!(provenance, Provenance::Repaired(_)));
+
+    // Object 6 is compressed, names object 5, and nothing in this overlay
+    // rewrites it: the section carries a copy of it because a rebuilt table
+    // cannot point into an object stream.
+    let overlay: BTreeMap<u32, PendingEdit> = [(5, PendingEdit::Delete { generation: 1 })]
+        .into_iter()
+        .collect();
+    match document.section_for(&overlay, &BTreeMap::new()) {
+        Err(Error::DanglingReference { holder, target }) => {
+            assert_eq!(holder, Holder::Object(6));
+            assert_eq!(target.number, 5);
+        }
+        other => panic!("freeing an object a carried copy names must be refused: {other:?}"),
+    }
+
+    // The same document, freeing the object nothing names, still saves.
+    let legal: BTreeMap<u32, PendingEdit> = [(6, PendingEdit::Delete { generation: 1 })]
+        .into_iter()
+        .collect();
+    assert!(document
+        .section_for(&legal, &BTreeMap::new())
+        .expect("freeing an object nothing in the section names is allowed")
+        .is_some());
+}
+
+/// An overlay comes straight from a caller, so the refusal `set_object` makes
+/// at its own door has to be made at this one too: a number the file has
+/// already marked free cannot be written back, because the free entry is in a
+/// section that is already on disk.
+#[test]
+fn an_overlay_may_not_write_a_number_the_file_has_marked_free() {
+    let mut first = open(&fixture());
+    first.delete_object(4).expect("object 4 is deletable");
+    let once = first.save_to_vec().expect("save");
+
+    let second = open(&once);
+    let overlay: BTreeMap<u32, PendingEdit> = [set(4, Object::Integer(7))].into_iter().collect();
+    match second.section_for(&overlay, &BTreeMap::new()) {
+        Err(Error::FreedObject(objref)) => assert_eq!(objref.number, 4),
+        other => panic!("writing a freed number must be refused, got {other:?}"),
+    }
 }

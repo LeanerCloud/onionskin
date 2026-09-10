@@ -3,7 +3,7 @@
 //! printed-sheet backend all produce one, and the core invariant applies to
 //! them from that first write onwards.
 
-use onionskin_cos::{BytesSource, Dict, Document, Error, ObjRef, Object};
+use onionskin_cos::{BytesSource, Dict, Document, Error, Holder, ObjRef, Object};
 
 /// A two-page document: catalog, page tree, two pages, one shared content
 /// stream.
@@ -246,5 +246,66 @@ fn a_document_that_could_not_be_opened_is_refused_rather_than_written() {
     match Document::write_new(&twice, trailer) {
         Err(Error::Unrecoverable { detail }) => assert!(detail.contains("twice"), "{detail}"),
         other => panic!("one number given two objects must be refused, got {other:?}"),
+    }
+}
+
+/// A document written from scratch is the whole of its own object graph, so a
+/// reference to a number nobody wrote resolves to nothing at all. The same
+/// check the section builder's gate runs, and here it is complete rather than
+/// bounded, because there is nothing underneath for a reference to reach.
+#[test]
+fn a_reference_to_an_object_nobody_wrote_is_refused() {
+    let (objects, trailer) = two_pages();
+
+    let mut orphaned = Vec::new();
+    for (objref, object) in objects.clone() {
+        let object = match object {
+            // The page tree loses one of its two pages, so its /Kids names an
+            // object the file does not contain.
+            Object::Dict(mut dict) if dict.get(b"Kids").is_some() => {
+                dict.set("Kids", Object::Array(vec![Object::Ref(ObjRef::new(3, 0))]));
+                dict.set("Count", Object::Integer(1));
+                Object::Dict(dict)
+            }
+            other => other,
+        };
+        if objref.number != 4 {
+            orphaned.push((objref, object));
+        }
+    }
+    assert!(
+        Document::write_new(&orphaned, trailer.clone()).is_ok(),
+        "dropping a page and its /Kids entry together is a legal document"
+    );
+
+    let mut dangling = orphaned.clone();
+    for (objref, object) in dangling.iter_mut() {
+        if let (2, Object::Dict(dict)) = (objref.number, object) {
+            dict.set(
+                "Kids",
+                Object::Array(vec![
+                    Object::Ref(ObjRef::new(3, 0)),
+                    Object::Ref(ObjRef::new(4, 0)),
+                ]),
+            );
+        }
+    }
+    match Document::write_new(&dangling, trailer.clone()) {
+        Err(Error::DanglingReference { holder, target }) => {
+            assert_eq!(holder, Holder::Object(2));
+            assert_eq!(target.number, 4);
+        }
+        other => panic!("a /Kids naming an object nobody wrote must be refused, got {other:?}"),
+    }
+
+    // The trailer dangles on its own, and it is not one of the objects.
+    let mut rootless = trailer;
+    rootless.set("Info", Object::Ref(ObjRef::new(77, 0)));
+    match Document::write_new(&orphaned, rootless) {
+        Err(Error::DanglingReference { holder, target }) => {
+            assert_eq!(holder, Holder::Trailer);
+            assert_eq!(target.number, 77);
+        }
+        other => panic!("a trailer naming an object nobody wrote must be refused, got {other:?}"),
     }
 }

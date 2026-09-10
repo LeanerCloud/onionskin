@@ -4,8 +4,7 @@
 
 use std::fmt;
 
-use crate::document::Holder;
-use crate::object::ObjRef;
+use crate::object::{Holder, ObjRef};
 use crate::repair::RepairReport;
 
 pub type Result<T> = std::result::Result<T, Error>;
