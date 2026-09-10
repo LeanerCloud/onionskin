@@ -102,7 +102,7 @@ python3 procedure_mutation.py <files now>
 python3 rule_calibration.py <files now>
 ```
 
-The eight `frame-state-*.txt` files are the acceptance record for the one change
+The nine `frame-state-*.txt` files are the acceptance record for the one change
 that has used the rule so far, P0b, which gathered ten of `ShellFrame`'s loose
 fields into five sub-structs. Like the `tabs-split-*` set they are a record and
 are not regenerated. Measured from `f349359` to `536487a` the comparison is
@@ -118,7 +118,11 @@ fifteen lines out and twenty-five in, and every one of them is accounted for:
 
 The five names absorbed 135 hops between them, counted in the `# elided` header
 and matching the number of reads the change reroutes.
-`frame-state-calibration.txt` is the calibration run over the same files.
+`frame-state-calibration.txt` is the calibration run over the same files, and
+`frame-state-configurations.txt` is every configuration CI builds the app in,
+with its diagnostic and test counts before the change and after it. Counts and
+not exit codes: this package's predecessor shipped a defect by reading an exit
+code, twice.
 
 `frame-state-before.txt` predates the counted header, and like every record here
 it is not regenerated. Re-emitting from `5ca2be6`'s tree with the tool as it

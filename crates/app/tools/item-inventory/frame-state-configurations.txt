@@ -1,0 +1,56 @@
+# Every configuration CI runs `onionskin-app` in, before P0b and after it.
+#
+# Before is the tree at 3407834, after is the tree at 536487a. Counts, not
+# exit codes: P0a shipped a defect because it checked exit codes, and then
+# shipped nine dead-code warnings in a configuration where it checked exit
+# codes again. Clippy is run with `--all-targets` and without `-D warnings`
+# so that the diagnostics can be counted rather than merely fatal, and the
+# count is of distinct rendered diagnostics.
+#
+# The nine warnings under `--features shell` and the thirteen under
+# `--features a11y-probe` are pre-existing and are not P0b's: they are
+# dead-code on test-support helpers outside chrome/tabs/, and CI lints
+# neither configuration. known-issues.md records six of the nine.
+#
+# `app-nodefault-shell-test` exits 101 on both sides for the same single
+# failure, `a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops
+# _the_next_page`, which is gated on shell-test-support alone while its
+# neighbours also require codecs-common. Pre-existing, reproduces at
+# 3407834, and cargo stops after that suite, which is why only one suite is
+# counted there on either side.
+
+configuration             clippy exit/diagnostics  test exit/pass/fail/ignore
+-----------------------------------------------------------------------------
+app-nodefault             0 / 0                   0 / 113 / 0 / 7   before
+                          0 / 0                   0 / 113 / 0 / 7   after, same
+
+app-toolsbasic            0 / 0                   0 / 112 / 0 / 7   before
+                          0 / 0                   0 / 112 / 0 / 7   after, same
+
+app-shell                 0 / 9                   0 / 502 / 0 / 7   before
+                          0 / 9                   0 / 502 / 0 / 7   after, same
+
+app-shell-test            0 / 0                   0 / 605 / 0 / 7   before
+                          0 / 0                   0 / 605 / 0 / 7   after, same
+
+app-nodefault-shell-test  0 / 0                   101 / 530 / 1 / 0   before
+                          0 / 0                   101 / 530 / 1 / 0   after, same
+
+app-a11y-probe            0 / 13                  0 / 15 / 0 / 0   before
+                          0 / 13                  0 / 15 / 0 / 0   after, same
+
+workspace                 0 / 0                   0 / 541 / 0 / 10   before
+                          0 / 0                   0 / 541 / 0 / 10   after, same
+
+Commands, with {} standing for `clippy --all-targets` or `test`:
+
+  app-nodefault             cargo {} -p onionskin-app --no-default-features
+  app-toolsbasic            cargo {} -p onionskin-app --no-default-features --features tools-basic,commands-core
+  app-shell                 cargo {} -p onionskin-app --features shell
+  app-shell-test            cargo {} -p onionskin-app --features shell,shell-test-support
+  app-nodefault-shell-test  cargo {} -p onionskin-app --no-default-features --features shell,shell-test-support
+  app-a11y-probe            cargo {} -p onionskin-app --features a11y-probe --test a11y_probe
+  workspace                 cargo {} --workspace
+
+Built with CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0.
+`cargo fmt --all --check` exits 0. The a11y probe opens real windows.
