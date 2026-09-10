@@ -305,7 +305,11 @@ fn a_nonzero_pdftotext_exit_is_an_error() {
 
 fn run_corpus(name: &str, relative: &str, limit: Option<usize>) -> Option<Oracle> {
     if !common::have_pdftotext() {
-        eprintln!("SKIPPED: {name} needs pdftotext on PATH");
+        // Through `missing` rather than a bare print: without the oracle every
+        // test in this file returns early and reports a pass, which is the
+        // same silent skip an absent corpus produces and deserves the same
+        // treatment when CI says the run is mandatory.
+        common::missing(&format!("{name} needs pdftotext on PATH"));
         return None;
     }
     let dir = common::corpus_dir(relative)?;

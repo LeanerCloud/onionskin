@@ -1,18 +1,5 @@
-use std::path::{Path, PathBuf};
-
 use onionskin_core::{Document, Error, PageRect, Provenance, SearchOptions, SnapshotRequest};
-
-fn corpus_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("core crate lives under workspace/crates")
-        .join("corpus")
-}
-
-fn seed(name: &str) -> PathBuf {
-    corpus_root().join("seeds").join(name)
-}
+use onionskin_corpus_testing::{corpus_dir, seed};
 
 #[test]
 fn clean_seeds_open_with_expected_page_counts() {
@@ -43,10 +30,12 @@ fn repaired_input_keeps_provenance_and_serves_geometry() {
 
 #[test]
 fn every_generated_malformed_pdf_opens_as_repaired() {
-    let malformed = corpus_root().join("malformed");
-    if !malformed.is_dir() {
+    // Generated, gitignored, and until now skipped here without saying so:
+    // this walk was the only guarantee-6-shaped assertion in the tree with a
+    // bare `return` and no way for CI to demand it.
+    let Some(malformed) = corpus_dir("malformed") else {
         return;
-    }
+    };
 
     let mut paths = std::fs::read_dir(&malformed)
         .expect("malformed corpus is readable")

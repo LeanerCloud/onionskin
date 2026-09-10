@@ -4039,6 +4039,7 @@ name = "onionskin-core"
 version = "0.1.0"
 dependencies = [
  "onionskin-content",
+ "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-render",
 ]
