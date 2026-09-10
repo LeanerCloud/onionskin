@@ -208,14 +208,13 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
             recoveries += seen;
         }
     }
+    // Not asserted: that the sample met a file needing a recovery at all. Over
+    // the sets CI fetches it meets two in 680, and `stride` re-selects a
+    // disjoint subset whenever the corpus file count crosses a multiple of
+    // 600, so a floor here would fail on a corpus refresh rather than on a
+    // defect. Proving the detector fires on real data wants named files, which
+    // is this suite's own claim to make and not the corpus step's.
     println!("{recoveries} recovered stream boundaries in {files_with_recoveries} corpus files");
-    // The invariant is about files whose /Length lied. A sample that met none
-    // of them checked nothing, and printing the zero is not the same as
-    // saying so.
-    assert!(
-        recoveries > 0,
-        "no sampled corpus file needed a boundary recovery, so the invariant went unchecked"
-    );
 }
 
 /// The seeds are well-formed, so walking every object in them must produce no

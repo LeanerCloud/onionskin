@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: corpus/external
-          key: corpus-test-default-hayro-corpus-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
+          key: corpus-test-default+hayro-corpus-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
       # The default sets: hayro, pdf-association and verapdf. Almost every
       # external fixture the guarantee suites name comes from one of them, and
       # until this step existed every walk over them ran on an empty directory
@@ -72,11 +72,12 @@ jobs:
       # skips wholesale without it. Installed rather than assumed, because a
       # runner image that dropped it would leave the oracle green and
       # measuring nothing, which is this job's whole subject.
+      - name: Update the Linux package index
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
       - name: Install the extraction oracle
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
+        run: sudo apt-get install -y poppler-utils
       - run: cargo test --workspace
       # Fetching and generating a corpus is not proof anything measured it:
       # every suite below returns early when its directory is absent, so the

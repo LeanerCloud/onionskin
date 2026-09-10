@@ -157,9 +157,19 @@ fn damaged_files_in_the_external_corpora_repair_the_same_way() {
         return;
     };
 
+    // A directory is not a corpus: `corpus/fetch.sh` creates `external/`
+    // before it downloads anything, and a truncated cache restores it empty,
+    // either of which would leave the walk below with nothing to fail on.
+    let files = pdfs_in(&external);
+    assert!(
+        !files.is_empty(),
+        "{} holds no PDF, so this walk would report a pass having opened nothing",
+        external.display()
+    );
+
     let mut tally = Tally::new("external (damaged only)");
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
-    for path in pdfs_in(&external) {
+    for path in files {
         let Ok((document, provenance)) = Document::open_path_repairing(&path) else {
             continue;
         };

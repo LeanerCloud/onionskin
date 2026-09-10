@@ -18,17 +18,22 @@ const INTERESTING: u64 = 1024 * 1024;
 /// already mean the laziness bet had failed. Applied to the bytes the open
 /// looked at, counting each one once.
 const BUDGET_PERCENT: u64 = 25;
-/// Applied to the bytes handed out, re-reads included, which is the I/O the
-/// open actually costs.
+/// How many times over the open may hand out the bytes it looked at.
 ///
-/// Higher than the budget above and derived rather than chosen: `Reader`
-/// parses an object by reading a window and quadrupling it until the object
-/// fits, re-reading from the object's start each time, so the bytes handed out
-/// run to a bounded multiple of the bytes looked at. Measured over the sets CI
-/// fetches, the worst file is isartor-6-1-12-t01-fail-a.pdf at 22% looked at
-/// and 46% handed out, and every other file is under 3%. This is the ceiling
-/// on that multiple, not a second opinion about laziness.
-const IO_CEILING_PERCENT: u64 = 60;
+/// `Reader` parses an object by reading a window and quadrupling it until the
+/// object fits, re-reading from the object's start each time, so the bytes
+/// handed out are a multiple of the bytes looked at rather than a fraction of
+/// the file. Stating it that way binds on every file measured here; a ceiling
+/// stated against the file size binds only on the one large reader and leaves
+/// the rest free to regress by any factor at all.
+///
+/// Between two anchors, both of them named because neither alone justifies a
+/// number. Measured over the sets CI fetches, the whole-open factor runs from
+/// 1.31 to 2.31 across the 32 files. The loop's own worst case for a single
+/// object is 16/3, when the object is one byte past a window boundary. So this
+/// sits above everything observed with room for a file that lands worse, and
+/// below what a loop that stopped quadrupling would produce.
+const REREAD_CEILING: u64 = 4;
 
 /// Where the ranges are recorded, shared between the wrapper handing them out
 /// and the test reading them back.
@@ -156,8 +161,8 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
             "opening looked at {looked_at} of {len} bytes, over the {BUDGET_PERCENT}% budget"
         );
         assert!(
-            handed_out * 100 <= IO_CEILING_PERCENT * len,
-            "opening read {handed_out} bytes of a {len} byte file, over the {IO_CEILING_PERCENT}% re-read ceiling"
+            handed_out <= REREAD_CEILING * looked_at,
+            "opening handed out {handed_out} bytes for the {looked_at} it looked at, over the {REREAD_CEILING}x re-read ceiling"
         );
         measured += 1;
     }

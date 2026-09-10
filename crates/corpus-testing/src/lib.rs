@@ -78,7 +78,8 @@ pub fn missing(why: &str) -> Option<PathBuf> {
 /// pointed elsewhere is the way this stops being a broken checkout and starts
 /// being a wrong environment.
 pub fn seed(name: &str) -> PathBuf {
-    let root = corpus_root().unwrap_or_else(|| workspace_root().join("corpus"));
+    let root = corpus_root()
+        .unwrap_or_else(|| panic!("no corpus found; set ONIONSKIN_CORPUS to the corpus directory"));
     let path = root.join("seeds").join(name);
     assert!(
         path.is_file(),

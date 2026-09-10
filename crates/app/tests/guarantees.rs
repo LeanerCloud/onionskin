@@ -238,6 +238,14 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
             "./corpus/make-bench.py",
             "CI never generates the thousand-page file, so the pages suite cannot be made mandatory",
         ),
+        (
+            "sudo apt-get update",
+            "CI installs the extraction oracle from whatever package index the image shipped with",
+        ),
+        (
+            "sudo apt-get install -y poppler-utils",
+            "CI does not install pdftotext, so the extraction oracle skips every file and reports a pass",
+        ),
     ]
     .map(|(command, absent)| (command, linux_step(&steps, command, absent)));
 
@@ -266,6 +274,14 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
         })
         .expect("the test job does not cache the corpus it fetches");
     let key = field(&cache["with"], "key").expect("the corpus cache declares no key");
+    // A prefix fallback would restore the cache saved under the *previous*
+    // pinned revisions, and fetch.sh skips a set that is already stamped on
+    // disk, so a revision bump would serve the old corpus for as long as the
+    // prefix kept matching. The exact key is the whole mechanism.
+    assert!(
+        cache["with"]["restore-keys"].is_badvalue(),
+        "the corpus cache falls back to a prefix, so a moved pinned revision restores the old corpus and the fetch skips it"
+    );
     assert!(
         key.contains(
             "hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256')"
@@ -275,24 +291,34 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
     // The hash covers what a set contains and not which sets were asked for,
     // so a fetch step added without touching the key would hit it, restore a
     // cache without the new set, download it, and - the key having hit - never
-    // save it again, every run. Every fetch step in the job, not only the ones
-    // named above: an unrecognised one is exactly the case this catches.
+    // save it again, every run. Compared as one joined list rather than set by
+    // set, because `key.contains("hayro")` is satisfied by a key that only
+    // names `hayro-corpus`.
+    let mut fetched = BTreeSet::new();
     for step in &steps {
         let Some(run) = field(step, "run") else {
             continue;
         };
         for line in script_lines(&run) {
-            let Some(sets) = line.trim().strip_prefix("./corpus/fetch.sh") else {
+            // Every way of naming the script, not the one spelling this
+            // workflow happens to use: `bash corpus/fetch.sh pdfjs` adds a set
+            // just as well.
+            let Some((_, sets)) = line.split_once("corpus/fetch.sh") else {
                 continue;
             };
             let sets = sets.trim();
-            let named = if sets.is_empty() { "default" } else { sets };
-            assert!(
-                key.contains(named),
-                "`{line}` fetches a set the cache key does not name, so a warm cache serves a corpus without it"
-            );
+            if sets.is_empty() {
+                fetched.insert("default".to_owned());
+            } else {
+                fetched.extend(sets.split_whitespace().map(str::to_owned));
+            }
         }
     }
+    let named = fetched.into_iter().collect::<Vec<_>>().join("+");
+    assert!(
+        key.contains(&named),
+        "the corpus cache key does not name `{named}`, the sets this job fetches, so a warm cache serves a corpus without one of them"
+    );
 
     assert_eq!(
         field(&rerun["env"], "ONIONSKIN_CORPUS_REQUIRED").as_deref(),
@@ -305,10 +331,14 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
         // `--features shell` needs GPUI's Linux dependencies, which this job
         // installs none of and has never built. An app suite that reads the
         // corpus belongs beside the windowed tests in the `shell` job on
-        // macOS, with a fetch step of its own.
+        // macOS, and P1c did not build that half: there was no app corpus
+        // suite for it to run, and a mandatory rerun of nothing proves
+        // nothing. Whoever adds the first one adds the job half with it.
         assert_ne!(
             suite.package, "onionskin-app",
-            "{} --test {} reads the corpus from the app crate, which the test job cannot build with the shell features; it belongs in the shell job",
+            "{} --test {} reads the corpus from the app crate, which this job cannot build with the shell features. \
+             Add a corpus fetch and an ONIONSKIN_CORPUS_REQUIRED rerun naming it to the `shell` job in .github/workflows/ci.yml, \
+             on the macOS runner beside the windowed tests, and assert them here the way the test job's are asserted above",
             suite.package, suite.target
         );
         expected.push(format!(
@@ -3735,13 +3765,7 @@ fn corpus_suites() -> Vec<CorpusSuite> {
                 if package == "onionskin-app" && name == "guarantees" {
                     continue;
                 }
-                let source = fs::read_to_string(&path)
-                    .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
-                if reaches_the_corpus(&source)
-                    || declared_modules(&source, &tests)
-                        .iter()
-                        .any(|module| reaches_the_corpus(module))
-                {
+                if reaches_the_corpus(&path) {
                     found.push(CorpusSuite {
                         package: package.clone(),
                         target: name,
@@ -3754,26 +3778,90 @@ fn corpus_suites() -> Vec<CorpusSuite> {
     found
 }
 
-fn reaches_the_corpus(source: &str) -> bool {
-    CORPUS_LOOKUPS.iter().any(|call| source.contains(call))
+/// Whether `file` or anything it declares as a module calls a corpus lookup.
+fn reaches_the_corpus(file: &Path) -> bool {
+    let mut frontier = vec![file.to_path_buf()];
+    let mut seen = BTreeSet::new();
+    while let Some(path) = frontier.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} is unreadable ({error})", path.display()));
+        if CORPUS_LOOKUPS.iter().any(|call| source.contains(call)) {
+            return true;
+        }
+        frontier.extend(declared_modules(&source, &path));
+    }
+    false
 }
 
-/// The sources of the modules a target declares with `mod NAME;`, as
-/// `tests/NAME.rs` or `tests/NAME/mod.rs`. Only the ones it declares: reading
-/// every file in the directory would make each target answer for its
-/// neighbours.
-fn declared_modules(source: &str, tests: &Path) -> Vec<String> {
-    source
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("mod ")?.strip_suffix(';'))
-        .flat_map(|name| {
-            [
-                tests.join(format!("{name}.rs")),
-                tests.join(name).join("mod.rs"),
-            ]
-        })
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .collect()
+/// Where the modules `file` declares live.
+///
+/// Resolved rather than guessed, and every declaration has to resolve: a
+/// module this cannot find is a module whose corpus walk this cannot see, and
+/// dropping it silently is the failure mode the whole gate exists to prevent.
+/// `#[path]` is honoured because `crates/core/tests/scroll_accounting.rs`
+/// already uses it, to reach a file outside `tests/` entirely.
+fn declared_modules(source: &str, file: &Path) -> Vec<PathBuf> {
+    // A crate root and a `mod.rs` own the directory they sit in; any other
+    // module file owns a subdirectory named after it.
+    let directory = match file.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some("mod.rs") => file.parent().expect("a file has a parent").to_path_buf(),
+        _ if is_crate_root(file) => file.parent().expect("a file has a parent").to_path_buf(),
+        _ => file.with_extension(""),
+    };
+
+    let mut found = Vec::new();
+    let mut at_path: Option<&str> = None;
+    for line in source.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#[path = \"") {
+            at_path = rest.split('"').next();
+            continue;
+        }
+        let Some(rest) = line
+            .strip_prefix("mod ")
+            .or_else(|| line.strip_prefix("pub mod "))
+        else {
+            // Only an attribute directly above the declaration applies to it.
+            if !line.is_empty() && !line.starts_with("//") && !line.starts_with('#') {
+                at_path = None;
+            }
+            continue;
+        };
+        let Some((name, _)) = rest.split_once(';') else {
+            // `mod name { ... }` is inline, so its source is already in hand.
+            at_path = None;
+            continue;
+        };
+        let name = name.trim();
+        let candidates = match at_path.take() {
+            Some(relative) => vec![directory.join(relative)],
+            None => vec![
+                directory.join(format!("{name}.rs")),
+                directory.join(name).join("mod.rs"),
+            ],
+        };
+        let resolved: Vec<PathBuf> = candidates.iter().filter(|c| c.is_file()).cloned().collect();
+        assert_eq!(
+            resolved.len(),
+            1,
+            "{} declares `mod {name};`, which resolves to {:?} rather than to one file, so whether it reaches the corpus cannot be read",
+            file.display(),
+            resolved
+        );
+        found.push(resolved[0].clone());
+    }
+    found
+}
+
+/// Whether `file` is an integration-test target rather than a module of one.
+/// Targets sit directly in a crate's `tests/` directory.
+fn is_crate_root(file: &Path) -> bool {
+    file.parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "tests")
 }
 
 /// A manifest's `[package] name`. From that table only: `[[bin]]` declares a
