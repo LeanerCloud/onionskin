@@ -101,9 +101,8 @@ nothing is selected.
 | 13 | Prepare Form | yes | none | Prepare a form |
 
 `none` means the dump reported no `AXMenuItemCmdChar`. Not one Pro entry in
-this menu carries a keyboard shortcut, which is itself a class A fact and one
-Onionskin should not reproduce: these are commands a user reaches often enough
-to want a key for.
+this menu carries a keyboard shortcut. That is a class A fact and it is
+recorded here without a recommendation attached.
 
 Two further Edit-menu submenus are relevant and are **not** Pro-gated in the
 same way, because their children report disabled rather than live:

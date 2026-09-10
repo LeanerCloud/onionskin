@@ -587,15 +587,16 @@ answer rather than the true one. Two things follow.
 
 First, **N cannot separate "Adobe does not document this" from "this pass did
 not reach the page"**, because class C was unavailable throughout. A universal
-negative is not available from a failed search, so the four rows that look
-like they have no Acrobat control at all (`Reflowing text edit`, `Export pages
-to SVG`, `Keep the structure tree valid through every edit`, `Preserve
-signature validity across edits`) carry the same evidence string as the rest
-of N, and only the last two are Onionskin obligations by construction. Of
-those two, `Keep the structure tree valid through every edit` is proposed as a
-board edit in 7.5 because it sits in an Acrobat toolset section; `Preserve
-signature validity across edits` is not, because it is a property Acrobat's
-own signing surface has and a reader could reasonably expect a row for it.
+negative is not available from a failed search. Exactly one of the 57 is an
+absence this pass can assert without one: `Keep the structure tree valid
+through every edit` names no Acrobat control because it is an obligation
+Onionskin's incremental-save invariant creates, and 7.5 proposes it as a board
+edit for that reason. Two more look like absences and are not established as
+any: `Reflowing text edit` and `Export pages to SVG` both failed on the same
+route as the rest of N, and 7.5 asks for the SVG one to be checked rather than
+acted on. Everything else in the 57, including `Preserve signature validity
+across edits`, is a row this pass failed to source, not a row with nothing
+behind it.
 
 Second, and despite that, the shape of the fix is knowable. Every one of the
 57 is a row on the board, and the route that failed for all of them is the
