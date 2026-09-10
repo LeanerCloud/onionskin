@@ -2514,7 +2514,10 @@ tools do not each get it slightly wrong.
   buffer that is never saved. `/OC` is not used and no M3 annotation carries
   one, because hayro ignores it.
 - Reading existing annotations, because a comment on a file Acrobat produced has
-  to appear in the Comments pane.
+  to appear in the Comments pane. **This reader goes through P3's `structure()`,
+  not `&self.cos`**, or it cannot see a comment the session just authored and
+  P20's central claim fails. It is named here because this package lands after
+  P3, so P3's own conversion list could not include it.
 
 **Rows closed.** None. Backs every row in P8, P9a, P9b, P9c, P10, P20 and the filter rows
 in P15 and P17.
@@ -3665,6 +3668,7 @@ known 0755-preexisting-directory residual.
 - **The user-visible half of T1's undo-across-a-save rule**, end to end through the shell rather than through `EditSession`: delete a page, `cmd-s`, `cmd-z`, `cmd-s`, and the page is back on the canvas, in the file on disk, and in the thumbnails pane. This is P3's `edit, save, undo, save` test driven by four keystrokes, and it exists separately because a green kernel test alongside a shell that never reaches it is exactly the failure §4 of the repository rules names.
 - Closing a dirty tab prompts; the prompt retains the originating canvas identity, which is B4.2's rule for every async prompt in this shell and applies here unchanged.
 - Crash recovery: a recovery file written for document A is offered when A is next opened and not when B is, ranked most-recent-first, asserted as a unit test on the ranking with no window.
+- **Replaying a recovery file goes through P3's `adopt`**, and the object numbers it names do not collide with the next edit's: replay an overlay naming numbers a freshly opened document has never seen, then make one more edit, and assert it lands above all of them. Seeding from the reopened document alone collides on the first edit after recovery (T3).
 - Every new control is in the AccessKit tree with a state that reflects enablement (Undo is disabled with a reason when the stack is empty, not absent).
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-app --features shell`.
 
@@ -3688,8 +3692,13 @@ bytes as the bottom sheet and each incremental section above it, with its byte
 range, its size, and where known its producer and date from that section's
 trailer `/Info`. Sections other producers wrote (a file Acrobat has already
 been appended to) appear too, and are labelled as not ours. Selecting a
-generation previews the document as of that generation; rolling back truncates,
-through P3's `revert_to`, with a confirmation that says what will be discarded.
+generation previews the document as of that generation **through P3's `adopt`**,
+which is the same reopen-clear-reseed the save path takes and is why previewing a
+generation does not leave the session's readers, `next_number` or workers
+describing a different document (T3). Rolling back truncates, through P3's
+`revert_to`, with a confirmation that says what will be discarded; `revert_to`
+also clears the undo stack in both directions, so the panel's own affordances are
+the only way back after it.
 
 The skins panel is **not** a `NavigationPane`: those are one-at-a-time viewers
 of document content, and this is an app-level history of the file. It is a rail
@@ -3805,7 +3814,12 @@ updates while work continues. `quick_actions.rs` resolves availability through
 - **Runs.** `cargo test -p onionskin-app --no-default-features --features shell,shell-test-support` and the matching clippy; `cargo test -p onionskin-core` for the widened reason type.
 - **Corpus.** The fixture carrying comments Onionskin did not author is `external/`, behind P1c's fetch step and its mandatory re-run. It is the fixture that distinguishes a Comments pane from a view of the edit graph, so a skipped run leaves the package's central claim unmeasured.
 
-**Review risk.** Whether the pane reads annotations through `core::annots` or
+**Review risk.** Whether the pane sees a comment the session just authored,
+which is this package's central claim and which rests entirely on P6's reader
+going through P3's `structure()` rather than `&self.cos` - a pane reading the
+document as opened lists everything except what the user just did, and every
+fixture-based assertion here still passes. Whether the pane reads annotations
+through `core::annots` or
 grows its own parser. Whether status is written as `/State` on a reply
 annotation (correct) or as a key on the parent (what a reader would guess, and
 wrong). Whether "read and unread" is persisted in the document (it must not be:
