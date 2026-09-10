@@ -1532,9 +1532,16 @@ and asserts it everywhere else.
    step turns a silent skip into a failure, which is what makes disabling the
    fetch visible.
 
-   **Each of the eight packages adds its own command to that list as part of its
-   definition of done**, the way P4 already does. P4 is currently the only
-   package that does, and it should be the pattern rather than the exception.
+   **Every package that names an `external/` fixture adds its own command to that
+   list as part of its definition of done**, the way P4 already does. Twelve carry
+   an explicit `Corpus.` bullet: **P1b, P3, P4 and P6** reach `external/` from
+   `crates/cos` and `crates/core`, where helpers already exist, and **P8, P11,
+   P12, P13b, P14a, P14b, P19 and P20 are the eight that need the new one**,
+   because their assertions live in `crates/app/tests/` or plugin targets. **P1
+   and P5 also sweep `external/`**, inside other verification bullets rather than
+   a `Corpus.` one, and both are in crates that already have a helper. P4 is
+   currently the only package naming its command at all, and it should be the
+   pattern rather than the exception.
 
 Both pinned to `runner.os == 'Linux'`, like the two that exist, and for the
 reason those give: corpus assertions are byte and structure work with no platform
@@ -1544,7 +1551,7 @@ three chances to flake for one claim.
 **The tripwire, or this package is itself deletable.** It asserts the re-run
 step's **command set matches the enumerated list**, so a suite added to the plan
 and not to CI is a failing build rather than a silent gap; that is the assertion
-that stops the list drifting as the eight packages land.
+that stops the list drifting as those packages land.
 `crates/app/tests/guarantees.rs` asserts the steps the same way
 `every_malformed_file_opens_and_repairs_into_a_new_section` asserts its own:
 exactly one step per command, the allowed key set, `if` pinned to the value
