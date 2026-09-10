@@ -11,8 +11,9 @@ use std::path::PathBuf;
 
 use gpui::Entity;
 
+use super::context::{CanvasContextMenu, TabContextMenu};
 use super::export::ExportJob;
-use super::{tab_title, CanvasContextMenu, TabContextMenu};
+use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
 use crate::shell::chrome::page_controls::PageEntryError;
