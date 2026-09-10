@@ -238,7 +238,7 @@ call with the same argument, so they cannot disagree by construction, and no
 scratch document exists.
 
 ```
-core::edit::Overlay  =  BTreeMap<u32, ObjectState>       // net state, per object number
+core::edit::Overlay  =  { states: BTreeMap<u32, ObjectState>, next_number }  // net state, per object number
 core::edit::ObjectState = { generation: u16, object: cos::Object }
 core::edit::Change   = { number, before: Option<ObjectState>, after: Option<ObjectState> }
 core::edit::Entry    = { label: &'static str, changes: Vec<Change> }
@@ -341,15 +341,15 @@ Three consequences the plan states rather than discovers:
   the page object is not in the overlay either, and the save writes nothing.
   Collapsing has to be by value comparison against the original object, not by
   a dirty flag, or the file grows a section that changes nothing.
-- **After a save, `core` reopens the `cos::Document` from the written bytes,
-  clears the overlay, and rebases the history.** The reopen makes the `/Prev`
-  chain correct by construction for the second save and matches the existing
+- **After a save, `core` reopens the `cos::Document` from the written bytes and
+  clears the overlay.** The reopen makes the `/Prev` chain correct by
+  construction for the second save and matches the existing
   `ExportSnapshot::open` pattern. The overlay clears because the reopened
-  document now *is* the state it described. The rebase is T2's
-  `History::rebase_on_save`, and skipping it is the defect that makes undoing a
-  creation across a save a silent no-op. The caches keyed on edited pages are
-  invalidated; the rest survive. Nothing has to be cleared inside cos, because
-  nothing was ever put there.
+  document now *is* the state it described. **The history needs no rebasing**,
+  which is what T2's base-capture rule buys: `before: None` means the same thing
+  on both sides of a save. The caches keyed on edited pages are invalidated; the
+  rest survive. Nothing has to be cleared inside cos, because nothing was ever
+  put there.
 
 **T4. What the canvas shows before a save: preview bytes, not a second renderer.**
 
@@ -697,7 +697,8 @@ test would mean running neither.
 
 **Files.** `crates/app/src/shell/chrome/tabs.rs` (shrinks), new
 `crates/app/src/shell/chrome/{menu,dialogs,context,export}.rs`,
-`crates/app/src/shell/chrome/mod.rs`.
+`crates/app/src/shell/chrome/accessible.rs` (existing, receives the tree-assembly
+methods), `crates/app/src/shell/chrome/mod.rs`.
 
 **The acceptance test, and why the obvious one is not enough.** A green suite
 does not prove an 8521-line split preserved behaviour, because not every branch
@@ -778,7 +779,8 @@ have module homes (`find`, `home`, `navigation`, `rail_state`,
   normalized inventory still reports it. If the normalization swallows that, it
   is normalizing too much and P0b has no acceptance test at all.
 
-**Verification.** The same four commands as P0a, at the same test count.
+**Verification.** The same five invocations as P0a (its four plus the
+guarantee-5 `--no-default-features` run), at the same test count.
 
 **Rows closed.** None, in either package. Neither changes behaviour.
 
@@ -825,7 +827,7 @@ kernel package above depends on.
    document serialization, for the documents Onionskin authors (T8). Named
    consumers in M3: P12 (combine, split, extract), P14a (create from image),
    P14b (compress), P10 (the comment summary). This is the `flatten`
-   primitive the crate's charter names; it lands now because it has three real
+   primitive the crate's charter names; it lands now because it has four real
    callers, and M5's `redact` inherits it. Its serializer is `writer.rs`'s
    classic-table path; **it does not gain object streams or a cross-reference
    stream**, which are scoped out in P14b's entry and are not an implicit clause of
@@ -871,7 +873,8 @@ kernel package above depends on.
    catches the class if the rule is ever broken. Neither alone is enough and the
    plan says which does which.
 
-**Rows closed.** None. Backs every row in P3, P5, P11, P12, P14a, P14b and P19.
+**Rows closed.** None. Backs every row in P11, P12, P14a and P14b, and the
+kernel work of P3, P5 and P19, which close no rows themselves.
 
 **Files.** `crates/cos/src/document.rs`, `crates/cos/src/writer.rs`,
 `crates/cos/src/lib.rs`, `crates/cos/src/error.rs`; new
@@ -1084,8 +1087,7 @@ means anything.
 verification names an `external/` sweep. It is the fourth day-one root. It is
 also the one package with a `crates/app` file that does **not** depend on P0:
 `crates/app/tests/guarantees.rs` is a test target, not shell code, and neither
-P0a nor P0b does
-not touch it.
+P0a nor P0b touches it.
 
 **What exists to build on.** `corpus/fetch.sh` already skips a set already on
 disk, so a cache hit makes step 1 a no-op. The `bench` job already demonstrates
@@ -1225,8 +1227,8 @@ the base document, which are different whenever an object has already been
 edited, and getting it wrong makes exactly the second edit of an object
 un-undoable. Whether `before: None` is ever produced for anything other than a
 freshly reserved number, which is the invariant the whole undo-across-a-save
-story rests on. Whether `rebase_on_save` is called on the `Save As` path as well
-as `Save`, since both reopen. Whether the overlay collapses by value against the original (T3) or
+story rests on. Whether the overlay is cleared on the `Save As` path as well as
+`Save`, since both reopen. Whether the overlay collapses by value against the original (T3) or
 by a dirty flag, which would make edit-then-undo-then-save append an empty
 section. Whether `DocumentEdit` grew a `Raw(Change)` escape hatch, which would
 delete the entire justification for the closed enum. Whether `History` is
@@ -1702,7 +1704,7 @@ plus a linked replacement note, which Acrobat models as a `/StrikeOut` with
 
 These land first among the tool packages because they are the ones whose quad
 geometry comes from `content` and therefore exercise M2's coordinate mapping
-under a write path for the first time. If P3's geometry has a residual error,
+under a write path for the first time. If M2's P3 geometry has a residual error,
 this is where it surfaces, and it is cheaper to find here than under thirteen
 drawing tools.
 
@@ -1748,7 +1750,7 @@ generator.
 All three share P6's appearance-stream generator, one defaults struct and one
 commit path, and none of them writes a content stream. All three depend on P6 and
 P7, and all three land after P8, so P6's generator has one consumer's worth of
-feedback before twelve more arrive.
+feedback before thirteen more arrive.
 
 **The in-progress overlay seam does not exist yet, and the first draft said it
 did.** It claimed "`Overlay::{Polyline, Line, Circle, Rect}` cover every
@@ -1926,7 +1928,9 @@ surface its rows are scored on**: new `crates/app/src/shell/stamps_dialog.rs`
 `crates/app/src/shell/chrome/tabs.rs`'s clipboard read for row 85, since GPUI
 owns the pasteboard and no plugin can reach it.
 
-**Depends on.** P0b (the app surface above), P6, P7, P12 (the summary needs
+**Depends on.** P0b (the app surface above), P6, P7, P9c (a custom stamp's
+appearance is drawn artwork, and P9c's shapes are where that geometry-to-
+appearance path gets its first seven consumers), P12 (the summary needs
 `write_new` and P12's page assembly), P14a (paste-as-stamp needs the image import
 path).
 
@@ -2885,16 +2889,23 @@ P1c corpus in CI       P0a relocate ShellFrame       P1b crypto (ruled in)
            │         └── P8  tools-comment: text markup (also P7)
            │              └── P9a notes, free text, the overlay painters (also P0b)
            │                   ├── P9b ink
-           │                   └── P9c shapes
+           │                   └── P9c shapes ──┐ (P10 also hangs here)
            ├── P7  plugin-api edit contract (also P0b)
            └── P22 remaining shell rows (P0b only; drawn here for position)
 ```
 
 **Critical path: `P1c → P1 → P2 → P4 → P5 → P11 → P12 → P14a → P10 → P13b`, ten
-packages** (P20 ties at ten through the same nine-package prefix). The first
-draft called `P1 → P2 → P4 → P5 → P11 → P21` critical at six, which is four
-short: P21 is at depth seven, and the chain continues past P11 through combine,
-image import, stamps and the summary generator before it reaches P13b and P20.
+packages.** Three others tie at ten and all four converge on P10: P20 through the
+same nine-package prefix, and both P13b and P20 again through the annotation
+branch `P4 → P6 → P8 → P9a → P9c → P10`, since a custom stamp's appearance needs
+P9c's shapes. **P10 is the join**, which is the scheduling fact that matters: it
+waits on the page branch and the annotation branch both, and nothing downstream
+of it starts until the later of the two lands.
+
+The first draft called `P1 → P2 → P4 → P5 → P11 → P21` critical at six, which is
+four short: P21 is at depth seven, and the chain continues past P11 through
+combine, image import, stamps and the summary generator before it reaches P13b
+and P20.
 
 The picture hid it in two ways, both worth naming because they are how a drawn
 graph lies. P10 was drawn as a child of P6, which is true and is not the whole
@@ -2904,9 +2915,9 @@ they "are three independent branches", which is false twice over: **P14 depends
 on P12**, and **P13 depends on P10, which depends on P14, which depends on P12**.
 They are a chain of four, and it is the tail of the critical path.
 
-The print chain, `P1 → P2 → P4 → P6 → P15 → P16 → P17`, is seven deep, so it is
-shorter than the critical path rather than "the same depth" as the first draft
-said. It is still the natural second track, because it is the longest chain that
+The print chain, `P1c → P1 → P2 → P4 → P6 → P15 → P16 → P17`, is eight deep on
+the same convention, so it is shorter than the critical path rather than "the
+same depth" as the first draft said. It is still the natural second track, because it is the longest chain that
 shares nothing with the first past P4.
 
 **The schedule's real hazard** is unchanged and is not the length: P5 and P11 sit
@@ -2917,8 +2928,8 @@ round.
 
 **Parallelism.**
 
-- **P0 does not run alone in `crates/app` and does not block nobody.** Both of
-  those claims were in the first draft and both are false. `crates/app` files
+- **P0 neither runs alone in `crates/app` nor blocks nobody.** Both of those
+  claims were in the first draft and both are false. `crates/app` files
   appear in the Files line of P1b, P1c, P7, P9a, P10, P12, P13a, P13b, P13c,
   P14a, P14b, P17, P18, P19, P20, P21 and P22. All except P1c depend on P0b and
   land after it; P1c is the exception because its only app file is
@@ -2931,7 +2942,7 @@ round.
   and `crates/plugin-api`.
 - P5 and P6 are independent of each other; both need P4.
 - P8 comes before all three of P9a, P9b and P9c, on purpose: it gives P6's
-  appearance generator one consumer's worth of feedback before twelve more
+  appearance generator one consumer's worth of feedback before thirteen more
   arrive. **P9a then gates P9b and P9c**, not for taste but because it owns the
   `Overlay` and `OverlayPaint` seam both need: four of six `Overlay` variants
   have no painter today (`canvas.rs:1879-1895` returns `Err` for `Rect`,
@@ -2993,7 +3004,7 @@ P4 then adds the `corpus/tagged/` derivation on top of the `verapdf` set P1c
 already fetches, and adds its own suite to P1c's mandatory re-run list. Neither
 is a "later package" problem: a suite that skips its corpus silently is exactly
 how guarantee 6 stayed green and unmeasured for a milestone (section 8, item 2),
-and this plan was in the middle of repeating it for eleven packages.
+and this plan was in the middle of repeating it for twelve packages.
 
 ---
 
@@ -3521,22 +3532,33 @@ under `docs/evidence/`, generated by a test that fails if the tally drifts, and
 **the orchestrator lands the `known-issues.md` entry from it**; no package in
 this plan edits that file.
 
-### Ruling B. M3 ships fourteen of the sixteen printing rows.
+### Ruling B. M3 ships twelve of the fourteen printing rows.
 
 **Ruled: booklet and poster / tile move to M4.** M3 ships the `Sheet` imposition
-model and the other fourteen rows.
+model and the other twelve rows.
+
+**The count, corrected, because the ruling's own arithmetic was wrong and the
+reasoning below is not.** `ACROBAT-PARITY.md`'s Printing section has **eighteen
+rows, fourteen of them M3**; the other four are Print on Linux (M4), Print on
+Windows (M4), Print colour PDFs (out of scope) and Print a PDF Portfolio
+(post-1.0). So the denominator is fourteen, not sixteen, and moving two leaves
+**twelve**. Three more print-shaped rows live in other parity sections and are
+all P17's (4 Print button, 15 File > Print, 77 Print comments), so the print
+feature as a whole is seventeen rows of which fifteen ship: P15 7 + P16 1 +
+P17 7. Recount either way with the `awk` snippet in section 6; do not carry the
+number forward.
 
 `crates/print`'s doc comment names page ranges, scaling, N-up, booklet and
-print-as-image. `ACROBAT-PARITY.md` puts sixteen printing rows in M3. Some of
-that is deep.
+print-as-image. Some of what the Printing section asks for is deep.
 
 **The defensible M3 subset**, which is what P15 through P17 as written deliver:
 the imposition engine, page range and subset (all, current, custom, odd and
 even), page sizing and handling (Fit, Actual size, Shrink oversized, Custom
 scale), N-up, orientation, duplex, Comments and Forms, Page Setup, Print as
 Image, Print to File, the print dialog itself with a live preview, and the
-Advanced Print Setup dialog carrying only its two in-scope items. Fourteen of
-the sixteen rows.
+Advanced Print Setup dialog carrying only its two in-scope items. Twelve of the
+Printing section's fourteen M3 rows, plus the three print rows that live in other
+sections.
 
 **What slips: booklet (row 90) and poster / tile (row 91).**
 
