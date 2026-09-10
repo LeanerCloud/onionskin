@@ -91,7 +91,8 @@ impl ShellFrame {
         // emptying the field is what closes it. It never shows at the same
         // time as a menu, so where it sits relative to them does not matter.
         if self.search_panel_visible(cx) {
-            self.search_input
+            self.tool_search
+                .search_input
                 .update(cx, |input, cx| input.set_query("", cx));
             cx.notify();
             return;
@@ -130,7 +131,7 @@ impl ShellFrame {
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
-        if activate_tab(&mut self.tabs, &mut self.search_feedback, index) {
+        if activate_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index) {
             self.navigation.document_changed();
             self.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
@@ -263,7 +264,7 @@ impl ShellFrame {
         })
         .detach();
         self.tabs.push(DocumentTab::new(source.clone(), canvas));
-        self.search_feedback = None;
+        self.tool_search.search_feedback = None;
         Ok(source)
     }
 
@@ -357,7 +358,7 @@ impl ShellFrame {
                 if let Some(tab) = self.tabs.tabs().get(index) {
                     self.cancel_export_for(tab.canvas.entity_id());
                 }
-                close_tab(&mut self.tabs, &mut self.search_feedback, index)?;
+                close_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
@@ -376,7 +377,7 @@ impl ShellFrame {
                         self.cancel_export(cx);
                     }
                 }
-                close_other_tabs(&mut self.tabs, &mut self.search_feedback, index)?;
+                close_other_tabs(&mut self.tabs, &mut self.tool_search.search_feedback, index)?;
                 self.navigation.document_changed();
                 self.observed_view_state = self.active_view_state(cx);
                 self.sync_page_entry(cx);
@@ -387,7 +388,7 @@ impl ShellFrame {
             TabCommand::CloseAll => {
                 self.cancel_export(cx);
                 self.tabs.close_all();
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.navigation.document_changed();
                 self.observed_view_state = None;
                 self.refresh_find(cx);
@@ -427,7 +428,8 @@ impl ShellFrame {
 
     fn apply_theme(&mut self, cx: &mut Context<Self>) {
         let theme = self.shell_view_state.tokens();
-        self.search_input
+        self.tool_search
+            .search_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         self.find_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
@@ -716,12 +718,12 @@ impl ShellFrame {
                 div()
                     .w(px(320.0))
                     .flex_none()
-                    .child(self.search_input.clone()),
+                    .child(self.tool_search.search_input.clone()),
             )
     }
 
     fn search_results(&self, cx: &App) -> Vec<SearchResult> {
-        let query = self.search_input.read(cx).query().to_owned();
+        let query = self.tool_search.search_input.read(cx).query().to_owned();
         let has_document = self.tabs.active().is_some();
         let mut results = self
             .tabs
@@ -744,7 +746,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         if let Some(unavailable) = unavailable_selection(&result, self.tabs.active().is_some()) {
-            self.search_feedback = Some(unavailable);
+            self.tool_search.search_feedback = Some(unavailable);
             cx.notify();
             return;
         }
@@ -752,16 +754,16 @@ impl ShellFrame {
             SearchResult::Tool { index, name, .. } => {
                 let entry = self.active_rail_entry(index, cx);
                 if self.activate_canvas_tool(index, name, entry, cx) {
-                    self.search_feedback = None;
+                    self.tool_search.search_feedback = None;
                     cx.notify();
                 }
             }
             SearchResult::DocumentSearch { query } => {
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.open_find_bar(Some(query), window, cx);
             }
             SearchResult::Command { id, .. } => {
-                self.search_feedback = None;
+                self.tool_search.search_feedback = None;
                 self.run_registry_command(id, cx);
             }
             // Everything unavailable returned above.
@@ -815,7 +817,7 @@ impl ShellFrame {
             canvas.update(cx, |canvas, cx| canvas.activate_tool(index, cx))
         };
         if result.is_err() {
-            self.search_feedback = Some(SearchResult::Unavailable {
+            self.tool_search.search_feedback = Some(SearchResult::Unavailable {
                 label: name.to_owned(),
                 reason: TOOL_ACTIVATION_FAILED,
             });
@@ -973,7 +975,13 @@ impl ShellFrame {
         self.shell_view_state.visibility().global_bar
             && !self.menus.main_menu_open
             && self.context_menus.tab_context_menu.is_none()
-            && !self.search_input.read(cx).query().trim().is_empty()
+            && !self
+                .tool_search
+                .search_input
+                .read(cx)
+                .query()
+                .trim()
+                .is_empty()
     }
 
     fn render_search_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1020,7 +1028,7 @@ impl ShellFrame {
             );
         }
 
-        if let Some(feedback) = self.search_feedback.as_ref() {
+        if let Some(feedback) = self.tool_search.search_feedback.as_ref() {
             panel = panel.child(
                 div()
                     .mt_1()
@@ -2295,6 +2303,7 @@ mod tests {
                 // A query left in the global bar's field, so the panel it
                 // opens has to go with the bar rather than hang under it.
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("zoom", cx));
                 let tree = frame.accessible(window, cx);
@@ -2405,6 +2414,7 @@ mod tests {
                         // global bar's field, which these modes hide, so it
                         // does not open however much is typed into it.
                         frame
+                            .tool_search
                             .search_input
                             .update(cx, |input, cx| input.set_query("zoom", cx));
                         assert!(
@@ -2769,9 +2779,10 @@ mod tests {
         window
             .update(cx, |frame, window, cx| {
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("find me".to_owned(), cx));
-                window.focus(&frame.search_input.read(cx).focus_handle(cx));
+                window.focus(&frame.tool_search.search_input.read(cx).focus_handle(cx));
             })
             .unwrap();
         cx.run_until_parked();
@@ -2782,7 +2793,7 @@ mod tests {
         window
             .update(cx, |frame, _window, cx| {
                 assert_eq!(
-                    frame.search_input.read(cx).selected_range(),
+                    frame.tool_search.search_input.read(cx).selected_range(),
                     0.."find me".len(),
                     "the field's own Select All did not run"
                 );
@@ -3127,7 +3138,7 @@ mod tests {
             let open = frame.read(app);
             assert!(open.find.is_open());
             assert!(
-                open.search_feedback.is_none(),
+                open.tool_search.search_feedback.is_none(),
                 "the document-text route is live, not a deferred milestone"
             );
             assert_eq!(open.find_input.read(app).query(), "Onionskin");
@@ -3166,7 +3177,7 @@ mod tests {
 
         let results = window
             .update(cx, |frame, _window, cx| {
-                frame.search_input.update(cx, |input, cx| {
+                frame.tool_search.search_input.update(cx, |input, cx| {
                     input.set_query("needle", cx);
                 });
                 frame.search_results(cx)
@@ -4726,7 +4737,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             assert_eq!(
-                frame.read(app).search_feedback,
+                frame.read(app).tool_search.search_feedback,
                 Some(SearchResult::Unavailable {
                     label: "Absent".to_owned(),
                     reason: TOOL_ACTIVATION_FAILED,
@@ -4737,7 +4748,7 @@ mod tests {
 
         cx.update(|_window, app| {
             frame.update(app, |frame, cx| {
-                frame.search_feedback = None;
+                frame.tool_search.search_feedback = None;
                 frame.select_rail_entry(
                     RailEntry {
                         registry_index: 3,
@@ -4754,7 +4765,7 @@ mod tests {
         });
         cx.update(|_window, app| {
             assert!(
-                frame.read(app).search_feedback.is_some(),
+                frame.read(app).tool_search.search_feedback.is_some(),
                 "the rail dropped the activation error"
             );
         });
@@ -5379,6 +5390,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 assert!(
                     frame
+                        .tool_search
                         .search_input
                         .read(cx)
                         .focus_handle(cx)
@@ -5754,6 +5766,7 @@ mod tests {
             .update(cx, |frame, window, cx| {
                 frame.open_find_bar(None, window, cx);
                 frame
+                    .tool_search
                     .search_input
                     .update(cx, |input, cx| input.set_query("zoom", cx));
             })

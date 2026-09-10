@@ -163,12 +163,22 @@ impl<T> TabState<T> {
     }
 }
 
+/// The global bar's tool search box, and what the last search there
+/// reported.
+///
+/// Declared with the frame's own state rather than in `chrome::tool_search`,
+/// which owns the box itself and not the frame's hold on it: this side is
+/// built from `ShellFrame::new`'s context and observed by the frame.
+pub(super) struct ToolSearchState {
+    pub(super) search_input: Entity<SearchInput>,
+    pub(super) search_feedback: Option<SearchResult>,
+}
+
 pub(in crate::shell) struct ShellFrame {
     pub(super) tabs: TabState<DocumentTab>,
     pub(super) menus: MenuOpenState,
     pub(super) context_menus: ContextMenuState,
-    pub(super) search_input: Entity<SearchInput>,
-    pub(super) search_feedback: Option<SearchResult>,
+    pub(super) tool_search: ToolSearchState,
     pub(super) find: FindBarState,
     pub(super) find_input: Entity<SearchInput>,
     pub(super) page_input: Entity<SearchInput>,
@@ -243,7 +253,7 @@ impl ShellFrame {
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
         cx.observe(&search_input, |frame, _, cx| {
-            frame.search_feedback = None;
+            frame.tool_search.search_feedback = None;
             cx.notify();
         })
         .detach();
@@ -283,8 +293,10 @@ impl ShellFrame {
             tabs,
             menus: MenuOpenState::default(),
             context_menus: ContextMenuState::default(),
-            search_input,
-            search_feedback: None,
+            tool_search: ToolSearchState {
+                search_input,
+                search_feedback: None,
+            },
             find: FindBarState::with_options(settings.preferences.search),
             find_input,
             page_input,

@@ -184,7 +184,8 @@ impl ShellFrame {
                     .with_activation(Activation::ToggleMainMenu),
             )
             .child(
-                self.search_input
+                self.tool_search
+                    .search_input
                     .read(cx)
                     .accessible("Search Tools Or Document", TextField::Search),
             )
@@ -334,7 +335,7 @@ impl ShellFrame {
                     })
                     .collect(),
             );
-        if let Some(feedback) = self.search_feedback.as_ref() {
+        if let Some(feedback) = self.tool_search.search_feedback.as_ref() {
             panel = panel.child(A11yElement::new(
                 "global-search-feedback",
                 Role::Alert,
@@ -522,7 +523,7 @@ impl ShellFrame {
 
     pub(super) fn text_field(&self, field: TextField) -> &Entity<SearchInput> {
         match field {
-            TextField::Search => &self.search_input,
+            TextField::Search => &self.tool_search.search_input,
             TextField::Find => &self.find_input,
             TextField::Page => &self.page_input,
         }
@@ -553,10 +554,14 @@ impl ShellFrame {
     /// The id the field publishes, so the ring and the tree name it the same
     /// way.
     pub(super) fn focused_text_field(&self, window: &Window, cx: &App) -> Option<gpui::ElementId> {
-        [&self.search_input, &self.find_input, &self.page_input]
-            .into_iter()
-            .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
-            .map(|input| input.read(cx).element_id().into())
+        [
+            &self.tool_search.search_input,
+            &self.find_input,
+            &self.page_input,
+        ]
+        .into_iter()
+        .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        .map(|input| input.read(cx).element_id().into())
     }
 
     pub(super) fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
