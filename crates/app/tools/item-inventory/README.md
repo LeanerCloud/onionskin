@@ -73,7 +73,7 @@ are to be read rather than hashed away. Both halves are mutation-tested by
 asserts both that the rule absorbs the hop and that it still reports a lost
 statement, a changed call, a renamed leaf, an undeclared group and a literal.
 
-The six `frame-state-*.txt` files are the acceptance record for the one change
+The seven `frame-state-*.txt` files are the acceptance record for the one change
 that has used the rule so far, P0b, which gathered ten of `ShellFrame`'s loose
 fields into five sub-structs. Like the `tabs-split-*` set they are a record and
 are not regenerated. Measured from `f349359` to `efb49ee` the comparison is
@@ -86,6 +86,13 @@ fifteen lines out and twenty-five in, and every one of them is accounted for:
   restructuring itself;
 * three function bodies carry a rustfmt rewrap that adds a brace or a comma,
   listed with their diffs in `frame-state-reflow.txt`.
+
+The listing says which items changed; it cannot say a file holds nothing
+authored, because it excludes what is not an item. `frame-state-replay.txt`
+answers that separately: each of the six files is reproduced from its base by
+replaying the mechanical rewrite and nothing else, and every divergence from
+what shipped is either a declaration P0b adds by design or one of those rustfmt
+hunks. `accessible.rs` comes out byte-identical.
 
 Everything else hashes exactly as it did: 326 of the 330 function bodies, across
 135 rerouted reads. `frame-state-visibility.txt` is the `audit` diff that

@@ -43,3 +43,7 @@ the closure body wraps, and a wrapped closure body takes a block
 +                    .find(|tab| {
 +                        tab.canvas.entity_id() == frame.export.export_job.as_ref().unwrap().origin
 +                    })
+
+# frame-state-replay.txt replays the mechanical rewrite over all six files and
+# shows that these two hunks are the only divergence in either file that is not
+# a declaration P0b adds by design.

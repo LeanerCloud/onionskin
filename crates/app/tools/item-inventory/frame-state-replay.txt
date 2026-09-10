@@ -1,0 +1,103 @@
+# The whole change, replayed.
+#
+# The inventory says which items changed. It cannot say that a file contains
+# nothing authored, because it excludes what is not an item. So each of the six
+# files was reproduced from its base copy at f349359 by replaying the mechanical
+# `.field` -> `.group.field` rewrite for all five groups and nothing else, then
+# formatting, and the result is compared against what shipped at efb49ee.
+#
+# The comparison drops comments, collapses whitespace and removes the whitespace
+# beside every dot, which is what `--elide` normalizes and no more. rustfmt is
+# not canonical for a field chain: over one isolated file it settles on a
+# different fixed point from `cargo fmt` over the crate, so a byte comparison
+# would report the formatter. A brace or a comma is not whitespace, so the two
+# rustfmt hunks in frame-state-reflow.txt still show, which is the check that
+# this normalization is not simply hiding everything.
+#
+# Read the divergences below. There is no line among them that is not either a
+# declaration P0b adds by design or one of those two rustfmt hunks:
+#
+#   accessible.rs  nothing at all
+#   mod.rs         the two rustfmt hunks, as four difflib regions
+#   context.rs     the ContextMenuState declaration
+#   export.rs      the ExportState declaration
+#   menu.rs        the MenuOpenState declaration
+#   frame_state.rs the imports, the two declarations it holds, the field list
+#                  and the literal in ShellFrame::new
+#
+# In particular `recent_menu_open` is deleted twice in frame_state.rs, once from
+# the field list and once from the literal, and appears in menu.rs's declaration
+# and in the derive that replaces its `false`. Nothing is lost.
+
+== mod.rs  replayed 12062 tokens, shipped 12066, divergent regions 4
+   replace
+     replayed: assert!(frame.context_menus.canvas_context_menu.is_none(),
+     shipped : assert!( frame.context_menus.canvas_context_menu.is_none(),
+   replace
+     replayed: it");
+     shipped : it" );
+   insert
+     replayed: (nothing)
+     shipped : {
+   replace
+     replayed: frame.export.export_job.as_ref().unwrap().origin).unwrap().canvas.clone();
+     shipped : frame.export.export_job.as_ref().unwrap().origin }).unwrap().canvas.clone();
+== accessible.rs  replayed 1117 tokens, shipped 1117, divergent regions 0
+== context.rs  replayed 705 tokens, shipped 717, divergent regions 1
+   insert
+     replayed: (nothing)
+     shipped : #[derive(Default)] pub(super) struct ContextMenuState { pub(super) tab_context_menu: Option<TabContextMenu>, pub(super) canvas_context_menu: Option<CanvasContextMenu>, }
+== export.rs  replayed 1848 tokens, shipped 1860, divergent regions 1
+   insert
+     replayed: (nothing)
+     shipped : } #[derive(Default)] pub(super) struct ExportState { pub(super) export_job: Option<ExportJob>, pub(super) next_export_id: u64,
+== frame_state.rs  replayed 736 tokens, shipped 746, divergent regions 15
+   replace
+     replayed: super::context::{CanvasContextMenu, TabContextMenu};
+     shipped : super::context::ContextMenuState;
+   replace
+     replayed: super::export::ExportJob;
+     shipped : super::export::ExportState; use super::menu::MenuOpenState;
+   insert
+     replayed: (nothing)
+     shipped : pub(super) struct ToolSearchState { pub(super) search_input: Entity<SearchInput>, pub(super) search_feedback: Option<SearchResult>, } pub(super) struct PageEntryState { pub(super) page_input: Entity<SearchInput>, pub(sup
+   replace
+     replayed: main_menu_open: bool,
+     shipped : menus: MenuOpenState,
+   replace
+     replayed: tab_context_menu: Option<TabContextMenu>,
+     shipped : context_menus: ContextMenuState,
+   replace
+     replayed: canvas_context_menu: Option<CanvasContextMenu>, pub(super) search_input: Entity<SearchInput>, pub(super) search_feedback: Option<SearchResult>,
+     shipped : tool_search: ToolSearchState,
+   replace
+     replayed: page_input: Entity<SearchInput>, pub(super) page_entry_error: Option<PageEntryError>,
+     shipped : page_entry: PageEntryState,
+   delete
+     replayed: recent_menu_open: bool, pub(super)
+     shipped : (nothing)
+   replace
+     replayed: export_job: Option<ExportJob>, pub(super) next_export_id: u64,
+     shipped : export: ExportState,
+   replace
+     replayed: main_menu_open: false, tab_context_menu: None, canvas_context_menu: None,
+     shipped : menus: MenuOpenState::default(), context_menus: ContextMenuState::default(), tool_search: ToolSearchState {
+   insert
+     replayed: (nothing)
+     shipped : },
+   insert
+     replayed: (nothing)
+     shipped : page_entry: PageEntryState {
+   insert
+     replayed: (nothing)
+     shipped : },
+   delete
+     replayed: recent_menu_open: false,
+     shipped : (nothing)
+   replace
+     replayed: export_job: None, next_export_id: 0,
+     shipped : export: ExportState::default(),
+== menu.rs  replayed 732 tokens, shipped 744, divergent regions 1
+   insert
+     replayed: (nothing)
+     shipped : #[derive(Default)] pub(super) struct MenuOpenState { pub(super) main_menu_open: bool, pub(super) recent_menu_open: bool, }
