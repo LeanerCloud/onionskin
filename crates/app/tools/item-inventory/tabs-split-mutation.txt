@@ -1,0 +1,15 @@
+deliberately deleted:
+  method:    ShellFrame::toggle_fullscreen
+  match arm: CanvasContextCommand::RotateClockwise in ShellFrame::run_canvas_context_command
+
+items before: 460
+items after:  459
+visibility-only changes: 0
+only in before: 2
+  -    impl ShellFrame	fn	run_canvas_context_command	private	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	c3b25de281ac1170
+  -    impl ShellFrame	fn	toggle_fullscreen	private	fn toggle_fullscreen(&mut self,window: &mut Window,cx: &mut Context<Self>)	6dcc960e6bf1c538
+only in after:  1
+  +    impl ShellFrame	fn	run_canvas_context_command	private	fn run_canvas_context_command(&mut self,command: CanvasContextCommand,cx: &mut Context<Self>)	86dbcff329d8fae1
+RESULT: sets differ
+
+MUTATION CHECK: the inventory reported exactly the two deletions
