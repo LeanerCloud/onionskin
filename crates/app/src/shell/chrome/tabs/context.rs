@@ -390,3 +390,273 @@ pub(in crate::shell::chrome) fn tab_context_entries(
         },
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::context::{
+        context_menu_origin, tab_context_entries, CANVAS_CONTEXT_MENU_WIDTH, CONTEXT_MENU_PADDING,
+        CONTEXT_MENU_ROW_HEIGHT,
+    };
+    #[cfg(feature = "shell-test-support")]
+    use super::super::document_view_bounds;
+    #[cfg(feature = "shell-test-support")]
+    use super::super::tests::{bound_window, draw_window};
+    #[cfg(feature = "shell-test-support")]
+    use super::super::MouseButton;
+    use super::super::{px, TabCommand, TabError};
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use super::super::{Canvas, Document, ShellFrame, ViewSize};
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::preferences::ThemePreference;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::shell::canvas::CanvasModel;
+    use crate::shell::chrome::global_bar::MenuAvailability;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::shell::chrome::theme::ShellViewState;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::shell::context_menu::tool_with;
+    use crate::shell::context_menu::CanvasContextCommand;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use crate::shell::ShellSettings;
+    #[cfg(feature = "shell-test-support")]
+    use gpui::{TestAppContext, VisualTestContext};
+    // `tools-basic` as well: without it the canvas context menu test has no
+    // live entry to pick.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use gpui::{AppContext as _, MouseDownEvent};
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use onionskin_core::ViewRotation;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    use std::path::Path;
+
+    /// A click low enough that a thirteen-entry menu would overhang slides
+    /// the panel back inside; a click with room to spare is left alone.
+    #[test]
+    fn a_context_menu_never_opens_outside_the_window() {
+        let viewport = gpui::size(px(800.0), px(600.0));
+        let size = gpui::size(
+            px(CANVAS_CONTEXT_MENU_WIDTH),
+            px(
+                CanvasContextCommand::ALL.len() as f32 * CONTEXT_MENU_ROW_HEIGHT
+                    + 2.0 * CONTEXT_MENU_PADDING,
+            ),
+        );
+
+        let roomy = gpui::point(px(100.0), px(50.0));
+        assert_eq!(context_menu_origin(roomy, size, viewport), roomy);
+
+        let cornered = context_menu_origin(gpui::point(px(760.0), px(580.0)), size, viewport);
+        assert_eq!(cornered.x + size.width, viewport.width);
+        assert_eq!(cornered.y + size.height, viewport.height);
+
+        // A window too small for the panel still opens it at the top left,
+        // where the first entries are reachable, rather than off-screen.
+        let cramped = context_menu_origin(
+            gpui::point(px(10.0), px(10.0)),
+            size,
+            gpui::size(px(120.0), px(120.0)),
+        );
+        assert_eq!(cramped, gpui::point(px(0.0), px(0.0)));
+    }
+
+    /// The entries the menu shows come from the live model, and picking one
+    /// reaches the subsystem that owns it: Take A Snapshot activates the
+    /// registered snapshot tool, Rotate Clockwise turns the real view.
+    ///
+    /// Needs the plugin that registers that tool, for the same reason the
+    /// canvas's snapshot-request test does: without it the entry is
+    /// correctly not live, and the assertion is about the case where it is.
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    #[gpui::test]
+    fn canvas_context_entries_come_from_the_live_model_and_run_against_it(cx: &mut TestAppContext) {
+        use onionskin_plugin_api::ToolCapability;
+
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let document = Document::open_path(&path).unwrap();
+        let model = CanvasModel::new(
+            document,
+            crate::build_registry(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
+        let theme = shell_view.tokens();
+        let (frame, cx) = cx.add_window_view(move |window, cx| {
+            let canvas = cx.new(|_| Canvas::new(model, theme));
+            ShellFrame::new(
+                vec![(path, canvas)],
+                shell_view,
+                ShellSettings::defaults(),
+                window,
+                cx,
+            )
+        });
+
+        let right_click = MouseDownEvent {
+            button: MouseButton::Right,
+            position: gpui::point(px(300.0), px(300.0)),
+            ..Default::default()
+        };
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.open_canvas_context_menu(&right_click, cx);
+            });
+        });
+
+        let entries = cx.update(|_window, app| {
+            assert!(frame.read(app).context_menus.canvas_context_menu.is_some());
+            frame.read(app).canvas_context_menu_entries(app)
+        });
+        let live = |command| {
+            entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("the entry is present")
+                .availability
+                .is_enabled()
+        };
+        assert_eq!(entries.len(), CanvasContextCommand::ALL.len());
+        assert!(live(CanvasContextCommand::TakeASnapshot));
+        assert!(live(CanvasContextCommand::RotateClockwise));
+        // Nothing is selected in a freshly opened document.
+        assert!(!live(CanvasContextCommand::Copy));
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.run_canvas_context_command(CanvasContextCommand::TakeASnapshot, cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let frame = frame.read(app);
+            assert!(
+                frame.context_menus.canvas_context_menu.is_none(),
+                "picking closes it"
+            );
+            let model = &frame.tabs.active().unwrap().canvas.read(app).model;
+            assert_eq!(
+                model.active_tool(),
+                tool_with(model.registry(), ToolCapability::Snapshot)
+            );
+        });
+
+        cx.update(|_window, app| {
+            frame.update(app, |frame, cx| {
+                frame.open_canvas_context_menu(&right_click, cx);
+                frame.run_canvas_context_command(CanvasContextCommand::RotateClockwise, cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let frame = frame.read(app);
+            assert!(frame.context_menus.canvas_context_menu.is_none());
+            let rotation = frame
+                .tabs
+                .active()
+                .unwrap()
+                .canvas
+                .read(app)
+                .model
+                .view_state()
+                .rotation;
+            assert_eq!(rotation, ViewRotation::Clockwise90);
+        });
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_second_right_click_inside_the_document_repositions_the_canvas_menu(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let first = gpui::point(px(300.0), px(300.0));
+        let second = gpui::point(px(500.0), px(360.0));
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(first, MouseButton::Right, gpui::Modifiers::default());
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(second, MouseButton::Right, gpui::Modifiers::default());
+
+        window
+            .update(&mut cx, |frame, _window, _cx| {
+                assert_eq!(
+                    frame
+                        .context_menus
+                        .canvas_context_menu
+                        .expect("the canvas menu remains open")
+                        .origin,
+                    second
+                );
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_second_right_click_outside_the_document_dismisses_the_canvas_menu(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let inside = gpui::point(px(300.0), px(300.0));
+        let outside = gpui::point(px(20.0), px(20.0));
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut cx, |frame, window, _cx| {
+                let visibility = frame.shell_view_state.visibility();
+                assert!(!document_view_bounds(
+                    window.viewport_size(),
+                    visibility,
+                    frame.rail_state.expanded(),
+                    frame.navigation_width(visibility.navigation_pane),
+                    frame.side_panel_state,
+                )
+                .contains(&outside));
+            })
+            .unwrap();
+
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(inside, MouseButton::Right, gpui::Modifiers::default());
+        draw_window(&mut cx);
+        cx.simulate_mouse_down(outside, MouseButton::Right, gpui::Modifiers::default());
+
+        window
+            .update(&mut cx, |frame, _window, _cx| {
+                assert!(frame.context_menus.canvas_context_menu.is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn every_tab_context_action_targets_the_clicked_tab() {
+        let entries = tab_context_entries(2, 3).unwrap();
+
+        assert_eq!(entries.len(), 5);
+        assert!(entries.iter().all(|entry| entry.tab_index == 2));
+        assert!(entries.iter().all(|entry| entry.availability.is_enabled()));
+    }
+
+    #[test]
+    fn close_others_explains_why_it_is_disabled_for_a_single_tab() {
+        let entry = tab_context_entries(0, 1)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.command == TabCommand::CloseOthers)
+            .unwrap();
+
+        assert_eq!(
+            entry.availability,
+            MenuAvailability::Disabled("No other tabs are open")
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_context_target_fails_loudly() {
+        assert!(matches!(
+            tab_context_entries(2, 2),
+            Err(TabError::OutOfRange { index: 2, count: 2 })
+        ));
+    }
+}

@@ -2,9 +2,12 @@
 
 Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
 folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
-on 2026-09-10. Implementation status at `755842f`: P0a merged at `28b311e`
-and P0b merged at `755842f`; P0c and the editing/printing packages remain
-outstanding. This document is the authoritative decomposition; it supersedes PLAN.md's M3
+on 2026-09-10. P0a merged at `28b311e` and P0b merged at `755842f`.
+P0c's test relocation is committed locally at `fdf875c`; automated relocation
+checks pass. Native smoke and Task A/B window-only captures passed at `d34b29f`
+on 2026-09-11; final integration remains pending. Editing/printing packages
+remain outstanding. This document is the
+authoritative decomposition; it supersedes PLAN.md's M3
 paragraph wherever the two disagree, and section 8 lists every disagreement.
 The PLAN.md corrections those disagreements called for **landed at `989d8a7`**;
 section 8 marks each item as landed or still owed rather than describing all of
@@ -1201,6 +1204,38 @@ inventory.
 the same rule that green means no new diagnostics rather than exit code zero.
 
 #### P0c. Move the tests out of `tabs/mod.rs`
+
+**Local source checkpoint, 2026-09-10: `fdf875c`, based on `65d29c6`.**
+All 118 inline test functions are accounted for: 24 remain in `mod.rs`, with
+38 in `export.rs`, 28 in `accessible.rs`, 11 in `menu.rs`, 7 in `context.rs`,
+5 in `frame_state.rs` and 5 in `dialogs.rs`. Shared helpers remain in the root
+test module; the three external C1.2 test files are byte-identical. Production
+prefixes are unchanged. The existing inventory compares 516 items with zero
+non-visibility differences; 12 test-only visibility changes have sibling callers.
+The independent raw-body check covers 357 functions, and all 741 comment lines
+are preserved as a multiset.
+
+Eleven before/after Cargo configurations pass with unchanged diagnostics and
+3,060 test-result entries, including ignored cases, preserved by configuration,
+target, leaf name and status. Scratch mutations detect a missing test in three
+feature configurations and a missing import only when shell test support is
+enabled. A fresh unmodified control passes 624 tests with 7 ignored. Records:
+`crates/app/tools/item-inventory/p0c-test-relocation-*.txt`. Earlier P0a/P0b
+records are unchanged. Native verification at `d34b29f` on 2026-09-11 now covers
+opening PDFs, Cmd+F, tab switching and C1.2 export input/validation, including
+page-2 PNG output at 144 DPI. Task A/B window-only captures and exact binary/output
+hashes are in `docs/evidence/milestone-screenshots.md`. Final integration remains
+pending. No Acrobat feature row closes in P0c.
+
+The exact committed shell build and headless boot also pass, reporting
+12 plugins, 6 tools, 2 commands and 3 codecs. This verifies startup, not native
+window interaction.
+
+The configuration census does not certify external-corpus coverage. That
+coverage was not measured or equalized between worktrees; successful test-result
+entries can conceal internal fixture skips. P1c owns the explicit corpus run.
+
+The description below retains its original planning baseline.
 
 `tabs/mod.rs` carries **118 test functions in one 4669-line `#[cfg(test)]`
 module**, which is more than three times its production half and is what every

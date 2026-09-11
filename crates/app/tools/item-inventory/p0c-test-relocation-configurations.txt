@@ -1,0 +1,364 @@
+# P0c configuration evidence at fdf875c7bcfdc988fc149028b2ef0d90b78904fb
+# Base source: 65d29c6aa4c5fb352a1324b0840e16836ec24801
+# Scope: external-corpus coverage was not measured or equalized. Main has
+# downloaded external sets; the relocation worktree does not. Successful test
+# entries can hide fixture skips, and cached binaries can retain another
+# manifest directory. Equal counts do not certify equal external-fixture work.
+# P1c owns that measurement. The relocated shell tests use tracked seed or
+# synthetic fixtures; production code and their bodies remain unchanged.
+# Identity key: configuration + normalized target + leaf test name + status.
+# Primary census reduces test names to leaves and removes executable hash suffixes.
+# Multiplicity is retained. The supplementary audit below retains full executable
+# basenames to distinguish same-named targets in different workspace crates.
+environment:
+  CARGO_PROFILE_DEV_DEBUG=0
+  CARGO_PROFILE_TEST_DEBUG=0
+  CARGO_NET_GIT_FETCH_WITH_CLI=true
+  cargo: cargo 1.98.0 (797e8a9bc 2026-08-05)
+  rustc: rustc 1.98.0 (88d9e12ae 2026-08-18)
+
+[01-workspace-test]
+COMMAND: cargo test --locked --workspace
+exit: 0
+counts passed/failed/ignored: 541/0/10
+identity multiplicity: 551
+before identity sha256: 777dd34b2d958745466fe2ae3e8116c71cb7a0e1ba477be4b96744a854f17ac7
+after identity sha256: 777dd34b2d958745466fe2ae3e8116c71cb7a0e1ba477be4b96744a854f17ac7
+per-target after:
+  unittests src/lib.rs:onionskin_app: 56/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 3/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  unittests src/lib.rs:onionskin_cli: 0/0/0
+  unittests src/lib.rs:onionskin_codecs_common: 3/0/0
+  tests/export.rs:export: 11/0/0
+  tests/roundtrip.rs:roundtrip: 1/0/0
+  unittests src/lib.rs:onionskin_commands_core: 5/0/0
+  unittests src/lib.rs:onionskin_content: 45/0/0
+  tests/corpus.rs:corpus: 5/0/1
+  tests/oracle.rs:oracle: 8/0/2
+  tests/regressions.rs:regressions: 13/0/0
+  tests/seeds.rs:seeds: 6/0/0
+  unittests src/lib.rs:onionskin_core: 85/0/0
+  tests/geometry.rs:geometry: 3/0/0
+  tests/history.rs:history: 8/0/0
+  tests/panes.rs:panes: 6/0/0
+  tests/render.rs:render: 15/0/0
+  tests/scroll_accounting.rs:scroll_accounting: 4/0/0
+  tests/search.rs:search: 12/0/0
+  tests/session.rs:session: 7/0/0
+  tests/viewport.rs:viewport: 38/0/0
+  unittests src/lib.rs:onionskin_cos: 21/0/0
+  tests/boundaries.rs:boundaries: 7/0/0
+  tests/delete.rs:delete: 6/0/0
+  tests/incremental.rs:incremental: 9/0/0
+  tests/lazy.rs:lazy: 3/0/0
+  tests/pages.rs:pages: 7/0/0
+  tests/repair.rs:repair: 8/0/0
+  tests/robustness.rs:robustness: 4/0/0
+  tests/roundtrip.rs:roundtrip: 7/0/0
+  unittests src/lib.rs:onionskin_crypto: 0/0/0
+  unittests src/lib.rs:onionskin_mcp: 0/0/0
+  unittests src/lib.rs:onionskin_plugin_api: 11/0/0
+  unittests src/lib.rs:onionskin_print: 0/0/0
+  unittests src/lib.rs:onionskin_redact: 0/0/0
+  unittests src/lib.rs:onionskin_render: 17/0/0
+  tests/eviction.rs:eviction: 20/0/0
+  tests/render.rs:render: 4/0/0
+  tests/tiles.rs:tiles: 13/0/0
+  unittests src/lib.rs:onionskin_scripting: 0/0/0
+  unittests src/lib.rs:onionskin_text_engine: 0/0/0
+  unittests src/lib.rs:onionskin_tools_accessibility: 0/0/0
+  unittests src/lib.rs:onionskin_tools_basic: 0/0/0
+  tests/gestures.rs:gestures: 16/0/0
+  unittests src/lib.rs:onionskin_tools_comment: 0/0/0
+  unittests src/lib.rs:onionskin_tools_edit: 0/0/0
+  unittests src/lib.rs:onionskin_tools_fill_sign: 0/0/0
+  unittests src/lib.rs:onionskin_tools_form: 0/0/0
+  unittests src/lib.rs:onionskin_tools_measure: 0/0/0
+  unittests src/lib.rs:onionskin_tools_organize: 0/0/0
+  unittests src/lib.rs:onionskin_tools_protect: 0/0/0
+  doctest:onionskin_app: 0/0/0
+  doctest:onionskin_cli: 0/0/0
+  doctest:onionskin_codecs_common: 0/0/0
+  doctest:onionskin_commands_core: 0/0/0
+  doctest:onionskin_content: 1/0/0
+  doctest:onionskin_core: 0/0/0
+  doctest:onionskin_cos: 0/0/0
+  doctest:onionskin_crypto: 0/0/0
+  doctest:onionskin_mcp: 0/0/0
+  doctest:onionskin_plugin_api: 0/0/0
+  doctest:onionskin_print: 0/0/0
+  doctest:onionskin_redact: 0/0/0
+  doctest:onionskin_render: 0/0/0
+  doctest:onionskin_scripting: 0/0/0
+  doctest:onionskin_text_engine: 0/0/0
+  doctest:onionskin_tools_accessibility: 0/0/0
+  doctest:onionskin_tools_basic: 0/0/0
+  doctest:onionskin_tools_comment: 0/0/0
+  doctest:onionskin_tools_edit: 0/0/0
+  doctest:onionskin_tools_fill_sign: 0/0/0
+  doctest:onionskin_tools_form: 0/0/0
+  doctest:onionskin_tools_measure: 0/0/0
+  doctest:onionskin_tools_organize: 0/0/0
+  doctest:onionskin_tools_protect: 0/0/0
+
+[02-workspace-clippy]
+COMMAND: cargo clippy --locked --workspace --all-targets -- -D warnings
+exit: 0
+counts passed/failed/ignored: 0/0/0
+identity multiplicity: 0
+before identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+after identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+per-target after:
+
+[03-shell-build]
+COMMAND: cargo build --locked -p onionskin-app --features shell
+exit: 0
+counts passed/failed/ignored: 0/0/0
+identity multiplicity: 0
+before identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+after identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+per-target after:
+
+[04-shell-test]
+COMMAND: cargo test --locked -p onionskin-app --features shell
+exit: 0
+counts passed/failed/ignored: 502/0/7
+identity multiplicity: 509
+before identity sha256: 1f0b1f4233b0e1147e7a2291ac151abb0c9237a1b5b9c29e830ceeabbfcb79c7
+after identity sha256: 1f0b1f4233b0e1147e7a2291ac151abb0c9237a1b5b9c29e830ceeabbfcb79c7
+per-target after:
+  unittests src/lib.rs:onionskin_app: 446/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 3/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+[05-shell-support-test]
+COMMAND: cargo test --locked -p onionskin-app --features shell,shell-test-support
+exit: 0
+counts passed/failed/ignored: 624/0/7
+identity multiplicity: 631
+before identity sha256: e38cd0e0ff1a5bca03956862fcbbbd70b2460617a4f8843b126b038d0bd7dace
+after identity sha256: e38cd0e0ff1a5bca03956862fcbbbd70b2460617a4f8843b126b038d0bd7dace
+per-target after:
+  unittests src/lib.rs:onionskin_app: 568/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 3/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+[06-no-default-test]
+COMMAND: cargo test --locked -p onionskin-app --no-default-features
+exit: 0
+counts passed/failed/ignored: 113/0/7
+identity multiplicity: 120
+before identity sha256: 4afc4186d588efd3a1020741868be13ee406cdb06e8b122a94286da01af5de81
+after identity sha256: 4afc4186d588efd3a1020741868be13ee406cdb06e8b122a94286da01af5de81
+per-target after:
+  unittests src/lib.rs:onionskin_app: 56/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 4/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+[07-tools-commands-test]
+COMMAND: cargo test --locked -p onionskin-app --no-default-features --features tools-basic,commands-core
+exit: 0
+counts passed/failed/ignored: 112/0/7
+identity multiplicity: 119
+before identity sha256: 67660e2a26f4e4514a57e261c8d1a5bdde8a3275695a26d6e557d2528aa5b9f1
+after identity sha256: 67660e2a26f4e4514a57e261c8d1a5bdde8a3275695a26d6e557d2528aa5b9f1
+per-target after:
+  unittests src/lib.rs:onionskin_app: 56/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 3/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+[08-shell-support-clippy]
+COMMAND: cargo clippy --locked -p onionskin-app --features shell,shell-test-support --all-targets -- -D warnings
+exit: 0
+counts passed/failed/ignored: 0/0/0
+identity multiplicity: 0
+before identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+after identity sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+per-target after:
+
+[09-a11y-probe-test]
+COMMAND: cargo test --locked -p onionskin-app --features a11y-probe --test a11y_probe
+exit: 0
+counts passed/failed/ignored: 15/0/0
+identity multiplicity: 15
+before identity sha256: 99a1d39393bcaf93b988fb2a3bfbbfb547088410e71210dd872e4e5b7b4fc4a3
+after identity sha256: 99a1d39393bcaf93b988fb2a3bfbbfb547088410e71210dd872e4e5b7b4fc4a3
+per-target after:
+  tests/a11y_probe.rs:a11y_probe: 15/0/0
+
+[10-shell-no-default-test]
+COMMAND: cargo test --locked -p onionskin-app --no-default-features --features shell
+exit: 0
+counts passed/failed/ignored: 498/0/7
+identity multiplicity: 505
+before identity sha256: 4ae8e397602b503d49357ecc73ab946143b2314cec7a9add0fda4d48b34dd2ec
+after identity sha256: 4ae8e397602b503d49357ecc73ab946143b2314cec7a9add0fda4d48b34dd2ec
+per-target after:
+  unittests src/lib.rs:onionskin_app: 441/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 4/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+[11-support-no-default-test]
+COMMAND: cargo test --locked -p onionskin-app --no-default-features --features shell-test-support
+exit: 0
+counts passed/failed/ignored: 603/0/7
+identity multiplicity: 610
+before identity sha256: d2558ca55ae4732a490983ea03f18991e3e78b4d5966b4e6834326981a3d8f9e
+after identity sha256: d2558ca55ae4732a490983ea03f18991e3e78b4d5966b4e6834326981a3d8f9e
+per-target after:
+  unittests src/lib.rs:onionskin_app: 546/0/0
+  unittests src/main.rs:onionskin: 0/0/0
+  tests/a11y_probe.rs:a11y_probe: 0/0/0
+  tests/file_association.rs:file_association: 4/0/0
+  tests/guarantees.rs:guarantees: 39/0/4
+  tests/kernel_emptiness.rs:kernel_emptiness: 4/0/0
+  tests/parity_privacy.rs:parity_privacy: 1/0/0
+  tests/registry.rs:registry: 9/0/3
+  doctest:onionskin_app: 0/0/0
+
+# Retained dead_code warning groups in shell-only configurations:
+  1. published_node, published_focus
+  2. assigned
+  3. seed_worker_wait_for_test, has_worker_wait_for_test, request_snapshot_for_test, has_rendered_current_page_for_test, seed_visible_raster_for_test
+  4. outline_pdf
+  5. attachment_pdf
+  6. locked_layer_pdf
+  7. text_pages_pdf
+  8. bookmarks
+  9. requested_band, set_requested_band, has_image, image_count
+
+# Relocated qualified paths observed in after logs:
+  [04-shell-test] shell::chrome::tabs::frame_state::tests::close_all_leaves_no_invalid_active_tab
+  [04-shell-test] shell::chrome::tabs::export::tests::a_one_file_export_keeps_the_name_the_user_chose
+  [05-shell-support-test] shell::chrome::tabs::accessible::tests::tab_walks_the_chrome_in_reading_order_and_shift_tab_walks_back
+
+native window gate: PENDING, not accepted
+screenshot gate: PENDING, not accepted
+
+# Supplementary strict-target identity audit
+
+The primary census strips Cargo executable hashes, so workspace targets named
+tests/roundtrip.rs collapse. This audit keeps configuration + full executable
+basename/hash + leaf test name + status + multiplicity. Executable path prefixes
+are ignored; full Cargo hash suffixes are retained.
+
+Collision split:
+  roundtrip-9d610f697860747d (codecs-common)
+  roundtrip-46f2e7714cba4d2f (cos)
+
+[01-workspace-test]
+multiplicity: 551
+before sha256: ff6787b52696156bb92fde7b3fd12cc892be51269b629f699d2305c654071411
+after sha256: ff6787b52696156bb92fde7b3fd12cc892be51269b629f699d2305c654071411
+removed: 0
+added: 0
+
+[04-shell-test]
+multiplicity: 509
+before sha256: 2ffbc493ada31927fe996811414d154f8dff1f1ae7d031b59858a89fb5623f62
+after sha256: 2ffbc493ada31927fe996811414d154f8dff1f1ae7d031b59858a89fb5623f62
+removed: 0
+added: 0
+
+[05-shell-support-test]
+multiplicity: 631
+before sha256: f911d56c0f754627939832b27b45ed426db516cf884137e4d98762952338769f
+after sha256: f911d56c0f754627939832b27b45ed426db516cf884137e4d98762952338769f
+removed: 0
+added: 0
+
+[06-no-default-test]
+multiplicity: 120
+before sha256: c4304921ba2d83f10b622c8556233eeb72e51a23b3f044504d8230ed6ea01f94
+after sha256: c4304921ba2d83f10b622c8556233eeb72e51a23b3f044504d8230ed6ea01f94
+removed: 0
+added: 0
+
+[07-tools-commands-test]
+multiplicity: 119
+before sha256: d8b4b864a07654a878b83ddfd907a0d066edc6fb1e9c05964ae0ede42ec7fced
+after sha256: d8b4b864a07654a878b83ddfd907a0d066edc6fb1e9c05964ae0ede42ec7fced
+removed: 0
+added: 0
+
+[09-a11y-probe-test]
+multiplicity: 15
+before sha256: 20e055c48c677fd299937ee89d748f36f12b672312daed271d4e9231beaac5d6
+after sha256: 20e055c48c677fd299937ee89d748f36f12b672312daed271d4e9231beaac5d6
+removed: 0
+added: 0
+
+[10-shell-no-default-test]
+multiplicity: 505
+before sha256: 11ad4bdbbd04726d5b9aeccba144ea496394453444fd4f06f1b0b784b8be15ba
+after sha256: 11ad4bdbbd04726d5b9aeccba144ea496394453444fd4f06f1b0b784b8be15ba
+removed: 0
+added: 0
+
+[11-support-no-default-test]
+multiplicity: 610
+before sha256: 9185835e86b6c987329396603440f0517bc4b1aa7bef5e054f33349e64953598
+after sha256: 9185835e86b6c987329396603440f0517bc4b1aa7bef5e054f33349e64953598
+removed: 0
+added: 0
+
+# Accepted deletion mutants with the same strict key:
+[04-shell-test]
+valid multiplicity: 509
+mutant multiplicity: 508
+valid sha256: 2ffbc493ada31927fe996811414d154f8dff1f1ae7d031b59858a89fb5623f62
+mutant sha256: cc7baaee3d19da6a7918ba46321cc516386c664558005277afc8705c33e35036
+removed: onionskin_app-bd7cf22d34410fa1 :: close_all_leaves_no_invalid_active_tab :: ok
+added: 0
+
+[05-shell-support-test]
+valid multiplicity: 631
+mutant multiplicity: 630
+valid sha256: f911d56c0f754627939832b27b45ed426db516cf884137e4d98762952338769f
+mutant sha256: 45f6a63637455bd9c5cbc25e2c545efdbdf6a8e7ab073f577cacc2713bf02c32
+removed: onionskin_app-70f6e53d0788617a :: close_all_leaves_no_invalid_active_tab :: ok
+added: 0
+
+[11-support-no-default-test]
+valid multiplicity: 610
+mutant multiplicity: 609
+valid sha256: 9185835e86b6c987329396603440f0517bc4b1aa7bef5e054f33349e64953598
+mutant sha256: 4c33f25ee5bf2e0ed312b14d6bf8e236b417700ece733f42669d1e9f086d92e0
+removed: onionskin_app-99c07f5586fa8bf0 :: close_all_leaves_no_invalid_active_tab :: ok
+added: 0

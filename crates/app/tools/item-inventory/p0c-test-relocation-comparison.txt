@@ -1,0 +1,67 @@
+elided: nothing
+items before: 516
+items after:  516
+visibility-only changes: 12
+  VIS  #[cfg(test)] mod tests :: fn bound_window: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: fn bound_window_from_bytes: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: fn bound_window_in: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: fn draw_window: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: fn install_test_export_job: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: fn keystroke_for: private -> pub(super)
+  VIS  #[cfg(test)] mod tests :: struct BlockingCodec: private -> pub(super)
+  VIS  #[cfg(test)] mod tests > struct BlockingCodec :: field block_on: private -> pub(super)
+  VIS  #[cfg(test)] mod tests > struct BlockingCodec :: field calls: private -> pub(super)
+  VIS  #[cfg(test)] mod tests > struct BlockingCodec :: field kind: private -> pub(super)
+  VIS  #[cfg(test)] mod tests > struct BlockingCodec :: field release: private -> pub(super)
+  VIS  #[cfg(test)] mod tests > struct BlockingCodec :: field started: private -> pub(super)
+only in before: 0
+only in after:  0
+RESULT: sets are equal
+
+# P0c mutation proof
+
+Fresh runner exited 0. Every Cargo log names compilation of onionskin-app from
+the intended scratch worktree. Both scratch git diff HEAD and all seven source
+SHA-256 fingerprints matched before and after their command sets.
+
+The unchanged census parser detected exactly one missing successful test,
+close_all_leaves_no_invalid_active_tab, and zero additions in each configuration:
+
+| Configuration | Valid after census | Test mutant census |
+| --- | ---: | ---: |
+| shell | 509 | 508 |
+| shell,shell-test-support | 631 | 630 |
+| no defaults, shell,shell-test-support | 610 | 609 |
+
+Counts include ignored test identities. Source logs and identity TSV files are
+retained at /tmp/claude/onionskin-p0c-mutations/run.w0NalG. Baseline data came from
+/tmp/claude/onionskin-p0c-after-corrected. The comparator imports the unchanged
+read_identities/write_counter implementation from the earlier comparator script.
+
+The import mutant compiled with shell alone, then failed with shell/support:
+Cargo status 101 and E0433 naming ShellDialog. The only source mutation was
+omitting the explicit gated ShellDialog import from dialogs.rs tests.
+
+Afterward the unmutated implementation was freshly compiled from
+/Users/cristi/Dropbox_Maestral/devel/onionskin-m3-p0c-test-relocation and the full
+shell/support test command passed: 624 passed, 7 ignored, 0 failures. Raw output
+contains both the relocated frame_state test and dialogs test as successful.
+All seven control source hashes were verified. Its sole warning is the existing
+dependency future-incompatibility notice for block and proc-macro-error2.
+
+The earlier run.fDpJ6S remains preserved as a partial run. Its deletion census
+was correct, but its import compile reused artifacts from a different worktree
+and is not accepted. The reviewed runner now forces freshness by touching only
+session-created source timestamps before each compile, requires the correct
+crate path in the compilation output, and verifies the named missing import.
+No source content or artifact was deleted for freshness.
+
+# Existing acceptance-tool controls at committed source
+
+At fdf875c7bcfdc988fc149028b2ef0d90b78904fb, unchanged procedure_mutation.py
+and rule_calibration.py ran over the seven tabs files and three external test
+files listed in the inventory. Both exited 0: every procedure mutation was
+reported, the original normalization passed, and all eight deliberately broken
+normalizations failed as expected. Thirteen source/tool SHA-256 guards passed;
+HEAD remained unchanged. Raw logs, statuses and guards are retained at
+/tmp/claude/onionskin-p0c-committed-inventory.e2zdqZ.

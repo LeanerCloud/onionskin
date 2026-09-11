@@ -93,8 +93,50 @@ page-rendering, VoiceOver or milestone acceptance.
 |---|---|---|---|
 | M3-P1C-B-001 | 2026-09-11T15:59:20Z | `p1c-reuse-e777889-20260911T155913Z.png` | `8590e24501f56cc89ff91c4feae191376805bb5fc303557d6c6f6262c495bb99` |
 
+## P0c native verification, 2026-09-11
+
+The tested source revision `d34b29f` now passes native open, Find,
+tab switching, and export modal/input smoke. The binary was explicitly relinked
+from the P0c worktree with `cargo rustc --locked -p onionskin-app --features shell
+--bin onionskin -- -C metadata=p0c_native_20260911`. Its SHA256 is
+`c793492942cc0aa6156fed258a6fd180875ecc5acfc8344595cbb2719d454b74`.
+PID 18211 owned the captured window 21242. Capture permission was granted, the
+locked-session flag was absent, and the window was on screen. Each capture uses
+`screencapture -x -o -l 21242`, was visually inspected, and contains only Onionskin.
+Times below are file modification times in UTC; filename times are approximate.
+
+| Evidence ID | Verified state | Captured UTC | Private filename | SHA256 |
+|---|---|---|---|---|
+| M3-P0C-A-001 | Native Cmd+F, query Hello, one match visibly highlighted | 2026-09-11T13:16:24Z | `p0c-task-a-find-d34b29f-20260911T1320Z.png` | `e4963ba0b96674aa8159f973c4fb1b4209bde01c6c213c2c726d13dbfb0a7e85` |
+| M3-P0C-A-002 | Page 0 rejected with a visible error, Export focused | 2026-09-11T13:17:53Z | `p0c-export-invalid-d34b29f-20260911T1325Z.png` | `94c1f3a36eed576d14aeb1c3cde75fcc0ecf64b6269907741255c05d702dff4d` |
+| M3-P0C-B-001 | Representative Task B capture: page 2 only, 144 DPI, Export focused | 2026-09-11T13:18:07Z | `p0c-task-b-export-d34b29f-20260911T1327Z.png` | `719668fab99a3e1fd14e0b98c3d8a2fff7fc27eec9eb35b0671bca4982800c7c` |
+
+AX dumps record Find `Hello` with `1 of 1`, switching from `hello.pdf` to
+`two-page.pdf` with two page nodes, export defaults `1/2/150`, rejection of
+First page `0`, then corrected `2/2/144` with Export focused. Cmd+A replaces
+First/DPI values; native Edit > Select All replaces First after correction.
+The resulting PNG is 160 by 360 pixels and visibly contains only `Page two`.
+Its SHA256 is `db576c0bd09ccb5f7e0d74645d884a9736b987a27043f3c01f06fa7b5947c088`.
+
+The save-panel automation entered the intended scratch-directory path as a
+filename instead of navigating there. The newly generated file was identified
+in `corpus/seeds`, verified, then moved into the private evidence directory;
+no pre-existing file was moved or overwritten. Raw AX dumps, output PNG and
+command/selector limitations are retained at
+`/tmp/claude/onionskin-p0c-native-20260911.DrJCIZ/`.
+These checks close P0c's pending native smoke and Task A/B capture items, not
+its final integration gate, real VoiceOver acceptance, or any Acrobat feature row.
+
 ## Historical capture blockers
 
+- M3 P0c source checkpoint, 2026-09-10: test relocation is committed at
+  `fdf875c` and automated verification passed. Fresh CoreGraphics probes
+  report capture permission granted, `CGSSessionScreenIsLocked=1`, and no
+  Onionskin windows. Native open/Find/tab/export smoke and the Task A
+  window-only capture remain pending. The subsequent evidence/status task
+  also needs its representative capture. No screenshot or native acceptance
+  was claimed at that checkpoint, and no full-screen fallback was taken.
+  Resolved for P0c by the 2026-09-11 verification above.
 - C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build
   `f0cbbcb` Onionskin-window-only capture remains pending. It was deferred while
   B7 owned the overlapping evidence files, and the GUI session is now locked

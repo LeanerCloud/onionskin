@@ -1,0 +1,23 @@
+--- p0c-test-relocation-before
++++ p0c-test-relocation-after
+@@ -1,7 +1,19 @@
+-# emitted at 65d29c6aa4c5fb352a1324b0840e16836ec24801
++# emitted at fdf875c7bcfdc988fc149028b2ef0d90b78904fb
+ # from crates/app/src/shell/chrome/tabs/accessible.rs crates/app/src/shell/chrome/tabs/context.rs crates/app/src/shell/chrome/tabs/dialogs.rs crates/app/src/shell/chrome/tabs/export.rs crates/app/src/shell/chrome/tabs/frame_state.rs crates/app/src/shell/chrome/tabs/menu.rs crates/app/src/shell/chrome/tabs/mod.rs crates/app/src/shell/chrome/tabs/tests/export_settings.rs crates/app/src/shell/chrome/tabs/tests/input_values.rs crates/app/src/shell/chrome/tabs/tests/native_input.rs
+ # elided nothing
+ module	container	kind	name	visibility
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	bound_window	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	bound_window_from_bytes	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	bound_window_in	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	draw_window	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	install_test_export_job	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	fn	keystroke_for	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests	struct	BlockingCodec	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests > struct BlockingCodec	field	block_on	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests > struct BlockingCodec	field	calls	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests > struct BlockingCodec	field	kind	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests > struct BlockingCodec	field	release	pub(super)
++crate::shell::chrome::tabs	#[cfg(test)] mod tests > struct BlockingCodec	field	started	pub(super)
+ crate::shell::chrome::tabs	-	enum	TabCommand	pub(in crate::shell)
+ crate::shell::chrome::tabs	-	use	ShellFrame	pub(in crate::shell)
+ crate::shell::chrome::tabs	-	use	TabError	pub(super)
