@@ -130,6 +130,8 @@ part of this checkpoint.
 
 P1c's corpus CI gates, required-input enforcement, shared helper and hosted
 timing/mutation proof remain outstanding. No feature rows are promoted.
-Native representative capture also remains pending: at 2026-09-10T22:00Z,
-capture permission was true, but the GUI was locked and no Onionskin window
-was available. No full-screen screenshot was taken.
+The native representative capture passed at `521ca17` on 2026-09-11: the app
+opened the same Isartor PDF and exposed page 1 of 10,000. Window-only capture,
+binary hash and private AX records are in `milestone-screenshots.md`, evidence
+`M3-P1C-A-001`. This supersedes the locked-session capture blocker from
+2026-09-10T22:00Z, not the remaining 25-percent budget or integration gate.

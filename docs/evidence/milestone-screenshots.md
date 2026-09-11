@@ -51,6 +51,29 @@ C1.2 acceptance gate, not the remaining whole-app accessibility work.
 | C1.2-NATIVE-004 | Final build after native field replacement, page 2 at 144 DPI, Export focused | 2026-09-10T15:05:05Z | `c12-native-input-verified-62576fb-20260910T1505Z.png` | `a9660eb25fe281332910be7b0ce5492e9407f085cb7b4f5320f62675acaec842` |
 | C1.2-NATIVE-005 | Final build, invalid First page visibly rejected | 2026-09-10T15:06:37Z | `c12-native-alert-62576fb-20260910-final.png` | `45382a38b00269ac807f9c59a951d686f50c8b5e22378f226390d9921671acae` |
 
+## P1c representative capture, 2026-09-11
+
+At committed parser revision `521ca17`, the native app opened
+`isartor-6-1-12-t01-fail-a.pdf` and exposed `Page 1 of 10000` in its accessibility
+tree. Fit Page showed 85 percent zoom and a white first page. This records the
+native consumer, not a pixel comparison or a passing I/O budget.
+
+| Evidence ID | Captured UTC | Private filename | SHA256 |
+|---|---|---|---|
+| M3-P1C-A-001 | 2026-09-11T13:26:17Z | `p1c-isartor-521ca17-20260911T132700Z.png` | `8590e24501f56cc89ff91c4feae191376805bb5fc303557d6c6f6262c495bb99` |
+
+The time is the file modification time in UTC; the filename time is approximate.
+Capture used `screencapture -x -o -l 21275` for Onionskin PID 25322 and was visually
+inspected as window-only. Capture permission was granted and the locked flag was
+absent. The binary was explicitly relinked from the P1c worktree with
+`cargo rustc --locked -p onionskin-app --features shell --bin onionskin --
+-C metadata=p1c_native_20260911`; its SHA256 was
+`b80b344c17c10774c135ec9796c537f6a14d14d999d018e52dd645c669372a62`.
+Private AX/window records are at `/tmp/claude/onionskin-p1c-native-20260911.1RdLPW/`.
+The matching executable is retained there as `onionskin-shell-b80b344c`;
+the shared target's top-level binary was subsequently replaced by a test build.
+The representative-capture item is closed; P1c and integration remain incomplete.
+
 ## Historical capture blockers
 
 - C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build
@@ -157,4 +180,5 @@ C1.2 acceptance gate, not the remaining whole-app accessibility work.
   startup are recorded in `m3-p1c-read-windows.md`; they are not native UI proof.
   Fresh preflight reports `capturePermission=true` and
   `CGSSessionScreenIsLocked=1`, with no Onionskin window. No full-screen fallback
-  was taken, and no screenshot is claimed for this checkpoint.
+  was taken, and no screenshot was claimed then. The representative capture was
+  completed at `521ca17` on 2026-09-11 as recorded above.
