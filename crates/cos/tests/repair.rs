@@ -10,7 +10,9 @@ use std::path::Path;
 use common::{
     classic_pdf, classic_pdf_covering, corpus_dir, corpus_root, pdfs_in, skeleton, Tally,
 };
-use onionskin_cos::{BytesSource, Document, Error, Object, Provenance, RepairReason};
+use onionskin_cos::{
+    BytesSource, Document, Error, ObjRef, Object, Origin, Provenance, RepairReason, Span,
+};
 
 /// The damage each malformed variant carries, keyed by filename suffix.
 fn expected_reason(name: &str) -> fn(&RepairReason) -> bool {
@@ -297,6 +299,58 @@ fn a_clean_document_can_escalate_to_a_scan_when_an_object_turns_out_to_be_missin
     assert!(reopened.get(4).is_ok());
 }
 
+#[test]
+fn failed_structure_validation_discards_pre_scan_dictionary_results() {
+    let bodies = skeleton();
+    let honest = classic_pdf(&bodies, &[]);
+    let object_3_at = find(&honest, b"3 0 obj").expect("object 3 is in the fixture") as u64;
+    let mut bytes = classic_pdf(&bodies, &[(2, object_3_at)]);
+    let later_at = bytes.len();
+    bytes.extend_from_slice(
+        b"1 0 obj\n<</Type/Catalog/Pages 2 0 R/Marker/Repaired>>\nendobj\n%%EOF\n",
+    );
+
+    let (document, provenance) = Document::open_repairing(Box::new(BytesSource::new(bytes)))
+        .expect("the scanner repairs the invalid loaded structure");
+    let Provenance::Repaired(report) = &provenance else {
+        panic!("an invalid loaded structure must report repair");
+    };
+    assert!(report.rebuilt_by_scan);
+    assert!(report
+        .reasons
+        .iter()
+        .any(|reason| matches!(reason, RepairReason::XrefOffsetsWrong { .. })));
+
+    let catalog = document.get(1).expect("the later catalog resolves");
+    assert_eq!(catalog.objref, ObjRef::new(1, 0));
+    assert_eq!(
+        catalog.origin,
+        Origin::File(Span::new(
+            later_at as u64,
+            (later_at + b"1 0 obj\n<</Type/Catalog/Pages 2 0 R/Marker/Repaired>>\nendobj".len())
+                as u64,
+        ))
+    );
+    assert_eq!(
+        catalog
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Marker"))
+            .and_then(Object::as_name)
+            .map(|name| name.as_bytes()),
+        Some(&b"Repaired"[..])
+    );
+    assert_eq!(
+        document
+            .first_page()
+            .expect("first page resolves")
+            .objref
+            .number,
+        3
+    );
+    assert_eq!(document.page_count().expect("page count resolves"), 1);
+}
+
 /// Escalation is not a way of ignoring a deliberate deletion: an object marked
 /// free stays free, however plainly its bytes are still in the file.
 #[test]
@@ -370,30 +424,47 @@ fn escalating_does_not_hand_out_the_numbers_the_scan_recovered() {
 
 /// The escalation must answer for the object it was asked about. A scan that
 /// corrects nothing leaves a clean document clean, rather than inventing a
-/// repair and a section to record it in.
+/// repair and a section to record it in. A scan that proposes another
+/// correction must roll that correction back when the requested object stays
+/// missing.
 #[test]
 fn escalating_for_an_object_that_is_not_there_does_not_fabricate_a_repair() {
-    let bytes = classic_pdf(&skeleton(), &[]);
-    let mut document =
-        Document::open(Box::new(BytesSource::new(bytes.clone()))).expect("opens clean");
+    let original = classic_pdf(&skeleton(), &[]);
+    let mut extended = skeleton();
+    extended.push(b"<</Type/Spare/Which 4>>");
+    let proposed_correction = classic_pdf_covering(&extended, &[], 3);
 
-    match document.escalate_to_scan(999) {
-        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 999),
-        other => panic!("escalating for an object no scan can find must fail, got {other:?}"),
+    for bytes in [original, proposed_correction] {
+        let mut document =
+            Document::open(Box::new(BytesSource::new(bytes.clone()))).expect("opens clean");
+        assert!(document.get(4).is_err(), "object 4 starts outside the xref");
+
+        match document.escalate_to_scan(999) {
+            Err(Error::MissingObject(objref)) => assert_eq!(objref.number, 999),
+            other => panic!("escalating for an object no scan can find must fail, got {other:?}"),
+        }
+        assert!(
+            document.provenance().is_clean(),
+            "a failed escalation must leave the provenance alone"
+        );
+        assert!(
+            !document.has_pending_changes(),
+            "a failed escalation must not turn a save into an append"
+        );
+        assert!(
+            document.get(4).is_err(),
+            "a correction proposed during a failed escalation must be rolled back"
+        );
+        assert!(
+            document.first_page().is_ok(),
+            "the page tree must remain usable"
+        );
+        assert_eq!(
+            document.save_to_vec().expect("save"),
+            bytes,
+            "save-unchanged must still be byte-identical"
+        );
     }
-    assert!(
-        document.provenance().is_clean(),
-        "a failed escalation must leave the provenance alone"
-    );
-    assert!(
-        !document.has_pending_changes(),
-        "a failed escalation must not turn a save into an append"
-    );
-    assert_eq!(
-        document.save_to_vec().expect("save"),
-        bytes,
-        "save-unchanged must still be byte-identical"
-    );
 }
 
 /// A cross-reference that sends a compressed object to the wrong slot inside

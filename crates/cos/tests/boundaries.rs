@@ -10,7 +10,9 @@
 mod common;
 
 use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton, xref_stream_pdf};
-use onionskin_cos::{BytesSource, Document, Object, Origin, Provenance, RecoveredBoundary};
+use onionskin_cos::{
+    BytesSource, Document, ObjRef, Object, Origin, Provenance, RecoveredBoundary, Span,
+};
 
 /// The stream's real content. The fixture's `/Length` claims otherwise.
 const CONTENT: &[u8] = b"BT /F1 12 Tf ET  \n%%%";
@@ -95,6 +97,85 @@ fn a_stream_with_the_right_length_reports_nothing() {
     assert_eq!(parsed.object.as_stream().expect("a stream").raw, CONTENT);
     assert_eq!(parsed.recovered_boundary, None);
     assert!(document.recovered_boundaries().is_empty());
+}
+
+#[test]
+fn structural_streams_resolve_length_only_on_ordinary_access() {
+    const PAYLOAD: &[u8] = b"prefix\nendstream\nsuffix";
+    for structural_number in [1u32, 2] {
+        for correct_length in [true, false] {
+            let mut bodies = skeleton();
+            let structural_body = match structural_number {
+                1 => format!(
+                    "<</Type/Catalog/Pages 2 0 R/Length 4 0 R>>\nstream\n{}\nendstream",
+                    String::from_utf8_lossy(PAYLOAD)
+                ),
+                2 => format!(
+                    "<</Type/Pages/Kids[3 0 R]/Count 1/Length 4 0 R>>\nstream\n{}\nendstream",
+                    String::from_utf8_lossy(PAYLOAD)
+                ),
+                _ => unreachable!(),
+            };
+            let length_body = if correct_length {
+                PAYLOAD.len().to_string()
+            } else {
+                "999".to_string()
+            };
+            bodies[(structural_number - 1) as usize] = structural_body.as_bytes();
+            bodies.push(length_body.as_bytes());
+            let bytes = classic_pdf(&bodies, &[]);
+            let object_header = format!("{structural_number} 0 obj\n");
+            let object_start = bytes
+                .windows(object_header.len())
+                .position(|window| window == object_header.as_bytes())
+                .expect("structural object header") as u64;
+            let object_end = object_start
+                + bytes[object_start as usize..]
+                    .windows(b"\nendobj".len())
+                    .position(|window| window == b"\nendobj")
+                    .expect("structural object end") as u64
+                + b"\nendobj".len() as u64;
+
+            let (document, provenance) =
+                Document::open_repairing(Box::new(BytesSource::new(bytes.clone())))
+                    .expect("structural stream fixture opens");
+            assert_eq!(provenance, Provenance::Clean);
+            assert!(document.recovered_boundaries().is_empty());
+
+            let parsed = document
+                .get(structural_number)
+                .expect("structural stream resolves");
+            let stream = parsed.object.as_stream().expect("object is a stream");
+            if correct_length {
+                assert_eq!(stream.raw, PAYLOAD);
+                assert_eq!(parsed.recovered_boundary, None);
+                assert_eq!(
+                    parsed.origin,
+                    Origin::File(Span::new(object_start, object_end))
+                );
+            } else {
+                assert_eq!(stream.raw, b"prefix");
+                assert_eq!(
+                    parsed.recovered_boundary,
+                    Some(RecoveredBoundary::LengthWrong {
+                        declared: 999,
+                        actual: 6,
+                    })
+                );
+                assert_eq!(
+                    document.recovered_boundaries().get(&structural_number),
+                    parsed.recovered_boundary.as_ref()
+                );
+                let boundary = document.recovered_boundaries();
+                let mut document = document;
+                document
+                    .set_object(4, 0, Object::Integer(999))
+                    .expect("Length can be edited");
+                assert_eq!(document.recovered_boundaries(), boundary);
+            }
+            assert_eq!(parsed.objref, ObjRef::new(structural_number, 0));
+        }
+    }
 }
 
 /// The one recovery no amount of fetching objects would reveal: the

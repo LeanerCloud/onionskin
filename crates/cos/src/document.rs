@@ -180,16 +180,16 @@ impl Document {
             .as_ref()
             .map(|l| l.recovered.iter().copied().collect())
             .unwrap_or_default();
-        let (xref_table, trailer, prev_startxref) = match loaded {
+        let (xref_table, trailer, prev_startxref, cache) = match loaded {
             Some(l) => match structure_ok(&reader, &l.xref, &l.trailer) {
-                Ok(()) => (l.xref, l.trailer, Some(l.startxref)),
+                Ok(cache) => (l.xref, l.trailer, Some(l.startxref), cache),
                 Err(detail) => {
                     reasons.push(RepairReason::XrefOffsetsWrong { detail });
                     rebuilt_by_scan = true;
                     let scanned = repair::scan(&reader)?;
                     refuse_encrypted(&scanned.trailer)?;
                     reasons.extend(scanned.reasons);
-                    (scanned.xref, scanned.trailer, None)
+                    (scanned.xref, scanned.trailer, None, BTreeMap::new())
                 }
             },
             None => {
@@ -197,7 +197,7 @@ impl Document {
                 let scanned = repair::scan(&reader)?;
                 refuse_encrypted(&scanned.trailer)?;
                 reasons.extend(scanned.reasons);
-                (scanned.xref, scanned.trailer, None)
+                (scanned.xref, scanned.trailer, None, BTreeMap::new())
             }
         };
 
@@ -228,7 +228,7 @@ impl Document {
             provenance: provenance.clone(),
             prev_startxref,
             original_len,
-            cache: RefCell::new(BTreeMap::new()),
+            cache: RefCell::new(cache),
             object_streams: RefCell::new(BTreeMap::new()),
             recovered_boundaries: RefCell::new(recovered_boundaries),
             in_flight: RefCell::new(BTreeSet::new()),
@@ -1274,35 +1274,52 @@ fn reaches(reader: &Reader, table: &Xref, number: u32) -> bool {
 /// `/Root`, the bytes at its offset really are that object, and it parses to a
 /// dictionary. Three objects, not the whole file - this is the gate that keeps
 /// open lazy while still catching a globally wrong xref.
-fn structure_ok(reader: &Reader, table: &Xref, trailer: &Dict) -> std::result::Result<(), String> {
+fn structure_ok(
+    reader: &Reader,
+    table: &Xref,
+    trailer: &Dict,
+) -> std::result::Result<BTreeMap<u32, Parsed>, String> {
+    let mut cache = BTreeMap::new();
     let Some(Object::Ref(root)) = trailer.get(b"Root") else {
         return Err("trailer has no indirect /Root".to_string());
     };
     match reachable(reader, table, root.number)? {
         // A catalog stored in the file itself is cheap to check properly.
-        Some(object) => {
-            let dict = object
+        Some(parsed) => {
+            let root_dict = parsed
+                .object
                 .as_dict()
                 .ok_or_else(|| format!("/Root object {} is not a dictionary", root.number))?;
-            if let Some(Object::Ref(pages)) = dict.get(b"Pages") {
-                reachable(reader, table, pages.number)?;
+            let pages = match root_dict.get(b"Pages") {
+                Some(Object::Ref(pages)) => Some(*pages),
+                _ => None,
+            };
+            if let Some(pages) = pages {
+                if let Some(parsed_pages) = reachable(reader, table, pages.number)? {
+                    if matches!(&parsed_pages.object, Object::Dict(_)) {
+                        cache.insert(pages.number, parsed_pages);
+                    }
+                }
             }
-            Ok(())
+            if matches!(&parsed.object, Object::Dict(_)) {
+                cache.insert(root.number, parsed);
+            }
+            Ok(cache)
         }
         // A catalog inside an object stream: reaching the container is the
         // check. Decoding it here would cost a whole object stream at open.
-        None => Ok(()),
+        None => Ok(cache),
     }
 }
 
-/// `Ok(Some(object))` for an object read from the file, `Ok(None)` for one
+/// `Ok(Some(parsed object))` for an object read from the file, `Ok(None)` for one
 /// whose container was reached inside an object stream, `Err` when the xref
 /// does not lead to it at all.
 fn reachable(
     reader: &Reader,
     table: &Xref,
     number: u32,
-) -> std::result::Result<Option<Object>, String> {
+) -> std::result::Result<Option<Parsed>, String> {
     let missing = || format!("object {number} is not readable through the xref");
     match table.get(number) {
         Some(XrefEntry::InFile { offset, .. }) => {
@@ -1310,7 +1327,12 @@ fn reachable(
             let indirect = reader
                 .parse_indirect_at(real, &|_| None)
                 .map_err(|e| format!("object {number}: {e}"))?;
-            Ok(Some(indirect.object))
+            Ok(Some(Parsed {
+                objref: indirect.objref,
+                object: indirect.object,
+                origin: Origin::File(indirect.span),
+                recovered_boundary: indirect.recovered,
+            }))
         }
         Some(XrefEntry::InObjectStream { container, .. }) => match table.get(container) {
             Some(XrefEntry::InFile { offset, .. }) => {
