@@ -105,6 +105,62 @@ fn a_deleted_object_is_gone_from_the_saved_file() {
 }
 
 #[test]
+fn a_new_object_can_be_deleted_before_its_first_save() {
+    let original = fixture();
+    let mut document = open(&original);
+    let added = document
+        .add_object(Object::Integer(7))
+        .expect("a new object gets a number");
+    document
+        .delete_object(added.number)
+        .expect("an object can be deleted before its first save");
+    match document.get(added.number) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.generation, 1),
+        other => panic!("the pending deletion must be missing, got {other:?}"),
+    }
+
+    let saved = document.save_to_vec().expect("the deletion saves");
+    assert_eq!(&saved[..original.len()], &original[..]);
+
+    let reopened = open(&saved);
+    match reopened.get(added.number) {
+        Err(Error::MissingObject(objref)) => assert_eq!(objref.number, added.number),
+        other => panic!("the new object must be free after the save, got {other:?}"),
+    }
+    assert_eq!(reopened.page_count().ok(), Some(1));
+
+    let table: BTreeMap<u32, XrefRow> = effective_xref(&saved);
+    assert_eq!(free_list(&table), vec![added.number]);
+    assert_eq!(
+        table
+            .get(&added.number)
+            .expect("the deleted row")
+            .generation,
+        1
+    );
+}
+
+#[test]
+fn a_deleted_new_object_cannot_become_the_effective_root() {
+    let mut document = open(&fixture());
+    let added = document
+        .add_object(Object::Integer(7))
+        .expect("a new object gets a number");
+    document
+        .delete_object(added.number)
+        .expect("the new object can be deleted before its first save");
+    document.set_trailer_entry(
+        "Root",
+        Object::Ref(onionskin_cos::ObjRef::new(added.number, 0)),
+    );
+
+    match document.save_to_vec() {
+        Err(Error::Unrecoverable { detail }) => assert!(detail.contains("catalog"), "{detail}"),
+        other => panic!("a deleted effective Root must be refused, got {other:?}"),
+    }
+}
+
+#[test]
 fn the_appended_section_carries_a_well_formed_free_list() {
     let mut document = open(&fixture());
     document.delete_object(4).expect("deletable");
@@ -222,6 +278,33 @@ fn rewriting_a_freed_object_does_not_corrupt_the_free_list() {
         vec![4],
         "object 4 stays free, and the chain stays one a reader can follow"
     );
+}
+
+/// The other half of the free-number rule, one generation later: the free
+/// entry is already in the file, so a section that writes an object naming
+/// that number would index a reference into a number nothing can resolve.
+/// Refused before a byte is written, naming both ends of it.
+#[test]
+fn a_section_may_not_write_an_object_that_points_at_a_number_the_file_freed() {
+    let mut first = open(&fixture());
+    first.delete_object(4).expect("deletable");
+    let once = first.save_to_vec().expect("save");
+
+    let mut second =
+        Document::open(Box::new(BytesSource::new(once.clone()))).expect("reopens clean");
+    let mut referrer = onionskin_cos::Dict::new();
+    referrer.set("Points", Object::Ref(onionskin_cos::ObjRef::new(4, 0)));
+    second
+        .set_object(5, 0, Object::Dict(referrer))
+        .expect("object 5 is writable; it is the save that must refuse the reference");
+
+    match second.save_to_vec() {
+        Err(Error::DanglingReference { holder, target }) => {
+            assert_eq!(format!("{holder}"), "object 5");
+            assert_eq!(target.number, 4);
+        }
+        other => panic!("writing a reference to a freed number must be refused, got {other:?}"),
+    }
 }
 
 /// The two edit verbs work on one map, so the last one called wins. Writing an

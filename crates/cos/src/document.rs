@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::{Error, Result};
 use crate::filters;
 use crate::object::{
-    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
+    Dict, Holder, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };
-use crate::parse::Lexer;
+use crate::parse::{LexError, Lexer};
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
 use crate::source::{FileSource, Source};
@@ -49,7 +49,13 @@ const COPY_CHUNK: u64 = 64 * 1024;
 
 /// A pending change to one object number. Both variants carry the generation
 /// the appended section will record for it.
-enum Edit {
+///
+/// This is the vocabulary [`Document::section_for`] takes, so a caller holding
+/// its own overlay says what a save would write without the document holding
+/// any of it. `Document`'s own edit map speaks the same type, and both routes
+/// feed the shared section serializer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PendingEdit {
     Set {
         generation: u16,
         object: Object,
@@ -59,6 +65,29 @@ enum Edit {
     Delete {
         generation: u16,
     },
+}
+
+/// One generation of a file: the byte range it occupies, from the first byte
+/// after the previous generation to the end of its own `%%EOF`.
+///
+/// There is no `prev` field and no `startxref` field. The `Vec` a walk returns
+/// *is* the chain, in file order, so a section's predecessor is the element
+/// before it; storing that fact twice is storing two things that can disagree.
+/// The offset of a table inside a section is likewise not handed out: a caller
+/// showing generations wants ranges and sizes, and one rolling a generation
+/// back truncates at a `start`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Section {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// A reference whose target is free or absent: who names it, and what it
+/// names.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Dangling {
+    pub holder: Holder,
+    pub target: ObjRef,
 }
 
 struct ObjectStream {
@@ -96,7 +125,7 @@ struct PageWalk {
 }
 
 pub struct Document {
-    reader: Reader,
+    reader: Rc<Reader>,
     xref: Xref,
     trailer: Dict,
     provenance: Provenance,
@@ -112,7 +141,7 @@ pub struct Document {
     /// is a fact about the file and does not stop being true.
     recovered_boundaries: RefCell<BTreeMap<u32, RecoveredBoundary>>,
     in_flight: RefCell<BTreeSet<u32>>,
-    edits: BTreeMap<u32, Edit>,
+    edits: BTreeMap<u32, PendingEdit>,
     trailer_edits: Dict,
     next_number: u32,
 }
@@ -222,7 +251,7 @@ impl Document {
         };
 
         let document = Document {
-            reader,
+            reader: Rc::new(reader),
             xref: xref_table,
             trailer,
             provenance: provenance.clone(),
@@ -243,6 +272,24 @@ impl Document {
         Document::open_repairing(Box::new(FileSource::open(path)?))
     }
 
+    fn base_view(&self) -> Document {
+        Document {
+            reader: Rc::clone(&self.reader),
+            xref: self.xref.clone(),
+            trailer: self.trailer.clone(),
+            provenance: self.provenance.clone(),
+            prev_startxref: self.prev_startxref,
+            original_len: self.original_len,
+            cache: RefCell::new(BTreeMap::new()),
+            object_streams: RefCell::new(BTreeMap::new()),
+            recovered_boundaries: RefCell::new(BTreeMap::new()),
+            in_flight: RefCell::new(BTreeSet::new()),
+            edits: BTreeMap::new(),
+            trailer_edits: Dict::new(),
+            next_number: self.next_number,
+        }
+    }
+
     pub fn provenance(&self) -> &Provenance {
         &self.provenance
     }
@@ -259,6 +306,281 @@ impl Document {
     /// truncating to this length recovers the file as it was opened.
     pub fn original_len(&self) -> u64 {
         self.original_len
+    }
+
+    /// The next object number [`Document::add_object`] would hand out: one
+    /// above everything the file names and everything this session has written.
+    ///
+    /// Consumer: a caller that keeps its own overlay and allocates its own
+    /// numbers, which is how `core` reserves one without calling `add_object`
+    /// speculatively and leaving an edit it cannot withdraw.
+    pub fn next_object_number(&self) -> u32 {
+        self.next_number
+    }
+
+    /// Every generation in the file, oldest first, as byte ranges that
+    /// partition it: the first starts at 0, each one starts where the previous
+    /// ended, and the last ends at the end of the file.
+    ///
+    /// Consumers: the generations panel, which shows the ranges and their
+    /// sizes, and a revert, which truncates at a `start`.
+    ///
+    /// This reports what is **in the file**, not what opening it produced. It
+    /// walks the file's own `startxref` and `/Prev` chain again rather than
+    /// reading the merged table, because the merged table is the union of every
+    /// section and cannot say which section any of it came from. The cost is
+    /// one re-read of each cross-reference section, which is what opening the
+    /// document already paid.
+    ///
+    /// A chain that cannot be followed is [`Error::SectionChain`] rather than a
+    /// shorter list: a hostile `/Prev` that loops, one that points at no
+    /// section, or a section with no `%%EOF`. Reporting the prefix it managed
+    /// to walk would be a list of generations that quietly omits some.
+    ///
+    /// A linearized file is one generation, not two. Its first-page
+    /// cross-reference sits at the front of the file with an `%%EOF` of its
+    /// own, and it names objects that live after that marker, which no
+    /// generation's own table can do. Both halves were written in one pass, so
+    /// that `%%EOF` is not a boundary a caller may truncate at: the bytes
+    /// before it are a header and a table, not a document.
+    pub fn sections(&self) -> Result<Vec<Section>> {
+        // The opener rebuilt the table by scanning, which is what a `None`
+        // here means, so the file's own chain is not what this document was
+        // read through. Walking it anyway would report ranges derived from a
+        // chain cos itself rejected, which is exactly the trap
+        // [`Document::recovered_boundaries`] is written to avoid.
+        if self.prev_startxref.is_none() {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "the cross-reference was rebuilt when the file opened, so the file's own \
+                         chain is not the one this document was read through"
+                    .into(),
+            });
+        }
+
+        let (tail_base, tail) = self.reader.tail(TAIL_WINDOW)?;
+        let Some(startxref) = xref::find_startxref(&tail, tail_base) else {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "the file's tail has no startxref".into(),
+            });
+        };
+
+        let mut visited: BTreeSet<u64> = BTreeSet::new();
+        // The end of each section that ends a generation, in chain order.
+        let mut ends: Vec<u64> = Vec::new();
+        let mut next = Some(startxref);
+        while let Some(value) = next {
+            let Some(offset) = xref::section_start(&self.reader, value) else {
+                return Err(Error::SectionChain {
+                    offset: value,
+                    detail: "does not point at a cross-reference section".into(),
+                });
+            };
+            if !visited.insert(offset) {
+                return Err(Error::SectionChain {
+                    offset,
+                    detail: "the chain returns to a section it has already walked".into(),
+                });
+            }
+            if visited.len() > xref::MAX_SECTIONS {
+                return Err(Error::SectionChain {
+                    offset,
+                    detail: format!("the chain runs past {} sections", xref::MAX_SECTIONS),
+                });
+            }
+            // The reasons a re-read collects are already in this document's
+            // provenance from the open that produced it; a walk of the chain
+            // does not get to add to them.
+            let mut reasons = Vec::new();
+            let section = xref::read_section(&self.reader, offset, &mut reasons)?;
+            let end = self.end_of_section(offset, section.end)?;
+            // A generation's own table can only name objects written before
+            // the `%%EOF` that closes it. A table that names one *after* its
+            // `%%EOF` is describing bytes that are not its own, which is what
+            // a linearized file's first-page cross-reference does (ISO 32000-1
+            // annex F): it sits at the front of the file, it belongs to the
+            // same single pass that wrote the rest, and its `%%EOF` is not a
+            // point a caller may truncate at. Truncating there leaves a file
+            // with no catalog in it.
+            let describes_later_bytes = section.entries.iter().any(|(_, entry)| match entry {
+                XrefEntry::InFile { offset, .. } => {
+                    // An offset in a file with junk before its header may be
+                    // written short by that much or written absolute, and
+                    // `locate` accepts either, so an entry counts only when
+                    // both readings land past the end. And only when one of
+                    // them lands inside the file at all: an offset past the
+                    // end of the file is a corrupt entry, not a table
+                    // describing bytes later on, and reading it as one would
+                    // drop a real generation.
+                    let candidates = [*offset, offset.saturating_add(self.reader.header_offset)];
+                    candidates.iter().all(|candidate| *candidate >= end)
+                        && candidates
+                            .iter()
+                            .any(|candidate| *candidate < self.original_len)
+                }
+                XrefEntry::Free { .. } | XrefEntry::InObjectStream { .. } => false,
+            });
+            if !describes_later_bytes {
+                ends.push(end);
+            }
+            next = match section.trailer.get(b"Prev") {
+                None | Some(Object::Null) => None,
+                Some(Object::Integer(value)) if *value >= 0 => Some(*value as u64),
+                Some(other) => {
+                    return Err(Error::SectionChain {
+                        offset,
+                        detail: format!("/Prev is {other:?}, which names no offset"),
+                    })
+                }
+            };
+        }
+
+        // A file has at least one generation, so an empty list is this walk
+        // having talked itself out of every boundary it found. Saying so is
+        // what keeps the rule above loud when it is wrong rather than handing
+        // a caller a `Vec` with no first element.
+        if ends.is_empty() {
+            return Err(Error::SectionChain {
+                offset: self.original_len,
+                detail: "no section in the chain ends a generation".into(),
+            });
+        }
+
+        ends.sort_unstable();
+        let mut sections = Vec::with_capacity(ends.len());
+        let mut start = 0u64;
+        for (index, end) in ends.iter().enumerate() {
+            // Whatever follows the last `%%EOF` belongs to the newest
+            // generation: it is in the file, and truncating to a `start` has to
+            // recover everything written before that start whether or not the
+            // producer left bytes after its own end marker.
+            let end = if index + 1 == ends.len() {
+                self.original_len
+            } else {
+                *end
+            };
+            if end <= start {
+                return Err(Error::SectionChain {
+                    offset: start,
+                    detail: format!("a section ending at {end} does not follow the one before it"),
+                });
+            }
+            sections.push(Section { start, end });
+            start = end;
+        }
+        Ok(sections)
+    }
+
+    /// The end of the section whose cross-reference starts at `table`: the
+    /// immediate footer after `parsed_end`, plus the end-of-line that follows
+    /// its exact `%%EOF` marker.
+    ///
+    /// The search starts past the table or cross-reference stream rather than
+    /// at the table itself, because a stream's compressed data can hold those
+    /// five bytes and a section's own body must not be able to end it.
+    ///
+    /// What follows a section's trailer is its `startxref`, its offset and its
+    /// `%%EOF`, so the marker is a few dozen bytes away. The search is capped
+    /// at `SEARCH` rather than running to the end of the file.
+    fn end_of_section(&self, table: u64, parsed_end: u64) -> Result<u64> {
+        const SEARCH: u64 = 4096;
+        const LOOKAHEAD: u64 = 2;
+        const EOF: &[u8] = b"%%EOF";
+        let search_end = self.original_len.min(parsed_end.saturating_add(SEARCH));
+        let read_end = self
+            .original_len
+            .min(parsed_end.saturating_add(SEARCH + LOOKAHEAD));
+        let mut buf = Vec::with_capacity((read_end - parsed_end) as usize);
+        let mut at = parsed_end;
+        while at < read_end {
+            let want = (read_end - at) as usize;
+            let chunk = self.reader.read(at, want)?;
+            if chunk.is_empty() {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "empty read before the footer window ended",
+                )));
+            }
+            if chunk.len() > want {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "footer read returned more bytes than requested",
+                )));
+            }
+            at += chunk.len() as u64;
+            buf.extend_from_slice(&chunk);
+        }
+
+        let mut lex = Lexer::new(&buf, parsed_end);
+        let grammar_error = |error: LexError| Error::SectionChain {
+            offset: error.offset,
+            detail: error.detail(),
+        };
+        lex.expect_keyword(b"startxref").map_err(grammar_error)?;
+        lex.read_unsigned().map_err(grammar_error)?;
+
+        let mut pos = lex.position();
+        loop {
+            while pos < buf.len() && crate::parse::is_whitespace(buf[pos]) {
+                pos += 1;
+            }
+            if pos >= buf.len() {
+                break;
+            }
+            if buf[pos] != b'%' {
+                return Err(Error::SectionChain {
+                    offset: parsed_end + pos as u64,
+                    detail: "unexpected token before %%EOF".into(),
+                });
+            }
+
+            let marker_end = pos + EOF.len();
+            let mut after_marker = marker_end;
+            while after_marker < buf.len()
+                && matches!(buf[after_marker], b' ' | b'\t' | b'\0' | b'\x0c')
+            {
+                after_marker += 1;
+            }
+            let marker_line = buf[pos..].starts_with(EOF)
+                && parsed_end + marker_end as u64 <= search_end
+                && parsed_end + after_marker as u64 <= search_end
+                && match buf.get(after_marker).copied() {
+                    Some(b'\r' | b'\n') => true,
+                    None => parsed_end + after_marker as u64 == self.original_len,
+                    _ => false,
+                };
+            if marker_line {
+                let eol_len = match buf.get(after_marker).copied() {
+                    Some(b'\r') if buf.get(after_marker + 1) == Some(&b'\n') => 2,
+                    Some(b'\r' | b'\n') => 1,
+                    None => 0,
+                    _ => unreachable!(),
+                };
+                return Ok(parsed_end + after_marker as u64 + eol_len);
+            }
+
+            while pos < buf.len() && !matches!(buf[pos], b'\r' | b'\n') {
+                pos += 1;
+            }
+            match buf.get(pos).copied() {
+                Some(b'\r') if buf.get(pos + 1) == Some(&b'\n') => pos += 2,
+                Some(b'\r') | Some(b'\n') => pos += 1,
+                None if parsed_end + pos as u64 == self.original_len => break,
+                None => {
+                    return Err(Error::SectionChain {
+                        offset: parsed_end + pos as u64,
+                        detail: "comment line is cut off before its line ending".into(),
+                    })
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Err(Error::SectionChain {
+            offset: table,
+            detail: "no %%EOF closes this section".into(),
+        })
     }
 
     /// Every stream whose data boundary the parser recovered, keyed by object
@@ -293,7 +615,7 @@ impl Document {
             return Ok(hit.clone());
         }
         match self.edits.get(&number) {
-            Some(Edit::Set { generation, object }) => {
+            Some(PendingEdit::Set { generation, object }) => {
                 return Ok(Parsed {
                     objref: ObjRef::new(number, *generation),
                     object: object.clone(),
@@ -304,7 +626,7 @@ impl Document {
             // The object still has bytes in the file, and a caller that has
             // not saved yet could read them. Reporting it as present would
             // make the deletion invisible until the save.
-            Some(Edit::Delete { generation }) => {
+            Some(PendingEdit::Delete { generation }) => {
                 return Err(Error::MissingObject(ObjRef::new(number, *generation)))
             }
             None => {}
@@ -838,7 +1160,8 @@ impl Document {
         }
         self.forget_parsed_objects();
         self.next_number = self.next_number.max(number.saturating_add(1));
-        self.edits.insert(number, Edit::Set { generation, object });
+        self.edits
+            .insert(number, PendingEdit::Set { generation, object });
         Ok(())
     }
 
@@ -851,7 +1174,7 @@ impl Document {
         })?;
         self.edits.insert(
             number,
-            Edit::Set {
+            PendingEdit::Set {
                 generation: 0,
                 object,
             },
@@ -886,10 +1209,10 @@ impl Document {
             });
         }
         let live = match self.edits.get(&number) {
-            Some(Edit::Delete { generation }) => {
+            Some(PendingEdit::Delete { generation }) => {
                 return Err(Error::MissingObject(ObjRef::new(number, *generation)))
             }
-            Some(Edit::Set { generation, .. }) => *generation,
+            Some(PendingEdit::Set { generation, .. }) => *generation,
             None => match self.xref.get(number) {
                 Some(XrefEntry::InFile { generation, .. }) => generation,
                 // A compressed object carries no generation of its own; the
@@ -905,7 +1228,8 @@ impl Document {
         // stops, rather than wrapping back to a generation that is in use.
         let generation = live.saturating_add(1);
         self.forget_parsed_objects();
-        self.edits.insert(number, Edit::Delete { generation });
+        self.edits
+            .insert(number, PendingEdit::Delete { generation });
         Ok(())
     }
 
@@ -962,6 +1286,204 @@ impl Document {
         !self.edits.is_empty() || !self.trailer_edits.is_empty() || !self.provenance.is_clean()
     }
 
+    // ---- reference checking -------------------------------------------------
+
+    /// Every reference in the document that resolves to no object: the
+    /// complete check, as a query rather than a gate.
+    ///
+    /// It walks every in-use object and the trailer, and reports each
+    /// `(holder, target)` pair whose target is free or absent from the
+    /// cross-reference. It is O(file), which is why it is a query the
+    /// verification suites run over a fixture rather than something a save
+    /// pays for.
+    ///
+    /// This is the check that sees what the gate in [`Document::section_for`]
+    /// cannot: an object already in the file, not rewritten by a section,
+    /// pointing at a number that section freed. No walk bounded by the edit
+    /// can find that one, and pretending otherwise is what makes a cheap gate
+    /// look complete.
+    ///
+    /// An object the file cannot produce at all is an error rather than a
+    /// dangling entry: the two are different findings and a damaged file is
+    /// not this walk's answer to give.
+    ///
+    /// `0 0 R` is never reported. ISO 32000-1 7.3.10 makes a reference to a
+    /// nonexistent object the null object, and object 0 is the head of the
+    /// free list, so naming it is how a file writes a null reference.
+    pub fn audit_references(&self) -> Result<Vec<Dangling>> {
+        let mut numbers: BTreeSet<u32> = self
+            .xref
+            .iter()
+            .filter(|(number, entry)| {
+                *number != 0
+                    && matches!(
+                        entry,
+                        XrefEntry::InFile { .. } | XrefEntry::InObjectStream { .. }
+                    )
+            })
+            .map(|(number, _)| number)
+            .collect();
+        for (number, edit) in &self.edits {
+            match edit {
+                PendingEdit::Set { .. } => numbers.insert(*number),
+                PendingEdit::Delete { .. } => numbers.remove(number),
+            };
+        }
+
+        let resolves = |target: ObjRef| self.in_use(&self.edits, target);
+        let mut found = Vec::new();
+        let mut trailer = self.trailer.clone();
+        for (key, value) in self.trailer_edits.iter() {
+            trailer.set(key.clone(), value.clone());
+        }
+        collect_dangling(
+            Holder::Trailer,
+            &Object::Dict(trailer),
+            &resolves,
+            &mut found,
+        );
+        for number in numbers {
+            let parsed = self.get(number)?;
+            collect_dangling(
+                Holder::Object(number),
+                &parsed.object,
+                &resolves,
+                &mut found,
+            );
+        }
+        Ok(found)
+    }
+
+    /// Whether object `number` exists, with `overlay` laid over the file's own
+    /// table. The gate asks it of the overlay it is about to write; the audit
+    /// asks it of the document's own edit map, which is the same question
+    /// about the document as it stands.
+    fn in_use(&self, overlay: &BTreeMap<u32, PendingEdit>, target: ObjRef) -> bool {
+        match overlay.get(&target.number) {
+            Some(PendingEdit::Set { generation, .. }) => *generation == target.generation,
+            Some(PendingEdit::Delete { .. }) => false,
+            None => match self.xref.get(target.number) {
+                Some(XrefEntry::InFile { generation, .. }) => generation == target.generation,
+                Some(XrefEntry::InObjectStream { .. }) => target.generation == 0,
+                Some(XrefEntry::Free { .. }) | None => false,
+            },
+        }
+    }
+
+    /// The gate: refuses to emit a section that would leave a reference in its
+    /// own bytes pointing at nothing. It is the same walk
+    /// [`Document::audit_references`] uses, over the objects this section
+    /// writes and the trailer it emits rather than over the whole file.
+    ///
+    /// One rule, in two halves, because a section is answerable for what it
+    /// writes and not for what it carries forward:
+    ///
+    /// - **What the section introduces** - an object the overlay writes, a
+    ///   trailer key the section sets - must resolve, after this section, to
+    ///   an object that exists.
+    /// - **What it carries forward** - a trailer key it inherits, a copy of a
+    ///   base object a repaired document's full table has to re-serialize -
+    ///   must at least not name a number this section frees. Refusing those
+    ///   for absence instead would make a document whose trailer already names
+    ///   an `/Info` nothing defines uneditable, and files like that are real:
+    ///   a section that never touched `/Info` did not make that true.
+    ///
+    /// The carried-forward copies are walked only when the section frees
+    /// something, since freeing is the only way it can make one of them
+    /// dangle. Under the free-nothing rule that is never, so the gate stays
+    /// proportional to the edit rather than O(file) on every preview of a
+    /// repaired document.
+    ///
+    /// **What it still cannot see**: an object already in the file that this
+    /// section does not write, pointing at a number this section frees. No
+    /// walk bounded by the edit can. `audit_references` over the result is
+    /// what finds that one.
+    fn refuse_dangling_references(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        objects: &[(ObjRef, Object)],
+        trailer: &Dict,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+    ) -> Result<()> {
+        // The shared builder still refuses object 0 and the effective catalog:
+        // these are unsafe regardless of where the edit originated.
+        let root = trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .map(|objref| objref.number);
+        for (number, edit) in overlay {
+            match edit {
+                PendingEdit::Set { .. } if *number == 0 => {
+                    return Err(Error::Unrecoverable {
+                        detail: "object 0 is the head of the free list, not a document object"
+                            .into(),
+                    });
+                }
+                PendingEdit::Set { .. } => {}
+                PendingEdit::Delete { .. } => {
+                    if *number == 0 || root == Some(*number) {
+                        return Err(Error::Unrecoverable {
+                            detail: format!(
+                                "object {number} is {}, not something a section may free",
+                                if *number == 0 {
+                                    "the head of the free list"
+                                } else {
+                                    "the document catalog"
+                                }
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        let resolves = |target: ObjRef| self.in_use(overlay, target);
+        let not_freed_here = |target: ObjRef| {
+            !matches!(
+                overlay.get(&target.number),
+                Some(PendingEdit::Delete { .. })
+            )
+        };
+        // The copies of base objects a repaired document's full table carries
+        // are worth walking only when the section frees something, because
+        // freeing is the only way this section can make one of them dangle.
+        // Under the free-nothing rule that is every M3 section, so the gate
+        // stays proportional to the edit.
+        let frees = overlay
+            .values()
+            .any(|edit| matches!(edit, PendingEdit::Delete { .. }));
+
+        let mut found = Vec::new();
+        for (objref, object) in objects {
+            let introduced = overlay.contains_key(&objref.number);
+            if !introduced && !frees {
+                continue;
+            }
+            let test: &dyn Fn(ObjRef) -> bool = if introduced {
+                &resolves
+            } else {
+                &not_freed_here
+            };
+            collect_dangling(Holder::Object(objref.number), object, test, &mut found);
+        }
+        for (key, value) in trailer.iter() {
+            let test: &dyn Fn(ObjRef) -> bool = if trailer_edits.contains_key(key) {
+                &resolves
+            } else {
+                &not_freed_here
+            };
+            collect_dangling(Holder::Trailer, value, test, &mut found);
+        }
+
+        match found.first() {
+            Some(dangling) => Err(Error::DanglingReference {
+                holder: dangling.holder,
+                target: dangling.target,
+            }),
+            None => Ok(()),
+        }
+    }
+
     // ---- save ---------------------------------------------------------------
 
     /// Whether the appended section must carry a table covering every object,
@@ -992,13 +1514,16 @@ impl Document {
     ///
     /// Returns an empty vector when there is nothing to say: a delta section
     /// with no deletions has no business rewriting the head of the list.
-    fn free_list_rows(&self, full_table: bool) -> Vec<XrefRow> {
-        let deleted: Vec<(u32, u16)> = self
-            .edits
+    fn free_list_rows(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        full_table: bool,
+    ) -> Vec<XrefRow> {
+        let deleted: Vec<(u32, u16)> = overlay
             .iter()
             .filter_map(|(number, edit)| match edit {
-                Edit::Delete { generation } => Some((*number, *generation)),
-                Edit::Set { .. } => None,
+                PendingEdit::Delete { generation } => Some((*number, *generation)),
+                PendingEdit::Set { .. } => None,
             })
             .collect();
         if deleted.is_empty() && !full_table {
@@ -1026,10 +1551,147 @@ impl Document {
     }
 
     /// The bytes a save would append, or `None` when there is nothing to say.
+    ///
+    /// This feeds the document's own validated edit map to the shared section
+    /// builder. Trailer edits are adapted entry by entry into the argument
+    /// form, every one of them as `Some`: this path has no verb that removes a
+    /// trailer key and never needed one, so the adaptation is total.
     pub fn incremental_section(&self) -> Result<Option<Vec<u8>>> {
-        if !self.has_pending_changes() {
+        let trailer_edits: BTreeMap<Name, Option<Object>> = self
+            .trailer_edits
+            .iter()
+            .map(|(key, value)| (key.clone(), Some(value.clone())))
+            .collect();
+        self.build_section(&self.edits, &trailer_edits)
+    }
+
+    /// The bytes a save of `overlay` would append, or `None` when it would
+    /// append nothing.
+    ///
+    /// **Nothing appended is exactly when `overlay` and `trailer_edits` are
+    /// both empty *and* the provenance is [`Provenance::Clean`]**: a repaired
+    /// document with an empty overlay still owes its repair, and dropping that
+    /// third clause would stop the repair ever being written.
+    ///
+    /// `trailer_edits` maps a key to `Some(value)` to set it and to `None` to
+    /// **clear** it. A cleared key is emitted as `Object::Null`, which
+    /// ISO 32000-1 7.3.7 makes equivalent to the entry being absent. That is
+    /// the whole of what a set-only dictionary of edits could not say, and
+    /// without it an undo that took back the creation of a trailer key could
+    /// not be saved: nothing above the trailer can stop naming it.
+    ///
+    /// Takes `&self` and the overlay by reference: no cache is dropped, the
+    /// document's own edit map is neither read nor written, and the bytes a
+    /// preview renders are the bytes a save writes, because they are one call.
+    ///
+    /// It grows no ability to resurrect a freed number. Removal is expressed by
+    /// rewriting the referrer, so nothing an overlay names is a number the file
+    /// has already marked free, and [`Document::set_object`] keeps its refusal.
+    pub fn section_for(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+    ) -> Result<Option<Vec<u8>>> {
+        for (number, edit) in overlay {
+            match edit {
+                PendingEdit::Set { generation, .. }
+                    if matches!(self.xref.get(*number), Some(XrefEntry::Free { .. })) =>
+                {
+                    return Err(Error::FreedObject(ObjRef::new(*number, *generation)));
+                }
+                PendingEdit::Set { .. } => {}
+                PendingEdit::Delete { generation } => {
+                    if *number != 0
+                        && !matches!(
+                            self.xref.get(*number),
+                            Some(XrefEntry::InFile { .. }) | Some(XrefEntry::InObjectStream { .. })
+                        )
+                    {
+                        return Err(Error::MissingObject(ObjRef::new(*number, *generation)));
+                    }
+                }
+            }
+        }
+        self.build_section(overlay, trailer_edits)
+    }
+
+    fn validate_root(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer: &Dict,
+        require_catalog: bool,
+        base_view: &mut Option<Document>,
+    ) -> Result<()> {
+        let Some(Object::Ref(root)) = trailer.get(b"Root") else {
+            return Err(Error::Unrecoverable {
+                detail: "the effective trailer must name an indirect /Root".into(),
+            });
+        };
+        if root.number == 0 {
+            return Err(Error::Unrecoverable {
+                detail: "the effective /Root may not name object 0".into(),
+            });
+        }
+        if !require_catalog {
+            return Ok(());
+        }
+
+        let object = match overlay.get(&root.number) {
+            Some(PendingEdit::Set {
+                generation, object, ..
+            }) => {
+                if *generation != root.generation {
+                    return Err(Error::DanglingReference {
+                        holder: Holder::Trailer,
+                        target: *root,
+                    });
+                }
+                object.clone()
+            }
+            Some(PendingEdit::Delete { .. }) => return Ok(()),
+            None => {
+                if !self.in_use(&BTreeMap::new(), *root) {
+                    return Ok(());
+                }
+                let base = base_view.get_or_insert_with(|| self.base_view());
+                base.get(root.number)?.object
+            }
+        };
+        validate_catalog(root.number, &object)
+    }
+
+    fn build_section(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+    ) -> Result<Option<Vec<u8>>> {
+        if overlay.is_empty() && trailer_edits.is_empty() && self.provenance.is_clean() {
             return Ok(None);
         }
+        if self.trailer.contains(b"Encrypt") {
+            return Err(Error::EncryptedWrite);
+        }
+
+        let full_table = self.needs_full_table();
+        let mut trailer = self.trailer.clone();
+        for (key, value) in trailer_edits {
+            match value {
+                Some(value) => trailer.set(key.clone(), value.clone()),
+                // ISO 32000-1 7.3.7: an entry whose value is null is
+                // equivalent to the entry being absent. That is how a section
+                // removes a trailer key without rewriting the file underneath
+                // it, which an append-only save cannot do.
+                None => trailer.set(key.clone(), Object::Null),
+            }
+        }
+        refuse_encrypted_write(&trailer)?;
+        let root_changed = trailer_edits.contains_key(&Name::new("Root"))
+            || trailer
+                .get(b"Root")
+                .and_then(Object::as_reference)
+                .is_some_and(|root| overlay.contains_key(&root.number));
+        let mut base_view = None;
+        self.validate_root(overlay, &trailer, root_changed, &mut base_view)?;
 
         // The section must start on its own line.
         let last = self.reader.read(self.original_len.saturating_sub(1), 1)?;
@@ -1039,22 +1701,26 @@ impl Document {
         };
         let section_start = self.original_len + lead.len() as u64;
 
-        let mut objects: Vec<(ObjRef, Object)> = self
-            .edits
+        let mut objects: Vec<(ObjRef, Object)> = overlay
             .iter()
             .filter_map(|(number, edit)| match edit {
-                Edit::Set { generation, object } => {
+                PendingEdit::Set { generation, object } => {
                     Some((ObjRef::new(*number, *generation), object.clone()))
                 }
-                Edit::Delete { .. } => None,
+                PendingEdit::Delete { .. } => None,
             })
             .collect();
 
-        let full_table = self.needs_full_table();
-        let mut rows = self.free_list_rows(full_table);
+        let mut rows = self.free_list_rows(overlay, full_table);
         if full_table {
             for (number, entry) in self.xref.iter() {
-                if number == 0 || self.edits.contains_key(&number) {
+                // The overlay, not the document's edit map, which is the
+                // fourth of the four places that distinction has to be made.
+                // Reading the edit map here would push an overlaid compressed
+                // object twice - the overlay's copy and the base's - and the
+                // table's last row wins, so the edit would be written into the
+                // file and then indexed away.
+                if number == 0 || overlay.contains_key(&number) {
                     continue;
                 }
                 match entry {
@@ -1078,7 +1744,8 @@ impl Document {
                     // at, so the repaired section carries a copy. The original
                     // container is left untouched underneath.
                     XrefEntry::InObjectStream { .. } => {
-                        let parsed = self.get(number)?;
+                        let base = base_view.get_or_insert_with(|| self.base_view());
+                        let parsed = base.get(number)?;
                         objects.push((parsed.objref, parsed.object));
                     }
                 }
@@ -1086,16 +1753,14 @@ impl Document {
         }
         objects.sort_by_key(|(r, _)| r.number);
 
-        let mut trailer = writer::trailer_for_new_section(&self.trailer);
-        // A rebuilt table is self-sufficient and the chain it would point at is
-        // the damaged one, so /Prev is written only for a delta section.
+        let mut trailer = writer::trailer_for_new_section(&trailer);
+        if matches!(trailer.get(b"Encrypt"), Some(Object::Null)) {
+            trailer.remove(b"Encrypt");
+        }
         if !full_table {
             if let Some(prev) = self.prev_startxref {
                 trailer.set("Prev", Object::Integer(prev as i64));
             }
-        }
-        for (key, value) in self.trailer_edits.iter() {
-            trailer.set(key.clone(), value.clone());
         }
         let highest = objects
             .iter()
@@ -1105,6 +1770,10 @@ impl Document {
             .unwrap_or(0)
             .max(self.xref.max_number());
         trailer.set("Size", Object::Integer(i64::from(highest) + 1));
+
+        // Before a byte is serialized: a section that would index a reference
+        // into nothing is refused rather than written and discovered later.
+        self.refuse_dangling_references(overlay, &objects, &trailer, trailer_edits)?;
 
         let mut section = lead.to_vec();
         section.extend_from_slice(&writer::incremental_section(
@@ -1129,7 +1798,10 @@ impl Document {
         // built leaves the writer untouched rather than holding a document
         // that is all original and no update.
         let section = self.incremental_section()?;
+        self.write_original_then(section, out)
+    }
 
+    fn write_original_then(&self, section: Option<Vec<u8>>, out: &mut dyn Write) -> Result<()> {
         let mut offset = 0u64;
         while offset < self.original_len {
             let want = (self.original_len - offset).min(COPY_CHUNK);
@@ -1164,6 +1836,24 @@ impl Document {
     /// still reading. The rename also means a crash mid-save leaves the
     /// previous file whole rather than a half-written one.
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
+        self.write_section_to_path(self.incremental_section()?, path)
+    }
+
+    /// Saves `overlay` the way [`Document::save_to_path`] saves the document's
+    /// own edits, through the same section builder and the same temporary
+    /// file. The bytes on disk are the bytes
+    /// [`Document::section_for`] returned, so a preview built from them cannot
+    /// disagree with what a save wrote.
+    pub fn save_overlay_to_path(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+        path: &Path,
+    ) -> Result<()> {
+        self.write_section_to_path(self.section_for(overlay, trailer_edits)?, path)
+    }
+
+    fn write_section_to_path(&self, section: Option<Vec<u8>>, path: &Path) -> Result<()> {
         let Some(directory) = path.parent() else {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1171,7 +1861,7 @@ impl Document {
             )));
         };
         let temporary = directory.join(temporary_name(path));
-        let written = self.write_through(&temporary, path);
+        let written = self.write_through(section, &temporary, path);
         if written.is_err() {
             // The save already failed; a failure to clean up after it is not
             // the error worth reporting in its place.
@@ -1180,9 +1870,9 @@ impl Document {
         written
     }
 
-    fn write_through(&self, temporary: &Path, path: &Path) -> Result<()> {
+    fn write_through(&self, section: Option<Vec<u8>>, temporary: &Path, path: &Path) -> Result<()> {
         let mut out = BufWriter::new(File::create(temporary)?);
-        self.save_to_writer(&mut out)?;
+        self.write_original_then(section, &mut out)?;
         let file = out.into_inner().map_err(|e| Error::Io(e.into_error()))?;
         file.sync_all()?;
         // A file created here gets the process's default mode, so replacing a
@@ -1204,6 +1894,103 @@ impl Document {
         self.save_to_writer(&mut out)?;
         Ok(out)
     }
+
+    // ---- write from scratch -------------------------------------------------
+
+    /// Serializes a complete document: the header, `objects` in ascending
+    /// number order, a classic cross-reference table covering all of them, and
+    /// `trailer`.
+    ///
+    /// Consumers: the operations that produce a **new** file rather than
+    /// editing one - combine, split, extract, create-from-image, compress, and
+    /// the printed sheets a print-to-file backend composes. The core invariant
+    /// applies to those files from their first save onwards, because there is
+    /// nothing underneath them to preserve.
+    ///
+    /// It is the section writer with an empty file in front of it, not a second
+    /// serializer: the same object writer, the same table builder, the same
+    /// trailer stripping. It emits a classic table, never a cross-reference
+    /// stream, and it never writes object streams.
+    ///
+    /// Refuses non-null `/Encrypt`; requires `/Root` to be a nonzero indirect
+    /// reference to the supplied object of the exact generation, and that
+    /// object to be a Catalog; rejects object 0, duplicate object numbers, and
+    /// nonzero references whose exact `(number, generation)` is absent from
+    /// `objects`.
+    /// This reference check is complete for a new file because `objects` and
+    /// `trailer` are its whole graph; [`Document::section_for`] has only the
+    /// bounded view available while validating pending edits.
+    pub fn write_new(objects: &[(ObjRef, Object)], trailer: Dict) -> Result<Vec<u8>> {
+        // The binary comment (ISO 32000-1 7.5.2) is what makes a transfer that
+        // sniffs content treat the file as binary rather than as text.
+        const HEADER: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
+
+        if !trailer.contains(b"Root") {
+            return Err(Error::Unrecoverable {
+                detail: "a new document's trailer must name a /Root".into(),
+            });
+        }
+        refuse_encrypted_write(&trailer)?;
+        let mut objects: Vec<(ObjRef, Object)> = objects.to_vec();
+        objects.sort_by_key(|(r, _)| r.number);
+        if let Some((r, _)) = objects.first() {
+            if r.number == 0 {
+                return Err(Error::Unrecoverable {
+                    detail: "object 0 is the head of the free list, not a document object".into(),
+                });
+            }
+        }
+        if let Some(pair) = objects.windows(2).find(|p| p[0].0.number == p[1].0.number) {
+            return Err(Error::Unrecoverable {
+                detail: format!("object {} was given twice", pair[0].0.number),
+            });
+        }
+        validate_new_root(&objects, &trailer)?;
+
+        // The free list of a file with nothing freed is its head alone,
+        // linking back to itself (ISO 32000-1 7.5.4). Writing it is what makes
+        // the table's first subsection cover object 0, which every conforming
+        // reader expects to be there.
+        let rows = [XrefRow {
+            number: 0,
+            generation: 65535,
+            entry: RowEntry::Free(0),
+        }];
+        let highest = objects.last().map_or(0, |(r, _)| r.number);
+        let mut trailer = writer::trailer_for_new_section(&trailer);
+        if matches!(trailer.get(b"Encrypt"), Some(Object::Null)) {
+            trailer.remove(b"Encrypt");
+        }
+        trailer.set("Size", Object::Integer(i64::from(highest) + 1));
+
+        let objects_by_ref: BTreeSet<ObjRef> = objects.iter().map(|(objref, _)| *objref).collect();
+        let resolves = |target: ObjRef| objects_by_ref.contains(&target);
+        let mut found = Vec::new();
+        for (objref, object) in &objects {
+            collect_dangling(Holder::Object(objref.number), object, &resolves, &mut found);
+        }
+        collect_dangling(
+            Holder::Trailer,
+            &Object::Dict(trailer.clone()),
+            &resolves,
+            &mut found,
+        );
+        if let Some(dangling) = found.first() {
+            return Err(Error::DanglingReference {
+                holder: dangling.holder,
+                target: dangling.target,
+            });
+        }
+
+        let mut out = HEADER.to_vec();
+        out.extend_from_slice(&writer::incremental_section(
+            HEADER.len() as u64,
+            &objects,
+            &rows,
+            trailer,
+        )?);
+        Ok(out)
+    }
 }
 
 /// Names the temporary file a `save_to_path` writes through. Two saves of the
@@ -1213,6 +2000,56 @@ fn temporary_name(path: &Path) -> String {
     let serial = SAVES.fetch_add(1, Ordering::Relaxed);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     format!(".{name}.onionskin-save.{}.{serial}", std::process::id())
+}
+
+/// Calls `found` for every indirect reference inside `object`: dictionary
+/// values, array elements, and a stream's dictionary, at any depth. A walk
+/// that only looked at the top level would pass on exactly the nesting a page
+/// tree and an annotation list are made of.
+fn each_reference(object: &Object, found: &mut dyn FnMut(ObjRef)) {
+    match object {
+        Object::Ref(r) => found(*r),
+        Object::Array(items) => {
+            for item in items {
+                each_reference(item, found);
+            }
+        }
+        Object::Dict(dict) => {
+            for (_, value) in dict.iter() {
+                each_reference(value, found);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter() {
+                each_reference(value, found);
+            }
+        }
+        Object::Null
+        | Object::Bool(_)
+        | Object::Integer(_)
+        | Object::Real(_)
+        | Object::String(_)
+        | Object::Name(_) => {}
+    }
+}
+
+/// The one reference check. The gate and the audit differ in the set of
+/// objects they hand it, not in how a reference is found.
+///
+/// `0 0 R` is skipped: object 0 is the head of the free list and never an
+/// object, so a file names it to write a reference that resolves to null
+/// (ISO 32000-1 7.3.10).
+fn collect_dangling(
+    holder: Holder,
+    object: &Object,
+    resolves: &dyn Fn(ObjRef) -> bool,
+    out: &mut Vec<Dangling>,
+) {
+    each_reference(object, &mut |target| {
+        if target.number != 0 && !resolves(target) {
+            out.push(Dangling { holder, target });
+        }
+    });
 }
 
 /// A numeric object as an `f64`. Rectangles are the only place `cos` needs
@@ -1228,6 +2065,54 @@ fn as_number(object: &Object) -> Option<f64> {
 fn refuse_encrypted(trailer: &Dict) -> Result<()> {
     if trailer.contains(b"Encrypt") {
         return Err(Error::Encrypted);
+    }
+    Ok(())
+}
+
+fn validate_catalog(number: u32, object: &Object) -> Result<()> {
+    let Object::Dict(dict) = object else {
+        return Err(Error::Unrecoverable {
+            detail: format!("/Root object {number} is not a catalog dictionary"),
+        });
+    };
+    if !dict
+        .get(b"Type")
+        .and_then(Object::as_name)
+        .is_some_and(|name| name.as_bytes() == b"Catalog")
+    {
+        return Err(Error::Unrecoverable {
+            detail: format!("/Root object {number} is not a catalog"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_new_root(objects: &[(ObjRef, Object)], trailer: &Dict) -> Result<()> {
+    let Some(Object::Ref(root)) = trailer.get(b"Root") else {
+        return Err(Error::Unrecoverable {
+            detail: "a new document's trailer must name an indirect /Root".into(),
+        });
+    };
+    if root.number == 0 {
+        return Err(Error::Unrecoverable {
+            detail: "a new document's /Root may not name object 0".into(),
+        });
+    }
+    let Some((_, object)) = objects.iter().find(|(objref, _)| objref == root) else {
+        return Err(Error::DanglingReference {
+            holder: Holder::Trailer,
+            target: *root,
+        });
+    };
+    validate_catalog(root.number, object)
+}
+
+fn refuse_encrypted_write(trailer: &Dict) -> Result<()> {
+    if trailer
+        .get(b"Encrypt")
+        .is_some_and(|value| !matches!(value, Object::Null))
+    {
+        return Err(Error::EncryptedWrite);
     }
     Ok(())
 }

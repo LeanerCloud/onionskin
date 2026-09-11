@@ -64,10 +64,10 @@ mod xref;
 
 pub mod source;
 
-pub use document::Document;
+pub use document::{Dangling, Document, PendingEdit, Section};
 pub use error::{Error, Result};
 pub use object::{
-    Dict, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
+    Dict, Holder, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };
 pub use repair::{Provenance, RepairReason, RepairReport};
 pub use source::{BytesSource, CountingSource, FileSource, ReadStats, Source};

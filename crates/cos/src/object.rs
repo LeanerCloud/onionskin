@@ -16,6 +16,24 @@ impl ObjRef {
     }
 }
 
+/// Where a reference was found. The trailer is a holder of its own because it
+/// is the one thing a section emits that is not one of its objects, and it can
+/// dangle on its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Holder {
+    Trailer,
+    Object(u32),
+}
+
+impl fmt::Display for Holder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Holder::Trailer => write!(f, "the trailer"),
+            Holder::Object(number) => write!(f, "object {number}"),
+        }
+    }
+}
+
 /// A half-open byte range `[start, end)`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Span {

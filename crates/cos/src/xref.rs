@@ -14,7 +14,7 @@ use crate::reader::Reader;
 use crate::repair::RepairReason;
 
 /// Guards against a `/Prev` chain that loops or fans out absurdly.
-const MAX_SECTIONS: usize = 128;
+pub(crate) const MAX_SECTIONS: usize = 128;
 const XREF_INITIAL_WINDOW: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,10 +109,25 @@ pub(crate) fn load_chain(
     walk.section(first, reasons)?;
     let Walk {
         xref,
-        trailer,
+        mut trailer,
         recovered,
         ..
     } = walk;
+
+    // ISO 32000-1 7.3.7: a dictionary entry whose value is null is equivalent
+    // to the entry being absent. A newer section says "this trailer key is
+    // gone" that way, which is the only way an append-only update can say it.
+    // The key is dropped after the whole chain has been merged, never during:
+    // dropping it as the walk went would let the older section's value for the
+    // same key take its place, which is the opposite of what it asked for.
+    let nulls: Vec<Vec<u8>> = trailer
+        .iter()
+        .filter(|(_, value)| matches!(value, Object::Null))
+        .map(|(key, _)| key.as_bytes().to_vec())
+        .collect();
+    for key in nulls {
+        trailer.remove(&key);
+    }
 
     if xref.is_empty() {
         return Err(Error::Unrecoverable {
@@ -192,7 +207,7 @@ impl Walk<'_> {
 
 /// Accepts an xref offset as written, or biased by the header offset when junk
 /// precedes `%PDF-` and every recorded offset is short by that much.
-fn section_start(reader: &Reader, value: u64) -> Option<u64> {
+pub(crate) fn section_start(reader: &Reader, value: u64) -> Option<u64> {
     // Both operands come out of the file, so the biased candidate is a checked
     // add rather than a wrap.
     [Some(value), value.checked_add(reader.header_offset)]
@@ -216,15 +231,25 @@ fn looks_like_section(reader: &Reader, offset: u64) -> bool {
     reader.object_header_at(offset).is_some()
 }
 
-struct Section {
-    entries: Vec<(u32, XrefEntry)>,
-    trailer: Dict,
+pub(crate) struct Section {
+    pub entries: Vec<(u32, XrefEntry)>,
+    pub trailer: Dict,
     /// Set when this section is a cross-reference stream whose data boundary
     /// the parser recovered rather than read from `/Length`.
-    recovered: Option<(u32, RecoveredBoundary)>,
+    pub recovered: Option<(u32, RecoveredBoundary)>,
+    /// Absolute offset just past what was parsed: the end of the trailer
+    /// dictionary, or of the cross-reference stream object. What follows is
+    /// the section's `startxref` and `%%EOF`, which
+    /// [`crate::Document::sections`] needs to find its own end and which is
+    /// the one bound a search for `%%EOF` cannot get from the table itself.
+    pub end: u64,
 }
 
-fn read_section(reader: &Reader, offset: u64, reasons: &mut Vec<RepairReason>) -> Result<Section> {
+pub(crate) fn read_section(
+    reader: &Reader,
+    offset: u64,
+    reasons: &mut Vec<RepairReason>,
+) -> Result<Section> {
     let probe = reader.read(offset, 64)?;
     let mut lex = Lexer::new(&probe, offset);
     lex.skip_whitespace();
@@ -352,6 +377,7 @@ fn parse_table(buf: &[u8], base: u64, at_eof: bool) -> TableParse {
             entries,
             trailer,
             recovered: None,
+            end: base + lex.position() as u64,
         },
         reasons,
     )
@@ -388,6 +414,7 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
     // indirect length resolution is available here; the parser falls back to
     // scanning for `endstream`.
     let indirect = reader.parse_indirect_at(offset, &|_| None)?;
+    let end = indirect.span.end;
     let recovered = indirect
         .recovered
         .map(|boundary| (indirect.objref.number, boundary));
@@ -487,6 +514,7 @@ fn read_stream(reader: &Reader, offset: u64) -> Result<Section> {
         entries,
         trailer: dict,
         recovered,
+        end,
     })
 }
 

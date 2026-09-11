@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::object::ObjRef;
+use crate::object::{Holder, ObjRef};
 use crate::repair::RepairReport;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -17,6 +17,11 @@ pub enum Error {
     /// The file has a `/Encrypt` entry. The spike parses no security handler,
     /// so this is a refusal rather than a partial open.
     Encrypted,
+    /// A section was asked for on a document whose trailer names `/Encrypt`.
+    /// Writing one means encrypting the objects it carries, which is M6 work,
+    /// and emitting them in the clear under an `/Encrypt` trailer would
+    /// produce a file no reader opens and disclose a protected document.
+    EncryptedWrite,
     /// A lexical or grammatical failure at a known byte offset.
     Syntax {
         offset: u64,
@@ -48,6 +53,23 @@ pub enum Error {
     DepthExceeded {
         detail: String,
     },
+    /// A section was asked to emit a reference that would resolve to nothing:
+    /// `holder` is the trailer or the object the section writes, `target` is
+    /// the number it names. Refused before any byte is written.
+    DanglingReference {
+        holder: Holder,
+        target: ObjRef,
+    },
+    /// The chain of cross-reference sections could not be walked from the
+    /// file's `startxref` back to its first table: a `/Prev` that points at no
+    /// section, one that returns to a section already visited, or a section
+    /// with no `%%EOF` to end it. Reported rather than silently truncating the
+    /// list, because a caller showing generations would otherwise show fewer
+    /// than the file has.
+    SectionChain {
+        offset: u64,
+        detail: String,
+    },
     /// A page index the page tree does not reach. `count` is how far the walk
     /// got: leaves it reached, plus the declared size of any subtree it skipped
     /// by `/Count` on the way. It is what the tree yields, which a root
@@ -68,6 +90,10 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "io: {e}"),
             Error::NotAPdf => write!(f, "no %PDF- header found"),
             Error::Encrypted => write!(f, "document is encrypted"),
+            Error::EncryptedWrite => write!(
+                f,
+                "the document is encrypted; writing to one is M6 work and no section can be written to it"
+            ),
             Error::Syntax { offset, detail } => {
                 write!(f, "syntax error at byte {offset}: {detail}")
             }
@@ -88,6 +114,14 @@ impl fmt::Display for Error {
             Error::UnsupportedFilter(name) => write!(f, "unsupported filter /{name}"),
             Error::Filter { filter, detail } => write!(f, "filter /{filter} failed: {detail}"),
             Error::DepthExceeded { detail } => write!(f, "depth limit exceeded: {detail}"),
+            Error::DanglingReference { holder, target } => write!(
+                f,
+                "{holder} references object {}, which the section would leave pointing at nothing",
+                target.number
+            ),
+            Error::SectionChain { offset, detail } => {
+                write!(f, "cross-reference chain at byte {offset}: {detail}")
+            }
             Error::NoSuchPage { index, count } => {
                 write!(f, "page {index} requested, the page tree reaches {count}")
             }
@@ -120,6 +154,7 @@ impl Error {
             Error::Io(_) => "io",
             Error::NotAPdf => "not-a-pdf",
             Error::Encrypted => "encrypted",
+            Error::EncryptedWrite => "encrypted-write",
             Error::Syntax { .. } => "syntax",
             Error::Unrecoverable { .. } => "unrecoverable",
             Error::RepairRequired(_) => "repair-required",
@@ -128,6 +163,8 @@ impl Error {
             Error::UnsupportedFilter(_) => "unsupported-filter",
             Error::Filter { .. } => "filter-failed",
             Error::DepthExceeded { .. } => "depth-exceeded",
+            Error::DanglingReference { .. } => "dangling-reference",
+            Error::SectionChain { .. } => "section-chain",
             Error::NoSuchPage { .. } => "no-such-page",
             Error::InvalidPageCount { .. } => "invalid-page-count",
         }
