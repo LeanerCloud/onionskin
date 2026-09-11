@@ -74,6 +74,25 @@ The matching executable is retained there as `onionskin-shell-b80b344c`;
 the shared target's top-level binary was subsequently replaced by a test build.
 The representative-capture item is closed; P1c and integration remain incomplete.
 
+A follow-up capture tied the same document to committed validation-reuse revision
+`e7778898724fe732b6fb79cff63d4ccbf59c21a7`. The fresh shell booted headlessly
+with exit 0 and SHA-256
+`741d61af47e830afca02c796cb6a9994de8a55668cbe48151371e5bb75a15078`.
+Onionskin PID 98936 owned window ID 22648 with bounds
+`{X = 350, Y = 155, Width = 1100, Height = 893}`; the earlier PID 25322 was
+left untouched. Capture permission was true, the login session was active and
+the lock-state key was unavailable. Exact-window capture succeeded without a
+desktop or rectangle fallback. AX inspection selected PID 98936 and exposed
+the Isartor document, `Page 1 of 10000`, page entry 1 and 10,000 total pages.
+The image mtime was `2026-09-11T15:59:20Z` UTC, size 191,653 bytes, and its
+SHA-256 is shown below. The image was inspected as an Onionskin-only window;
+its same-layout hash does not claim Acrobat pixel equivalence, broader
+page-rendering, VoiceOver or milestone acceptance.
+
+| Evidence ID | Captured UTC | Private filename | SHA256 |
+|---|---|---|---|
+| M3-P1C-B-001 | 2026-09-11T15:59:20Z | `p1c-reuse-e777889-20260911T155913Z.png` | `8590e24501f56cc89ff91c4feae191376805bb5fc303557d6c6f6262c495bb99` |
+
 ## Historical capture blockers
 
 - C1.1 Task 1 shared-byte export snapshot, 2026-09-02: the required exact-build

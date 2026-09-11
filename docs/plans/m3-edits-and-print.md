@@ -1665,6 +1665,20 @@ The existing 25% total-byte budget remains unchanged. Corpus fetch/rerun CI gate
 the shared helper and P1c acceptance remain outstanding; this is not a feature
 row promotion.
 
+**2026-09-11 validation-reuse checkpoint:** committed COS revision
+`e7778898724fe732b6fb79cff63d4ccbf59c21a7` was verified against the same Isartor
+input with clean provenance and successful first-page access. See [read-window
+evidence](../evidence/m3-p1c-read-windows.md). Through-first-page reads fell
+from 1,335,528 to 1,072,232 bytes, a further 19.7% reduction and 42.3% below
+the original 1,857,768-byte baseline. The unchanged budget assertion therefore
+still fails at 26.73% of the file; opening alone remained 1,070,056 bytes
+(26.68%), also over budget. The fresh 17-command runtime retained the
+lazy-budget failure (16 other commands exited 0). Corpus CI, required-input
+enforcement, the shared helper, hosted timing/mutation evidence, P1c
+integration and the remaining 25% performance work remain open. The named M2
+carry-forwards remain open as well; no feature row, headline count or milestone
+state changes here.
+
 **Goal.** Every assertion in this document over an `external/` fixture currently
 runs in CI over an empty file list and reports a pass. This package fixes that,
 once, for the whole milestone.

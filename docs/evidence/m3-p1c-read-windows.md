@@ -80,10 +80,49 @@ read calls. The original budget still fails: 33.3% of the file exceeds 25%.
 Raw trace and library/source hash checks:
 `/tmp/claude/onionskin-p1c-after-trace.3LfP79/`.
 
-## Broader checks
+## Validated dictionary reuse checkpoint, 2026-09-11
 
-The 17-command local matrix completed without timeouts or source drift:
-16 exits were zero, and only the unchanged lazy-budget assertion failed.
+The committed Task 1 source revision `e7778898724fe732b6fb79cff63d4ccbf59c21a7`
+(staged diff SHA-256
+`71df8959f500418a067853a0fbfebcb2d90be77bd84e98bf03f2fa03e96e025f`)
+retains exact in-file dictionary results parsed during clean structural
+validation. A fresh range trace of the same Isartor input verified clean
+provenance and successful first-page access; its raw log is retained as
+`/tmp/claude/onionskin-p1c-reuse-evidence-20260911.dmMXEo/trace.log`.
+
+| Phase | Read calls | Total bytes returned | Unique file bytes covered |
+|---|---:|---:|---:|
+| Open | 17 | 1,070,056 | 904,092 |
+| Through first page | 21 | 1,072,232 | 905,116 |
+
+The fresh corpus run reports 10,000 pages. The timed `cos-lazy` command took
+0.301745 s; the trace itself reports only read ranges, provenance and phase
+totals. The input SHA-256 is
+`a0d9fa2404be34c8ef098f6b6320523dbacf1d5d964c3c29e30a8f391210ded9`.
+
+Compared with the preceding suffix-read checkpoint, through-first-page reads
+fall from 1,335,528 to 1,072,232 bytes: 263,296 bytes, or 19.7%, fewer. The
+combined reduction from the original main baseline is 785,536 bytes, or
+42.3%. Unique coverage remains unchanged. The unchanged lazy-budget assertion
+checks through-first-page reads: 1,072,232 bytes, or 26.73% of the
+4,010,934-byte file, so it still exceeds 25%. Open alone is unchanged at
+1,070,056 bytes, or 26.68%, and already exceeds that budget as well.
+
+The fresh 17-command runtime
+(`/tmp/claude/onionskin-p1c-reuse-fresh-diagnostic-20260911.AEDQwd/run.tvxy7aes/`)
+completed 16 commands with exit 0. The unchanged lazy-budget assertion
+remained the one failure (5 passed, 1 failed), so this
+is a verified local improvement, not P1c completion. Corpus CI gates,
+required-input enforcement, the shared helper, hosted timing and mutation
+evidence, P1c integration and the remaining 25% performance work remain open.
+The named M2 carry-forwards also remain open: VoiceOver, Linux/Windows
+accessibility, private B7 states 003-010, hosted release/required-checks/
+platform-package work, and three-pass acceptance.
+
+## Broader checks: preceding suffix-read checkpoint
+
+The preceding 17-command local matrix completed without timeouts or source
+drift: 16 exits were zero, and only the unchanged lazy-budget assertion failed.
 Every case used the explicit corpus root above; corpus-required mode was
 scoped to the selected corpus consumers. Results are test counts, not unique
 fixture counts.
@@ -123,10 +162,11 @@ Verified SHA-256 fingerprints:
 
 ## Still pending
 
-Repeated parsing of validated page-tree dictionaries and window overfetch
-remain. Reuse must exclude validation-parsed streams whose indirect Length
-can resolve differently during ordinary access. No further source change is
-part of this checkpoint.
+Window overfetch remains. Validated dictionary reuse now covers the repeated
+page-tree dictionary parse, while validation-parsed streams remain excluded so
+ordinary access can resolve indirect Length values afresh. Compressed objects
+also remain deferred until ordinary access. No further source change is part
+of this checkpoint.
 
 P1c's corpus CI gates, required-input enforcement, shared helper and hosted
 timing/mutation proof remain outstanding. No feature rows are promoted.
@@ -135,3 +175,28 @@ opened the same Isartor PDF and exposed page 1 of 10,000. Window-only capture,
 binary hash and private AX records are in `milestone-screenshots.md`, evidence
 `M3-P1C-A-001`. This supersedes the locked-session capture blocker from
 2026-09-10T22:00Z, not the remaining 25-percent budget or integration gate.
+
+A follow-up capture tied the same document to committed validation-reuse
+revision `e7778898724fe732b6fb79cff63d4ccbf59c21a7`. The freshly relinked shell
+booted headlessly with exit 0 and SHA-256
+`741d61af47e830afca02c796cb6a9994de8a55668cbe48151371e5bb75a15078`.
+Onionskin PID 98936 owned window ID 22648 with bounds
+`{X = 350, Y = 155, Width = 1100, Height = 893}`; the earlier PID 25322 was
+left untouched. Capture permission was true, the login session was active and
+the lock-state key was unavailable. Exact-window capture succeeded without a
+desktop or rectangle fallback.
+
+AX inspection selected PID 98936 and exposed the Isartor document, `Page 1 of
+10000`, page entry 1 and 10,000 total pages. The image mtime was
+`2026-09-11T15:59:20Z` UTC, size 191,653 bytes, and SHA-256
+`8590e24501f56cc89ff91c4feae191376805bb5fc303557d6c6f6262c495bb99`.
+Private AX/window records and native logs are retained at
+`/tmp/claude/onionskin-reuse-native-e777889.r0ANsy/`. The image was inspected
+as an Onionskin-only window showing the blank first page and page 1 of 10,000.
+Its hash matches the earlier same-layout representative image, but this is a
+new process/window capture and makes no Acrobat pixel-equivalence claim. It
+does not claim broader page-rendering, VoiceOver or milestone acceptance.
+
+| Evidence ID | Captured UTC | Private filename | SHA256 |
+|---|---|---|---|
+| M3-P1C-B-001 | 2026-09-11T15:59:20Z | `p1c-reuse-e777889-20260911T155913Z.png` | `8590e24501f56cc89ff91c4feae191376805bb5fc303557d6c6f6262c495bb99` |

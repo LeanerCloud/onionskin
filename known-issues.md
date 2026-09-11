@@ -77,6 +77,18 @@ source IDs, severity, ownership, and required proof.
   1,335,528 bytes (33.3%), with unchanged unique coverage and successful
   first-page access. Duplicate validation parsing and window overfetch remain;
   the 25% budget still fails and P1c is not complete.
+  **Validated-dictionary reuse checkpoint (2026-09-11):** retaining exact
+  in-file dictionaries parsed during clean validation reduces the same
+  through-first-page scenario to 1,072,232 bytes (26.73%), down 263,296 bytes
+  (19.7%) from the suffix-read checkpoint and 785,536 bytes (42.3%) from the
+  original main baseline. The unchanged budget assertion checks through-first-page
+  reads, which remain over budget; open alone is 1,070,056 bytes (26.68%) and
+  also exceeds 25%. Corpus CI, required-input enforcement, the shared helper,
+  hosted timing/mutation evidence, P1c integration and the remaining 25%
+  performance work remain open. This COS checkpoint does not close the named
+  M2 carry-forwards: VoiceOver, Linux/Windows accessibility, private B7 states
+  003-010, hosted release/required-checks/platform-package work, or three-pass
+  acceptance.
 - cos: only the copy loop of a save is bounded memory. A repaired or
   escalated document assembles a section carrying a full table, which
   materializes every compressed object it has to copy forward, and

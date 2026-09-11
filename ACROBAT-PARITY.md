@@ -71,13 +71,20 @@ awk -F'|' '/^\|/ {gsub(/^ +| +$/,"",$3); if ($3 ~ /^(planned|partial|out-of-scop
   END {for (k in c) print c[k], k}' ACROBAT-PARITY.md
 ```
 
-### Implementation evidence (reconciled 2026-09-10)
+### Implementation evidence (reconciled 2026-09-11)
 
 M3 P1c verification is in progress: the default-corpus lazy I/O failure is
 reproduced, and the verified parser-window correction reduces the named
 fixture's returned bytes by 28.1%, while its budget still fails. See
-`docs/evidence/m3-p1c-read-windows.md`. No feature row changes or P1c completion
-are claimed; the corpus CI gates remain outstanding.
+`docs/evidence/m3-p1c-read-windows.md`. The dated validated-dictionary reuse
+checkpoint reduces through-first-page reads from the preceding 1,335,528-byte
+suffix checkpoint to 1,072,232 bytes, a further 19.7% reduction and 42.3% below
+the original main baseline. The unchanged budget assertion checks
+through-first-page reads of 1,072,232 bytes (26.73% of the 4,010,934-byte
+file), so it still fails; opening alone remains 1,070,056 bytes (26.68%), also
+over budget. No feature row changes or P1c completion are claimed; corpus CI,
+required-input enforcement, the shared helper, hosted timing/mutation evidence,
+P1c integration and the remaining 25% performance work remain outstanding.
 
 The evidence keys in changed rows refer to these live paths. `M2-AUDIT-T1-001`
 is the window-only visual baseline, and `M2-AUDIT-T2-001` records the required
