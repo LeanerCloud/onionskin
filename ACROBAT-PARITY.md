@@ -83,8 +83,10 @@ their named verification, not a fresh run of every historical package.
 P0c's local test-relocation checkpoint `fdf875c` preserves the suite across
 eleven configurations; its source/configuration/mutation records are under
 `crates/app/tools/item-inventory/p0c-test-relocation-*.txt`. Live test paths below
-reflect that relocation. Native capture and integration are pending, and this
-test-only change promotes no feature rows.
+reflect that relocation. Native open/Find/tab/export smoke and window-only
+captures passed at `d34b29f` on 2026-09-11, recorded in
+`docs/evidence/milestone-screenshots.md`. Final integration remains pending;
+this test-only change promotes no feature rows.
 
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|

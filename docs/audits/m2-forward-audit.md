@@ -112,9 +112,9 @@ and packaged-platform acceptance remain open.
   at the root, without changing production code or the three external C1.2 files.
   Eleven configurations pass with 3,060 test-result entries, including ignored
   cases, preserved in the before/after census. Missing-test/import mutations
-  and a fresh 624-test control pass. Native
-  smoke and window-only capture remain blocked by the locked GUI session,
-  so integration and full P0c acceptance are pending. This changes no matrix
+  and a fresh 624-test control pass. Native open/Find/tab/export smoke and Task A/B
+  window-only captures passed at `d34b29f` on 2026-09-11; details and hashes are in
+  `docs/evidence/milestone-screenshots.md`. Final integration remains pending. This changes no matrix
   status. Detailed proof is in `crates/app/tools/item-inventory/p0c-test-relocation-*.txt`.
 - B0 restored all three deleted source artifacts at `d683def` before current main
   was merged additively into this retained audit branch. The frozen repository

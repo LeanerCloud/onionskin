@@ -4,8 +4,9 @@ Status: planning, with section 9's two open decisions ruled on 2026-09-02 and
 folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
 on 2026-09-10. P0a merged at `28b311e` and P0b merged at `755842f`.
 P0c's test relocation is committed locally at `fdf875c`; automated relocation
-checks pass. Native smoke, window-only capture and integration remain
-pending. Editing/printing packages remain outstanding. This document is the
+checks pass. Native smoke and Task A/B window-only captures passed at `d34b29f`
+on 2026-09-11; final integration remains pending. Editing/printing packages
+remain outstanding. This document is the
 authoritative decomposition; it supersedes PLAN.md's M3
 paragraph wherever the two disagree, and section 8 lists every disagreement.
 The PLAN.md corrections those disagreements called for **landed at `989d8a7`**;
@@ -1220,8 +1221,11 @@ target, leaf name and status. Scratch mutations detect a missing test in three
 feature configurations and a missing import only when shell test support is
 enabled. A fresh unmodified control passes 624 tests with 7 ignored. Records:
 `crates/app/tools/item-inventory/p0c-test-relocation-*.txt`. Earlier P0a/P0b
-records are unchanged. The GUI session is locked, so this is not native
-acceptance or an integration claim. No Acrobat feature row closes in P0c.
+records are unchanged. Native verification at `d34b29f` on 2026-09-11 now covers
+opening PDFs, Cmd+F, tab switching and C1.2 export input/validation, including
+page-2 PNG output at 144 DPI. Task A/B window-only captures and exact binary/output
+hashes are in `docs/evidence/milestone-screenshots.md`. Final integration remains
+pending. No Acrobat feature row closes in P0c.
 
 The exact committed shell build and headless boot also pass, reporting
 12 plugins, 6 tools, 2 commands and 3 codecs. This verifies startup, not native
