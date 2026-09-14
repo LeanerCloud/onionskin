@@ -5,8 +5,11 @@ folded in, and section 1's ground truth re-measured against `main` at `fa5a194`
 on 2026-09-10. P0a merged at `28b311e` and P0b merged at `755842f`.
 P0c's test relocation is committed locally at `fdf875c`; automated relocation
 checks pass. Native smoke and Task A/B window-only captures passed at `d34b29f`
-on 2026-09-11; final integration remains pending. Editing/printing packages
-remain outstanding. This document is the
+on 2026-09-11. Task B corpus/parser integration is now committed locally at
+`432e1f7eb5facdc51239472d28c748388b445550`; root-owned native verification is
+recorded in `docs/evidence/milestone-screenshots.md`, while final evidence
+reconciliation remains separate. Editing/printing packages remain outstanding.
+This document is the
 authoritative decomposition; it supersedes PLAN.md's M3
 paragraph wherever the two disagree, and section 8 lists every disagreement.
 The PLAN.md corrections those disagreements called for **landed at `989d8a7`**;
@@ -26,6 +29,19 @@ tools-protect,tools-accessibility,tools-measure}` are M4 and later and get no
 code here. `cargo test -p onionskin-app --no-default-features` (guarantee 5)
 must stay green at every commit, and no crate outside `crates/app` may import
 GPUI. `crates/print` is GPUI-free; `app` supplies only the dialog.
+
+## Integration checkpoint, 2026-09-14
+
+Task B is complete as a local source integration, not as a feature promotion.
+The required corpus consumers, COS library, and `write_new` target passed as
+separate direct commands on the committed tree. The exact Isartor trace met
+the unchanged 25% returned-byte budget at 941,160/4,010,934 bytes through
+first-page access, and the local amd64 Docker/`act` simulation exited 0. Those
+results do not claim hosted CI or Windows acceptance, and do not represent
+completion of editing and printing. Independently reviewed native macOS
+scenario evidence is recorded in the screenshot manifest; the interrupted
+chooser failure was not reproduced and has no broader stability claim.
+Historical parser, screenshot, and plan measurements below remain unchanged.
 
 ---
 

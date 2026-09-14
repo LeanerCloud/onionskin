@@ -101,6 +101,24 @@ captures passed at `d34b29f` on 2026-09-11, recorded in
 `docs/evidence/milestone-screenshots.md`. Final integration remains pending;
 this test-only change promotes no feature rows.
 
+### Task B integration checkpoint, 2026-09-14
+
+Corpus/parser integration is committed locally at
+`432e1f7eb5facdc51239472d28c748388b445550`. The reviewed source fingerprints
+are `reader.rs` `4b3b39d3be11728715aee9d62436d71ceb85b49d4527d622e2da11dc51b53da4`
+and `parse.rs`
+`ce2ce1e299912d8ee50aa0e266e5c4f2a55562c478d08852d0d05ca11fee899c`.
+Required consumer targets passed as separate direct commands, and the local
+amd64 Docker/`act` simulation exited 0 after its clean control and reviewed
+negative controls. The simulation is not hosted CI or Windows acceptance. The
+exact Isartor trace measured 941,160/4,010,934 returned bytes through first-page
+access. Separately, independent review approved the native macOS scenario
+evidence recorded in `docs/evidence/milestone-screenshots.md`, including the
+stable Isartor window, Find, tab switching, invalid page rejection, native
+Select All for the export fields, and the 160 by 360 pixel export. The
+403-row totals and all matrix row statuses are unchanged; no parser or corpus
+plumbing is promoted to an Acrobat feature row.
+
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
 | M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |

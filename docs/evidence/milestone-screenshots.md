@@ -6,6 +6,48 @@ Acrobat reference images are never committed; their future evidence IDs may be
 recorded here without public paths. The user-facing progress report provides local
 absolute paths when needed; this tracked manifest records filenames only.
 
+## Integrated Task B status, 2026-09-14
+
+Corpus/parser integration is committed locally at
+`432e1f7eb5facdc51239472d28c748388b445550`. Required consumer suites and the
+qualified local amd64 Docker/`act` simulation exited 0; the simulation is not
+hosted CI or native-window acceptance. The exact Isartor trace opened page 1
+of 10,000 and returned 941,160 of 4,010,934 bytes (23.46%) through first-page
+access. This status does not add a screenshot row or promote an Acrobat
+feature row. Native macOS evidence is recorded separately below; the
+independent native scenario review passed, while final-main and milestone gates
+remain pending.
+
+## Native verification, 2026-09-14
+
+The committed source was `432e1f7eb5facdc51239472d28c748388b445550` with tree
+`38ef2a494c46b8a2a63757b8bbd36d923b3b279f`. The freshly built shell binary was
+`46e2d32be9d6d29d27220a3624cb2fdd89eb76ca324d0d42d79ff6bd3f6a4fe4`.
+The stable native process was PID 72408. It opened Isartor at page 1 of
+10,000, found `Hello` visibly, switched between the Hello and two-page tabs,
+and rejected page 0 without opening Save. Cmd+A replaced First page 0 with 2;
+native Edit > Select All then replaced the focused DPI value 150 with 144,
+while Last page remained 2. The resulting new private PNG was 160 by
+360 pixels with SHA-256
+`db576c0bd09ccb5f7e0d74645d884a9736b987a27043f3c01f06fa7b5947c088`.
+
+The five window-only captures below are retained in the private progress
+directory. `M3-INTEGRATION-NATIVE-005` is the principal stable Isartor proof.
+
+| Evidence ID | Scenario | Captured UTC | Private filename | SHA-256 |
+|---|---|---|---|---|
+| M3-INTEGRATION-NATIVE-001 | Initial Isartor window | 2026-09-14T12:59:27Z | `20260914-m3-integration-432e1f7-isartor.png` | `49ee0d80c89acf7b8147ed46e3158c3d2554202a1e4272431764ba529120826c` |
+| M3-INTEGRATION-NATIVE-002 | Hello Find result | 2026-09-14T13:10:32Z | `20260914-m3-integration-432e1f7-find.png` | `d5daafad409e8ca0391c47bd71ae5184b44a4669704eba769bb4ec6190ee1304` |
+| M3-INTEGRATION-NATIVE-003 | Invalid page rejection | 2026-09-14T13:12:04Z | `20260914-m3-integration-432e1f7-export-invalid.png` | `a7679055e20b98473a6308706e76f4a91bb3e140921e5d34a2dd5e12cce7451b` |
+| M3-INTEGRATION-NATIVE-004 | Export settings after native Select All | 2026-09-14T13:12:39Z | `20260914-m3-integration-432e1f7-export-settings.png` | `e2b4759f6446926f6d9137fe470f01f2d81d6c5f1a40e928d54cbc3c6a0e69a4` |
+| M3-INTEGRATION-NATIVE-005 | Stable Isartor window, principal proof | 2026-09-14T13:16:40Z | `20260914-m3-integration-432e1f7-isartor-stable.png` | `2ec293b81319e15de469bf1e66149eb9985d78a4a440712ef4e04a914139f2eb` |
+
+The earlier interrupted chooser sequence replayed successfully in this stable
+process, but the original failure was not reproduced and its cause is
+unknown. That narrow replay carries no broader stability claim. Native
+scenario acceptance was independently reviewed and approved; VoiceOver,
+cross-platform, hosted-CI and final-main acceptance remain separate gates.
+
 | Evidence ID | Task | Scenario | Build commit | Evidence time (UTC) | Local image | SHA-256 |
 |---|---|---|---|---|---|---|
 | M2-P7-ARTIFACT-001 | P7 rendering artifact fix | Rotated second page after atlas-gutter seam fix; inspected as window-only | `fdaf657` | 2026-08-29T23:26Z, inferred from filename; filesystem mtime 23:28:57Z | `m2-p7-render-artifact-fix-two-page-20260830-0126.png` | `0d88848c0f41b42ce7468e4b95384bbcac3b5c399718cc6e370d9319982f407f` |

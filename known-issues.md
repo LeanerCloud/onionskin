@@ -97,6 +97,17 @@ source IDs, severity, ownership, and required proof.
   M2 carry-forwards: VoiceOver, Linux/Windows accessibility, private B7 states
   003-010, hosted release/required-checks/platform-package work, or three-pass
   acceptance.
+  **Integrated Task B checkpoint (2026-09-14):** commit `432e1f7` measures the
+  exact Isartor consumer at 941,160/4,010,934 returned bytes (23.46%) through
+  first-page access, with 10,000 pages; 32 of 39 size-qualified lazy candidates
+  were measured and seven existing exclusions remain. Required corpus targets,
+  the COS library and `write_new` passed directly, and the local amd64
+  Docker/`act` simulation exited 0. This is not hosted CI, Windows or native
+  acceptance. Independently reviewed native macOS scenario evidence is recorded
+  in `docs/evidence/milestone-screenshots.md`; the interrupted chooser failure
+  was not reproduced and has no broader stability claim. The measured local 25%
+  regression is resolved on this corpus; hosted timing/branch enforcement,
+  Windows acceptance and final milestone acceptance remain open.
 - cos: only the copy loop of a save is bounded memory. A repaired or
   escalated document assembles a section carrying a full table, which
   materializes every compressed object it has to copy forward, and
@@ -202,23 +213,13 @@ source IDs, severity, ownership, and required proof.
   script at docs/spikes/m2-voiceover-acceptance.md and record the result
   there. Role::Document is fixed (the M1 spike misread it: the missing piece
   was the role description, not the role) and verified by execution.
-- P12 residuals: arrow-key navigation was not shipped, so the focus ring is
-  flat and every visible pane row is a tab stop, which makes Tab cross an
-  open thumbnails pane in dozens of presses; a screen-reader press on an
-  occluded window is queued rather than honoured, because gpui runs a
-  window's display link only while macOS reports it visible and
-  refresh_windows merely marks the window dirty; the shell extracts every
-  visible page's text on every frame whether or not a client is listening,
-  so first-visit content-stream extraction runs on the UI thread during
-  scroll and P14's headless scroll bench cannot see it. The prior soft CI
-  gate for the platform half of the press and the prepaint rectangles is
-  resolved by B5: the macOS accessibility probe now runs as a required CI
-  step after its 14-test local pass.
-- P12 focus dispatch: an AccessKit `Focus` request updates the internal ring but
-  does not clear stale GPUI text-field focus or focus the requested real input.
-  B5 must regress text-field focus -> screen-reader focus on Zoom In -> Enter and
-  prove Zoom In runs. Linux and Windows adapters are currently no-ops; either wire
-  them or scope M2 app-accessibility acceptance to macOS with named follow-ups.
+- **Resolved in B5:** P12 now groups the focus ring so Tab crosses surfaces and
+  arrows move within one, publishes queued presses from occluded macOS windows
+  on the main queue, and extracts page text on demand rather than every frame.
+  The macOS accessibility probe is a required CI step after its local pass.
+- **Resolved in B5:** AccessKit `Focus` requests and GPUI text-field focus now
+  synchronize through the published cursor. Linux and Windows adapters remain
+  no-ops, and one real VoiceOver session is still required for acceptance.
 - Linux packaging script and Windows NSIS installer have inspection-only
   confidence; the first tagged release is their real test.
 - Shell spike nit for M2: drag state not cleared on outside-window

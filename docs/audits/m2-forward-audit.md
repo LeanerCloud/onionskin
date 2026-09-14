@@ -21,6 +21,37 @@ the view/zoom merge `cb87b72`, brings the live totals to 52 implemented,
 is landed, and its first two private comparisons are complete with public metadata
 ledgered. It still owns the remaining eight states and final acceptance.
 
+## Integration verification checkpoint, 2026-09-14
+
+Task B corpus/parser integration is committed locally at
+`432e1f7eb5facdc51239472d28c748388b445550`. The required consumer targets,
+COS library, and `write_new` passed as separate direct commands. The exact
+Isartor trace opened page 1 of 10,000 and returned 941,160/4,010,934 bytes
+through first-page access. A local amd64 Docker/`act` simulation exited 0;
+its clean control and three reviewed workflow mutations produced their
+expected statuses. These results are local qualification only, not hosted CI,
+or Windows acceptance. Independent review approved the native macOS scenario
+evidence recorded in `docs/evidence/milestone-screenshots.md`, including the
+stable Isartor window, Find, tab switching, invalid page rejection, native
+Select All, and the 160 by 360 pixel export. Final-main and milestone gates
+remain separate, and these results do not change the Acrobat matrix totals or
+feature statuses.
+
+The stale `f1fe658` P12 ledger is retained as historical evidence. Its current
+disposition is the live `HARD-A11Y-001` row: P12 remains partially resolved,
+the required macOS probe is not a VoiceOver session, and real VoiceOver plus
+Linux/Windows adapters remain open. The old missing-codecs export claim in that
+ledger is stale and is not carried forward; the current regression uses a
+custom blocked codec. Historical global-search ordering and probe-lint claims
+remain unverified and are not imported as fresh findings. The retained source
+inventory is likewise
+unchanged: the integrated primary sets (`c516734`, `c933642`, `0340cdb`, and
+`dd3e404`) contribute only their approved history; dirty tools-basic, zoom-to
+and C12 experiments, equivalent old M1/page-index work, the `a284` whole-tree
+checkpoint, historical P12 and parity worktrees, local corpus artifacts, and
+the three workflow-mutation worktrees remain preserved as follow-ups or
+controls. None is promoted or silently discarded.
+
 ## Method
 
 Three independent read-only audits covered core/render/content/search/performance,
