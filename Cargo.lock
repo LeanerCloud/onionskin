@@ -3980,6 +3980,7 @@ dependencies = [
  "onionskin-codecs-common",
  "onionskin-commands-core",
  "onionskin-core",
+ "onionskin-corpus-testing",
  "onionskin-plugin-api",
  "onionskin-redact",
  "onionskin-render",
@@ -4012,6 +4013,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "onionskin-core",
+ "onionskin-corpus-testing",
  "onionskin-plugin-api",
  "resvg",
 ]
@@ -4037,9 +4039,14 @@ name = "onionskin-core"
 version = "0.1.0"
 dependencies = [
  "onionskin-content",
+ "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-render",
 ]
+
+[[package]]
+name = "onionskin-corpus-testing"
+version = "0.1.0"
 
 [[package]]
 name = "onionskin-cos"
@@ -4104,6 +4111,7 @@ name = "onionskin-tools-basic"
 version = "0.1.0"
 dependencies = [
  "onionskin-core",
+ "onionskin-corpus-testing",
  "onionskin-plugin-api",
 ]
 

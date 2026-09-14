@@ -226,7 +226,12 @@ fn a_similarity_mismatch_is_not_an_extraction_error() {
     oracle.score(path, 0.5, 1.0);
     oracle.fail(path, "future-mismatch-category", "the text differs");
 
+    assert_eq!(oracle.total(), 1);
     assert_eq!(error_rate(&oracle), 0.0);
+
+    oracle.skip(Path::new("skipped.pdf"), "no-text");
+    oracle.error(Path::new("broken.pdf"), "extract", "the extractor failed");
+    assert_eq!(oracle.total(), 3);
 }
 
 #[test]
@@ -305,7 +310,11 @@ fn a_nonzero_pdftotext_exit_is_an_error() {
 
 fn run_corpus(name: &str, relative: &str, limit: Option<usize>) -> Option<Oracle> {
     if !common::have_pdftotext() {
-        eprintln!("SKIPPED: {name} needs pdftotext on PATH");
+        // Through `missing` rather than a bare print: without the oracle every
+        // test in this file returns early and reports a pass, which is the
+        // same silent skip an absent corpus produces and deserves the same
+        // treatment when CI says the run is mandatory.
+        common::missing(&format!("{name} needs pdftotext on PATH"));
         return None;
     }
     let dir = common::corpus_dir(relative)?;
@@ -331,6 +340,7 @@ fn seeds_match_pdftotext_exactly() {
     let Some(oracle) = run_corpus("seeds", "seeds", None) else {
         return;
     };
+    assert!(!oracle.scores.is_empty(), "no seed text was compared");
     assert!(oracle.failed.is_empty(), "{:?}", oracle.failed);
     assert_eq!(oracle.bucket(1.0, f64::INFINITY), oracle.scores.len());
 }
@@ -433,6 +443,7 @@ fn full_sweep() {
         for (category, files) in &oracle.failed {
             *totals.entry(category.clone()).or_default() += files.len();
         }
+        all.errors += oracle.errors;
         all.scores.extend(oracle.scores);
         all.overlaps.extend(oracle.overlaps);
         for (k, v) in oracle.skipped {

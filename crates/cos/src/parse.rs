@@ -654,7 +654,11 @@ pub(crate) fn parse_indirect(
         // its data would hand back a plausible wrong stream on a document that
         // otherwise looks clean.
         _ => {
-            let found = scan_for_endstream(buf, data_start).ok_or_else(no_endstream)?;
+            let found = match scan_for_endstream(buf, data_start) {
+                Some(found) => found,
+                None if !at_eof => return Err(need_more()),
+                None => return Err(no_endstream()),
+            };
             let actual = (found - data_start) as u64;
             let note = match declared {
                 Declared::Given(declared) => RecoveredBoundary::LengthWrong { declared, actual },
@@ -813,5 +817,38 @@ mod tests {
         let parsed = parse_indirect(src, 0, true, &|_| None).expect("parses");
         assert_eq!(parsed.object.as_stream().unwrap().raw, b"abcdef");
         assert_eq!(parsed.recovered, None);
+    }
+
+    #[test]
+    fn stream_search_requests_more_until_eof() {
+        let payload = vec![b'x'; 3000];
+        let mut complete = b"7 0 obj\n<< /Length 1500 >>\nstream\n".to_vec();
+        complete.extend_from_slice(&payload);
+        complete.extend_from_slice(b"\nendstream\nendobj");
+        let window = &complete[..2048];
+
+        match parse_indirect(window, 0, false, &|_| None) {
+            Err(error) => assert_eq!(error.kind, LexErrorKind::Eof),
+            Ok(_) => panic!("an intermediate stream window must request more input"),
+        }
+        match parse_indirect(window, 0, true, &|_| None) {
+            Err(LexError {
+                kind: LexErrorKind::Syntax(detail),
+                ..
+            }) => assert_eq!(detail, "stream has no endstream"),
+            _ => panic!("an EOF window must report the missing terminator"),
+        }
+
+        let parsed = parse_indirect(&complete, 0, true, &|_| None).expect("complete stream parses");
+        assert_eq!(parsed.objref, ObjRef::new(7, 0));
+        assert_eq!(parsed.span, Span::new(0, complete.len() as u64));
+        assert_eq!(parsed.object.as_stream().expect("stream").raw, payload);
+        assert_eq!(
+            parsed.recovered,
+            Some(RecoveredBoundary::LengthWrong {
+                declared: 1500,
+                actual: 3000,
+            })
+        );
     }
 }

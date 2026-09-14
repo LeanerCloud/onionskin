@@ -1,0 +1,267 @@
+Recorded by corpus/proof/record.sh. Regenerate rather than edit.
+rustc: rustc 1.98.0 (88d9e12ae 2026-08-18)
+
+================================================================
+The rerun over the corpus CI fetches. Every suite must pass.
+================================================================
+corpus root: $CORPUS
+  bench        1 PDFs
+  external     3378 PDFs
+  js-forms     0 PDFs
+  malformed    15 PDFs
+  seeds        3 PDFs
+  tagged       0 PDFs
+
+PASS  cargo test -p onionskin-codecs-common --test roundtrip
+PASS  cargo test -p onionskin-content --test corpus
+PASS  cargo test -p onionskin-content --test oracle
+PASS  cargo test -p onionskin-content --test regressions
+PASS  cargo test -p onionskin-content --test seeds
+PASS  cargo test -p onionskin-core --test panes
+PASS  cargo test -p onionskin-core --test search
+PASS  cargo test -p onionskin-core --test session
+PASS  cargo test -p onionskin-cos --test boundaries
+PASS  cargo test -p onionskin-cos --test delete
+PASS  cargo test -p onionskin-cos --test incremental
+PASS  cargo test -p onionskin-cos --test lazy
+PASS  cargo test -p onionskin-cos --test pages
+PASS  cargo test -p onionskin-cos --test repair
+PASS  cargo test -p onionskin-cos --test robustness
+PASS  cargo test -p onionskin-cos --test roundtrip
+
+16 passed, 0 failed
+
+================================================================
+The fetch step removed. The rerun must fail.
+================================================================
+corpus root: $CORPUS
+  bench        1 PDFs
+  js-forms     0 PDFs
+  malformed    15 PDFs
+  seeds        3 PDFs
+  tagged       0 PDFs
+
+FAIL  cargo test -p onionskin-codecs-common --test roundtrip
+        corpus required but $CORPUS/external is absent (it is gitignored)
+FAIL  cargo test -p onionskin-content --test corpus
+        corpus required but $CORPUS/external/hayro/pdfs/custom is absent (it is gitignored)
+FAIL  cargo test -p onionskin-content --test oracle
+        corpus required but $CORPUS/external/pdf-association is absent (it is gitignored)
+PASS  cargo test -p onionskin-content --test regressions
+PASS  cargo test -p onionskin-content --test seeds
+FAIL  cargo test -p onionskin-core --test panes
+        corpus required but $CORPUS/external/hayro/pdfs/custom/issue175.pdf is absent
+FAIL  cargo test -p onionskin-core --test search
+        corpus required but $CORPUS/external/hayro-corpus is absent
+PASS  cargo test -p onionskin-core --test session
+FAIL  cargo test -p onionskin-cos --test boundaries
+        corpus required but $CORPUS/external is absent (it is gitignored)
+PASS  cargo test -p onionskin-cos --test delete
+PASS  cargo test -p onionskin-cos --test incremental
+FAIL  cargo test -p onionskin-cos --test lazy
+        corpus required but $CORPUS/external is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test pages
+        corpus required but $CORPUS/external is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test repair
+        corpus required but $CORPUS/external is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test robustness
+        corpus required but $CORPUS/external/hayro/pdfs/load is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test roundtrip
+        corpus required but $CORPUS/external/hayro-corpus is absent (it is gitignored)
+
+5 passed, 11 failed
+
+================================================================
+The fetch step half-done, external/ present and empty. Must fail.
+================================================================
+corpus root: $CORPUS
+  bench        1 PDFs
+  external     0 PDFs
+  js-forms     0 PDFs
+  malformed    15 PDFs
+  seeds        3 PDFs
+  tagged       0 PDFs
+
+FAIL  cargo test -p onionskin-codecs-common --test roundtrip
+        $CORPUS/external holds no PDFs
+FAIL  cargo test -p onionskin-content --test corpus
+        corpus required but $CORPUS/external/verapdf is absent (it is gitignored)
+FAIL  cargo test -p onionskin-content --test oracle
+        corpus required but $CORPUS/external/hayro/pdfs/custom is absent (it is gitignored)
+PASS  cargo test -p onionskin-content --test regressions
+PASS  cargo test -p onionskin-content --test seeds
+FAIL  cargo test -p onionskin-core --test panes
+        corpus required but $CORPUS/external/pdf-association/pdf20examples/pdf20-utf8-test.pdf is absent
+FAIL  cargo test -p onionskin-core --test search
+        corpus required but $CORPUS/external/hayro-corpus is absent
+PASS  cargo test -p onionskin-core --test session
+FAIL  cargo test -p onionskin-cos --test boundaries
+        only 19 corpus files sampled, so this walk is not measuring the wild
+PASS  cargo test -p onionskin-cos --test delete
+PASS  cargo test -p onionskin-cos --test incremental
+FAIL  cargo test -p onionskin-cos --test lazy
+        the external corpus is present but produced no object-stream spans
+FAIL  cargo test -p onionskin-cos --test pages
+        only 1 multi-page files were compared; the external corpus should carry dozens
+FAIL  cargo test -p onionskin-cos --test repair
+        $CORPUS/external holds no PDF, so this walk would report a pass having opened nothing
+FAIL  cargo test -p onionskin-cos --test robustness
+        corpus required but $CORPUS/external/hayro/pdfs/load is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test roundtrip
+        corpus required but $CORPUS/external/pdf-association is absent (it is gitignored)
+
+5 passed, 11 failed
+
+================================================================
+An external/ of undamaged files. The damage walks must fail.
+================================================================
+corpus root: $CORPUS
+  bench        1 PDFs
+  external     3 PDFs
+  js-forms     0 PDFs
+  malformed    15 PDFs
+  seeds        3 PDFs
+  tagged       0 PDFs
+
+PASS  cargo test -p onionskin-codecs-common --test roundtrip
+FAIL  cargo test -p onionskin-content --test corpus
+        corpus required but $CORPUS/external/pdf-association is absent (it is gitignored)
+FAIL  cargo test -p onionskin-content --test oracle
+        corpus required but $CORPUS/external/hayro/pdfs/custom is absent (it is gitignored)
+PASS  cargo test -p onionskin-content --test regressions
+PASS  cargo test -p onionskin-content --test seeds
+FAIL  cargo test -p onionskin-core --test panes
+        corpus required but $CORPUS/external/pdf-association/pdf-differences/UnknownFilter/UnknownFilter-OutlineObjStm.pdf is absent
+FAIL  cargo test -p onionskin-core --test search
+        corpus required but $CORPUS/external/hayro-corpus is absent
+PASS  cargo test -p onionskin-core --test session
+FAIL  cargo test -p onionskin-cos --test boundaries
+        only 22 corpus files sampled, so this walk is not measuring the wild
+PASS  cargo test -p onionskin-cos --test delete
+PASS  cargo test -p onionskin-cos --test incremental
+FAIL  cargo test -p onionskin-cos --test lazy
+        the external corpus is present but produced no object-stream spans
+FAIL  cargo test -p onionskin-cos --test pages
+        only 2 multi-page files were compared; the external corpus should carry dozens
+FAIL  cargo test -p onionskin-cos --test repair
+        $CORPUS/external holds no file that needed repairing, so real-world damage went unmeasured
+FAIL  cargo test -p onionskin-cos --test robustness
+        corpus required but $CORPUS/external/hayro/pdfs/load is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test roundtrip
+        corpus required but $CORPUS/external/hayro-corpus is absent (it is gitignored)
+
+6 passed, 10 failed
+
+================================================================
+Both generators removed. The suites that need them must fail.
+================================================================
+corpus root: $CORPUS
+  external     3378 PDFs
+  js-forms     0 PDFs
+  seeds        3 PDFs
+  tagged       0 PDFs
+
+PASS  cargo test -p onionskin-codecs-common --test roundtrip
+PASS  cargo test -p onionskin-content --test corpus
+PASS  cargo test -p onionskin-content --test oracle
+PASS  cargo test -p onionskin-content --test regressions
+PASS  cargo test -p onionskin-content --test seeds
+PASS  cargo test -p onionskin-core --test panes
+PASS  cargo test -p onionskin-core --test search
+FAIL  cargo test -p onionskin-core --test session
+        corpus required but $CORPUS/malformed is absent (it is gitignored)
+PASS  cargo test -p onionskin-cos --test boundaries
+PASS  cargo test -p onionskin-cos --test delete
+PASS  cargo test -p onionskin-cos --test incremental
+PASS  cargo test -p onionskin-cos --test lazy
+FAIL  cargo test -p onionskin-cos --test pages
+        corpus required but $CORPUS/bench is absent (it is gitignored)
+FAIL  cargo test -p onionskin-cos --test repair
+        corpus required but $CORPUS/malformed is absent (it is gitignored)
+PASS  cargo test -p onionskin-cos --test robustness
+PASS  cargo test -p onionskin-cos --test roundtrip
+
+13 passed, 3 failed
+
+================================================================
+The tripwire, one mutation of the workflow at a time.
+================================================================
+
+=== remove the fetch step ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969454) panicked at crates/app/tests/guarantees.rs:3667:5:
+assertion `left == right` failed: CI fetches no corpus, so every external/ walk runs over an empty directory and passes
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== remove the hayro-corpus fetch step ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969486) panicked at crates/app/tests/guarantees.rs:3667:5:
+assertion `left == right` failed: CI does not fetch hayro-corpus, which guarantee 1's round-trip walk, the extraction walk and the document search walk all name
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== remove the malformed generator ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969547) panicked at crates/app/tests/guarantees.rs:3667:5:
+assertion `left == right` failed: CI never generates corpus/malformed, so the repair and session walks cannot be made mandatory
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== remove the thousand-page generator ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969580) panicked at crates/app/tests/guarantees.rs:3667:5:
+assertion `left == right` failed: CI never generates the thousand-page file, so the pages suite cannot be made mandatory
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== remove the extraction oracle install ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969614) panicked at crates/app/tests/guarantees.rs:3667:5:
+assertion `left == right` failed: CI does not install pdftotext, so the extraction oracle skips every file and reports a pass
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== remove one suite from the rerun list ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969651) panicked at crates/app/tests/guarantees.rs:365:5:
+assertion `left == right` failed: the corpus rerun and the suites that can reach the corpus disagree
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.07s
+
+=== add a suite that reaches no corpus ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969683) panicked at crates/app/tests/guarantees.rs:365:5:
+assertion `left == right` failed: the corpus rerun and the suites that can reach the corpus disagree
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.05s
+
+=== condition the rerun away ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969716) panicked at crates/app/tests/guarantees.rs:3700:5:
+assertion `left == right` failed: the corpus rerun runs on a different set of runners than the fetch that feeds it
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== swallow the rerun's failures ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969749) panicked at crates/app/tests/guarantees.rs:365:5:
+assertion `left == right` failed: the corpus rerun and the suites that can reach the corpus disagree
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.05s
+
+=== drop the corpus-required env from the rerun ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969789) panicked at crates/app/tests/guarantees.rs:334:5:
+assertion `left == right` failed: the rerun still lets an absent corpus report a pass
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== fetch the corpus after the suites that read it ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969821) panicked at crates/app/tests/guarantees.rs:263:9:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== add a fetch step the cache key does not name ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969886) panicked at crates/app/tests/guarantees.rs:329:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== point the cache key at nothing that pins a revision ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969919) panicked at crates/app/tests/guarantees.rs:285:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== let the corpus cache fall back to a prefix ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36969976) panicked at crates/app/tests/guarantees.rs:281:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== let the whole test job fail without failing the build ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36970015) panicked at crates/app/tests/guarantees.rs:208:5:
+assertion `left == right` failed: a job allowed to fail is not a gate
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== condition the whole test job away ===
+thread 'every_corpus_suite_is_rerun_with_the_corpus_required' (36970046) panicked at crates/app/tests/guarantees.rs:213:5:
+assertion `left == right` failed: the test job is conditional, so there are pushes it does not gate
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.00s
+
+=== baseline, must pass ===
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 43 filtered out; finished in 0.05s

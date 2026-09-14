@@ -32,13 +32,21 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         })
         .collect();
     if candidates.is_empty() {
-        eprintln!("SKIPPED: the corpus holds no PDF of at least {INTERESTING} bytes");
+        common::missing(&format!(
+            "the corpus holds no PDF of at least {INTERESTING} bytes, so laziness cannot be measured"
+        ));
         return;
     }
     candidates.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
 
+    let candidate_count = candidates.len();
+    // Every candidate rather than the largest few: which files the largest few
+    // are depends on which corpus sets happen to be fetched, and the one file
+    // in the corpus that comes anywhere near this budget is 4 MB sitting among
+    // 10 MB neighbours.
     let mut measured = 0usize;
-    for (len, path) in candidates.iter().take(8) {
+    let mut violations = Vec::new();
+    for (len, path) in candidates.iter() {
         let file = FileSource::open(path).expect("corpus file opens");
         let (counting, stats) = CountingSource::new(Box::new(file));
 
@@ -57,29 +65,38 @@ fn opening_a_large_document_reads_far_less_than_the_whole_file() {
         let elapsed = started.elapsed();
 
         let read = stats.total();
-        let percent = read * 100 / len;
         println!(
-            "{}: {} bytes read of {} ({percent}%), {} pages, first page in {:?}",
+            "{}: {} bytes read of {} ({:.2}%), {} pages, first page in {:?}",
             path.file_name().unwrap_or_default().to_string_lossy(),
             read,
             len,
+            read as f64 * 100.0 / *len as f64,
             document.page_count().unwrap_or(-1),
             elapsed
         );
-        assert!(
-            read < *len,
-            "opening read {read} bytes of a {len} byte file: that is the whole file"
-        );
-        assert!(
-            percent <= BUDGET_PERCENT,
-            "opening read {percent}% of the file, over the {BUDGET_PERCENT}% budget"
-        );
+        if read >= *len {
+            violations.push(format!(
+                "{}: opening read {read} bytes of a {len} byte file",
+                path.display()
+            ));
+        }
+        if read * 100 > BUDGET_PERCENT * *len {
+            violations.push(format!(
+                "{}: opening read {read} bytes of a {len} byte file, over the {BUDGET_PERCENT}% budget",
+                path.display()
+            ));
+        }
         measured += 1;
     }
 
+    println!("measured {measured} of {candidate_count} size-qualified candidates");
     assert!(
         measured > 0,
         "no large corpus file opened cleanly, so laziness went unmeasured"
+    );
+    assert!(
+        violations.is_empty(),
+        "laziness budget violations: {violations:?}"
     );
 }
 
@@ -188,7 +205,7 @@ fn an_object_is_parsed_only_when_it_is_asked_for() {
     };
     let path = root.join("seeds").join("two-page.pdf");
     if !path.is_file() {
-        eprintln!("SKIPPED: {} is absent", path.display());
+        common::missing(&format!("{} is absent", path.display()));
         return;
     }
 

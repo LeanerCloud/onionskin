@@ -2,12 +2,11 @@
 //! only ever see page-space pointer input and a viewport, so everything
 //! they do can be asserted without a window.
 
-use std::path::{Path, PathBuf};
-
 use onionskin_core::{
     Document, FitMode, Modifiers, PageAlignment, PagePoint, PageQuad, PageRect, ViewPoint,
     ViewSize, Viewport, ZoomPolicy,
 };
+use onionskin_corpus_testing::seed;
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCtx, ToolPlugin};
 use onionskin_tools_basic::{
     DynamicZoomTool, HandTool, SelectRegionTool, SelectTextTool, SnapshotTool, ZoomTool,
@@ -24,8 +23,8 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn open(seed: &str) -> Self {
-        let mut doc = Document::open_path(&seed_path(seed)).expect("seed opens");
+    fn open(name: &str) -> Self {
+        let mut doc = Document::open_path(&seed(name)).expect("seed opens");
         let mut viewport =
             Viewport::new(doc.page_count(), VIEWPORT, 12.0).expect("viewport is valid");
         for page in 0..doc.page_count() {
@@ -88,12 +87,6 @@ impl Fixture {
             .text()
             .map(|selection| selection.text.clone())
     }
-}
-
-fn seed_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/seeds")
-        .join(name)
 }
 
 fn input(at: PagePoint, modifiers: Modifiers) -> PointerInput {

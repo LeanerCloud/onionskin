@@ -7,9 +7,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use common::{
-    classic_pdf, classic_pdf_covering, corpus_dir, corpus_root, pdfs_in, skeleton, Tally,
-};
+use common::{classic_pdf, classic_pdf_covering, corpus_dir, pdfs_in, skeleton, Tally};
 use onionskin_cos::{
     BytesSource, Document, Error, ObjRef, Object, Origin, Provenance, RepairReason, Span,
 };
@@ -154,22 +152,26 @@ fn repairs_and_saves(path: &Path) -> Result<(), String> {
 /// as "needed-repair" lands here, and has to survive the same contract.
 #[test]
 fn damaged_files_in_the_external_corpora_repair_the_same_way() {
-    let Some(root) = corpus_root() else {
-        common::missing("no corpus found; set ONIONSKIN_CORPUS");
+    // Through `corpus_dir` rather than an `is_dir` check of its own: this
+    // walk printed SKIPPED and returned even under ONIONSKIN_CORPUS_REQUIRED,
+    // so guarantee 6's own re-run reported a pass over an absent corpus.
+    let Some(external) = corpus_dir("external") else {
         return;
     };
-    let external = root.join("external");
-    if !external.is_dir() {
-        eprintln!(
-            "SKIPPED: {} is absent (it is gitignored)",
-            external.display()
-        );
-        return;
-    }
+
+    // A directory is not a corpus: `corpus/fetch.sh` creates `external/`
+    // before it downloads anything, and a truncated cache restores it empty,
+    // either of which would leave the walk below with nothing to fail on.
+    let files = pdfs_in(&external);
+    assert!(
+        !files.is_empty(),
+        "{} holds no PDF, so this walk would report a pass having opened nothing",
+        external.display()
+    );
 
     let mut tally = Tally::new("external (damaged only)");
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
-    for path in pdfs_in(&external) {
+    for path in files {
         let Ok((document, provenance)) = Document::open_path_repairing(&path) else {
             continue;
         };
@@ -193,6 +195,16 @@ fn damaged_files_in_the_external_corpora_repair_the_same_way() {
         tally.failure_count(),
         0,
         "a repaired real-world file must still save over intact original bytes"
+    );
+    // A file list is not damage. Every clean file is skipped by the loop
+    // above, so an `external/` of well-formed documents leaves the tally empty
+    // and the assertion just made is satisfied by nothing at all. The sets CI
+    // fetches carry 28 damaged files, so this is a floor with a wide margin
+    // over a full walk rather than a count taken from a sample.
+    assert!(
+        tally.total() > 0,
+        "{} holds no file that needed repairing, so real-world damage went unmeasured",
+        external.display()
     );
 }
 

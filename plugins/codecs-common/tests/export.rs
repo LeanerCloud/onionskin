@@ -2,11 +2,11 @@
 //! to be faithful to: `content`'s extraction for text, and the canvas render
 //! path's own raster for PNG.
 
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use onionskin_codecs_common::{CommonCodecsPlugin, PngCodec, SvgCodec, TextCodec};
 use onionskin_core::{BaseRaster, Document, RenderRequest, RenderResponse};
+use onionskin_corpus_testing::seed;
 use onionskin_plugin_api::{
     CodecPlugin, ExportError, ExportOutputKind, ExportRequest, PageIndex, PageRange, PluginRegistry,
 };
@@ -37,15 +37,6 @@ fn collect_export(
             Ok(CollectedExport::PerPage(pages))
         }
     }
-}
-
-fn seed(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("the plugin lives under workspace/plugins")
-        .join("corpus/seeds")
-        .join(name)
 }
 
 fn open(name: &str) -> Document {

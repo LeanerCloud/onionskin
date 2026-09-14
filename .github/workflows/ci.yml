@@ -23,6 +23,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # 351 MB and 3378 files, so it is cached on everything that decides what
+      # a fetch produces: the pinned revisions in fetch.sh, and for the
+      # R2-hosted set the id manifest helper, the verifier and the checksum
+      # file. Same key shape as the bench job, a different key because the two
+      # jobs fetch different sets into the same directory and sharing one would
+      # make whichever job ran first decide what the other got.
+      - name: Cache the fetched corpus
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-test-default+hayro-corpus-${{ hashFiles('corpus/fetch.sh', 'corpus/verify-sha256.py', 'corpus/r2.py', 'corpus/checksums/hayro-corpus.sha256') }}
+      # The default sets: hayro, pdf-association and verapdf. Almost every
+      # external fixture the guarantee suites name comes from one of them, and
+      # until this step existed every walk over them ran on an empty directory
+      # and reported a pass. fetch.sh skips a set already on disk, so a cache
+      # hit makes this a no-op that says so in its own log.
+      - name: Fetch the corpus the guarantee suites walk
+        if: runner.os == 'Linux'
+        run: ./corpus/fetch.sh
+      # hayro-corpus is opt-in for a fetch on a laptop - 152 MB for 41 files -
+      # but three live suites name it outright, guarantee 1's own round-trip walk
+      # among them, and a mandatory re-run that excluded them would leave
+      # guarantee 1 meaning the tracked seeds again. Its own step rather than
+      # arguments spliced into the one above, so neither is a list of set names
+      # that can drift from fetch.sh's.
+      - name: Fetch the corpus set the round-trip and extraction suites name
+        if: runner.os == 'Linux'
+        run: ./corpus/fetch.sh hayro-corpus
       # Guarantee test 6's malformed set. It is gitignored, and the repair test
       # returns early when it is absent, so without this step that test is
       # green and measuring nothing. Deterministic byte transforms of the
@@ -33,16 +62,60 @@ jobs:
       - name: Generate the malformed corpus set
         if: runner.os == 'Linux'
         run: ./corpus/make-malformed.sh
+      # `crates/cos/tests/pages.rs` walks external/ and also measures the
+      # thousand-page file, so leaving it out would cost the external walk to
+      # save a generator that takes under a second.
+      - name: Generate the thousand-page corpus file
+        if: runner.os == 'Linux'
+        run: ./corpus/make-bench.py
+      # `crates/content/tests/oracle.rs` scores extraction against poppler and
+      # skips wholesale without it. Installed rather than assumed, because a
+      # runner image that dropped it would leave the oracle green and
+      # measuring nothing, which is this job's whole subject.
+      - name: Update the Linux package index
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
+      - name: Install the extraction oracle
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y poppler-utils
       - run: cargo test --workspace
-      # Generating the set is not proof it was measured: repair.rs returns
-      # early when the corpus is absent, so the run above would pass either
-      # way. ONIONSKIN_CORPUS_REQUIRED turns that skip into a failure, which is
-      # what makes disabling the step above visible instead of silent.
-      - name: Prove the repair guarantee measured the malformed set
+      # Fetching and generating a corpus is not proof anything measured it:
+      # every suite below returns early when its directory is absent, so the
+      # run above would pass either way. ONIONSKIN_CORPUS_REQUIRED turns that
+      # skip into a failure, which is what makes removing a step above visible
+      # instead of silent.
+      #
+      # Named per suite, never per crate. Per crate is not a shortcut: a crate
+      # holds suites with different corpus needs, and `cargo test -p
+      # onionskin-cos` would fail here on `--test pages`, which wants a file
+      # `corpus/make-bench.py` generates rather than one the fetch produces.
+      # `crates/app/tests/guarantees.rs` asserts this list against the suites
+      # that actually read the corpus, so a new one that skips CI fails the
+      # build.
+      - name: Prove every corpus suite measured its corpus
         if: runner.os == 'Linux'
         env:
           ONIONSKIN_CORPUS_REQUIRED: 1
-        run: cargo test -p onionskin-cos --test repair
+        run: |
+          cargo test -p onionskin-codecs-common --test roundtrip
+          cargo test -p onionskin-content --test corpus
+          cargo test -p onionskin-content --test oracle
+          cargo test -p onionskin-content --test regressions
+          cargo test -p onionskin-content --test seeds
+          cargo test -p onionskin-core --test panes
+          cargo test -p onionskin-core --test search
+          cargo test -p onionskin-core --test session
+          cargo test -p onionskin-cos --test boundaries
+          cargo test -p onionskin-cos --test delete
+          cargo test -p onionskin-cos --test incremental
+          cargo test -p onionskin-cos --test lazy
+          cargo test -p onionskin-cos --test overlay
+          cargo test -p onionskin-cos --test pages
+          cargo test -p onionskin-cos --test references
+          cargo test -p onionskin-cos --test repair
+          cargo test -p onionskin-cos --test robustness
+          cargo test -p onionskin-cos --test roundtrip
+          cargo test -p onionskin-cos --test sections
       # Guarantee test 5: with every plugin compiled out, the app still
       # builds and boots to a workspace that can do nothing.
       - run: cargo test -p onionskin-app --no-default-features

@@ -227,6 +227,12 @@ fn a_cross_reference_stream_with_the_right_length_reports_nothing() {
 /// would be worse than no note.
 #[test]
 fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
+    // "What the wild actually contains" is `external/`. Sampling the root
+    // without requiring it let this walk report a pass over the three tracked
+    // seeds, which contain no recovered boundary at all.
+    if corpus_dir("external").is_none() {
+        return;
+    }
     let Some(root) = corpus_root() else {
         common::missing("no corpus found; set ONIONSKIN_CORPUS");
         return;
@@ -239,6 +245,14 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
     let stride = (all.len() / 600).max(1);
     let sampled: Vec<_> = all.into_iter().step_by(stride).collect();
     println!("sampling {} corpus files, every {stride}", sampled.len());
+    // The sets CI fetches sample 680 files here. A floor rather than a count,
+    // so a corpus refresh that adds files does not fail the build for adding
+    // them, but a corpus that shrank to the seeds cannot report a pass.
+    assert!(
+        sampled.len() >= 500,
+        "only {} corpus files sampled, so this walk is not measuring the wild",
+        sampled.len()
+    );
     for path in sampled {
         let Ok((document, _)) = Document::open_path_repairing(&path) else {
             continue;
@@ -275,6 +289,12 @@ fn recovered_boundaries_across_the_corpus_agree_with_the_bytes() {
             recoveries += seen;
         }
     }
+    // Not asserted: that the sample met a file needing a recovery at all. Over
+    // the sets CI fetches it meets two in 680, and `stride` re-selects a
+    // disjoint subset whenever the corpus file count crosses a multiple of
+    // 600, so a floor here would fail on a corpus refresh rather than on a
+    // defect. Proving the detector fires on real data wants named files, which
+    // is this suite's own claim to make and not the corpus step's.
     println!("{recoveries} recovered stream boundaries in {files_with_recoveries} corpus files");
 }
 

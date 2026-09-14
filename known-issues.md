@@ -32,6 +32,14 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- Historical corpus proof scripts are retained references, not acceptance tools:
+  `tripwire.sh` mutates its checkout's workflow and masks the guarantee test's
+  exit status, `rerun.sh` deletes each command's raw log and treats an empty
+  suite list as success, and `record.sh` does not assert expected scenario
+  outcomes. This integration preserves them without running them. Current
+  acceptance uses direct commands with retained raw logs and subprocess exit
+  statuses.
+
 - Native menu availability: Select All is disabled without a document
   or the commands-core plugin, even when Home search has text focus. Correct
   native menu availability and focus-driven refresh in the next menu pass.

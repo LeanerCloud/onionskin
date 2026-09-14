@@ -8,3 +8,6 @@ publish.workspace = true
 [dependencies]
 onionskin-core.workspace = true
 onionskin-plugin-api.workspace = true
+
+[dev-dependencies]
+onionskin-corpus-testing.workspace = true

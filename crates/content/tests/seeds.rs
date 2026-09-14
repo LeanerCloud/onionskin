@@ -59,7 +59,7 @@ fn close(a: f64, b: f64) -> bool {
 /// placed it.
 fn assert_seed_layout(name: &str, expected: &str) {
     let Some(path) = seed(name) else {
-        eprintln!("SKIPPED: {name} is absent");
+        common::missing(&format!("{name} is absent"));
         return;
     };
     let doc = onionskin_cos::Document::open_path(&path).expect("seed opens clean");

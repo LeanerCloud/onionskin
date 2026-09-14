@@ -58,6 +58,10 @@ onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Corpus discovery for the test targets. `crates/app/tests` had none, so its
+# fixtures could neither be moved with `ONIONSKIN_CORPUS` nor made mandatory
+# with `ONIONSKIN_CORPUS_REQUIRED`.
+onionskin-corpus-testing.workspace = true
 # `crates/app/tests/a11y_probe.rs` parses what the probe build prints.
 serde_json.workspace = true
 # `crates/app/tests/guarantees.rs` reads the CI and release workflows to prove

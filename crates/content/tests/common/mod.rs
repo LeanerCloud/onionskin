@@ -330,6 +330,10 @@ impl Oracle {
         self.fail(file, category, detail);
     }
 
+    pub fn total(&self) -> usize {
+        self.scores.len() + self.skipped.values().map(Vec::len).sum::<usize>() + self.errors
+    }
+
     pub fn bucket(&self, low: f64, high: f64) -> usize {
         self.scores
             .iter()
@@ -345,9 +349,7 @@ impl Oracle {
     }
 
     pub fn report(&self) {
-        let total = self.scores.len()
-            + self.skipped.values().map(Vec::len).sum::<usize>()
-            + self.failed.values().map(Vec::len).sum::<usize>();
+        let total = self.total();
         println!(
             "\n== {} == {total} files, {} compared, mean sequence similarity {:.4}, mean character overlap {:.4}",
             self.name,

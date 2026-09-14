@@ -206,6 +206,36 @@ Tests 1, 2 and 6 walk directories, so a set added to `external/` is picked up
 without touching test code. Tests 3, 7 and 8 need per-file expectations and
 therefore name their inputs explicitly.
 
+### What CI fetches, and why that list
+
+The `test` job's Linux runner fetches the three default sets (`hayro`,
+`pdf-association`, `verapdf`) and `hayro-corpus`, generates `malformed/` and
+`bench/`, installs the `pdftotext` the extraction oracle scores against, and
+then re-runs every suite that reads any of them under
+`ONIONSKIN_CORPUS_REQUIRED=1`. Fetching a corpus is not proof anything measured
+it: each of those suites returns early when its directory is absent, so the
+ordinary `cargo test --workspace` before it would pass either way. The re-run
+is what turns a silent skip into a failure, and therefore what makes removing
+the fetch visible. `crates/app/tests/guarantees.rs` derives the re-run's
+command list from the test targets that can reach a corpus lookup, following
+the modules they declare, so a new suite that reads the corpus and never
+reaches CI fails the build.
+
+`hayro-corpus` is an opt-in set for a fetch on a laptop, and CI fetches it
+anyway. Three live suites name it outright, `cos/tests/roundtrip.rs`,
+`content/tests/corpus.rs` and `core/tests/search.rs`, plus one `#[ignore]`d
+sweep in `content/tests/oracle.rs`; the first of those enforces guarantee 1.
+Leaving it out would mean either a mandatory re-run that skipped guarantee 1's
+own walk or a per-test skip list inside it, and both put the guarantee back
+where it started. It costs 152 MB on a cold cache and nothing on a warm one.
+
+The corpus steps run on the Linux runner only. Corpus assertions are byte and
+structure work with no platform dimension, so putting the fetch on the
+three-way matrix would buy three caches and three chances to flake for one
+claim. The `test` and `bench` jobs cache `corpus/external` under separate keys
+because they fetch different sets into it, and a shared key would make
+whichever job ran first decide what the other one got.
+
 ### Known gap: signed documents
 
 A raw byte scan of the fetched sets finds `/Sig` or `/Adbe.pkcs7` in only 13

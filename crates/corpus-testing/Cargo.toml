@@ -1,0 +1,11 @@
+[package]
+name = "onionskin-corpus-testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# No dependencies on purpose. Every crate that reaches the corpus is a
+# dev-dependant of this one, so anything pulled in here is pulled into every
+# test build in the workspace.
+[dependencies]
