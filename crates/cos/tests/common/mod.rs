@@ -7,6 +7,10 @@
 //! absent from a fresh clone and from CI. A test that cannot find its corpus
 //! says so loudly and returns; it never reports a pass it did not earn.
 
+pub(crate) mod fixtures;
+#[allow(unused_imports)]
+pub(crate) use fixtures::skeleton;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -244,16 +248,6 @@ pub fn xref_stream_pdf(declared_length: Option<i64>) -> Vec<u8> {
     bytes.extend_from_slice(b"\nendstream\nendobj\n");
     bytes.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
     bytes
-}
-
-/// The three-object skeleton every fixture here needs: a catalog, a page tree
-/// and one page. Further bodies become objects 4 and up.
-pub fn skeleton() -> Vec<&'static [u8]> {
-    vec![
-        b"<</Type/Catalog/Pages 2 0 R>>",
-        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
-        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<<>>>>",
-    ]
 }
 
 /// One row of a classic cross-reference table, as read back out of bytes this
