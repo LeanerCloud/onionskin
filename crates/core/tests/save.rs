@@ -482,6 +482,44 @@ fn the_preview_cache_key_includes_the_filter() {
     );
 }
 
+/// The collision the key actually guards. The unfiltered preview and a
+/// filtered one live in different slots, so a test comparing those two passes
+/// whether or not the key includes the filter; that test survived the mutation
+/// that drops it. Two **hiding** modes share the one transient slot, and a
+/// document with a stamp is one they treat differently: Document-Only hides it
+/// and Document-and-Stamps keeps it.
+#[test]
+fn two_hiding_filters_at_one_generation_do_not_share_a_buffer() {
+    let dir = temp_dir("preview-two-hiding");
+    let path = copy_seed(&dir, "minimal.pdf");
+    let mut document = Document::open_path(&path).expect("opens");
+
+    let (edit, base) = document.edit_mut();
+    let structure = read_structure(base).expect("structure");
+    edit.transact(base, "Add Stamp", |tx| {
+        add_annotation(
+            tx,
+            &structure,
+            ObjRef::new(3, 0),
+            &Annotation::new(Subtype::Stamp, Rect::new(10.0, 10.0, 90.0, 40.0)),
+            WHEN,
+        )
+    })
+    .expect("stamp added");
+
+    let hides_stamp = document
+        .preview_bytes(AnnotationFilter::DocumentOnly)
+        .expect("preview");
+    let keeps_stamp = document
+        .preview_bytes(AnnotationFilter::DocumentAndStamps)
+        .expect("preview");
+    assert_ne!(
+        hides_stamp, keeps_stamp,
+        "Document-Only and Document-and-Stamps at one generation are different \
+         buffers; sharing one would show the print dialog the wrong mode"
+    );
+}
+
 /// One `section_for` call feeds both, so this is a regression test on the
 /// wiring rather than two implementations agreeing.
 #[test]
@@ -506,6 +544,91 @@ fn the_preview_equals_what_the_following_save_writes() {
         graph(&saved),
         preview_graph,
         "the preview's object graph is what the save wrote"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Structural reads answer from the edits
+// ---------------------------------------------------------------------------
+
+/// `structure()` is the document with the session's edits in it, not the
+/// document as it was opened. Asserted against the base directly, so the test
+/// fails if `structure()` ever quietly hands back the base.
+#[test]
+fn structure_answers_from_the_edits_not_from_the_open_document() {
+    let dir = temp_dir("structure-reads");
+    let path = copy_seed(&dir, "minimal.pdf");
+    let mut document = Document::open_path(&path).expect("opens");
+
+    let (edit, base) = document.edit_mut();
+    edit.apply(
+        base,
+        DocumentEdit::SetCatalogEntry {
+            key: Name::new("PageLayout"),
+            value: Some(Object::name("TwoColumnLeft")),
+        },
+    )
+    .expect("catalog entry");
+
+    let (_, base) = document.edit_mut();
+    assert!(
+        base.catalog()
+            .expect("catalog")
+            .get(b"PageLayout")
+            .is_none(),
+        "the base is unchanged, which is what makes the next assertion mean something"
+    );
+    let seen = document
+        .structure()
+        .expect("structure")
+        .catalog()
+        .expect("catalog")
+        .get(b"PageLayout")
+        .and_then(Object::as_name)
+        .map(|name| name.as_bytes().to_vec());
+    assert_eq!(seen, Some(b"TwoColumnLeft".to_vec()));
+}
+
+/// A reader routed through `structure()` sees a layer the session added and
+/// has not saved. `layers()` is the reader chosen because it is the one whose
+/// input an M3 edit can reach today.
+#[test]
+fn a_routed_reader_sees_an_unsaved_edit() {
+    let dir = temp_dir("routed-reader");
+    let path = copy_seed(&dir, "minimal.pdf");
+    let mut document = Document::open_path(&path).expect("opens");
+    assert!(
+        document.layers().expect("layers").is_empty(),
+        "no layers yet"
+    );
+
+    let (edit, base) = document.edit_mut();
+    edit.transact(base, "Add Layer", |tx| {
+        let group = tx.reserve();
+        let mut ocg = Dict::new();
+        ocg.set(Name::new("Type"), Object::name("OCG"));
+        ocg.set(Name::new("Name"), Object::String(b"Notes".to_vec()));
+        tx.set_object(group, 0, Object::Dict(ocg))?;
+
+        let group_ref = Object::Ref(ObjRef::new(group, 0));
+        let mut default_config = Dict::new();
+        default_config.set(Name::new("ON"), Object::Array(vec![group_ref.clone()]));
+        let mut properties = Dict::new();
+        properties.set(Name::new("OCGs"), Object::Array(vec![group_ref]));
+        properties.set(Name::new("D"), Object::Dict(default_config));
+
+        let catalog = tx.object(1)?.expect("catalog");
+        let mut updated = catalog.object.as_dict().expect("dict").clone();
+        updated.set(Name::new("OCProperties"), Object::Dict(properties));
+        tx.set_object(1, catalog.generation, Object::Dict(updated))
+    })
+    .expect("layer added");
+
+    let layers = document.layers().expect("layers");
+    assert_eq!(
+        layers.len(),
+        1,
+        "the reader sees the layer the session added, before any save"
     );
 }
 

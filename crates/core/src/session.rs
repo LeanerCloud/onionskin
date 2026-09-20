@@ -246,9 +246,19 @@ pub struct Document {
     /// a save, a revert. The preview cache and the render worker's staleness
     /// discipline both key on it.
     byte_generation: u64,
-    /// One entry, keyed by `(generation, filter)`. See `preview.rs` for why it
-    /// is one and not one per mode.
+    /// The unfiltered preview for the current generation, and the document
+    /// every structural read goes through. Persistent across reads within a
+    /// generation.
     preview: Option<crate::preview::PreviewBuffer>,
+    /// One transient slot for a filtered preview, keyed by `(generation,
+    /// filter)`. See `preview.rs` for why it is one and not one per mode: a
+    /// filtered preview is built for a render, used, and dropped, and keeping
+    /// it apart from `preview` stops the print dialog's mode changes from
+    /// evicting the buffer every structural read depends on.
+    filtered: Option<crate::preview::PreviewBuffer>,
+    /// The edit epoch the cached views were built at. When the session's
+    /// epoch moves past it, every view is stale.
+    seen_epoch: u64,
 }
 
 impl Document {
@@ -290,6 +300,8 @@ impl Document {
             path: None,
             byte_generation: 0,
             preview: None,
+            filtered: None,
+            seen_epoch: 0,
         })
     }
 
@@ -354,47 +366,86 @@ impl Document {
     /// Everything a reader should see right now: the original bytes plus at
     /// most one section, with `filter` applied.
     pub fn preview_bytes(&mut self, filter: crate::AnnotationFilter) -> Result<Arc<Vec<u8>>> {
-        self.ensure_preview(filter)?;
-        Ok(self.preview.as_ref().expect("just built").bytes())
+        self.sync_epoch();
+        if !filter.hides_anything() {
+            self.ensure_unfiltered()?;
+            return Ok(self.preview.as_ref().expect("just built").bytes());
+        }
+        if !self
+            .filtered
+            .as_ref()
+            .is_some_and(|buffer| buffer.matches(self.byte_generation, filter))
+        {
+            self.filtered = Some(self.build_preview(filter)?);
+        }
+        Ok(self.filtered.as_ref().expect("just built").bytes())
     }
 
     /// The document every structural read goes through, rather than the
     /// document as it was opened.
     ///
-    /// Adding a reader to `core` means routing it through here. The counterpart
-    /// rule on the write side is that adding a field to the overlay means
-    /// adding a row to its table; both exist because the previous version of
-    /// each was a list that sampled.
+    /// **Adding a reader to `core` means routing it through here.** The
+    /// counterpart rule on the write side is that adding a field to the overlay
+    /// means adding a row to its table; both exist because the previous version
+    /// of each was a list that sampled.
     pub fn structure(&mut self) -> Result<&onionskin_cos::Document> {
-        self.ensure_preview(crate::AnnotationFilter::DocumentAndMarkups)?;
+        self.ensure_unfiltered()?;
         self.preview.as_mut().expect("just built").structure()
     }
 
-    fn ensure_preview(&mut self, filter: crate::AnnotationFilter) -> Result<()> {
+    fn ensure_unfiltered(&mut self) -> Result<()> {
+        self.sync_epoch();
+        let unfiltered = crate::AnnotationFilter::DocumentAndMarkups;
         if self
             .preview
             .as_ref()
-            .is_some_and(|buffer| buffer.matches(self.byte_generation, filter))
+            .is_some_and(|buffer| buffer.matches(self.byte_generation, unfiltered))
         {
             return Ok(());
         }
-        let buffer = crate::preview::build(
+        self.preview = Some(self.build_preview(unfiltered)?);
+        Ok(())
+    }
+
+    fn build_preview(
+        &self,
+        filter: crate::AnnotationFilter,
+    ) -> Result<crate::preview::PreviewBuffer> {
+        crate::preview::build(
             Arc::clone(&self.bytes),
             &self.cos,
             &self.edit,
             self.page_count,
             self.byte_generation,
             filter,
-        )?;
-        self.preview = Some(buffer);
-        Ok(())
+        )
     }
 
-    /// Call after anything that changes what a reader should see.
+    /// Call after anything that changes the bytes underneath the session: a
+    /// save, a revert. An edit does not need it; see `sync_epoch`.
     pub fn bump_generation(&mut self) {
         self.byte_generation += 1;
-        self.preview = None;
         self.geometry.clear();
+        self.invalidate_views();
+    }
+
+    /// Drop every view built from the previous state of the edits, if the
+    /// edits have moved since.
+    ///
+    /// Called at the top of every read that caches, which is what makes an
+    /// edit through `edit_mut` visible to the next read without the caller
+    /// doing anything.
+    fn sync_epoch(&mut self) {
+        let epoch = self.edit.epoch();
+        if epoch != self.seen_epoch {
+            self.seen_epoch = epoch;
+            self.invalidate_views();
+        }
+    }
+
+    fn invalidate_views(&mut self) {
+        self.preview = None;
+        self.filtered = None;
         self.text.clear();
         self.outline = None;
         self.attachments = None;
@@ -525,9 +576,10 @@ impl Document {
     }
 
     pub fn page_text(&mut self, index: PageIndex) -> Result<&content::PageText> {
-        let cos = &self.cos;
+        self.ensure_unfiltered()?;
+        let structure = self.preview.as_mut().expect("just built").structure()?;
         self.text
-            .get_or_try_insert_with(index, || Ok(content::extract_page(cos, index)?))
+            .get_or_try_insert_with(index, || Ok(content::extract_page(structure, index)?))
     }
 
     pub fn request_render(
@@ -595,16 +647,21 @@ impl Document {
 
     /// The document outline, read once and kept.
     pub fn outline(&mut self) -> Result<&[OutlineItem]> {
+        self.sync_epoch();
         if self.outline.is_none() {
-            self.outline = Some(outline::read(&self.cos, self.page_count)?);
+            let page_count = self.page_count;
+            let items = outline::read(self.structure()?, page_count)?;
+            self.outline = Some(items);
         }
         Ok(self.outline.as_deref().expect("the outline was just read"))
     }
 
     /// The embedded files, read once and kept.
     pub fn attachments(&mut self) -> Result<&[Attachment]> {
+        self.sync_epoch();
         if self.attachments.is_none() {
-            self.attachments = Some(attachments::read(&self.cos)?);
+            let items = attachments::read(self.structure()?)?;
+            self.attachments = Some(items);
         }
         Ok(self
             .attachments
@@ -628,14 +685,18 @@ impl Document {
             .get(index)
             .ok_or(Error::NoSuchAttachment { index, count })?
             .clone();
-        attachments::read_bytes(&self.cos, &attachment)
+        // The listing came from `structure()`, so the bytes do too: an
+        // attachment the session added exists only there.
+        attachments::read_bytes(self.structure()?, &attachment)
     }
 
     /// The signature fields, read once and kept. Listing only: nothing here
     /// says whether a signature is valid, which is M6's answer to give.
     pub fn signatures(&mut self) -> Result<&[SignatureField]> {
+        self.sync_epoch();
         if self.signatures.is_none() {
-            self.signatures = Some(signatures::read(&self.cos)?);
+            let items = signatures::read(self.structure()?)?;
+            self.signatures = Some(items);
         }
         Ok(self
             .signatures
@@ -646,8 +707,10 @@ impl Document {
     /// The optional content groups, at the visibility the session is showing
     /// them: the file's default configuration until something toggles one.
     pub fn layers(&mut self) -> Result<&[Layer]> {
+        self.sync_epoch();
         if self.layers.is_none() {
-            self.layers = Some(layers::read(&self.cos)?);
+            let items = layers::read(self.structure()?)?;
+            self.layers = Some(items);
         }
         Ok(self.layers.as_deref().expect("the layers were just read"))
     }
@@ -690,7 +753,10 @@ impl Document {
     /// file, and keeping a second copy of it beside the live one is a second
     /// thing that can drift.
     pub fn reset_layer_visibility(&mut self) -> Result<bool> {
-        let initial = layers::read(&self.cos)?;
+        // Through `structure()`, like `layers()`: comparing a routed read
+        // against an unrouted one would call an edited document's own layers
+        // a change from its defaults.
+        let initial = layers::read(self.structure()?)?;
         if self.layers.as_ref() == Some(&initial) {
             return Ok(false);
         }
