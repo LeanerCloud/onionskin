@@ -158,8 +158,25 @@ enum Request {
     /// leave the untouched groups following the file while the pane showed
     /// something else.
     SetLayerVisibility(HashMap<ObjectIdentifier, bool>),
+    /// Render from different bytes from here on: the preview after an edit,
+    /// the reopened file after a save, the truncated one after a revert.
+    ///
+    /// The render session borrows the document it renders, so it cannot swap
+    /// documents in place; the loop exits, the thread rebuilds the document and
+    /// re-enters. The answer comes back on `response` only after the rebuild,
+    /// so a caller learns whether it worked rather than rendering on quietly
+    /// from bytes it thinks it replaced.
+    SetBytes {
+        bytes: Arc<Vec<u8>>,
+        response: mpsc::SyncSender<Result<(), WorkerError>>,
+    },
     Shutdown,
 }
+
+/// A reload the loop was asked for and has not performed yet. Set by
+/// `handle_request`, acted on by the thread body once the render session that
+/// borrows the old document has ended.
+type Reload = Option<(Arc<Vec<u8>>, mpsc::SyncSender<Result<(), WorkerError>>)>;
 
 type GeometryResponse = (PageIndex, Result<PageRenderGeometry, WorkerError>);
 
@@ -195,22 +212,44 @@ impl WorkerHandle {
                     }
                 };
 
+                let mut document = document;
                 let mut pending = PendingRequests::default();
                 let mut options = RenderOptions::default();
-                document.with_render_session(|renderer| {
-                    worker_loop(
-                        &document,
-                        renderer,
-                        &incoming,
-                        &Outgoing {
-                            renders: &outgoing,
-                            geometry: &geometry_outgoing,
-                            thumbnails: &thumbnail_outgoing,
-                        },
-                        &mut pending,
-                        &mut options,
-                    );
-                });
+                loop {
+                    let mut reload: Reload = None;
+                    document.with_render_session(|renderer| {
+                        worker_loop(
+                            &document,
+                            renderer,
+                            &incoming,
+                            &Outgoing {
+                                renders: &outgoing,
+                                geometry: &geometry_outgoing,
+                                thumbnails: &thumbnail_outgoing,
+                            },
+                            &mut pending,
+                            &mut options,
+                            &mut reload,
+                        );
+                    });
+                    // No reload means the loop ended for good: a shutdown or a
+                    // dropped handle.
+                    let Some((bytes, response)) = reload else {
+                        break;
+                    };
+                    // The old document is kept until the new one parses, so a
+                    // reload that fails leaves a worker that still renders
+                    // rather than one with nothing to render from.
+                    match onionskin_render::Document::from_shared(bytes) {
+                        Ok(fresh) => {
+                            document = fresh;
+                            let _ = response.send(Ok(()));
+                        }
+                        Err(error) => {
+                            let _ = response.send(Err(WorkerError::Render(error)));
+                        }
+                    }
+                }
             })
             .map_err(WorkerError::Spawn)?;
 
@@ -230,6 +269,24 @@ impl WorkerHandle {
                 Err(error)
             }
         }
+    }
+
+    /// Render from `bytes` from now on, and discard any geometry answered for
+    /// the old ones.
+    ///
+    /// Async geometry responses carry no generation, so one computed before
+    /// this call and delivered after it would be filed against the new bytes
+    /// and lay the page out at its old size. Draining the channel here is the
+    /// rule that prevents that; the alternative, a generation on every
+    /// response, is a wider change for the same guarantee.
+    pub(crate) fn set_bytes(&mut self, bytes: Arc<Vec<u8>>) -> Result<(), WorkerError> {
+        let (response, answer) = mpsc::sync_channel(1);
+        self.requests
+            .send(Request::SetBytes { bytes, response })
+            .map_err(|_| WorkerError::Stopped)?;
+        let result = answer.recv().map_err(|_| WorkerError::Stopped)?;
+        while self.geometry_responses.try_recv().is_ok() {}
+        result
     }
 
     pub(crate) fn page_geometry(&self, page: usize) -> Result<PageRenderGeometry, WorkerError> {
@@ -505,18 +562,23 @@ fn worker_loop(
     outgoing: &Outgoing<'_>,
     pending: &mut PendingRequests,
     options: &mut RenderOptions,
+    reload: &mut Reload,
 ) {
     loop {
         if pending.is_idle() {
             let Ok(request) = incoming.recv() else {
                 return;
             };
-            if handle_request(document, renderer, options, pending, outgoing, request) {
+            if handle_request(
+                document, renderer, options, pending, outgoing, request, reload,
+            ) {
                 return;
             }
         }
 
-        if drain_requests(document, renderer, options, pending, incoming, outgoing) {
+        if drain_requests(
+            document, renderer, options, pending, incoming, outgoing, reload,
+        ) {
             return;
         }
         // Which queue gets served is `PendingRequests`' decision, not this
@@ -524,15 +586,24 @@ fn worker_loop(
         match pending.next() {
             None => continue,
             Some(Work::Thumbnail(request)) => {
-                if render_one_thumbnail(
-                    document, renderer, options, pending, incoming, outgoing, request,
+                // Requests that arrived during the render are drained before the
+                // answer is sent, so a page that became visible meanwhile is
+                // already queued ahead of the next thumbnail.
+                let rendered = renderer.render_page(request.page, request.zoom, options);
+                if drain_requests(
+                    document, renderer, options, pending, incoming, outgoing, reload,
                 ) {
+                    return;
+                }
+                if send_thumbnail(outgoing, request, rendered) {
                     return;
                 }
             }
             Some(Work::Interactive(request)) => {
                 let rendered = renderer.render_page(request.page, request.zoom, options);
-                if drain_requests(document, renderer, options, pending, incoming, outgoing) {
+                if drain_requests(
+                    document, renderer, options, pending, incoming, outgoing, reload,
+                ) {
                     return;
                 }
                 if !pending.should_publish(request) {
@@ -551,25 +622,13 @@ fn worker_loop(
     }
 }
 
-/// Rasterize the oldest queued thumbnail, if there is one. Returns true when
-/// the loop should end.
-///
-/// Requests that arrived while it rendered are drained before the answer is
-/// sent, so a page that became visible during a thumbnail render is already
-/// queued ahead of the next thumbnail.
-fn render_one_thumbnail(
-    document: &onionskin_render::Document,
-    renderer: &mut onionskin_render::RenderSession<'_>,
-    options: &mut RenderOptions,
-    pending: &mut PendingRequests,
-    incoming: &mpsc::Receiver<Request>,
+/// Send a finished thumbnail. Returns true when the loop should end, which is
+/// when nobody is listening any more.
+fn send_thumbnail(
     outgoing: &Outgoing<'_>,
     request: ThumbnailRequest,
+    rendered: Result<PageRender, onionskin_render::RenderError>,
 ) -> bool {
-    let rendered = renderer.render_page(request.page, request.zoom, options);
-    if drain_requests(document, renderer, options, pending, incoming, outgoing) {
-        return true;
-    }
     let response = match rendered {
         Ok(render) => ThumbnailResponse::Ready { request, render },
         Err(error) => ThumbnailResponse::Failed { request, error },
@@ -584,11 +643,14 @@ fn drain_requests(
     pending: &mut PendingRequests,
     incoming: &mpsc::Receiver<Request>,
     outgoing: &Outgoing<'_>,
+    reload: &mut Reload,
 ) -> bool {
     loop {
         match incoming.try_recv() {
             Ok(request) => {
-                if handle_request(document, renderer, options, pending, outgoing, request) {
+                if handle_request(
+                    document, renderer, options, pending, outgoing, request, reload,
+                ) {
                     return true;
                 }
             }
@@ -605,6 +667,7 @@ fn handle_request(
     pending: &mut PendingRequests,
     outgoing: &Outgoing<'_>,
     request: Request,
+    reload: &mut Reload,
 ) -> bool {
     match request {
         Request::Geometry { page, response } => {
@@ -646,6 +709,12 @@ fn handle_request(
         Request::SetLayerVisibility(overrides) => {
             options.layer_visibility = overrides;
             false
+        }
+        Request::SetBytes { bytes, response } => {
+            // Ending the loop is how the session that borrows the old document
+            // gets dropped; the thread body does the rebuild.
+            *reload = Some((bytes, response));
+            true
         }
         Request::Shutdown => true,
     }
