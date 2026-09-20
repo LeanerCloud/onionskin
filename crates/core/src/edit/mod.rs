@@ -26,6 +26,13 @@ use overlay::ChangeKey;
 pub struct EditSession {
     overlay: Overlay,
     history: History,
+    /// Incremented by every commit, undo, redo, rebase and forget.
+    ///
+    /// The document's caches key on this, so an edit made through
+    /// `Document::edit_mut` invalidates them without the caller having to
+    /// remember to. A convention every caller must follow is a convention some
+    /// caller will not.
+    epoch: u64,
 }
 
 impl EditSession {
@@ -33,7 +40,13 @@ impl EditSession {
         EditSession {
             overlay: Overlay::for_base(base),
             history: History::default(),
+            epoch: 0,
         }
+    }
+
+    /// Changes whenever what a reader should see changes.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     /// A session whose undo stack is bounded at `max_bytes` rather than at
@@ -44,6 +57,7 @@ impl EditSession {
         EditSession {
             overlay: Overlay::for_base(base),
             history: History::with_bound(max_bytes),
+            epoch: 0,
         }
     }
 
@@ -86,6 +100,7 @@ impl EditSession {
                 Err(error)
             }
             Ok(value) => {
+                self.epoch += 1;
                 self.overlay.collapse(base)?;
                 let kept: Vec<Change> = changes.into_iter().filter(|c| !c.is_noop()).collect();
                 if !kept.is_empty() {
@@ -107,6 +122,7 @@ impl EditSession {
         };
         rollback(&mut self.overlay, &changes);
         self.overlay.collapse(base)?;
+        self.epoch += 1;
         Ok(true)
     }
 
@@ -118,6 +134,7 @@ impl EditSession {
             self.overlay.apply(change);
         }
         self.overlay.collapse(base)?;
+        self.epoch += 1;
         Ok(true)
     }
 
@@ -129,6 +146,7 @@ impl EditSession {
         self.overlay.clear();
         self.overlay.set_next_number(reopened.next_object_number());
         self.history.mark_saved();
+        self.epoch += 1;
     }
 
     /// Forget the overlay and the whole stack, in both directions, and report
@@ -143,6 +161,7 @@ impl EditSession {
     pub fn forget(&mut self, base: &CosDocument) {
         self.overlay = Overlay::for_base(base);
         self.history = History::default();
+        self.epoch += 1;
     }
 
     /// What the section writer consumes, as a fresh pair of maps. Nothing is
