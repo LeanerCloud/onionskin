@@ -1,4 +1,4 @@
-# M3 P3 verification: save, preview, generations and recovery (stages A to C)
+# M3 P3 verification: save, preview, generations, recovery and the render worker (stages A to D)
 
 Date: 2026-09-21. Branch: `feat/m3-p2-edit-graph`. Built on P2, P4 and P6.
 
@@ -18,18 +18,17 @@ independently green. What is here:
 
 **What is not here, and is not claimed:**
 
-- **Three reads still go to `&self.cos`, each for a stated reason** (stage B
-  routed the rest; see below). `page_geometry` and the async geometry response
-  pair a cos read with the render worker's own geometry, which comes from the
-  **original** bytes; routing the cos half alone would make the two disagree
-  after a page edit, which is worse than both being stale together. They move
-  when the worker does. `page_count` is still a field: nothing in M3 can change
-  the page count until P5 lands, so it is correct today, and P5 owes either
-  routing it or forcing a structure build. `export_snapshot` is documented as
-  exporting the original bytes and is left alone.
-- **The render worker still renders from the original bytes**, not from the
-  preview. The plan is explicit that feeding it preview bytes is a restructure
-  of `render.rs` rather than a new `Arc`, and it has not been done.
+- **Two reads still go to `&self.cos`, each for a stated reason.**
+  `page_count` is a field: nothing in M3 can change the page count until P5
+  lands, so it is correct today, and P5 owes either routing it or forcing a
+  structure build. `export_snapshot` is documented as exporting the original
+  bytes and is left alone; whether export should see unsaved edits is the
+  export feature's decision, not this package's.
+- **The shell-feature test suite was not run.** `cargo test -p onionskin-app
+  --features shell,shell-test-support` builds GPUI, which takes longer than this
+  environment allows a single command. The worker restructure is exercised by
+  every `core` suite and by the app's no-default-features suites, all green, but
+  the shell's own use of the worker is not claimed.
 - **`benches/save.rs` does not exist.**
 - The **failed-reopen** path is implemented and its rule is enforced in code,
   but there is no test for it: provoking a write that succeeds and a reopen that
@@ -177,6 +176,41 @@ the old one's.
 
 Mode checks are Unix-only. On Windows the directory and file are created with
 platform defaults and no mode is verified; this is stated rather than claimed.
+
+## Stage D: the render worker draws what a save would write
+
+The render session borrows the document it renders, so a worker cannot swap
+documents in place. `Request::SetBytes` ends the loop, the thread drops the
+session, builds a document from the new bytes and re-enters. The old document is
+kept until the new one parses, so a reload that fails leaves a worker that still
+renders. The answer comes back on a sync channel after the rebuild, so a caller
+learns whether it worked rather than rendering on from bytes it thinks it
+replaced.
+
+The document hands the worker the unfiltered preview lazily, at the next
+render-side call, when `(byte generation, edit epoch)` has moved. An unedited
+document's preview is the original `Arc`, so that costs nothing. With the worker
+in step, `page_geometry` reads both its halves from the edited document: text
+metrics from `structure()`, raster geometry from the worker. Routing one half
+without the other was the reason it had waited.
+
+**Async geometry.** Responses carry no generation, so one computed before a
+reload and delivered after it would lay a page out at its old size. The plan
+offers two rules and asks for one to be asserted; `set_bytes` drains the channel
+and the session clears its pending set, so a stale response cannot be read.
+
+| Mutation | Tests failed |
+| --- | --- |
+| P. the worker is never handed the preview | `an_unsaved_annotation_is_on_the_canvas_and_an_undone_one_is_not`, `a_reverted_annotation_leaves_the_canvas` |
+
+Both are asserted on pixels, because that is where the defect showed: a comment
+written a moment ago was invisible until a save.
+
+One lint finding came out of it and was fixed structurally rather than
+suppressed. The reload slot pushed `render_one_thumbnail` to eight arguments,
+past clippy's limit; it only took the slot to pass to its own drain, and the
+interactive arm already rendered, drained and sent inline. The thumbnail arm now
+does the same, and the helper is left with only the sending.
 
 ## An environment note
 
