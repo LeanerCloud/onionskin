@@ -38,3 +38,11 @@ test = false
 name = "scroll"
 harness = false
 test = false
+
+# P2's bound over resident bytes, measured rather than chosen: one entry for
+# the 1000-page reorder and one session of a hundred annotations, both
+# asserted against `MAX_HISTORY_BYTES`.
+[[bench]]
+name = "edit_entry"
+harness = false
+test = false

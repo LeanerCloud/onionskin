@@ -22,9 +22,13 @@ use super::Change;
 
 /// The stack's bound, as total resident bytes across every retained entry.
 ///
-/// The figure is derived rather than chosen, and `benches/edit_entry.rs` is
-/// where it is derived: it measures the worst single entry M3 can produce and
-/// asserts it against this constant, so the two cannot drift apart.
+/// The figure is derived rather than chosen. `benches/edit_entry.rs` measures
+/// the worst single entry M3 can produce, one page reorder on the thousand-page
+/// bench file, at **1,440,040 bytes**, against a hundred-annotation session at
+/// 207,700 bytes across a hundred entries. So 256 MiB holds roughly 186
+/// worst-case entries, and the one-step reorder is about seven times the whole
+/// annotation session, which is the asymmetry a byte-based bound exists for.
+/// The bench asserts against this constant so the two cannot drift apart.
 pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 
 /// One transaction's worth of changes, at most one per address.
