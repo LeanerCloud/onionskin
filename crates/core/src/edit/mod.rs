@@ -131,6 +131,20 @@ impl EditSession {
         self.history.mark_saved();
     }
 
+    /// Forget the overlay and the whole stack, in both directions, and report
+    /// clean against `base`.
+    ///
+    /// `revert_to` needs this and nothing else does. Left out, the stack goes
+    /// on describing bytes that no longer exist: every captured `before` was
+    /// read against a base the truncation just removed, so an undo after a
+    /// revert would restore objects into a document that never had them.
+    /// Refusing a revert on unsaved edits does not cover that, because the
+    /// entries below the saved mark are exactly the ones that survive it.
+    pub fn forget(&mut self, base: &CosDocument) {
+        self.overlay = Overlay::for_base(base);
+        self.history = History::default();
+    }
+
     /// What the section writer consumes, as a fresh pair of maps. Nothing is
     /// ever written into cos's own edit map.
     pub fn pending_edits(&self) -> BTreeMap<u32, onionskin_cos::PendingEdit> {

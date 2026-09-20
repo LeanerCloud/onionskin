@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use onionskin_content as content;
@@ -42,6 +42,14 @@ pub enum Error {
     /// The trailer has no `/Root`, or it does not name an object. An edit
     /// to the catalog has nowhere to land.
     NoCatalog,
+    /// A save was asked for on a session that was opened from bytes and has no
+    /// file to write to.
+    NoPath,
+    /// The file was written and is correct on disk, but the session could not
+    /// reopen it. The overlay is intact and the saved mark has not moved.
+    WrittenButNotReloaded(crate::save::WrittenButNotReloaded),
+    /// A revert was refused, with the reason.
+    RevertRefused(crate::generations::RevertRefusal),
     /// An edit addressed an object that is not a dictionary. Writing a key
     /// into it would discard whatever it actually held.
     NotADictionary {
@@ -84,6 +92,14 @@ impl fmt::Display for Error {
             Error::Content(e) => write!(f, "{e}"),
             Error::Worker(e) => write!(f, "{e}"),
             Error::NoCatalog => write!(f, "the trailer names no catalog"),
+            Error::NoPath => write!(f, "this document has no file to save to"),
+            Error::WrittenButNotReloaded(written) => write!(
+                f,
+                "{} was written and is correct, but this session could not reload it: {}",
+                written.path.display(),
+                written.cause
+            ),
+            Error::RevertRefused(why) => write!(f, "{why}"),
             Error::NotADictionary { number } => {
                 write!(f, "object {number} is not a dictionary")
             }
@@ -107,7 +123,10 @@ impl std::error::Error for Error {
             | Error::LayerLocked { .. }
             | Error::GeometryPageMismatch { .. }
             | Error::NoCatalog
+            | Error::NoPath
+            | Error::RevertRefused(_)
             | Error::NotADictionary { .. } => None,
+            Error::WrittenButNotReloaded(written) => Some(&*written.cause),
         }
     }
 }
@@ -220,11 +239,23 @@ pub struct Document {
     /// What this session has changed, and the stack that can take it back.
     /// Empty for a document nobody edits, so a reader pays nothing for it.
     edit: crate::EditSession,
+    /// Where a save writes. `None` for a session opened from bytes, which is
+    /// what `Save As` exists to fill in.
+    path: Option<PathBuf>,
+    /// Bumped whenever the bytes a reader should see change: a committed edit,
+    /// a save, a revert. The preview cache and the render worker's staleness
+    /// discipline both key on it.
+    byte_generation: u64,
+    /// One entry, keyed by `(generation, filter)`. See `preview.rs` for why it
+    /// is one and not one per mode.
+    preview: Option<crate::preview::PreviewBuffer>,
 }
 
 impl Document {
     pub fn open_path(path: &Path) -> Result<Self> {
-        Self::open_bytes(std::fs::read(path)?)
+        let mut document = Self::open_bytes(std::fs::read(path)?)?;
+        document.path = Some(path.to_path_buf());
+        Ok(document)
     }
 
     pub fn open_bytes(bytes: Vec<u8>) -> Result<Self> {
@@ -256,6 +287,9 @@ impl Document {
             signatures: None,
             layers: None,
             edit,
+            path: None,
+            byte_generation: 0,
+            preview: None,
         })
     }
 
@@ -275,6 +309,133 @@ impl Document {
     /// Whether the document differs from its last save.
     pub fn is_dirty(&self) -> bool {
         self.edit.is_dirty()
+    }
+
+    /// Where a save writes, if anywhere.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Bumped whenever the bytes a reader should see change.
+    pub fn byte_generation(&self) -> u64 {
+        self.byte_generation
+    }
+
+    /// Write the overlay to the file this session was opened from.
+    pub fn save(&mut self) -> Result<crate::SaveOutcome> {
+        let path = self.path.clone().ok_or(Error::NoPath)?;
+        self.write_to(&path, false)
+    }
+
+    /// The same, to a different file. There is no truncation relationship to
+    /// the original: the new file gets the original bytes plus one section, and
+    /// the session's generations list from here on describes the new file.
+    pub fn save_as(&mut self, path: &Path) -> Result<crate::SaveOutcome> {
+        self.write_to(path, true)
+    }
+
+    fn write_to(&mut self, path: &Path, saved_as: bool) -> Result<crate::SaveOutcome> {
+        let (bytes, cos, appended) =
+            crate::save::write_and_reopen(&self.bytes, &self.cos, &self.edit, path)?;
+
+        // Only past the reopen is any of this touched, so a failed reopen
+        // leaves the session exactly as it was.
+        self.bytes = bytes;
+        self.cos = cos;
+        self.edit.rebase(&self.cos);
+        self.path = Some(path.to_path_buf());
+        self.bump_generation();
+        Ok(crate::SaveOutcome {
+            sections_appended: appended,
+            saved_as,
+        })
+    }
+
+    /// Everything a reader should see right now: the original bytes plus at
+    /// most one section, with `filter` applied.
+    pub fn preview_bytes(&mut self, filter: crate::AnnotationFilter) -> Result<Arc<Vec<u8>>> {
+        self.ensure_preview(filter)?;
+        Ok(self.preview.as_ref().expect("just built").bytes())
+    }
+
+    /// The document every structural read goes through, rather than the
+    /// document as it was opened.
+    ///
+    /// Adding a reader to `core` means routing it through here. The counterpart
+    /// rule on the write side is that adding a field to the overlay means
+    /// adding a row to its table; both exist because the previous version of
+    /// each was a list that sampled.
+    pub fn structure(&mut self) -> Result<&onionskin_cos::Document> {
+        self.ensure_preview(crate::AnnotationFilter::DocumentAndMarkups)?;
+        self.preview.as_mut().expect("just built").structure()
+    }
+
+    fn ensure_preview(&mut self, filter: crate::AnnotationFilter) -> Result<()> {
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|buffer| buffer.matches(self.byte_generation, filter))
+        {
+            return Ok(());
+        }
+        let buffer = crate::preview::build(
+            Arc::clone(&self.bytes),
+            &self.cos,
+            &self.edit,
+            self.page_count,
+            self.byte_generation,
+            filter,
+        )?;
+        self.preview = Some(buffer);
+        Ok(())
+    }
+
+    /// Call after anything that changes what a reader should see.
+    pub fn bump_generation(&mut self) {
+        self.byte_generation += 1;
+        self.preview = None;
+        self.geometry.clear();
+        self.text.clear();
+        self.outline = None;
+        self.attachments = None;
+        self.signatures = None;
+        self.layers = None;
+    }
+
+    /// The file's own history, oldest first.
+    pub fn generations(&self) -> Result<Vec<crate::Generation>> {
+        crate::generations::generations(&self.cos)
+    }
+
+    /// Truncate the file back to the end of `target` and reopen.
+    ///
+    /// The generation is bumped **before** the truncation, so anything the
+    /// render worker has in flight against the old bytes is already stale by
+    /// the time the file changes. The reverse order leaves exactly the window
+    /// this ordering exists to close.
+    pub fn revert_to(&mut self, target: usize) -> Result<()> {
+        let path = self.path.clone().ok_or(Error::NoPath)?;
+        let generations = self.generations()?;
+        let point =
+            crate::generations::truncation_point(&generations, target, self.edit.is_dirty())
+                .map_err(Error::RevertRefused)?;
+
+        self.bump_generation();
+
+        let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+        file.set_len(point)?;
+        file.sync_all()?;
+        drop(file);
+
+        let bytes = Arc::new(std::fs::read(&path)?);
+        let cos =
+            onionskin_cos::Document::open(Box::new(BytesSource::from_shared(Arc::clone(&bytes))))?;
+        self.bytes = bytes;
+        self.cos = cos;
+        self.page_count = content::page_count(&self.cos)?;
+        // The stack described bytes that no longer exist, so it goes with them.
+        self.edit.forget(&self.cos);
+        Ok(())
     }
 
     pub fn bytes(&self) -> Arc<Vec<u8>> {
@@ -708,6 +869,13 @@ struct PageCache<T> {
 }
 
 impl<T> PageCache<T> {
+    /// Drop everything. A generation bump invalidates every page, because an
+    /// edit can move any of them.
+    fn clear(&mut self) {
+        self.items.clear();
+        self.order.clear();
+    }
+
     fn new(limit: usize) -> Self {
         PageCache {
             limit: limit.max(1),

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use onionskin_core::{
     add_annotation, check, pdf_date, read_annotations, read_structure, remove_annotation,
-    Annotation, AnnotationFilter, Color, Document, EditSession, Quad, Rect, RenderMode, Subtype,
+    Annotation, AnnotationFilter, Color, Document, EditSession, Quad, Rect, Subtype,
 };
 use onionskin_cos::{BytesSource, Document as CosDocument, ObjRef, Object};
 
@@ -255,13 +255,17 @@ fn the_filter_hides_by_mode_and_never_touches_the_saved_document() {
         "the unfiltered document draws its markup"
     );
 
-    let hidden = preview(&with_highlight, &document, RenderMode::DocumentOnly);
+    let hidden = preview(&with_highlight, &document, AnnotationFilter::DocumentOnly);
     assert!(
         content_bounds(&hidden, 1.0).is_none(),
         "DocumentOnly hides every markup"
     );
 
-    let stamps_only = preview(&with_highlight, &document, RenderMode::DocumentAndStamps);
+    let stamps_only = preview(
+        &with_highlight,
+        &document,
+        AnnotationFilter::DocumentAndStamps,
+    );
     assert!(
         content_bounds(&stamps_only, 1.0).is_none(),
         "DocumentAndStamps hides a highlight"
@@ -269,7 +273,7 @@ fn the_filter_hides_by_mode_and_never_touches_the_saved_document() {
 
     let (with_stamp, _) = author(&original, &base, &sample(Subtype::Stamp));
     let stamped = open(&with_stamp);
-    let kept = preview(&with_stamp, &stamped, RenderMode::DocumentAndStamps);
+    let kept = preview(&with_stamp, &stamped, AnnotationFilter::DocumentAndStamps);
     assert!(
         content_bounds(&kept, 1.0).is_some(),
         "DocumentAndStamps keeps a stamp"
@@ -475,10 +479,13 @@ fn author(original: &[u8], base: &CosDocument, annotation: &Annotation) -> (Vec<
 
 /// A preview buffer: the filter's overrides appended as a section that is
 /// rendered and thrown away.
-fn preview(bytes: &[u8], doc: &CosDocument, mode: RenderMode) -> Vec<u8> {
-    let filter = AnnotationFilter::new(mode);
+fn preview(bytes: &[u8], doc: &CosDocument, filter: AnnotationFilter) -> Vec<u8> {
     let overrides = filter
-        .preview_overrides(doc, doc.page_count().expect("pages") as usize)
+        .preview_overrides(
+            doc,
+            doc.page_count().expect("pages") as usize,
+            &BTreeMap::new(),
+        )
         .expect("overrides");
     let section = doc
         .section_for(&overrides, &BTreeMap::new())
