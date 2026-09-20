@@ -5,6 +5,7 @@
 //! history, save, and shell integration land in later milestones.
 
 mod attachments;
+mod edit;
 mod history;
 mod layers;
 mod layout;
@@ -20,6 +21,10 @@ mod testpdf;
 mod viewport;
 
 pub use attachments::Attachment;
+pub use edit::{
+    Change, DocumentEdit, EditSession, Entry, History, ObjectState, Overlay, TrailerState,
+    Transaction, MAX_HISTORY_BYTES,
+};
 pub use history::{ViewHistory, ViewState};
 pub use layers::Layer;
 pub use layout::{

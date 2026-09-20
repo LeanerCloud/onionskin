@@ -1,0 +1,239 @@
+//! The edit graph: one place that knows what has changed, one stack that can
+//! take it back, and one typed vocabulary every plugin speaks.
+//!
+//! [`Overlay`] holds the state, [`History`] holds the steps, [`DocumentEdit`]
+//! is the vocabulary, and [`EditSession`] is the only thing that touches all
+//! three. A caller never moves the overlay without recording the step, because
+//! the only way in is [`EditSession::transact`].
+
+mod history;
+mod overlay;
+mod verb;
+
+use std::collections::BTreeMap;
+
+use onionskin_cos::{Document as CosDocument, Name, Object};
+
+pub use history::{Entry, History, MAX_HISTORY_BYTES};
+pub use overlay::{Change, ObjectState, Overlay, TrailerState};
+pub use verb::DocumentEdit;
+
+use crate::session::Result;
+use overlay::ChangeKey;
+
+/// The document's edit state: what has changed and how to walk it back.
+#[derive(Clone, Debug)]
+pub struct EditSession {
+    overlay: Overlay,
+    history: History,
+}
+
+impl EditSession {
+    pub fn for_base(base: &CosDocument) -> Self {
+        EditSession {
+            overlay: Overlay::for_base(base),
+            history: History::default(),
+        }
+    }
+
+    /// A session whose undo stack is bounded at `max_bytes` rather than at
+    /// [`MAX_HISTORY_BYTES`]. The eviction rule is the same one; this only
+    /// makes it reachable without allocating a quarter of a gigabyte, which is
+    /// what the bound test needs.
+    pub fn with_history_bound(base: &CosDocument, max_bytes: usize) -> Self {
+        EditSession {
+            overlay: Overlay::for_base(base),
+            history: History::with_bound(max_bytes),
+        }
+    }
+
+    pub fn overlay(&self) -> &Overlay {
+        &self.overlay
+    }
+
+    pub fn history(&self) -> &History {
+        &self.history
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        !self.history.is_at_saved_mark()
+    }
+
+    /// Collect every change one label's worth of work makes into a single
+    /// entry. Two producers writing the same object inside one transaction
+    /// coalesce into one change whose `before` is the state before the
+    /// transaction and whose `after` is the last write, in either order.
+    ///
+    /// An aborted transaction leaves the overlay untouched, including any
+    /// object numbers it reserved: an abort cannot leak a number.
+    pub fn transact<F, T>(&mut self, base: &CosDocument, label: &'static str, body: F) -> Result<T>
+    where
+        F: FnOnce(&mut Transaction<'_>) -> Result<T>,
+    {
+        let reserved_before = self.overlay.next_number();
+        let mut tx = Transaction {
+            base,
+            overlay: &mut self.overlay,
+            changes: Vec::new(),
+            index: BTreeMap::new(),
+        };
+        let outcome = body(&mut tx);
+        let changes = tx.finish();
+        match outcome {
+            Err(error) => {
+                rollback(&mut self.overlay, &changes);
+                self.overlay.set_next_number(reserved_before);
+                Err(error)
+            }
+            Ok(value) => {
+                self.overlay.collapse(base)?;
+                let kept: Vec<Change> = changes.into_iter().filter(|c| !c.is_noop()).collect();
+                if !kept.is_empty() {
+                    self.history.push(Entry::new(label, kept));
+                }
+                Ok(value)
+            }
+        }
+    }
+
+    /// Apply one typed verb as its own undoable step.
+    pub fn apply(&mut self, base: &CosDocument, edit: DocumentEdit) -> Result<()> {
+        self.transact(base, edit.label(), |tx| edit.apply(tx))
+    }
+
+    pub fn undo(&mut self, base: &CosDocument) -> Result<bool> {
+        let Some(changes) = self.history.undo().map(|e| e.changes().to_vec()) else {
+            return Ok(false);
+        };
+        rollback(&mut self.overlay, &changes);
+        self.overlay.collapse(base)?;
+        Ok(true)
+    }
+
+    pub fn redo(&mut self, base: &CosDocument) -> Result<bool> {
+        let Some(changes) = self.history.redo().map(|e| e.changes().to_vec()) else {
+            return Ok(false);
+        };
+        for change in &changes {
+            self.overlay.apply(change);
+        }
+        self.overlay.collapse(base)?;
+        Ok(true)
+    }
+
+    /// After a save the overlay's contents have become the base, so the overlay
+    /// empties and the reservation counter rebases against the reopened
+    /// document. The history survives: undoing across a save is the case
+    /// [`TrailerState::Cleared`] exists for.
+    pub fn rebase(&mut self, reopened: &CosDocument) {
+        self.overlay.clear();
+        self.overlay.set_next_number(reopened.next_object_number());
+        self.history.mark_saved();
+    }
+
+    /// What the section writer consumes, as a fresh pair of maps. Nothing is
+    /// ever written into cos's own edit map.
+    pub fn pending_edits(&self) -> BTreeMap<u32, onionskin_cos::PendingEdit> {
+        self.overlay.pending_edits()
+    }
+
+    pub fn trailer_edits(&self) -> BTreeMap<Name, Option<Object>> {
+        self.overlay.trailer_edits()
+    }
+}
+
+fn rollback(overlay: &mut Overlay, changes: &[Change]) {
+    for change in changes.iter().rev() {
+        overlay.revert(change);
+    }
+}
+
+/// The write surface inside a transaction. Every write captures its own
+/// `before` by the base-capture rule before it moves the overlay, so a reader
+/// later in the same transaction sees the earlier write.
+pub struct Transaction<'a> {
+    base: &'a CosDocument,
+    overlay: &'a mut Overlay,
+    changes: Vec<Change>,
+    index: BTreeMap<ChangeKey, usize>,
+}
+
+impl Transaction<'_> {
+    /// The current value at a number: the overlay's if it has one, else the
+    /// base's, else `None`.
+    pub fn object(&self, number: u32) -> Result<Option<ObjectState>> {
+        self.overlay.capture_object(self.base, number)
+    }
+
+    /// The current value of a trailer key, resolved the same way.
+    pub fn trailer_value(&self, key: &[u8]) -> Option<Object> {
+        match self.overlay.capture_trailer(self.base, &Name(key.to_vec())) {
+            TrailerState::Cleared => None,
+            TrailerState::Set(object) => Some(object),
+        }
+    }
+
+    /// A number no object in the base or the overlay uses.
+    pub fn reserve(&mut self) -> u32 {
+        self.overlay.reserve()
+    }
+
+    pub fn set_object(&mut self, number: u32, generation: u16, object: Object) -> Result<()> {
+        let before = self.overlay.capture_object(self.base, number)?;
+        let after = Some(ObjectState::new(generation, object));
+        self.record(Change::Object {
+            number,
+            before,
+            after,
+        });
+        Ok(())
+    }
+
+    pub fn set_trailer(&mut self, key: Name, value: Option<Object>) -> Result<()> {
+        let before = self.overlay.capture_trailer(self.base, &key);
+        let after = match value {
+            None => TrailerState::Cleared,
+            Some(object) => TrailerState::Set(object),
+        };
+        self.record(Change::TrailerKey { key, before, after });
+        Ok(())
+    }
+
+    /// One change per address. A second write to the same address keeps the
+    /// first write's `before`, which is the state before the transaction, and
+    /// takes the later `after`.
+    fn record(&mut self, change: Change) {
+        self.overlay.apply(&change);
+        match self.index.get(&change.key()) {
+            Some(&at) => self.changes[at] = merge(&self.changes[at], change),
+            None => {
+                self.index.insert(change.key(), self.changes.len());
+                self.changes.push(change);
+            }
+        }
+    }
+
+    fn finish(self) -> Vec<Change> {
+        self.changes
+    }
+}
+
+fn merge(existing: &Change, later: Change) -> Change {
+    match (existing, later) {
+        (Change::Object { before, .. }, Change::Object { number, after, .. }) => Change::Object {
+            number,
+            before: before.clone(),
+            after,
+        },
+        (Change::TrailerKey { before, .. }, Change::TrailerKey { key, after, .. }) => {
+            Change::TrailerKey {
+                key,
+                before: before.clone(),
+                after,
+            }
+        }
+        // Unreachable: the index is keyed by variant as well as address, so a
+        // slot only ever merges with its own kind.
+        (_, later) => later,
+    }
+}

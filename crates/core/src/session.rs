@@ -39,6 +39,14 @@ pub enum Error {
         request: PageIndex,
         geometry: PageIndex,
     },
+    /// The trailer has no `/Root`, or it does not name an object. An edit
+    /// to the catalog has nowhere to land.
+    NoCatalog,
+    /// An edit addressed an object that is not a dictionary. Writing a key
+    /// into it would discard whatever it actually held.
+    NotADictionary {
+        number: u32,
+    },
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -75,6 +83,10 @@ impl fmt::Display for Error {
             Error::Cos(e) => write!(f, "{e}"),
             Error::Content(e) => write!(f, "{e}"),
             Error::Worker(e) => write!(f, "{e}"),
+            Error::NoCatalog => write!(f, "the trailer names no catalog"),
+            Error::NotADictionary { number } => {
+                write!(f, "object {number} is not a dictionary")
+            }
             Error::SearchWorker(e) => write!(f, "{e}"),
         }
     }
@@ -93,7 +105,9 @@ impl std::error::Error for Error {
             | Error::NoSuchAttachment { .. }
             | Error::NoSuchLayer { .. }
             | Error::LayerLocked { .. }
-            | Error::GeometryPageMismatch { .. } => None,
+            | Error::GeometryPageMismatch { .. }
+            | Error::NoCatalog
+            | Error::NotADictionary { .. } => None,
         }
     }
 }
@@ -203,6 +217,9 @@ pub struct Document {
     /// Kept rather than re-read, because a toggle lives here: this is what
     /// the pane shows and what the render worker was last told.
     layers: Option<Vec<Layer>>,
+    /// What this session has changed, and the stack that can take it back.
+    /// Empty for a document nobody edits, so a reader pays nothing for it.
+    edit: crate::EditSession,
 }
 
 impl Document {
@@ -219,6 +236,7 @@ impl Document {
             BytesSource::from_shared(Arc::clone(&bytes)),
         ))?;
         let page_count = content::page_count(&cos)?;
+        let edit = crate::EditSession::for_base(&cos);
         let render = WorkerHandle::spawn(Arc::clone(&bytes))?;
         Ok(Document {
             bytes,
@@ -237,7 +255,26 @@ impl Document {
             attachments: None,
             signatures: None,
             layers: None,
+            edit,
         })
+    }
+
+    /// What this session has changed. Read-only: the only way to move the
+    /// overlay is through [`Document::edit_mut`], which records the step.
+    pub fn edit(&self) -> &crate::EditSession {
+        &self.edit
+    }
+
+    /// The edit session together with the base it captures `before` values
+    /// from. Handing both out at once is what keeps a caller from capturing
+    /// against the wrong document.
+    pub fn edit_mut(&mut self) -> (&mut crate::EditSession, &onionskin_cos::Document) {
+        (&mut self.edit, &self.cos)
+    }
+
+    /// Whether the document differs from its last save.
+    pub fn is_dirty(&self) -> bool {
+        self.edit.is_dirty()
     }
 
     pub fn bytes(&self) -> Arc<Vec<u8>> {
