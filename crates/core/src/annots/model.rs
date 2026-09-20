@@ -30,6 +30,24 @@ pub enum Subtype {
 }
 
 impl Subtype {
+    /// Every subtype `core::annots` authors. The filter and the test suite both
+    /// read this rather than keeping their own copies, so a new subtype cannot
+    /// be added to one and forgotten in the other.
+    pub const ALL: &'static [Subtype] = &[
+        Subtype::Highlight,
+        Subtype::Underline,
+        Subtype::StrikeOut,
+        Subtype::Squiggly,
+        Subtype::Text,
+        Subtype::FreeText,
+        Subtype::Ink,
+        Subtype::Square,
+        Subtype::Circle,
+        Subtype::Line,
+        Subtype::Stamp,
+        Subtype::FileAttachment,
+    ];
+
     pub fn as_name(self) -> Name {
         Name::new(self.as_str())
     }

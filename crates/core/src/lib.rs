@@ -7,12 +7,15 @@
 mod annots;
 mod attachments;
 mod edit;
+mod generations;
 mod history;
 mod layers;
 mod layout;
 mod outline;
 mod page;
+mod preview;
 mod render;
+mod save;
 mod search;
 mod selection;
 mod session;
@@ -24,13 +27,14 @@ mod viewport;
 
 pub use annots::{
     add_annotation, pdf_date, read_annotations, remove_annotation, Annotation, AnnotationFilter,
-    Color, Flags, Quad, ReadAnnotation, Rect, RenderMode, Subtype,
+    Color, Flags, Quad, ReadAnnotation, Rect, Subtype,
 };
 pub use attachments::Attachment;
 pub use edit::{
     Change, DocumentEdit, EditSession, Entry, History, ObjectState, Overlay, TrailerState,
     Transaction, MAX_HISTORY_BYTES,
 };
+pub use generations::{Generation, RevertRefusal};
 pub use history::{ViewHistory, ViewState};
 pub use layers::Layer;
 pub use layout::{
@@ -53,6 +57,7 @@ pub use render::{
     PagePlaceholder, RenderRequest, RenderResponse, ThumbnailRequest, ThumbnailResponse,
     WorkerError,
 };
+pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, ExportSnapshot, PageGeometryResponse, Result, SnapshotRequest};

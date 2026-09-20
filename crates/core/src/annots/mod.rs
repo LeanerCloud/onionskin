@@ -12,7 +12,7 @@ mod filter;
 mod model;
 mod read;
 
-pub use filter::{AnnotationFilter, RenderMode};
+pub use filter::AnnotationFilter;
 pub use model::{Annotation, Color, Flags, Quad, Rect, Subtype};
 pub use read::ReadAnnotation;
 
