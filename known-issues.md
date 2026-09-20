@@ -32,6 +32,18 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- `cos` object spans, found 2026-09-21 while fetching the corpus for P4:
+  `crates/cos/tests/lazy.rs`'s `every_parsed_object_records_the_bytes_it_came_from`
+  fails on `external/verapdf/Isartor test files/PDFA-1b/6.1 File structure/6.1.8
+  Indirect objects/isartor-6-1-8-t01-fail-a.pdf` with "object 1's span does not
+  start at its header". The fixture is a deliberate 6.1.8 failure case, so either
+  the parser records a span that does not begin at the object header for this
+  shape, or the test's expectation is too strong for a file the parser repaired.
+  Predates the P4 work and is unrelated to it: it reproduces with `crates/cos`
+  unmodified, and only surfaces once `corpus/external/verapdf` is present, which
+  is why a fresh clone has not seen it. Not diagnosed further here; it belongs to
+  whoever owns the boundary-recovery path.
+
 - Historical corpus proof scripts are retained references, not acceptance tools:
   `tripwire.sh` mutates its checkout's workflow and masks the guarantee test's
   exit status, `rerun.sh` deletes each command's raw log and treats an empty
