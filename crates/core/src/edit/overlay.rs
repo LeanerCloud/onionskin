@@ -28,7 +28,7 @@
 //! had would otherwise write `/Info null` into a document that never had one.
 //! `Cleared` equals absent; `Set(v)` equals a base value of `v`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use onionskin_cos::{Document as CosDocument, Name, Object, PendingEdit, XrefEntry};
 
@@ -261,8 +261,22 @@ impl Overlay {
         self.trailer.insert(key, state.into_value());
     }
 
-    /// Drop every entry that now equals the base, by value. A dirty flag here
-    /// would make edit-then-undo-then-save append an empty section.
+    /// Drop every entry the document no longer needs.
+    ///
+    /// Two rules, and the second cannot be reached by the first.
+    ///
+    /// **Rule 1, by value.** An entry that now equals the base drops out. A
+    /// dirty flag here would make edit-then-undo-then-save append an empty
+    /// section.
+    ///
+    /// **Rule 2, by reachability.** An object this session *created* has no
+    /// base value to compare against, so rule 1 can never drop it. Add an
+    /// annotation and delete it again in one session: the page's `/Annots`
+    /// collapses back to the base under rule 1, and the annotation dictionary
+    /// and its appearance stream are left in the overlay with nothing naming
+    /// them. The save would then append a section carrying two orphans, on a
+    /// document the user changed and changed back. So an overlay-only object
+    /// that nothing in the merged document reaches drops out too.
     pub fn collapse(&mut self, base: &CosDocument) -> Result<()> {
         let mut settled = Vec::new();
         for (number, state) in &self.states {
@@ -276,7 +290,75 @@ impl Overlay {
         let trailer = base.trailer();
         self.trailer
             .retain(|key, value| value.as_ref() != trailer.get(key.as_bytes()));
+        self.drop_unreachable_new_objects(base)?;
         Ok(())
+    }
+
+    /// Rule 2. Skipped entirely unless the overlay holds an object the base
+    /// does not, which is what keeps an ordinary editing session from paying
+    /// for a reachability walk it cannot need.
+    fn drop_unreachable_new_objects(&mut self, base: &CosDocument) -> Result<()> {
+        let created: Vec<u32> = self
+            .states
+            .keys()
+            .copied()
+            .filter(|number| !base_has(base, *number))
+            .collect();
+        if created.is_empty() {
+            return Ok(());
+        }
+
+        let reached = self.reachable(base)?;
+        for number in created {
+            if !reached.contains(&number) {
+                self.states.remove(&number);
+            }
+        }
+        Ok(())
+    }
+
+    /// Every object number reachable from the merged trailer, where "merged"
+    /// means the overlay's value for a number when it has one and the base's
+    /// otherwise.
+    fn reachable(&self, base: &CosDocument) -> Result<BTreeSet<u32>> {
+        let mut reached = BTreeSet::new();
+        let mut queue: Vec<Object> = Vec::new();
+
+        // The merged trailer: the base's keys, with this session's overrides
+        // applied and its cleared keys removed.
+        for (key, value) in base.trailer().iter() {
+            match self.trailer.get(key) {
+                Some(Some(replacement)) => queue.push(replacement.clone()),
+                Some(None) => {}
+                None => queue.push(value.clone()),
+            }
+        }
+        for value in self.trailer.values().flatten() {
+            queue.push(value.clone());
+        }
+
+        while let Some(object) = queue.pop() {
+            match object {
+                Object::Ref(objref) => {
+                    if !reached.insert(objref.number) {
+                        continue;
+                    }
+                    match self.states.get(&objref.number) {
+                        Some(state) => queue.push(state.object.clone()),
+                        None => {
+                            if base_has(base, objref.number) {
+                                queue.push(base.get(objref.number)?.object);
+                            }
+                        }
+                    }
+                }
+                Object::Array(items) => queue.extend(items),
+                Object::Dict(dict) => queue.extend(dict.iter().map(|(_, v)| v.clone())),
+                Object::Stream(stream) => queue.extend(stream.dict.iter().map(|(_, v)| v.clone())),
+                _ => {}
+            }
+        }
+        Ok(reached)
     }
 
     /// The projection the section writer consumes. `Set` is the only variant

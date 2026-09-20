@@ -293,7 +293,17 @@ fn write_annots(
                 return Ok(());
             };
             let mut dict = dict.clone();
-            dict.set(Name::new("Annots"), Object::Array(items));
+            if items.is_empty() {
+                // Removing the last annotation removes the key, rather than
+                // leaving `/Annots []` behind. An empty array is legal, but a
+                // page that carries one no longer equals the page the base
+                // holds, so the overlay could not collapse and a save would
+                // append a section for a document the user changed and changed
+                // back.
+                dict.remove(b"Annots");
+            } else {
+                dict.set(Name::new("Annots"), Object::Array(items));
+            }
             tx.set_object(page.number, state.generation, Object::Dict(dict))
         }
     }
