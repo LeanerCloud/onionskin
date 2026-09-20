@@ -46,3 +46,10 @@ test = false
 name = "edit_entry"
 harness = false
 test = false
+
+# P3's cost of one preview rebuild after an edit, which is O(file size) however
+# small the edit: clean thousand-page, repaired, and the largest external file.
+[[bench]]
+name = "save"
+harness = false
+test = false

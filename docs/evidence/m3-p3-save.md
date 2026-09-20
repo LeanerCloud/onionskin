@@ -29,7 +29,6 @@ independently green. What is here:
   environment allows a single command. The worker restructure is exercised by
   every `core` suite and by the app's no-default-features suites, all green, but
   the shell's own use of the worker is not claimed.
-- **`benches/save.rs` does not exist.**
 - The **failed-reopen** path is implemented and its rule is enforced in code,
   but there is no test for it: provoking a write that succeeds and a reopen that
   fails needs a fault-injection seam this package does not have.
@@ -211,6 +210,39 @@ suppressed. The reload slot pushed `render_one_thumbnail` to eight arguments,
 past clippy's limit; it only took the slot to pass to its own drain, and the
 interactive arm already rendered, drained and sent inline. The thumbnail arm now
 does the same, and the helper is left with only the sending.
+
+## The bench
+
+`cargo bench -p onionskin-core --bench save`, one preview rebuild after one
+small edit, first and second commit reported apart:
+
+| Document | Size | First | Second |
+| --- | --- | --- | --- |
+| thousand-page bench file, clean | 2.2 MB | 1.6 ms | 1.4 ms |
+| largest file fetched in `external/` | about 1 MB | 3.3 ms | 2.2 ms |
+| largest repaired file fetched in `external/` | a few KB | 0.03 ms | 0.02 ms |
+
+**Read these with three caveats.**
+
+- **The budgets are loose on purpose, and far above these numbers**: 250 ms
+  plus 60 ms per megabyte. They are a tripwire for a rebuild that stops being
+  proportional to the file, not a performance target, and a tight budget would
+  flake across CI machines before it caught anything real.
+- **The repaired row measures almost nothing.** Every repaired file in the
+  veraPDF set is a small conformance probe, so none of them forces a large
+  full-table section. The plan asks for this case because it is where the
+  section stops being small; the corpus available here cannot show it.
+  `hayro-corpus` and the `pdf-association` sets have larger damaged files, and
+  were not fetched because their downloads go through a host this environment
+  blocks.
+- **"Largest in `external/`" means largest in the veraPDF set**, for the same
+  reason. The plan's point, that the synthetic file is not the worst case a
+  user has, stands and is not answered by these numbers.
+
+Second commit is faster than first in both meaningful rows, which is page-cache
+warmth rather than buffer reuse: the preview is rebuilt from scratch each time.
+Whether reusing the previous buffer is worth it is a question these numbers now
+make answerable, and at 1.5 ms for 2.2 MB the answer today is probably not.
 
 ## An environment note
 
