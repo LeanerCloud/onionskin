@@ -16,6 +16,7 @@ mod search;
 mod selection;
 mod session;
 mod signatures;
+mod structure;
 #[cfg(test)]
 mod testpdf;
 mod viewport;
@@ -51,4 +52,8 @@ pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, ExportSnapshot, PageGeometryResponse, Result, SnapshotRequest};
 pub use signatures::SignatureField;
+pub use structure::{
+    attach_annotation, check, read_structure, remove_page, reorder_pages, Element, Kid,
+    Maintenance, ParentEntry, Report, Structure, StructureTree, Violation,
+};
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy, MAX_ZOOM, MIN_ZOOM};

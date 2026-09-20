@@ -1,4 +1,13 @@
-# Tagged PDF corpus (not built yet)
+# Tagged PDF corpus (partially built)
+
+**Status, 2026-09-21.** M3's P4 added the first half: `derive.py`, which reads
+element counts and page-to-element mappings out of the already-fetched
+`external/verapdf/` set using pikepdf, and whose output is recorded as
+expectations in `crates/core/tests/structure.rs`. That is enough to grade the
+structure *reader*. The second half below, the vendored deep-structure
+documents with authored before-and-after expectations, is still not built and
+still waits on `tools-accessibility`'s checker for the reason step 4 gives.
+
 
 Guarantee test 8 in [`PLAN.md`](../../PLAN.md) says editing a tagged document
 "leaves its structure tree valid and consistent with the edited content, checked

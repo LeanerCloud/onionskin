@@ -105,6 +105,7 @@ jobs:
           cargo test -p onionskin-core --test panes
           cargo test -p onionskin-core --test search
           cargo test -p onionskin-core --test session
+          cargo test -p onionskin-core --test structure
           cargo test -p onionskin-cos --test boundaries
           cargo test -p onionskin-cos --test delete
           cargo test -p onionskin-cos --test incremental
