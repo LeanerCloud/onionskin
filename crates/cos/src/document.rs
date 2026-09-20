@@ -2075,10 +2075,10 @@ fn validate_catalog(number: u32, object: &Object) -> Result<()> {
             detail: format!("/Root object {number} is not a catalog dictionary"),
         });
     };
-    if !dict
+    if dict
         .get(b"Type")
         .and_then(Object::as_name)
-        .is_some_and(|name| name.as_bytes() == b"Catalog")
+        .is_none_or(|name| name.as_bytes() != b"Catalog")
     {
         return Err(Error::Unrecoverable {
             detail: format!("/Root object {number} is not a catalog"),

@@ -3753,7 +3753,7 @@ fn corpus_suites() -> Vec<CorpusSuite> {
                 // Only the top level: a `tests/common/mod.rs` is a module of
                 // whatever includes it, not a target `--test` can name.
                 let path = target.path();
-                if !path.extension().is_some_and(|kind| kind == "rs") {
+                if path.extension().is_none_or(|kind| kind != "rs") {
                     continue;
                 }
                 let name = path

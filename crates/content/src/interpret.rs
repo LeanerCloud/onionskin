@@ -326,11 +326,10 @@ impl Interpreter<'_> {
                     self.form_xobject(&name, resources, &state, depth);
                 }
 
-                b"BDC" | b"BMC" => {
-                    if marked.len() < MAX_MARKED {
-                        marked.push(self.sequence(&op, resources));
-                    }
+                b"BDC" | b"BMC" if marked.len() < MAX_MARKED => {
+                    marked.push(self.sequence(&op, resources));
                 }
+                b"BDC" | b"BMC" => {}
                 b"EMC" => {
                     marked.pop();
                 }
