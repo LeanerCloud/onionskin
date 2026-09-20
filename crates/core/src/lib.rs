@@ -4,6 +4,7 @@
 //! provenance, bounded page caches, selection, and find state. Edit graph,
 //! history, save, and shell integration land in later milestones.
 
+mod annots;
 mod attachments;
 mod edit;
 mod history;
@@ -21,6 +22,10 @@ mod structure;
 mod testpdf;
 mod viewport;
 
+pub use annots::{
+    add_annotation, pdf_date, read_annotations, remove_annotation, Annotation, AnnotationFilter,
+    Color, Flags, Quad, ReadAnnotation, Rect, RenderMode, Subtype,
+};
 pub use attachments::Attachment;
 pub use edit::{
     Change, DocumentEdit, EditSession, Entry, History, ObjectState, Overlay, TrailerState,
