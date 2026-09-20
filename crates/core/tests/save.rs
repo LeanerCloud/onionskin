@@ -633,6 +633,62 @@ fn a_routed_reader_sees_an_unsaved_edit() {
 }
 
 // ---------------------------------------------------------------------------
+// The render worker draws what a save would write
+// ---------------------------------------------------------------------------
+
+/// Before the worker followed the session, it rendered the bytes the document
+/// was opened from, so a comment written a moment ago was invisible until a
+/// save. Asserted on pixels, because that is where the defect showed.
+#[test]
+fn an_unsaved_annotation_is_on_the_canvas_and_an_undone_one_is_not() {
+    let dir = temp_dir("canvas");
+    let path = copy_seed(&dir, "minimal.pdf");
+    let mut document = Document::open_path(&path).expect("opens");
+
+    assert!(
+        drawn(&mut document).is_none(),
+        "the seed page is blank, so anything drawn is the annotation"
+    );
+
+    add_square(&mut document);
+    assert!(
+        drawn(&mut document).is_some(),
+        "an unsaved annotation is drawn, from the preview the worker now holds"
+    );
+
+    let (edit, base) = document.edit_mut();
+    assert!(edit.undo(base).expect("undo runs"));
+    assert!(drawn(&mut document).is_none(), "and an undone one is not");
+}
+
+/// A revert changes the bytes under the worker as well as under the session.
+#[test]
+fn a_reverted_annotation_leaves_the_canvas() {
+    let dir = temp_dir("canvas-revert");
+    let path = copy_seed(&dir, "minimal.pdf");
+    let mut document = Document::open_path(&path).expect("opens");
+
+    add_square(&mut document);
+    document.save().expect("saves");
+    assert!(drawn(&mut document).is_some(), "saved and drawn");
+
+    document.revert_to(1).expect("reverts");
+    assert!(
+        drawn(&mut document).is_none(),
+        "the worker renders the truncated file, not the one it had"
+    );
+}
+
+fn drawn(document: &mut Document) -> Option<(u32, u32, u32, u32)> {
+    document
+        .render_page_now(0, 1.0)
+        .expect("renders")
+        .raster
+        .content_bounds()
+        .map(|b| (b.x, b.y, b.width, b.height))
+}
+
+// ---------------------------------------------------------------------------
 // Generations
 // ---------------------------------------------------------------------------
 

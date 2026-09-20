@@ -267,6 +267,10 @@ pub struct Document {
     /// Where autosave writes, when the app has given it somewhere. `None` means
     /// autosave is off for this document, which is the default.
     recovery: Option<crate::recovery::RecoveryStore>,
+    /// `(byte generation, edit epoch)` of the bytes the render worker holds.
+    /// When it trails the session, the next render-side call hands the worker
+    /// the preview first, so what is drawn is what a save would write.
+    worker_state: (u64, u64),
 }
 
 impl Document {
@@ -311,6 +315,7 @@ impl Document {
             filtered: None,
             seen_epoch: 0,
             recovery: None,
+            worker_state: (0, 0),
         })
     }
 
@@ -499,6 +504,29 @@ impl Document {
         }
     }
 
+    /// Hand the render worker the current preview if it is rendering from
+    /// anything older.
+    ///
+    /// Lazy on purpose: building a preview copies the file, so it happens when
+    /// something is about to be drawn rather than on every edit. An empty
+    /// overlay costs nothing here, because the preview of an unedited
+    /// document is the original `Arc`.
+    fn sync_worker(&mut self) -> Result<()> {
+        self.sync_epoch();
+        let current = (self.byte_generation, self.edit.epoch());
+        if current == self.worker_state {
+            return Ok(());
+        }
+        let bytes = self.preview_bytes(crate::AnnotationFilter::DocumentAndMarkups)?;
+        self.render.set_bytes(bytes)?;
+        // Geometry requested against the old bytes is answered against them, so
+        // anything still marked pending is re-requested rather than waited on.
+        self.pending_geometry.clear();
+        self.geometry.clear();
+        self.worker_state = current;
+        Ok(())
+    }
+
     fn invalidate_views(&mut self) {
         self.preview = None;
         self.filtered = None;
@@ -582,16 +610,23 @@ impl Document {
     }
 
     pub fn page_geometry(&mut self, index: PageIndex) -> Result<&PageGeometry> {
-        let cos = &self.cos;
+        // Both halves from the edited document: the worker holds the preview
+        // once `sync_worker` has run, and `structure()` is the same bytes
+        // parsed. Routing only one half would give a page's text metrics from
+        // one document and its raster geometry from another.
+        self.sync_worker()?;
+        self.ensure_unfiltered()?;
+        let structure = self.preview.as_mut().expect("just built").structure()?;
         let render = &self.render;
         self.geometry.get_or_try_insert_with(index, || {
-            let page = content::page(cos, index)?;
+            let page = content::page(structure, index)?;
             let rendered = render.page_geometry(index)?;
             Ok(PageGeometry::new(&page, rendered))
         })
     }
 
     pub fn request_page_geometry(&mut self, index: PageIndex) -> Result<bool> {
+        self.sync_worker()?;
         self.check_page(index)?;
         if !self.pending_geometry.insert(index) {
             return Ok(false);
@@ -643,6 +678,7 @@ impl Document {
         request: RenderRequest,
         source: Option<&onionskin_render::BaseRaster>,
     ) -> Result<()> {
+        self.sync_worker()?;
         self.render.validate_request(request)?;
         let geometry = self.page_geometry(request.page)?.clone();
         self.render.request_render(request, &geometry, source)?;
@@ -655,6 +691,7 @@ impl Document {
         geometry: &PageGeometry,
         source: Option<&onionskin_render::BaseRaster>,
     ) -> Result<()> {
+        self.sync_worker()?;
         self.render.validate_request(request)?;
         self.check_page(request.page)?;
         if geometry.index != request.page {
@@ -681,12 +718,14 @@ impl Document {
     /// PNG export and the pixels on screen are the same rasterizer at the
     /// same zoom.
     pub fn render_page_now(&mut self, page: PageIndex, zoom: f32) -> Result<PageRender> {
+        self.sync_worker()?;
         self.check_page(page)?;
         Ok(self.render.render_page_now(page, zoom)?)
     }
 
     /// Convert one page to SVG on the same worker and render options.
     pub fn page_svg(&mut self, page: PageIndex) -> Result<PageSvg> {
+        self.sync_worker()?;
         self.check_page(page)?;
         Ok(self.render.page_svg(page)?)
     }
@@ -828,6 +867,7 @@ impl Document {
     /// of thumbnails never delays the page being read. The picture arrives
     /// through [`Document::try_thumbnail_response`].
     pub fn request_thumbnail(&mut self, request: ThumbnailRequest) -> Result<()> {
+        self.sync_worker()?;
         self.check_page(request.page)?;
         Ok(self.render.request_thumbnail(request)?)
     }
