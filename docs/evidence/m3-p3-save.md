@@ -1,4 +1,4 @@
-# M3 P3 verification: save, preview and generations (stages A and B)
+# M3 P3 verification: save, preview, generations and recovery (stages A to C)
 
 Date: 2026-09-21. Branch: `feat/m3-p2-edit-graph`. Built on P2, P4 and P6.
 
@@ -30,9 +30,6 @@ independently green. What is here:
 - **The render worker still renders from the original bytes**, not from the
   preview. The plan is explicit that feeding it preview bytes is a restructure
   of `render.rs` rather than a new `Arc`, and it has not been done.
-- **Autosave and the recovery file do not exist**, including the permission
-  checks the plan specifies and which are a privacy requirement rather than a
-  nit.
 - **`benches/save.rs` does not exist.**
 - The **failed-reopen** path is implemented and its rule is enforced in code,
   but there is no test for it: provoking a write that succeeds and a reopen that
@@ -140,6 +137,46 @@ that still passed.
 The plan's fifth, "one section per edit instead of per save", is an alternative
 architecture rather than a local mutation, and is covered by
 `ten_edits_and_one_save_are_still_one_section` asserting on parsed sections.
+
+## Stage C: autosave and the recovery file
+
+`crates/core/src/recovery.rs` and `crates/core/tests/recovery.rs`, 9 tests
+plus 3 unit tests.
+
+**The format is the incremental section itself**, behind a three-line header.
+The plan says autosave serializes the overlay and replays it into a freshly
+opened document; the section the next save would append *is* that
+serialization, produced by the one serializer this crate already trusts, and
+replay is appending it. No second format exists to drift from the first.
+
+**Replay cannot double-apply a saved edit.** The header records the length and
+an FNV-1a checksum of the original the section was built against. After a
+save, the file on disk is the original plus the section, the two no longer
+match, and the recovery is reported `Stale` rather than applied. FNV-1a is a
+staleness check against accident, stated as such, not an integrity guarantee
+against someone crafting a collision.
+
+**Every permission is read back.** The directory is verified `0o700` after it is
+opened or created; a pre-existing `0o755` directory is refused with an error
+naming the mode it found, nothing is written into it, and it is not quietly
+narrowed. Each file is created owner-only through a temporary and verified
+`0o600` before and after the rename. Recovery files are named by an opaque
+checksum of the document's path, because the names of the files in a directory
+are a record of what someone had open.
+
+**Deleted on save and on clean close**, and on autosave of a document that has
+become clean again, so document content outside the document lasts no longer
+than it has a reason to. A Save As removes both the new path's recovery and
+the old one's.
+
+| Mutation | Tests failed |
+| --- | --- |
+| M. the directory mode is not verified | `a_pre_existing_world_readable_directory_is_refused_visibly` |
+| N. a save does not discard the recovery | `the_recovery_file_is_gone_after_a_save` |
+| O. `recover` ignores the checksum | `a_recovery_older_than_a_save_is_stale_rather_than_replayed` |
+
+Mode checks are Unix-only. On Windows the directory and file are created with
+platform defaults and no mode is verified; this is stated rather than claimed.
 
 ## An environment note
 
