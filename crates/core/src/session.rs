@@ -50,6 +50,9 @@ pub enum Error {
     WrittenButNotReloaded(crate::save::WrittenButNotReloaded),
     /// A revert was refused, with the reason.
     RevertRefused(crate::generations::RevertRefusal),
+    /// The recovery store refused, most often because its directory is not
+    /// owner-only. Autosave is off until that is fixed; nothing was written.
+    Recovery(crate::recovery::RecoveryError),
     /// An edit addressed an object that is not a dictionary. Writing a key
     /// into it would discard whatever it actually held.
     NotADictionary {
@@ -100,6 +103,7 @@ impl fmt::Display for Error {
                 written.cause
             ),
             Error::RevertRefused(why) => write!(f, "{why}"),
+            Error::Recovery(error) => write!(f, "{error}"),
             Error::NotADictionary { number } => {
                 write!(f, "object {number} is not a dictionary")
             }
@@ -127,6 +131,7 @@ impl std::error::Error for Error {
             | Error::RevertRefused(_)
             | Error::NotADictionary { .. } => None,
             Error::WrittenButNotReloaded(written) => Some(&*written.cause),
+            Error::Recovery(error) => Some(error),
         }
     }
 }
@@ -259,6 +264,9 @@ pub struct Document {
     /// The edit epoch the cached views were built at. When the session's
     /// epoch moves past it, every view is stale.
     seen_epoch: u64,
+    /// Where autosave writes, when the app has given it somewhere. `None` means
+    /// autosave is off for this document, which is the default.
+    recovery: Option<crate::recovery::RecoveryStore>,
 }
 
 impl Document {
@@ -302,6 +310,7 @@ impl Document {
             preview: None,
             filtered: None,
             seen_epoch: 0,
+            recovery: None,
         })
     }
 
@@ -352,15 +361,62 @@ impl Document {
 
         // Only past the reopen is any of this touched, so a failed reopen
         // leaves the session exactly as it was.
+        let previous_path = self.path.replace(path.to_path_buf());
         self.bytes = bytes;
         self.cos = cos;
         self.edit.rebase(&self.cos);
-        self.path = Some(path.to_path_buf());
         self.bump_generation();
+
+        // The edits are in the file now, so the copy of them outside it goes.
+        // Both paths: a Save As leaves the old document's recovery describing
+        // edits that now live in the new one.
+        if let Some(store) = &self.recovery {
+            store.discard(path).map_err(Error::Recovery)?;
+            if let Some(previous) = previous_path {
+                store.discard(&previous).map_err(Error::Recovery)?;
+            }
+        }
         Ok(crate::SaveOutcome {
             sections_appended: appended,
             saved_as,
         })
+    }
+
+    /// Turn autosave on for this document, writing into `store`.
+    pub fn set_recovery(&mut self, store: crate::recovery::RecoveryStore) {
+        self.recovery = Some(store);
+    }
+
+    /// Write the current edits to the recovery file, or remove it when there
+    /// are none. A no-op when autosave is off or the document has no path.
+    ///
+    /// What is written is the incremental section the next save would append,
+    /// so a recovery replays by appending bytes rather than by re-running
+    /// edits, and cannot drift from what a save would have produced.
+    pub fn autosave(&self) -> Result<Option<PathBuf>> {
+        let (Some(store), Some(path)) = (&self.recovery, &self.path) else {
+            return Ok(None);
+        };
+        match crate::save::section(&self.cos, &self.edit)? {
+            Some(section) => Ok(Some(
+                store
+                    .write(path, &self.bytes, &section)
+                    .map_err(Error::Recovery)?,
+            )),
+            None => {
+                store.discard(path).map_err(Error::Recovery)?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// A clean close: the document is going away with nothing unsaved worth
+    /// keeping, so its recovery file goes too.
+    pub fn close(self) -> Result<()> {
+        if let (Some(store), Some(path)) = (&self.recovery, &self.path) {
+            store.discard(path).map_err(Error::Recovery)?;
+        }
+        Ok(())
     }
 
     /// Everything a reader should see right now: the original bytes plus at

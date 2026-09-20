@@ -14,6 +14,7 @@ mod layout;
 mod outline;
 mod page;
 mod preview;
+mod recovery;
 mod render;
 mod save;
 mod search;
@@ -53,6 +54,7 @@ pub use outline::OutlineItem;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };
+pub use recovery::{Recovered, RecoveryError, RecoveryStore};
 pub use render::{
     PagePlaceholder, RenderRequest, RenderResponse, ThumbnailRequest, ThumbnailResponse,
     WorkerError,
