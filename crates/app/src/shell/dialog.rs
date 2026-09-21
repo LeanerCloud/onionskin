@@ -43,6 +43,8 @@ pub(in crate::shell) enum ShellDialog {
     ReduceFileSize,
     Print,
     PageSetup,
+    /// The skins panel's confirmation before a roll back.
+    RollBack,
 }
 
 impl ShellDialog {
@@ -60,6 +62,7 @@ impl ShellDialog {
             Self::ReduceFileSize => "Reduce File Size",
             Self::Print => "Print",
             Self::PageSetup => "Page Setup",
+            Self::RollBack => "Roll Back",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -184,6 +187,9 @@ pub(in crate::shell) fn accessible(
             cx,
         ),
         ShellDialog::PageSetup => super::chrome::print_dialog::accessible_setup(frame.page_setup()),
+        ShellDialog::RollBack => {
+            super::skins::accessible_confirm(frame.skins_state().expect("the skins panel is open"))
+        }
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::accessible(
             frame
                 .bookmark_title_dialog()
@@ -324,6 +330,13 @@ pub(in crate::shell) fn render_dialog(
             super::chrome::print_dialog::render_setup(frame.page_setup(), focused, theme, cx)
                 .into_any_element()
         }
+        ShellDialog::RollBack => super::skins::render_confirm(
+            frame.skins_state().expect("the skins panel is open"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::render(
             frame
                 .bookmark_title_dialog()

@@ -107,8 +107,11 @@ impl ShellFrame {
         }
 
         if visibility.rail {
-            let mut described =
-                rail::accessible(&self.rail_entries(cx), self.rail_state.expanded());
+            let mut described = rail::accessible(
+                &self.rail_entries(cx),
+                self.rail_state.expanded(),
+                self.skins.is_some(),
+            );
             self.a11y.rects.place(Surface::Rail, &mut described);
             root = root.child(described);
         }
@@ -169,7 +172,7 @@ impl ShellFrame {
             root = root.child(side_panel::accessible(
                 self.side_panel_state,
                 self.active_tool_help(cx),
-                self.accessible_inspector(cx),
+                self.accessible_side_panel_content(cx),
             ));
         }
         if self.menus.main_menu_open {
@@ -489,6 +492,7 @@ impl ShellFrame {
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),
+            Activation::Skins(action) => self.run_skins_action(action, window, cx),
             Activation::Properties(action) => self.run_properties_action(action, window, cx),
             Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
             Activation::File(action) => self.run_file_action(action, window, cx),

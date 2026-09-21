@@ -123,6 +123,8 @@ pub(in crate::shell) enum Activation {
     File(crate::shell::chrome::file_dialogs::FileAction),
     /// The Print and Page Setup dialogs.
     Print(crate::shell::chrome::print_dialog::PrintAction),
+    /// The skins panel and its roll back confirmation.
+    Skins(crate::shell::skins::SkinsAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.

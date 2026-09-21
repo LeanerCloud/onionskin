@@ -36,6 +36,7 @@ impl MenuCommand {
             MenuCommand::Save,
             MenuCommand::SaveAs,
             MenuCommand::Revert,
+            MenuCommand::Skins,
             MenuCommand::AttachToEmail,
             MenuCommand::CopyFileToClipboard,
             MenuCommand::CombineFiles,
@@ -121,6 +122,7 @@ impl MenuCommand {
             Self::Save => "file.save",
             Self::SaveAs => "file.save-as",
             Self::Revert => "file.revert",
+            Self::Skins => "file.skins",
             Self::AttachToEmail => "file.attach-to-email",
             Self::CopyFileToClipboard => "file.copy-to-clipboard",
             Self::Edit(verb) => match verb {
@@ -250,6 +252,7 @@ impl MenuCommand {
             | Self::OpenRecent
             | Self::CloseOtherTabs
             | Self::Revert
+            | Self::Skins
             | Self::AttachToEmail
             | Self::CopyFileToClipboard
             | Self::ReduceFileSize

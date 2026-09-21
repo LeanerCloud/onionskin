@@ -96,6 +96,33 @@ impl CanvasModel {
         self.relayout_after_edit()
     }
 
+    /// Every generation of the file, described, for the skins panel.
+    pub fn generation_details(&self) -> Result<Vec<onionskin_core::GenerationDetail>, CanvasError> {
+        Ok(self.document.generation_details()?)
+    }
+
+    /// Bumped whenever the bytes under the document change: a save, a
+    /// revert, a roll back. What the skins panel re-reads on.
+    pub fn byte_generation(&self) -> u64 {
+        self.document.byte_generation()
+    }
+
+    /// Keep generation `keep` and everything older, truncating the file.
+    pub fn roll_back_to(&mut self, keep: usize) -> Result<(), CanvasError> {
+        self.document.roll_back_to(keep)?;
+        self.relayout_after_edit()
+    }
+
+    /// The file as it was when generation `index` ended: the bytes an older
+    /// version is, to open as a copy.
+    pub fn version_bytes(&self, index: usize) -> Result<Vec<u8>, CanvasError> {
+        let generations = self.document.generations()?;
+        let generation = generations.get(index).ok_or(CanvasError::Core(
+            onionskin_core::Error::RevertRefused(onionskin_core::RevertRefusal::NoSuchGeneration),
+        ))?;
+        Ok(self.document.bytes()[..generation.end as usize].to_vec())
+    }
+
     /// Turn autosave on, writing into `store`.
     pub fn set_recovery(&mut self, store: RecoveryStore) {
         self.recovery = Some(store.clone());

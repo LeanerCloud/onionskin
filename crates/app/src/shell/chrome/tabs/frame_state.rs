@@ -237,6 +237,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) bookmark_title: Option<crate::shell::chrome::bookmark_dialog::BookmarkTitleState>,
     /// The Print dialog, while it is open.
     pub(super) print: Option<crate::shell::chrome::print_dialog::PrintDialogState>,
+    /// The skins panel, while it is open.
+    pub(super) skins: Option<crate::shell::skins::SkinsState>,
     /// Paper and orientation, which Page Setup and the Print dialog share.
     pub(super) page_setup: crate::shell::chrome::print_dialog::PageSetup,
     /// The question before closing unsaved documents, while it is asked.
@@ -401,6 +403,7 @@ impl ShellFrame {
             properties: None,
             bookmark_title: None,
             print: None,
+            skins: None,
             page_setup: Default::default(),
             unsaved: None,
             recover: None,

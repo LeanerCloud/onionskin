@@ -12,6 +12,7 @@ use super::accessible::{Activation, Element, Rects, Surface};
 use super::tabs::ShellFrame;
 use super::theme::ThemeTokens;
 use crate::a11y::State as A11yState;
+use crate::shell::skins::SkinsAction;
 
 const COLLAPSED_WIDTH: f32 = 88.0;
 const EXPANDED_WIDTH: f32 = 240.0;
@@ -164,7 +165,7 @@ fn icon_glyph(icon: &str) -> &'static str {
 ///
 /// One node per child the column renders, in the same order, so the
 /// rectangles the column reports after prepaint land on the right nodes.
-pub(super) fn accessible(entries: &[RailEntry], expanded: bool) -> Element {
+pub(super) fn accessible(entries: &[RailEntry], expanded: bool, skins_open: bool) -> Element {
     let mut rail = Element::new("tool-rail", Role::Toolbar, "Tools");
 
     if entries.is_empty() {
@@ -198,11 +199,21 @@ pub(super) fn accessible(entries: &[RailEntry], expanded: bool) -> Element {
         .with_state(A11yState::toggled(expanded))
         .with_activation(Activation::ToggleRailExpanded),
     )
+    .child(
+        Element::new("tool-rail-skins", Role::Button, SKINS_LABEL)
+            .with_state(A11yState::toggled(skins_open))
+            .with_activation(Activation::Skins(SkinsAction::Toggle)),
+    )
 }
+
+/// The rail's way into the skins panel: the file's versions, which is not a
+/// tool and so sits under the tools rather than among them.
+const SKINS_LABEL: &str = "Skins (Version History)";
 
 pub(super) fn render_rail(
     entries: Vec<RailEntry>,
     expanded: bool,
+    skins_open: bool,
     rects: Rects,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
@@ -289,6 +300,29 @@ pub(super) fn render_rail(
             }))
             .text_xs()
             .child(view_more_label(expanded)),
+    )
+    .child(
+        div()
+            .id("tool-rail-skins")
+            .min_h(px(34.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .rounded_sm()
+            .cursor_pointer()
+            .bg(if skins_open {
+                theme.selected
+            } else {
+                theme.raised
+            })
+            .hover(move |button| button.bg(theme.hover))
+            .on_click(cx.listener(|frame, _event, window, cx| {
+                frame.run_activation(Activation::Skins(SkinsAction::Toggle), window, cx);
+            }))
+            .text_xs()
+            .child("🧅")
+            .when(expanded, |button| button.child("Skins")),
     )
 }
 
@@ -620,7 +654,7 @@ mod tests {
             },
         ];
 
-        let described = accessible(&entries, true);
+        let described = accessible(&entries, true, false);
 
         for entry in &entries {
             let node = described
@@ -655,7 +689,7 @@ mod tests {
             },
         ];
 
-        let described = accessible(&entries, true);
+        let described = accessible(&entries, true, false);
 
         let inactive = described.find(&("tool-rail-entry", 0usize).into()).unwrap();
         let active = described.find(&("tool-rail-entry", 1usize).into()).unwrap();
@@ -690,7 +724,7 @@ mod tests {
         };
 
         for expanded in [true, false] {
-            let described = accessible(&[with_shortcut, without_shortcut], expanded);
+            let described = accessible(&[with_shortcut, without_shortcut], expanded, false);
             assert_eq!(
                 described
                     .find(&("tool-rail-entry", 0usize).into())
@@ -711,8 +745,8 @@ mod tests {
 
     #[test]
     fn the_view_more_toggle_announces_what_it_draws_and_carries_expansion_as_state() {
-        let expanded = accessible(&[], true);
-        let collapsed = accessible(&[], false);
+        let expanded = accessible(&[], true, false);
+        let collapsed = accessible(&[], false, false);
 
         let expanded = expanded.find(&"tool-rail-view-more".into()).unwrap();
         let collapsed = collapsed.find(&"tool-rail-view-more".into()).unwrap();
@@ -727,20 +761,20 @@ mod tests {
     /// toggle would inherit the message's rectangle.
     #[test]
     fn an_empty_rail_describes_its_message_before_the_toggle() {
-        let described = accessible(&[], false);
+        let described = accessible(&[], false, false);
 
-        assert_eq!(described.children.len(), 2);
+        assert_eq!(described.children.len(), 3, "message, toggle, skins");
         assert_eq!(described.children[0].role, Role::Label);
         assert_eq!(described.children[0].label, "No tools");
         assert_eq!(described.children[0].activation, None);
         assert_eq!(
-            accessible(&[], true).children[0].label,
+            accessible(&[], true, false).children[0].label,
             "No tools installed"
         );
     }
 
     /// Both halves of "one list drives both": the column renders one child
-    /// per entry and then the toggle, and the description has to match that
+    /// per entry, then the toggle and the skins, and the description has to match that
     /// count and order for the prepainted rectangles to line up.
     #[test]
     fn the_description_has_one_node_per_rendered_column_child_in_column_order() {
@@ -756,14 +790,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let described = accessible(&entries, true);
+        let described = accessible(&entries, true, false);
 
-        assert_eq!(described.children.len(), entries.len() + 1);
+        assert_eq!(described.children.len(), entries.len() + 2);
         let expected: Vec<gpui::ElementId> = vec![
             ("tool-rail-entry", 0usize).into(),
             ("tool-rail-entry", 1usize).into(),
             ("tool-rail-entry", 2usize).into(),
             "tool-rail-view-more".into(),
+            "tool-rail-skins".into(),
         ];
         assert_eq!(
             described

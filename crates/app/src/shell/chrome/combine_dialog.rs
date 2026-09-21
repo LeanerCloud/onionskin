@@ -458,7 +458,7 @@ pub(in crate::shell) fn render(
 }
 
 /// A dialog button: live, or drawn muted and taking no click.
-pub(super) fn button(
+pub(in crate::shell) fn button(
     id: &'static str,
     label: &'static str,
     enabled: bool,

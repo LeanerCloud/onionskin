@@ -225,6 +225,11 @@ impl ShellFrame {
                 self.open_page_setup(window, cx);
                 Ok(())
             }
+            MenuCommand::Skins => {
+                self.dismiss_menus(cx);
+                self.run_skins_action(crate::shell::skins::SkinsAction::Toggle, window, cx);
+                Ok(())
+            }
             MenuCommand::Page(page) => {
                 self.dismiss_menus(cx);
                 self.run_registry_command(page.id(), cx);

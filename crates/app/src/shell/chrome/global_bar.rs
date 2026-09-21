@@ -198,6 +198,7 @@ pub(in crate::shell) enum MenuCommand {
     ReduceFileSize,
     PageSetup,
     Print,
+    Skins,
     Export(ExportTarget),
     ExportAllImages,
     CloseTab,
@@ -462,6 +463,17 @@ fn copy_file_availability(state: MenuState) -> MenuAvailability {
     }
 }
 
+/// The skins list the file's versions, so they want a file.
+fn skins_availability(state: MenuState) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if !facts.has_path => {
+            MenuAvailability::Disabled("This document has never been saved")
+        }
+        Some(_) => MenuAvailability::Enabled,
+    }
+}
+
 fn revert_availability(state: MenuState) -> MenuAvailability {
     match state.history {
         None => MenuAvailability::Disabled("No document is open"),
@@ -567,6 +579,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     command: MenuCommand::Revert,
                     label: "Revert",
                     availability: revert_availability(state),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::Skins,
+                    label: "Skins (Version History)",
+                    availability: skins_availability(state),
                     selected: false,
                 },
                 MenuEntry {
@@ -1215,6 +1233,7 @@ impl MenuCommand {
             | Self::ReduceFileSize
             | Self::PageSetup
             | Self::Print
+            | Self::Skins
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1274,6 +1293,7 @@ impl MenuCommand {
             | Self::ReduceFileSize
             | Self::PageSetup
             | Self::Print
+            | Self::Skins
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1491,6 +1511,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ReduceFileSize
         | MenuCommand::PageSetup
         | MenuCommand::Print
+        | MenuCommand::Skins
         | MenuCommand::CopyFileToClipboard
         | MenuCommand::Edit(_)
         | MenuCommand::Undo

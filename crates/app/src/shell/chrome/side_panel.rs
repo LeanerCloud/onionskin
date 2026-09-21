@@ -69,20 +69,17 @@ pub(super) type ToolHelp = Option<(&'static str, Option<&'static str>)>;
 pub(super) fn accessible(
     state: SidePanelState,
     help: ToolHelp,
-    inspector: Option<Vec<Element>>,
+    content: Option<Element>,
 ) -> Element {
     let toggle = Element::new("side-panel-toggle", Role::Button, toggle_name(state))
         .with_state(A11yState::toggled(state.is_open()))
         .with_activation(Activation::ToggleSidePanel);
     let panel = Element::new("side-panel", Role::Complementary, PANEL_LABEL);
     if state.is_open() {
-        if let Some(inspector) = inspector {
-            return panel
-                .child(
-                    Element::new("inspector", Role::Group, "Comment Properties")
-                        .with_children(inspector),
-                )
-                .child(toggle);
+        // What the panel is showing instead of the tool's help: the skins,
+        // or a chosen comment's properties.
+        if let Some(content) = content {
+            return panel.child(content).child(toggle);
         }
         let body = match help {
             Some((name, hint)) => {
@@ -103,7 +100,7 @@ pub(super) fn accessible(
 pub(super) fn render_side_panel(
     state: SidePanelState,
     help: ToolHelp,
-    inspector: Option<gpui::AnyElement>,
+    content: Option<gpui::AnyElement>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -140,10 +137,11 @@ pub(super) fn render_side_panel(
                 .child(PANEL_LABEL)
                 .child(toggle),
         );
-        if let Some(inspector) = inspector {
-            // A chosen comment's properties are what the panel is for while
-            // one is chosen, as Acrobat's properties bar is.
-            return panel.child(inspector);
+        if let Some(content) = content {
+            // The skins, or a chosen comment's properties, which are what
+            // the panel is for while one is chosen, as Acrobat's properties
+            // bar is.
+            return panel.child(content);
         }
         panel = panel.child(match help {
             // The tool the canvas is in and what to do with it: every rail

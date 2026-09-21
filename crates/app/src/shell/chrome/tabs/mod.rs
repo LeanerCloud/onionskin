@@ -11,6 +11,7 @@ mod organize;
 mod outline;
 mod print;
 mod properties;
+mod skins;
 mod stamps;
 mod summary;
 
@@ -588,6 +589,9 @@ impl ShellFrame {
     /// again, so a comment just placed is in the Comments list, and redraw
     /// the tab's dirty mark and the Undo entry.
     fn follow_document_edits(&mut self, cx: &mut Context<Self>) {
+        // A save or a roll back changes the file's versions without always
+        // moving the edit epoch, so the skins look for themselves.
+        self.refresh_skins(cx);
         let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
             return;
         };
@@ -1085,7 +1089,6 @@ impl ShellFrame {
         &mut self.navigation
     }
 
-    #[cfg(all(test, feature = "shell-test-support"))]
     pub(in crate::shell) fn active_canvas(&self) -> Option<&Entity<Canvas>> {
         self.tabs.active().map(|tab| &tab.canvas)
     }
@@ -1253,6 +1256,7 @@ impl Render for ShellFrame {
 
         let rail_entries = self.rail_entries(cx);
         let rail_expanded = self.rail_state.expanded();
+        let skins_open = self.skins.is_some();
         let mut body = div()
             .flex_1()
             .min_h_0()
@@ -1261,6 +1265,7 @@ impl Render for ShellFrame {
                 body.child(render_rail(
                     rail_entries,
                     rail_expanded,
+                    skins_open,
                     rects.clone(),
                     theme,
                     cx,
@@ -1405,11 +1410,11 @@ impl Render for ShellFrame {
             ));
         }
         body = body.when(visibility.side_panel, |body| {
-            let inspector = self.render_inspector(theme, cx);
+            let content = self.render_side_panel_content(theme, cx);
             body.child(render_side_panel(
                 self.side_panel_state,
                 self.active_tool_help(cx),
-                inspector,
+                content,
                 theme,
                 cx,
             ))
@@ -1638,6 +1643,8 @@ mod tests {
     mod properties;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod reduce;
+    #[cfg(feature = "shell-test-support")]
+    mod skins;
     #[cfg(all(
         feature = "shell-test-support",
         feature = "tools-comment",
