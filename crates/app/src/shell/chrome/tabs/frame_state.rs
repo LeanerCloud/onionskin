@@ -15,6 +15,7 @@ use gpui::{AppContext as _, Context, Entity, Window};
 use super::context::ContextMenuState;
 use super::export::ExportState;
 use super::menu::MenuOpenState;
+use super::organize::OrganizeDialogs;
 use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
@@ -211,6 +212,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) dialog: Option<ShellDialog>,
     pub(super) home: HomeState,
     pub(super) export: ExportState,
+    pub(super) organize: OrganizeDialogs,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -328,6 +330,7 @@ impl ShellFrame {
             dialog: None,
             home: HomeState::default(),
             export: ExportState::default(),
+            organize: OrganizeDialogs::default(),
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);

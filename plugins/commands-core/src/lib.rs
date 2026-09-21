@@ -1,20 +1,26 @@
 //! Core menu commands: the ones that act on the open document rather than on
 //! the shell around it.
 //!
-//! M2 registers the two Edit commands the parity rows put in this milestone.
-//! Combine files, compress and flatten export, document properties,
-//! generation rollback (truncating back to an earlier skin) and print land
-//! with the milestones that own their subsystems.
+//! M2 registered the two Edit commands. M3's P12 adds the commands that
+//! produce new documents: [`combine`] (and Create PDF From Multiple Files,
+//! which is Combine from another entry point) and [`split`], both built on
+//! `core::pages::Assembly`. Compress, document properties, generation
+//! rollback and print land with the packages that own their subsystems.
 //!
 //! Registering here rather than in `app` is what makes the shell's command
 //! surface a query: the palette lists whatever the registry holds, the Edit
 //! menu asks for these ids by name, and a build without this plugin says the
 //! plugin is missing instead of showing an entry that would do nothing.
 
+use onionskin_plugin_api::command_ids::SPLIT_DOCUMENT;
 use onionskin_plugin_api::{
     Command, CommandCtx, CommandEffect, CommandError, CommandPlugin, PluginManifest,
     PluginRegistry, TextSelection,
 };
+
+pub mod combine;
+pub mod publish;
+pub mod split;
 
 pub const SELECT_ALL: &str = "edit.select-all";
 pub const DESELECT_ALL: &str = "edit.deselect-all";
@@ -52,6 +58,15 @@ impl CommandPlugin for CoreCommandsPlugin {
                 effect: CommandEffect::Reads,
                 run: Box::new(deselect_all),
             },
+            Command {
+                id: SPLIT_DOCUMENT,
+                title: "Split Document at Top-Level Bookmarks",
+                keybind: None,
+                // Copies the document's objects into new files: refused, like
+                // extract, on a document the encrypted-source rule protects.
+                effect: CommandEffect::ReadsOut,
+                run: Box::new(split_at_bookmarks),
+            },
         ]
     }
 }
@@ -87,6 +102,28 @@ fn select_all(ctx: &mut CommandCtx) -> Result<(), CommandError> {
 fn deselect_all(ctx: &mut CommandCtx) -> Result<(), CommandError> {
     ctx.doc.selection_mut().clear();
     Ok(())
+}
+
+/// The split that needs no dialog: at the top-level bookmarks, into files
+/// beside the document, named after it. The dialog offers the others.
+fn split_at_bookmarks(ctx: &mut CommandCtx) -> Result<(), CommandError> {
+    const LABEL: &str = "Split Document";
+    let failed = |reason: String| CommandError::Failed {
+        label: LABEL,
+        reason,
+    };
+    let path = ctx
+        .doc
+        .path()
+        .ok_or_else(|| failed("the document has not been saved to a file yet".to_owned()))?
+        .to_path_buf();
+    let folder = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = path
+        .file_stem()
+        .map_or_else(|| "Document".into(), |stem| stem.to_string_lossy());
+    split::split(ctx.doc, split::SplitBy::TopLevelBookmarks, folder, &stem)
+        .map(|_| ())
+        .map_err(|error| failed(error.to_string()))
 }
 
 #[cfg(test)]
@@ -184,23 +221,39 @@ mod tests {
     /// Both ids are namespaced and both carry Acrobat's default keystroke,
     /// which is what the app's keymap resolves against.
     #[test]
-    fn both_commands_are_named_and_bound() {
+    fn every_command_is_named_bound_and_declares_its_effect() {
         let commands = CoreCommandsPlugin.commands();
 
         assert_eq!(
             commands
                 .iter()
-                .map(|command| (command.id, command.title, command.keybind))
+                .map(|command| (command.id, command.title, command.keybind, command.effect))
                 .collect::<Vec<_>>(),
             vec![
-                (SELECT_ALL, "Select All", Some("cmd-a")),
-                (DESELECT_ALL, "Deselect All", Some("cmd-shift-a")),
+                (
+                    SELECT_ALL,
+                    "Select All",
+                    Some("cmd-a"),
+                    CommandEffect::Reads
+                ),
+                (
+                    DESELECT_ALL,
+                    "Deselect All",
+                    Some("cmd-shift-a"),
+                    CommandEffect::Reads
+                ),
+                (
+                    SPLIT_DOCUMENT,
+                    "Split Document at Top-Level Bookmarks",
+                    None,
+                    CommandEffect::ReadsOut
+                ),
             ]
         );
     }
 
     #[test]
-    fn the_manifest_registers_both_commands_into_a_registry() {
+    fn the_manifest_registers_every_command_into_a_registry() {
         let mut registry = PluginRegistry::new();
         registry.install(&CoreCommandsPlugin);
 
@@ -210,7 +263,7 @@ mod tests {
                 .iter()
                 .map(|command| command.id)
                 .collect::<Vec<_>>(),
-            vec![SELECT_ALL, DESELECT_ALL]
+            vec![SELECT_ALL, DESELECT_ALL, SPLIT_DOCUMENT]
         );
     }
 }

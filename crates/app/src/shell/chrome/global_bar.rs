@@ -144,6 +144,9 @@ pub(in crate::shell) enum MenuCommand {
     OpenRecent,
     Quit,
     SaveAs,
+    CombineFiles,
+    CreateFromFiles,
+    SplitDocument,
     Export(ExportTarget),
     CloseTab,
     CloseOtherTabs,
@@ -202,7 +205,7 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 9] = [
+const REGISTRY_BACKED: [MenuCommand; 10] = [
     MenuCommand::SelectAll,
     MenuCommand::DeselectAll,
     MenuCommand::Page(PageCommand::RotateClockwise),
@@ -212,6 +215,7 @@ const REGISTRY_BACKED: [MenuCommand; 9] = [
     MenuCommand::Page(PageCommand::MoveLater),
     MenuCommand::Page(PageCommand::Delete),
     MenuCommand::Page(PageCommand::ResetNumbering),
+    MenuCommand::SplitDocument,
 ];
 
 /// Which of those commands this build's plugins registered, and what each
@@ -236,6 +240,7 @@ impl RegisteredCommands {
             .and_then(|index| self.0[index])
     }
 
+    #[cfg(test)]
     fn has(self, command: MenuCommand) -> bool {
         self.effect(command).is_some()
     }
@@ -258,6 +263,10 @@ pub(in crate::shell) struct RegistryFacts {
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
     edit_refusal: Option<&'static str>,
+    /// Why the active document's objects may not be copied into another file:
+    /// an entry whose command declares [`CommandEffect::ReadsOut`] is disabled
+    /// with it.
+    read_out_refusal: Option<&'static str>,
 }
 
 impl RegistryFacts {
@@ -275,6 +284,15 @@ impl RegistryFacts {
             dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
             edit_refusal: None,
+            read_out_refusal: None,
+        }
+    }
+
+    /// The same facts for a document that refuses reading out for `refusal`.
+    pub(in crate::shell) fn refusing_read_out(self, refusal: Option<&'static str>) -> Self {
+        Self {
+            read_out_refusal: refusal,
+            ..self
         }
     }
 
@@ -396,6 +414,24 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: Disabled("Saving lands in M3"),
                     selected: false,
                 },
+                MenuEntry {
+                    command: MenuCommand::CombineFiles,
+                    label: "Combine Files…",
+                    availability: core_commands(),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::CreateFromFiles,
+                    label: "Create PDF From Multiple Files…",
+                    availability: core_commands(),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::SplitDocument,
+                    label: "Split Document…",
+                    availability: registry_command(state, MenuCommand::SplitDocument),
+                    selected: false,
+                },
             ]
             .into_iter()
             .chain(export_entries(state))
@@ -503,15 +539,27 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
 /// An entry a plugin's command runs: live when that plugin registered the
 /// command and there is a document for it to act on.
 fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability {
-    match (
-        state.registry.commands.effect(command),
-        state.has_active_tab,
-        state.registry.edit_refusal,
-    ) {
-        (None, _, _) => MenuAvailability::Disabled("No installed plugin provides this command"),
-        (Some(_), false, _) => MenuAvailability::Disabled("No document is open"),
-        (Some(CommandEffect::Edits), true, Some(refusal)) => MenuAvailability::Disabled(refusal),
-        (Some(_), true, _) => MenuAvailability::Enabled,
+    let refusal = match state.registry.commands.effect(command) {
+        None => return MenuAvailability::Disabled("No installed plugin provides this command"),
+        Some(_) if !state.has_active_tab => {
+            return MenuAvailability::Disabled("No document is open")
+        }
+        Some(CommandEffect::Edits) => state.registry.edit_refusal,
+        Some(CommandEffect::ReadsOut) => state.registry.read_out_refusal,
+        Some(CommandEffect::Reads) => None,
+    };
+    refusal.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled)
+}
+
+/// Combine needs no open document, only the plugin that does the work. The
+/// dialog calls that plugin's functions directly, so whether it was compiled
+/// in is the whole answer: there is no registry command to ask about, because
+/// a list of files is not something a command's context can carry.
+fn core_commands() -> MenuAvailability {
+    if cfg!(feature = "commands-core") {
+        MenuAvailability::Enabled
+    } else {
+        MenuAvailability::Disabled(super::tabs::NO_CORE_COMMANDS)
     }
 }
 
@@ -821,6 +869,9 @@ impl MenuCommand {
             | Self::Quit
             | Self::SaveAs
             | Self::Export(_)
+            | Self::CombineFiles
+            | Self::CreateFromFiles
+            | Self::SplitDocument
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -861,6 +912,9 @@ impl MenuCommand {
             | Self::Quit
             | Self::SaveAs
             | Self::Export(_)
+            | Self::CombineFiles
+            | Self::CreateFromFiles
+            | Self::SplitDocument
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -1045,7 +1099,10 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ThemeDark
         | MenuCommand::ReadMode
         | MenuCommand::FullScreen
-        | MenuCommand::Export(_) => Some(Box::new(RunCommand { command })),
+        | MenuCommand::Export(_)
+        | MenuCommand::CombineFiles
+        | MenuCommand::CreateFromFiles
+        | MenuCommand::SplitDocument => Some(Box::new(RunCommand { command })),
         MenuCommand::SaveAs
         | MenuCommand::Undo
         | MenuCommand::Redo
@@ -1082,6 +1139,8 @@ mod tests {
             commands: RegisteredCommands::installed(|id| {
                 Some(if id.starts_with("organize.") {
                     CommandEffect::Edits
+                } else if id == onionskin_plugin_api::command_ids::SPLIT_DOCUMENT {
+                    CommandEffect::ReadsOut
                 } else {
                     CommandEffect::Reads
                 })
@@ -1090,6 +1149,7 @@ mod tests {
             dynamic_zoom_tool: true,
             any_tool: true,
             edit_refusal: None,
+            read_out_refusal: None,
         }
     }
 

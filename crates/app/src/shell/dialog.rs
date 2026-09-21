@@ -31,11 +31,15 @@ pub(in crate::shell) enum ShellDialog {
     About,
     KeyboardShortcuts,
     ZoomTo,
+    Combine(super::chrome::combine_dialog::CombineEntryPoint),
+    Split,
 }
 
 impl ShellDialog {
     pub(in crate::shell) fn title(self) -> &'static str {
         match self {
+            Self::Combine(entry_point) => entry_point.title(),
+            Self::Split => "Split Document",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -119,6 +123,16 @@ pub(in crate::shell) fn accessible(
             rects,
             cx,
         ),
+        ShellDialog::Combine(_) => super::chrome::combine_dialog::accessible(
+            frame.combine_dialog().expect("combine dialog has state"),
+            rects,
+            cx,
+        ),
+        ShellDialog::Split => super::chrome::split_dialog::accessible(
+            frame.split_dialog().expect("split dialog has state"),
+            rects,
+            cx,
+        ),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -180,6 +194,22 @@ pub(in crate::shell) fn render_dialog(
         .into_any_element(),
         ShellDialog::Export => super::chrome::export_dialog::render(
             frame.export_dialog().expect("export dialog has state"),
+            rects,
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::Combine(_) => super::chrome::combine_dialog::render(
+            frame.combine_dialog().expect("combine dialog has state"),
+            rects,
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::Split => super::chrome::split_dialog::render(
+            frame.split_dialog().expect("split dialog has state"),
             rects,
             focused,
             theme,

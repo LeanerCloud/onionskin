@@ -34,6 +34,9 @@ impl MenuCommand {
             MenuCommand::CloseOtherTabs,
             MenuCommand::CloseAllTabs,
             MenuCommand::SaveAs,
+            MenuCommand::CombineFiles,
+            MenuCommand::CreateFromFiles,
+            MenuCommand::SplitDocument,
         ];
         all.extend(ExportTarget::ALL.map(MenuCommand::Export));
         all.extend([
@@ -98,6 +101,9 @@ impl MenuCommand {
             Self::CloseOtherTabs => "file.close-others",
             Self::CloseAllTabs => "file.close-all",
             Self::SaveAs => "file.save-as",
+            Self::CombineFiles => "file.combine",
+            Self::CreateFromFiles => "file.create-from-files",
+            Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::Export(ExportTarget::Text) => "file.export-text",
             Self::Export(ExportTarget::Png) => "file.export-png",
             Self::Export(ExportTarget::Svg) => "file.export-svg",
@@ -191,6 +197,9 @@ impl MenuCommand {
             | Self::OpenRecent
             | Self::CloseOtherTabs
             | Self::SaveAs
+            | Self::CombineFiles
+            | Self::CreateFromFiles
+            | Self::SplitDocument
             | Self::Export(_)
             | Self::Undo
             | Self::Redo
@@ -227,7 +236,9 @@ impl MenuCommand {
     /// and a build without that plugin says so.
     pub(in crate::shell) fn registry_command_id(self) -> Option<&'static str> {
         match self {
-            Self::SelectAll | Self::DeselectAll | Self::Page(_) => Some(self.id()),
+            Self::SelectAll | Self::DeselectAll | Self::Page(_) | Self::SplitDocument => {
+                Some(self.id())
+            }
             _ => None,
         }
     }

@@ -516,6 +516,12 @@ impl CanvasModel {
         &self.registry
     }
 
+    /// The document itself, for work that reads it out into new files - a
+    /// split - and changes nothing the canvas draws.
+    pub(super) fn document_mut(&mut self) -> &mut Document {
+        &mut self.document
+    }
+
     /// Why the open document may not be edited, as the short reason a disabled
     /// entry shows, or `None` when it may. Asked of `core`, which derives it
     /// from the document; the shell holds no flag of its own.

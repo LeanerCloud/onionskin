@@ -1,4 +1,5 @@
 pub(in crate::shell) mod accessible;
+pub(in crate::shell) mod combine_dialog;
 mod commands;
 pub(in crate::shell) mod export_dialog;
 mod global_bar;
@@ -6,6 +7,7 @@ mod page_controls;
 mod quick_actions;
 mod rail;
 mod side_panel;
+pub(in crate::shell) mod split_dialog;
 mod tabs;
 mod theme;
 mod tool_search;

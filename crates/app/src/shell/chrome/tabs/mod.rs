@@ -4,6 +4,9 @@ mod dialogs;
 mod export;
 mod frame_state;
 mod menu;
+mod organize;
+
+pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1430,6 +1433,8 @@ mod tests {
     mod input_values;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod native_input;
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    mod organize_dialogs;
 
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names

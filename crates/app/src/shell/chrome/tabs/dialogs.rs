@@ -58,6 +58,7 @@ impl ShellFrame {
         window.focus(self.a11y.focus_handle());
         self.dialog = None;
         self.export.dialog = None;
+        self.organize = Default::default();
         cx.notify();
     }
 

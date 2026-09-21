@@ -202,6 +202,9 @@ pub enum CommandError {
         label: &'static str,
         source: onionskin_core::Error,
     },
+    /// A command that writes files could not: `label` names the command and
+    /// `reason` says what went wrong, in words for the notice bar.
+    Failed { label: &'static str, reason: String },
 }
 
 impl std::fmt::Display for CommandError {
@@ -209,6 +212,7 @@ impl std::fmt::Display for CommandError {
         match self {
             Self::Page { page, source } => write!(f, "page {}: {source}", page + 1),
             Self::Edit { label, source } => write!(f, "{label}: {source}"),
+            Self::Failed { label, reason } => write!(f, "{label}: {reason}"),
         }
     }
 }
@@ -217,6 +221,7 @@ impl std::error::Error for CommandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Page { source, .. } | Self::Edit { source, .. } => Some(source),
+            Self::Failed { .. } => None,
         }
     }
 }

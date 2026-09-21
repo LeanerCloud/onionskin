@@ -21,6 +21,7 @@ use onionskin_plugin_api::ToolCapability;
 use super::{ShellFrame, TabCommand, TabError, GLOBAL_BAR_HEIGHT};
 use crate::preferences::{PreferenceCategory, ThemePreference};
 use crate::shell::chrome::accessible::{Activation, Surface};
+use crate::shell::chrome::combine_dialog::CombineEntryPoint;
 use crate::shell::chrome::global_bar::{
     main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
 };
@@ -157,6 +158,22 @@ impl ShellFrame {
                 self.take_a_snapshot(cx);
                 Ok(())
             }
+            MenuCommand::CombineFiles | MenuCommand::CreateFromFiles => {
+                let entry_point = if command == MenuCommand::CombineFiles {
+                    CombineEntryPoint::Combine
+                } else {
+                    CombineEntryPoint::CreateFromFiles
+                };
+                self.open_combine_dialog(entry_point, window, cx);
+                Ok(())
+            }
+            // The registered command splits at bookmarks with no questions;
+            // the menu entry, live when that command is, opens the dialog that
+            // offers every way to split.
+            MenuCommand::SplitDocument => {
+                self.open_split_dialog(window, cx);
+                Ok(())
+            }
             MenuCommand::Page(page) => {
                 self.dismiss_menus(cx);
                 self.run_registry_command(page.id(), cx);
@@ -284,7 +301,9 @@ impl ShellFrame {
         match self.tabs.active() {
             Some(tab) => {
                 let model = &tab.canvas.read(cx).model;
-                RegistryFacts::of(model.registry()).refusing_edits(model.edit_refusal())
+                RegistryFacts::of(model.registry())
+                    .refusing_edits(model.edit_refusal())
+                    .refusing_read_out(model.refusals().read_out)
             }
             // With no document there is no tab registry to ask, and the
             // entries still have to say whether their plugin is installed.

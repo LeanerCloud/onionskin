@@ -411,6 +411,8 @@ impl ShellFrame {
             Activation::CloseDialog => self.close_dialog(window, cx),
             Activation::SubmitExport => self.submit_export(window, cx),
             Activation::CancelExport => self.cancel_export(cx),
+            Activation::Combine(action) => self.run_combine_action(action, cx),
+            Activation::Split(action) => self.run_split_action(action, window, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));
@@ -551,6 +553,15 @@ impl ShellFrame {
                     dialog.target == crate::shell::chrome::global_bar::ExportTarget::Png
                 })
                 .map(|dialog| &dialog.dpi),
+            TextField::CombinePages => self.organize.combine.as_ref().map(|dialog| &dialog.pages),
+            TextField::SplitValue => self
+                .organize
+                .split
+                .as_ref()
+                .filter(|dialog| {
+                    dialog.mode != crate::shell::chrome::split_dialog::SplitMode::TopLevelBookmarks
+                })
+                .map(|dialog| &dialog.value),
         }
     }
 
@@ -584,6 +595,8 @@ impl ShellFrame {
                 TextField::ExportFirst,
                 TextField::ExportLast,
                 TextField::ExportDpi,
+                TextField::CombinePages,
+                TextField::SplitValue,
             ]
             .into_iter()
             .filter_map(|field| self.text_field(field))

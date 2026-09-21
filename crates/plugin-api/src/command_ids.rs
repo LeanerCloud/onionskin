@@ -15,6 +15,10 @@ pub const EXPORT_SELECTION: &str = "file.export-selection";
 pub const ADD_BOOKMARK: &str = "document.add-bookmark";
 /// File > Print. P15 to P17.
 pub const PRINT: &str = "file.print";
+/// Split the open document at its top-level bookmarks, beside it. P12. The
+/// File menu's Split Document entry asks for it, and opens the dialog that
+/// offers the other ways to split.
+pub const SPLIT_DOCUMENT: &str = "document.split";
 /// Page organization, P11: each acts on the page the viewport is on.
 pub const ROTATE_PAGE_CLOCKWISE: &str = "organize.rotate-page-clockwise";
 pub const ROTATE_PAGE_COUNTERCLOCKWISE: &str = "organize.rotate-page-counterclockwise";

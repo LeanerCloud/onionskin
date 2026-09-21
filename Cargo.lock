@@ -4023,7 +4023,11 @@ dependencies = [
 name = "onionskin-commands-core"
 version = "0.1.0"
 dependencies = [
+ "onionskin-core",
+ "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
+ "tempfile",
 ]
 
 [[package]]

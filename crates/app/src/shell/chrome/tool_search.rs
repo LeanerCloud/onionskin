@@ -500,9 +500,12 @@ fn field_node(
     field: TextField,
 ) -> super::accessible::Element {
     let role = match field {
-        TextField::Page | TextField::ExportFirst | TextField::ExportLast | TextField::ExportDpi => {
-            accesskit::Role::NumberInput
-        }
+        TextField::Page
+        | TextField::ExportFirst
+        | TextField::ExportLast
+        | TextField::ExportDpi
+        | TextField::SplitValue => accesskit::Role::NumberInput,
+        TextField::CombinePages => accesskit::Role::TextInput,
         TextField::Search | TextField::Find => accesskit::Role::SearchInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)

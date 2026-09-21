@@ -42,6 +42,10 @@ pub(in crate::shell) enum TextField {
     ExportFirst,
     ExportLast,
     ExportDpi,
+    /// The Combine dialog's page selection for the file selected in its list.
+    CombinePages,
+    /// The Split dialog's number of pages or size.
+    SplitValue,
 }
 
 /// What activating an accessible element does.
@@ -79,6 +83,8 @@ pub(in crate::shell) enum Activation {
     CloseDialog,
     SubmitExport,
     CancelExport,
+    Combine(crate::shell::chrome::combine_dialog::CombineAction),
+    Split(crate::shell::chrome::split_dialog::SplitAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.
@@ -103,6 +109,8 @@ pub(in crate::shell) enum Surface {
     Home,
     Dialog,
     ExportDialog,
+    CombineDialog,
+    SplitDialog,
     DialogHeader,
 }
 

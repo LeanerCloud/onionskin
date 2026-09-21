@@ -6,4 +6,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
+tempfile.workspace = true
+
+# Combine and split are asserted on documents written and parsed back.
+[dev-dependencies]
+onionskin-corpus-testing.workspace = true

@@ -88,7 +88,10 @@ source IDs, severity, ownership, and required proof.
   derived or a wait that is deterministic rather than a pinned value, and the
   export ones want a non-root runner or a different way of making the write
   fail. P11's run adds `...rollback_never_deletes_a_completed_page_replaced_by_a_directory`
-  to the set, which turns on the same refused write.
+  to the set, which turns on the same refused write. P12's run with
+  `--no-default-features --features shell,shell-test-support,commands-core`
+  adds `shell::panes::tests::the_thumbnails_pane_asks_only_for_the_rows_it_shows`,
+  which passed alone on each of three reruns: the same race family.
 
 - **Find searches the file as opened, not as edited**, recorded 2026-09-21
   during P11. The search worker is spawned over the session's original bytes
