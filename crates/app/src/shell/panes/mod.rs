@@ -488,7 +488,8 @@ fn accessible_body(
         (NavigationPane::Thumbnails, _) => thumbnails::accessible(state, canvas, cx),
         (NavigationPane::SearchResults, _) => results::accessible(canvas, cx),
         (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => {
-            let mut described = bookmarks::accessible(items.as_deref());
+            let mut described = vec![bookmark_edit::new_button_element(state.edit_refusal)];
+            described.extend(bookmarks::accessible(items.as_deref()));
             if state.bookmarks_menu.is_some() {
                 described.push(bookmark_edit::accessible_menu(state));
             }
@@ -639,9 +640,18 @@ fn render_body(
     match (pane, state.content.as_ref()) {
         (NavigationPane::Thumbnails, _) => thumbnails::render(state, canvas, theme, cx),
         (NavigationPane::SearchResults, _) => results::render(canvas, theme, cx),
-        (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => {
-            bookmarks::render(items.as_deref(), theme, cx)
-        }
+        (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(bookmark_edit::render_new_button(
+                state.edit_refusal,
+                theme,
+                cx,
+            ))
+            .child(bookmarks::render(items.as_deref(), theme, cx))
+            .into_any_element(),
         (NavigationPane::Attachments, Some(PaneContent::Attachments(items))) => {
             attachments::render(items.as_deref(), state.edit_refusal, theme, cx)
         }

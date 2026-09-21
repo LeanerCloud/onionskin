@@ -170,6 +170,56 @@ pub(super) fn run(
     }
 }
 
+/// The pane's own New Bookmark button, above the list and there when the
+/// list is empty: the discoverable way to make the first bookmark, and the
+/// keyboard's, since a right-click is neither.
+pub(super) fn new_button_element(refusal: Option<&'static str>) -> Element {
+    let availability = BookmarksCommand::New.availability(None, refusal);
+    let button = Element::new("bookmark-new", accesskit::Role::Button, "New Bookmark")
+        .with_state(crate::a11y::State::enabled(availability.is_enabled()))
+        .with_activation(run_command(BookmarksCommand::New));
+    match availability.reason() {
+        Some(reason) => button.with_description(reason),
+        None => button,
+    }
+}
+
+pub(super) fn render_new_button(
+    refusal: Option<&'static str>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    use gpui::StatefulInteractiveElement as _;
+
+    let availability = BookmarksCommand::New.availability(None, refusal);
+    let enabled = availability.is_enabled();
+    let button = div()
+        .id("bookmark-new")
+        .mx_2()
+        .my_1()
+        .px_2()
+        .py(px(2.0))
+        .rounded_sm()
+        .text_xs()
+        .bg(theme.surface)
+        .text_color(if enabled {
+            theme.text
+        } else {
+            theme.disabled_text
+        })
+        .child("New Bookmark");
+    if enabled {
+        button
+            .cursor_pointer()
+            .hover(move |button| button.bg(theme.hover))
+            .on_click(cx.listener(|frame, _event, window, cx| {
+                frame.run_activation(run_command(BookmarksCommand::New), window, cx);
+            }))
+    } else {
+        button
+    }
+}
+
 /// The described menu, built from the entries the drawn one is.
 pub(super) fn accessible_menu(state: &NavigationPanesState) -> Element {
     let target = target(state);

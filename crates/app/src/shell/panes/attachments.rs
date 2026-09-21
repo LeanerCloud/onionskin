@@ -384,7 +384,9 @@ pub(super) fn render(
                     .text_color(theme.muted_text)
                     .child(detail(attachment)),
             );
-        let mut actions = div().flex().gap_2();
+        // Wraps, so a disabled button's reason cannot push the others out of
+        // a narrow pane.
+        let mut actions = div().flex().flex_wrap().gap_2();
         for command in AttachmentCommand::ALL {
             let availability = command.availability(refusal);
             let enabled = availability.is_enabled();

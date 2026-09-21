@@ -13,6 +13,10 @@ use crate::shell::chrome::accessible::Activation;
 use crate::shell::chrome::combine_dialog::button;
 use crate::shell::chrome::{ShellFrame, ThemeTokens};
 
+/// How tall a tab's content may grow before it scrolls: what fits in the
+/// dialog frame's 520 with its title, the tabs and Apply.
+const CONTENT_HEIGHT: f32 = 330.0;
+
 pub(in crate::shell) fn render(
     state: &PropertiesDialogState,
     focused: Option<&gpui::ElementId>,
@@ -30,7 +34,10 @@ pub(in crate::shell) fn render(
             cx,
         ));
     }
-    let mut body = div().flex().flex_col().gap_2().child(tabs);
+    // The tab's own content scrolls, between the tabs and Apply, so Apply
+    // stays on screen on every tab instead of scrolling away under the
+    // longest one (found by hand on Initial View).
+    let mut body = div().flex().flex_col().gap_2();
     body = match state.tab {
         PropertiesTab::Description => description(state, theme, body),
         PropertiesTab::Security => state
@@ -44,6 +51,13 @@ pub(in crate::shell) fn render(
         PropertiesTab::InitialView => initial_view(state, theme, cx, body),
         PropertiesTab::Custom => custom(state, theme, focused, cx, body),
     };
+    let mut body = div().flex().flex_col().gap_2().child(tabs).child(
+        div()
+            .id("properties-content")
+            .max_h(px(CONTENT_HEIGHT))
+            .overflow_y_scroll()
+            .child(body),
+    );
     if let Some(error) = &state.error {
         body = body.child(
             div()

@@ -23,7 +23,7 @@ use crate::a11y::State as A11yState;
 const MAX_INDENT: usize = 8;
 const INDENT: f32 = 12.0;
 /// Said where the list would be when the document has no outline.
-const NO_BOOKMARKS: &str = "This document has no bookmarks.";
+const NO_BOOKMARKS: &str = "This document has no bookmarks. Right-click here to add one.";
 
 /// One drawn row: an item, flattened out of the tree with the depth it sat
 /// at.
@@ -148,13 +148,8 @@ pub(super) fn render(
         Ok(items) => items,
         Err(message) => return error_message(message, theme).into_any_element(),
     };
-    if items.is_empty() {
-        return empty_message(NO_BOOKMARKS, theme).into_any_element();
-    }
-
-    let mut body = list("bookmark-rows").on_mouse_down(
-        MouseButton::Right,
-        cx.listener(|frame, event: &gpui::MouseDownEvent, _window, cx| {
+    let open_menu =
+        |frame: &mut ShellFrame, event: &gpui::MouseDownEvent, cx: &mut Context<ShellFrame>| {
             frame.run_pane_action(
                 PaneAction::Bookmark(BookmarkAction::OpenMenu {
                     row: None,
@@ -162,6 +157,26 @@ pub(super) fn render(
                 }),
                 cx,
             );
+        };
+    if items.is_empty() {
+        // The empty pane takes the right-click too: it is where the first
+        // bookmark is made, and a menu only rows could open would leave a
+        // document without bookmarks no way to get one.
+        return list("bookmark-rows-empty-area")
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |frame, event: &gpui::MouseDownEvent, _window, cx| {
+                    open_menu(frame, event, cx);
+                }),
+            )
+            .child(empty_message(NO_BOOKMARKS, theme))
+            .into_any_element();
+    }
+
+    let mut body = list("bookmark-rows").on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |frame, event: &gpui::MouseDownEvent, _window, cx| {
+            open_menu(frame, event, cx);
         }),
     );
     for (index, row) in rows(items).into_iter().enumerate() {

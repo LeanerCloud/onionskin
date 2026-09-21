@@ -297,3 +297,32 @@ fn a_file_that_cannot_be_read_is_reported_in_the_pane(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Found by hand: with no bookmarks the pane drew only its empty message,
+/// which nothing could right-click, so the first bookmark could not be made.
+/// The pane's own button makes it, from the accessibility tree as a
+/// keyboard or screen reader user would.
+#[gpui::test]
+fn the_first_bookmark_is_made_from_the_panes_own_button(cx: &mut TestAppContext) {
+    let (_dir, path) = seed_copy("two-page.pdf");
+    let window = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            let tree = frame.accessible(window, cx);
+            let button = tree
+                .find(&"bookmark-new".into())
+                .expect("the empty pane offers New Bookmark");
+            assert!(!button.state.disabled);
+            let activation = button.activation.clone().expect("it runs");
+            frame.run_activation(activation, window, cx);
+            assert_eq!(frame.dialog, Some(ShellDialog::BookmarkTitle));
+            frame.run_activation(
+                Activation::BookmarkTitle(BookmarkTitleAction::Submit),
+                window,
+                cx,
+            );
+            assert_eq!(outline(frame, cx), [("Untitled".to_owned(), 0)]);
+        })
+        .unwrap();
+}
