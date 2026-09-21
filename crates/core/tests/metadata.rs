@@ -260,3 +260,42 @@ fn an_encrypted_document_refuses_a_properties_edit() {
         Err(Error::Protected(_))
     ));
 }
+
+/// Fonts on the page, fonts a Form XObject uses, an embedded subset and a
+/// composite font whose program hangs off its descendant; a font named twice
+/// is listed once.
+#[test]
+fn the_fonts_list_follows_forms_and_reads_embedding_from_the_descriptor() {
+    use common::{pdf, stream, stream_with};
+    use onionskin_core::metadata::FontEntry;
+
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> /XObject << /X1 9 0 R >> >> >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        b"<< /Type /Font /Subtype /TrueType /BaseFont /ABCDEF+Garamond /FontDescriptor 7 0 R >>".to_vec(),
+        b"<< /Type /FontDescriptor /FontName /ABCDEF+Garamond /FontFile2 8 0 R >>".to_vec(),
+        stream("font program"),
+        stream_with("", "/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /Font << /F3 10 0 R >> >>"),
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /Noto /DescendantFonts [11 0 R] >>".to_vec(),
+        b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Noto /FontDescriptor 12 0 R >>".to_vec(),
+        b"<< /Type /FontDescriptor /FontName /Noto /FontFile2 8 0 R >>".to_vec(),
+    ]);
+    let mut document = Document::open_bytes(bytes).expect("opens");
+    let entry = |name: &str, kind: &str, embedded, subset| FontEntry {
+        name: name.into(),
+        kind: kind.into(),
+        embedded,
+        subset,
+    };
+    assert_eq!(
+        document.fonts().expect("reads"),
+        [
+            entry("Garamond", "TrueType", true, true),
+            entry("Helvetica", "Type1", false, false),
+            entry("Noto", "Type0", true, false),
+        ]
+    );
+}

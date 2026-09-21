@@ -440,6 +440,11 @@ impl Document {
         crate::metadata::read_xmp(self.structure()?)
     }
 
+    /// Every font the pages name, as this session has them.
+    pub fn fonts(&mut self) -> Result<Vec<crate::metadata::FontEntry>> {
+        crate::metadata::document_fonts(self.structure()?)
+    }
+
     /// How the document asks to be opened, as this session has it.
     pub fn initial_view(&mut self) -> Result<crate::metadata::InitialView> {
         crate::metadata::read_initial_view(self.structure()?)

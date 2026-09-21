@@ -13,11 +13,13 @@
 //! trailer's `/Info` key, which is a trailer edit, undone with the rest of
 //! the transaction.
 
+pub mod fonts;
 pub mod view;
 pub mod xmp;
 
 use onionskin_cos::{Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
 
+pub use fonts::{document_fonts, FontEntry};
 pub use view::{read_initial_view, write_initial_view, InitialView, OpenFit, PageLayout, PageMode};
 pub use xmp::XmpFields;
 
