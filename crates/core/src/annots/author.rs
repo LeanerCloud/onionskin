@@ -66,6 +66,61 @@ pub(crate) fn remove(tx: &mut Transaction<'_>, page: ObjRef, annotation: ObjRef)
     Ok(true)
 }
 
+/// Give an existing ink annotation new strokes: its `/InkList`, a `/Rect`
+/// that bounds them, a fresh appearance and a new `/M`. What an eraser does.
+///
+/// The pen widths a stroke was drawn with are not in the file - PDF has no key
+/// for them - so a rewritten stroke is drawn at the annotation's `/BS /W`.
+/// `strokes` must hold at least one point: an eraser that leaves nothing
+/// removes the annotation instead.
+pub(crate) fn set_ink(
+    tx: &mut Transaction<'_>,
+    annotation: ObjRef,
+    strokes: Vec<Vec<(f64, f64)>>,
+    now: i64,
+) -> Result<()> {
+    let not_ink = || Error::NotADictionary {
+        number: annotation.number,
+    };
+    let state = tx.object(annotation.number)?.ok_or_else(not_ink)?;
+    let mut dict = state.object.as_dict().cloned().ok_or_else(not_ink)?;
+    let width = dict
+        .get(b"BS")
+        .and_then(Object::as_dict)
+        .and_then(|border| border.get(b"W"))
+        .and_then(super::read::as_number)
+        .unwrap_or(1.0);
+    let mut model = Annotation::ink(strokes, Vec::new(), width).ok_or_else(not_ink)?;
+    model.color = super::read::color(dict.get(b"C"));
+    model.opacity = dict.get(b"CA").and_then(super::read::as_number);
+
+    let appearance = tx.reserve();
+    tx.put_object(appearance, 0, Object::Stream(normal_appearance(&model)))?;
+    let rect = model.rect;
+    dict.set(
+        Name::new("Rect"),
+        numbers(&[rect.x0, rect.y0, rect.x1, rect.y1]),
+    );
+    dict.set(Name::new("InkList"), ink_list(&model.ink));
+    let mut appearances = Dict::new();
+    appearances.set(Name::new("N"), Object::Ref(ObjRef::new(appearance, 0)));
+    dict.set(Name::new("AP"), Object::Dict(appearances));
+    dict.set(Name::new("M"), Object::String(pdf_date(now).into_bytes()));
+    tx.put_object(annotation.number, state.generation, Object::Dict(dict))
+}
+
+fn ink_list(strokes: &[Vec<(f64, f64)>]) -> Object {
+    Object::Array(
+        strokes
+            .iter()
+            .map(|stroke| {
+                let flat: Vec<f64> = stroke.iter().flat_map(|(x, y)| [*x, *y]).collect();
+                numbers(&flat)
+            })
+            .collect(),
+    )
+}
+
 /// The annotation dictionary.
 fn dictionary(
     annotation: &Annotation,
@@ -113,15 +168,7 @@ fn dictionary(
         dict.set(Name::new("QuadPoints"), numbers(&points));
     }
     if !annotation.ink.is_empty() {
-        let strokes = annotation
-            .ink
-            .iter()
-            .map(|stroke| {
-                let flat: Vec<f64> = stroke.iter().flat_map(|(x, y)| [*x, *y]).collect();
-                numbers(&flat)
-            })
-            .collect();
-        dict.set(Name::new("InkList"), Object::Array(strokes));
+        dict.set(Name::new("InkList"), ink_list(&annotation.ink));
     }
     if let Some(((sx, sy), (ex, ey))) = annotation.line {
         dict.set(Name::new("L"), numbers(&[sx, sy, ex, ey]));

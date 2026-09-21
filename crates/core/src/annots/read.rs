@@ -37,6 +37,10 @@ pub struct ReadAnnotation {
     pub flags: Flags,
     pub in_reply_to: Option<ObjRef>,
     pub has_appearance: bool,
+    /// `/InkList`, one entry per stroke. Empty for anything but ink.
+    pub ink: Vec<Vec<(f64, f64)>>,
+    /// `/BS /W`, or 1 when the dictionary has none.
+    pub border_width: f64,
 }
 
 /// Every annotation on every page, in page order and then in `/Annots` order.
@@ -134,7 +138,30 @@ fn one(objref: ObjRef, page: usize, dict: &Dict) -> ReadAnnotation {
             .get(b"AP")
             .and_then(Object::as_dict)
             .is_some_and(|ap| ap.get(b"N").is_some()),
+        ink: ink_list(dict.get(b"InkList")),
+        border_width: dict
+            .get(b"BS")
+            .and_then(Object::as_dict)
+            .and_then(|border| border.get(b"W"))
+            .and_then(as_number)
+            .unwrap_or(1.0),
     }
+}
+
+/// `/InkList` as strokes of points. An odd trailing coordinate is dropped.
+pub(crate) fn ink_list(object: Option<&Object>) -> Vec<Vec<(f64, f64)>> {
+    let Some(Object::Array(strokes)) = object else {
+        return Vec::new();
+    };
+    strokes
+        .iter()
+        .map(|stroke| {
+            numbers(Some(stroke))
+                .chunks_exact(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect()
+        })
+        .collect()
 }
 
 fn numbers(object: Option<&Object>) -> Vec<f64> {
@@ -144,7 +171,7 @@ fn numbers(object: Option<&Object>) -> Vec<f64> {
     items.iter().filter_map(as_number).collect()
 }
 
-fn as_number(object: &Object) -> Option<f64> {
+pub(crate) fn as_number(object: &Object) -> Option<f64> {
     match object {
         Object::Integer(value) => Some(*value as f64),
         Object::Real(value) => Some(*value),
@@ -175,7 +202,7 @@ fn quads(object: Option<&Object>) -> Vec<Quad> {
         .collect()
 }
 
-fn color(object: Option<&Object>) -> Option<Color> {
+pub(crate) fn color(object: Option<&Object>) -> Option<Color> {
     let values = numbers(object);
     match values[..] {
         [gray] => Some(Color::new(gray, gray, gray)),

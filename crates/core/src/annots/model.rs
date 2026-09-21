@@ -282,6 +282,11 @@ pub struct Annotation {
     pub quads: Vec<Quad>,
     /// Ink only: one entry per stroke, each a list of points.
     pub ink: Vec<Vec<(f64, f64)>>,
+    /// Ink only: the width the pen had at each point of each stroke, from
+    /// stylus pressure. Empty, or shaped unlike `ink`, means every point is
+    /// `border_width` wide. Drawn into the appearance stream only: PDF has no
+    /// key for it, which is why Acrobat bakes pressure into `/AP` too.
+    pub ink_widths: Vec<Vec<f64>>,
     /// `/L`, for `Line`.
     pub line: Option<((f64, f64), (f64, f64))>,
     pub contents: Option<String>,
@@ -457,6 +462,7 @@ impl Annotation {
             rect,
             quads: Vec::new(),
             ink: Vec::new(),
+            ink_widths: Vec::new(),
             line: None,
             contents: None,
             author: None,
@@ -500,6 +506,22 @@ impl Annotation {
         Some(annotation)
     }
 
+    /// Freehand ink from its strokes and each point's pen width, with the
+    /// `/Rect` their bounds grown by half the widest pen, so no stroke is
+    /// clipped at its edge. `None` when no stroke has a point.
+    pub fn ink(
+        strokes: Vec<Vec<(f64, f64)>>,
+        widths: Vec<Vec<f64>>,
+        border_width: f64,
+    ) -> Option<Self> {
+        let rect = ink_bounds(&strokes, &widths, border_width)?;
+        let mut annotation = Annotation::new(Subtype::Ink, rect);
+        annotation.ink = strokes;
+        annotation.ink_widths = widths;
+        annotation.border_width = border_width;
+        Some(annotation)
+    }
+
     /// A `FreeText` carrying text, which is the only subtype that needs a
     /// `/DA`. The intent decides what a reader thinks it is looking at.
     pub fn free_text(rect: Rect, style: TextStyle, intent: Option<Intent>) -> Self {
@@ -521,4 +543,30 @@ impl Annotation {
         annotation.color = Some(Color::YELLOW);
         Some(annotation)
     }
+}
+
+/// The bounds of every point of every stroke, grown by half the widest pen.
+pub(crate) fn ink_bounds(
+    strokes: &[Vec<(f64, f64)>],
+    widths: &[Vec<f64>],
+    border_width: f64,
+) -> Option<Rect> {
+    let mut points = strokes.iter().flatten();
+    let &(x, y) = points.next()?;
+    let mut bounds = Rect::new(x, y, x, y);
+    for &(x, y) in points {
+        bounds = bounds.union(Rect::new(x, y, x, y));
+    }
+    let widest = widths
+        .iter()
+        .flatten()
+        .copied()
+        .fold(border_width, f64::max);
+    let half = widest / 2.0;
+    Some(Rect::new(
+        bounds.x0 - half,
+        bounds.y0 - half,
+        bounds.x1 + half,
+        bounds.y1 + half,
+    ))
 }

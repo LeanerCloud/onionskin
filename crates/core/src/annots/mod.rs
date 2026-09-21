@@ -42,6 +42,17 @@ pub fn add_annotation(
     author::add(tx, structure, page, annotation, now)
 }
 
+/// Give an ink annotation new strokes, as an eraser does: new `/InkList`,
+/// `/Rect`, appearance and `/M`. See `author::set_ink`.
+pub fn set_ink_strokes(
+    tx: &mut Transaction<'_>,
+    annotation: ObjRef,
+    strokes: Vec<Vec<(f64, f64)>>,
+    now: i64,
+) -> Result<()> {
+    author::set_ink(tx, annotation, strokes, now)
+}
+
 /// Stop a page naming an annotation. Returns whether it named one.
 pub fn remove_annotation(
     tx: &mut Transaction<'_>,

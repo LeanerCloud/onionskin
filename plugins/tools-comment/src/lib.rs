@@ -6,6 +6,7 @@
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
 mod freetext;
+mod ink;
 mod markup;
 mod note;
 mod place;
@@ -13,6 +14,7 @@ mod quads;
 mod shapes;
 
 pub use freetext::FreeTextTool;
+pub use ink::{EraseInkTool, InkTool};
 pub use markup::MarkupTool;
 pub use note::NoteTool;
 pub use shapes::ShapeTool;
@@ -47,5 +49,7 @@ impl PluginManifest for CommentToolsPlugin {
         registry.register_tool(Box::new(ShapeTool::polygon()));
         registry.register_tool(Box::new(ShapeTool::connected_lines()));
         registry.register_tool(Box::new(ShapeTool::cloud()));
+        registry.register_tool(Box::new(InkTool::new()));
+        registry.register_tool(Box::new(EraseInkTool::new()));
     }
 }

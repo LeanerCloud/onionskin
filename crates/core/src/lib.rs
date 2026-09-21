@@ -31,9 +31,9 @@ pub mod textselect;
 mod viewport;
 
 pub use annots::{
-    add_annotation, pdf_date, read_annotations, remove_annotation, Annotation, AnnotationFilter,
-    BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad, ReadAnnotation, Rect, Subtype,
-    TextStyle,
+    add_annotation, pdf_date, read_annotations, remove_annotation, set_ink_strokes, Annotation,
+    AnnotationFilter, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad,
+    ReadAnnotation, Rect, Subtype, TextStyle,
 };
 pub use attachments::Attachment;
 pub use edit::{

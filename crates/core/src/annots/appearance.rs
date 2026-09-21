@@ -484,24 +484,57 @@ fn paint_operator(annotation: &Annotation, closed: bool) -> &'static str {
     }
 }
 
+/// Freehand ink. A stroke whose points carry pen widths is drawn a segment
+/// at a time, each at the mean of its ends' widths, which is how pressure
+/// reaches the page; a stroke without is one path at `/BS /W`. A stroke of one
+/// point is a dot, drawn as a zero-length segment with round caps.
 fn ink(annotation: &Annotation, rect: Rect) -> String {
     let color = annotation.color.unwrap_or(Color::BLACK);
     let mut out = format!(
         "{} {} {} RG {} w 1 J 1 j\n",
         color.red, color.green, color.blue, annotation.border_width
     );
-    for stroke in &annotation.ink {
-        let mut points = stroke.iter();
-        let Some((x, y)) = points.next() else {
-            continue;
-        };
-        let _ = writeln!(out, "{} {} m", x - rect.x0, y - rect.y0);
-        for (x, y) in points {
-            let _ = writeln!(out, "{} {} l", x - rect.x0, y - rect.y0);
+    for (index, stroke) in annotation.ink.iter().enumerate() {
+        let local: Vec<(f64, f64)> = stroke
+            .iter()
+            .map(|(x, y)| (x - rect.x0, y - rect.y0))
+            .collect();
+        match annotation
+            .ink_widths
+            .get(index)
+            .filter(|widths| widths.len() == stroke.len())
+        {
+            Some(widths) => pressured_stroke(&mut out, &local, widths),
+            None => uniform_stroke(&mut out, &local),
         }
-        out.push_str("S\n");
     }
     out
+}
+
+fn uniform_stroke(out: &mut String, points: &[(f64, f64)]) {
+    let Some(&(x, y)) = points.first() else {
+        return;
+    };
+    let _ = writeln!(out, "{x} {y} m");
+    if points.len() == 1 {
+        let _ = writeln!(out, "{x} {y} l");
+    }
+    for (x, y) in &points[1..] {
+        let _ = writeln!(out, "{x} {y} l");
+    }
+    out.push_str("S\n");
+}
+
+fn pressured_stroke(out: &mut String, points: &[(f64, f64)], widths: &[f64]) {
+    if let ([(x, y)], [width]) = (points, widths) {
+        let _ = writeln!(out, "{width} w {x} {y} m {x} {y} l S");
+        return;
+    }
+    for (pair, width) in points.windows(2).zip(widths.windows(2)) {
+        let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
+        let width = (width[0] + width[1]) / 2.0;
+        let _ = writeln!(out, "{width} w {x0} {y0} m {x1} {y1} l S");
+    }
 }
 
 /// A sticky note or attachment icon: a filled rounded square with a fold.
