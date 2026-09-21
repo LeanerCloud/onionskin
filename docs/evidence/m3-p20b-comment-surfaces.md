@@ -92,3 +92,25 @@ Rows:
     Mark as Read.
 - `cargo test -p onionskin-app --features shell,shell-test-support --lib --
   comment`: 21 pass.
+
+## Every comment is signed
+
+**What changed.** Until now only the stamp and attach-file tools put the
+author on what they placed. Sticky notes, text boxes, typewriter text,
+callouts, highlights, underlines, strikethroughs, inserted and replacement
+text, lines, arrows, rectangles, ovals, polygons, connected lines, clouds
+and ink were all unsigned. Acrobat signs every comment, and the Comments
+pane lists by author, so an unsigned comment is one the author filter
+cannot find.
+
+**How it is built.** One `Signer` in `tools-comment/src/place.rs` is
+configured from the shell's `ToolEnvironment` and puts the name on the
+annotation's `/T`. Each tool holds one. With no name chosen the comment
+stays unsigned; the operating system's account name is never used.
+
+**Runs.**
+
+- `tools-comment/tests/signing.rs`: a sticky note, a text box, a rectangle
+  and an ink stroke are each signed "Ana Pop" when configured with that
+  name, and unsigned when configured with none.
+- `cargo test -p onionskin-tools-comment`: every test binary passes.

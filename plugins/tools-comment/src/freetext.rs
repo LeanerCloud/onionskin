@@ -15,9 +15,11 @@
 use onionskin_core::{
     add_annotation, Annotation, Color, Intent, PagePoint, PageRect, Rect, TextStyle, Viewport,
 };
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{
+    Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
+};
 
-use crate::place::{now, page_object};
+use crate::place::{now, page_object, Signer};
 
 /// Below this, in view pixels, a drag is a click. Expressed in view pixels so
 /// it means the same thing at every zoom.
@@ -56,6 +58,7 @@ pub struct FreeTextTool {
     anchor: Option<PagePoint>,
     at: Option<PagePoint>,
     dragging: bool,
+    signer: Signer,
 }
 
 impl FreeTextTool {
@@ -95,6 +98,7 @@ impl FreeTextTool {
             anchor: None,
             at: None,
             dragging: false,
+            signer: Signer::default(),
         }
     }
 
@@ -183,6 +187,7 @@ impl FreeTextTool {
         };
         let mut annotation = Annotation::free_text(rect, self.style, intent);
         annotation.color = Some(self.color);
+        self.signer.sign(&mut annotation);
         if self.shape == Shape::Callout {
             annotation.callout = FreeTextTool::leader(anchor, rect);
         }
@@ -209,6 +214,10 @@ fn is_drag(from: PagePoint, to: PagePoint, viewport: &Viewport) -> bool {
 }
 
 impl ToolPlugin for FreeTextTool {
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.signer.configure(environment);
+    }
+
     fn id(&self) -> &'static str {
         self.id
     }

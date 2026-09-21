@@ -21,9 +21,11 @@ use onionskin_core::{
     add_annotation, Annotation, BorderEffect, Color, Document, LineEnding, PagePoint, PageRect,
     Rect, Subtype, Viewport,
 };
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{
+    Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
+};
 
-use crate::place::{now, page_object};
+use crate::place::{now, page_object, Signer};
 
 /// Below this, in view pixels, a drag is a click: it makes no shape.
 const MIN_DRAG_PIXELS: f64 = 3.0;
@@ -78,6 +80,7 @@ pub struct ShapeTool {
     dragging: bool,
     /// Collected vertices, for the three that are built by clicking.
     vertices: Vec<PagePoint>,
+    signer: Signer,
 }
 
 impl ShapeTool {
@@ -149,6 +152,7 @@ impl ShapeTool {
             at: None,
             dragging: false,
             vertices: Vec::new(),
+            signer: Signer::default(),
         }
     }
 
@@ -210,6 +214,7 @@ impl ShapeTool {
         annotation.color = Some(self.defaults.color);
         annotation.interior_color = self.defaults.interior;
         annotation.border_width = self.defaults.border_width;
+        self.signer.sign(&mut annotation);
         Some(annotation)
     }
 
@@ -269,6 +274,10 @@ fn view_distance(from: PagePoint, to: PagePoint, viewport: &Viewport) -> Option<
 }
 
 impl ToolPlugin for ShapeTool {
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.signer.configure(environment);
+    }
+
     fn id(&self) -> &'static str {
         self.id
     }

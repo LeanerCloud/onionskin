@@ -19,9 +19,11 @@ use onionskin_core::{
     add_annotation, read_annotations, remove_annotation, set_ink_strokes, Annotation, Color,
     Document, PageIndex, PagePoint, PageRect, Subtype, Viewport,
 };
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{
+    Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
+};
 
-use crate::place::{now, page_object};
+use crate::place::{now, page_object, Signer};
 
 /// Below this, in view pixels, a pointer move adds no point: a stylus reports
 /// many more events than a stroke needs.
@@ -72,6 +74,7 @@ pub struct InkTool {
     color: Color,
     width: f64,
     stroke: Stroke,
+    signer: Signer,
 }
 
 impl InkTool {
@@ -80,6 +83,7 @@ impl InkTool {
             color: Color::new(0.16, 0.34, 0.85),
             width: 3.0,
             stroke: Stroke::default(),
+            signer: Signer::default(),
         }
     }
 
@@ -98,6 +102,7 @@ impl InkTool {
             return;
         };
         annotation.color = Some(self.color);
+        self.signer.sign(&mut annotation);
         let _ = doc.edit_annotations("Draw", |tx, structure| {
             add_annotation(tx, structure, page, &annotation, now()).map(|_| ())
         });
@@ -111,6 +116,10 @@ impl Default for InkTool {
 }
 
 impl ToolPlugin for InkTool {
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.signer.configure(environment);
+    }
+
     fn id(&self) -> &'static str {
         "ink"
     }

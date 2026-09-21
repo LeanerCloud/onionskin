@@ -21,9 +21,11 @@ use onionskin_core::{
     add_annotation, Annotation, Color, Document, PagePoint, PageQuad, Quad, Rect, Subtype,
     TextSelection, Viewport,
 };
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{
+    Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
+};
 
-use crate::place::{now, page_object};
+use crate::place::{now, page_object, Signer};
 use crate::quads::merge;
 
 /// Below this, a drag is a click: it selects nothing and writes nothing.
@@ -58,6 +60,7 @@ pub struct MarkupTool {
     /// Whether the last gesture in this chain wrote a markup that a
     /// shift-extend should replace rather than overlap.
     committed: bool,
+    signer: Signer,
 }
 
 impl MarkupTool {
@@ -135,6 +138,7 @@ impl MarkupTool {
             dragging: false,
             pending: None,
             committed: false,
+            signer: Signer::default(),
         }
     }
 
@@ -193,37 +197,37 @@ impl MarkupTool {
         let color = self.color;
         let label = self.name;
         let text = selection.text.clone();
+        let signer = self.signer.clone();
         self.committed = true;
         let _ = ctx.doc.edit_annotations(label, |tx, structure| {
             match writes {
                 Writes::Span(subtype) => {
                     let mut annotation = span(subtype, &quads, color);
                     annotation.contents = None;
+                    signer.sign(&mut annotation);
                     add_annotation(tx, structure, page, &annotation, now())?;
                 }
                 Writes::Caret => {
                     let mut annotation = Annotation::new(Subtype::Text, caret_rect(&quads));
                     annotation.icon = Some("Comment".into());
                     annotation.color = Some(color);
+                    signer.sign(&mut annotation);
                     add_annotation(tx, structure, page, &annotation, now())?;
                 }
                 Writes::Replacement => {
                     // One transaction: the strike-out and the note that
                     // replaces it are one edit, and undoing half of a
                     // replacement is not a state anyone wants.
-                    let struck = add_annotation(
-                        tx,
-                        structure,
-                        page,
-                        &span(Subtype::StrikeOut, &quads, color),
-                        now(),
-                    )?;
+                    let mut strike = span(Subtype::StrikeOut, &quads, color);
+                    signer.sign(&mut strike);
+                    let struck = add_annotation(tx, structure, page, &strike, now())?;
                     let mut reply = Annotation::new(Subtype::Text, caret_rect(&quads));
                     reply.icon = Some("Comment".into());
                     reply.color = Some(color);
                     reply.in_reply_to = Some(struck);
                     reply.subject = Some("Replacement".into());
                     reply.contents = Some(text);
+                    signer.sign(&mut reply);
                     add_annotation(tx, structure, page, &reply, now())?;
                 }
             }
@@ -267,6 +271,10 @@ fn is_drag(from: PagePoint, to: PagePoint, viewport: &Viewport) -> bool {
 }
 
 impl ToolPlugin for MarkupTool {
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.signer.configure(environment);
+    }
+
     fn id(&self) -> &'static str {
         self.id
     }

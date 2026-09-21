@@ -7,9 +7,9 @@
 //! rubber band that changes nothing.
 
 use onionskin_core::{add_annotation, Annotation, Color, PagePoint, Rect, Subtype};
-use onionskin_plugin_api::{PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin};
 
-use crate::place::{now, page_object};
+use crate::place::{now, page_object, Signer};
 
 /// The icon's box, in page units. 20pt is what Acrobat writes, and a reader
 /// draws its own icon into it rather than scaling one.
@@ -23,6 +23,7 @@ const SLIP: f64 = 4.0;
 pub struct NoteTool {
     color: Color,
     pressed: Option<PagePoint>,
+    signer: Signer,
 }
 
 impl Default for NoteTool {
@@ -36,6 +37,7 @@ impl NoteTool {
         NoteTool {
             color: Color::new(1.0, 0.82, 0.2),
             pressed: None,
+            signer: Signer::default(),
         }
     }
 
@@ -48,6 +50,10 @@ impl NoteTool {
 }
 
 impl ToolPlugin for NoteTool {
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.signer.configure(environment);
+    }
+
     fn id(&self) -> &'static str {
         "sticky-note"
     }
@@ -102,6 +108,7 @@ impl ToolPlugin for NoteTool {
         let mut annotation = Annotation::new(Subtype::Text, NoteTool::rect(pressed));
         annotation.icon = Some("Note".into());
         annotation.color = Some(self.color);
+        self.signer.sign(&mut annotation);
         let _ = ctx.doc.edit_annotations("Sticky Note", |tx, structure| {
             add_annotation(tx, structure, page, &annotation, now()).map(|_| ())
         });
