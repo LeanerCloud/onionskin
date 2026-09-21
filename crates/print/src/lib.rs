@@ -7,6 +7,7 @@
 pub mod backend;
 pub mod impose;
 pub mod job;
+pub mod ranges;
 pub mod sheet;
 
 pub use backend::file::{print_to_file, FileBackend};
@@ -17,4 +18,5 @@ pub use impose::{impose, PageSize};
 pub use job::{
     Duplex, NUp, NUpOrder, Orientation, PageSelection, PaperSize, PrintJob, Sizing, Subset,
 };
+pub use ranges::{parse_page_ranges, RangeError};
 pub use sheet::{Placement, Sheet};

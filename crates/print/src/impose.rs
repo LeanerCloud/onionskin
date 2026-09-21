@@ -289,7 +289,7 @@ mod tests {
     fn a_selection_decides_which_pages_reach_the_sheets() {
         let job = PrintJob {
             selection: PageSelection {
-                range: Some((1, 2)),
+                ranges: vec![(1, 2)],
                 ..PageSelection::default()
             },
             ..job()

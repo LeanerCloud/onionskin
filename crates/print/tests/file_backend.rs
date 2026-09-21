@@ -473,7 +473,7 @@ fn a_selection_that_selects_nothing_is_not_printed() {
     let mut doc = marked(&[(612.0, 792.0, 0)]);
     let job = PrintJob {
         selection: onionskin_print::PageSelection {
-            range: Some((3, 4)),
+            ranges: vec![(3, 4)],
             ..Default::default()
         },
         ..letter()

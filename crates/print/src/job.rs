@@ -63,25 +63,46 @@ pub enum Subset {
 }
 
 /// Which pages, and in which order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PageSelection {
-    /// First and last page, zero-based and inclusive. `None` is every page.
-    pub range: Option<(usize, usize)>,
+    /// First and last page of each range, zero-based and inclusive, in the
+    /// order they print. Empty is every page.
+    pub ranges: Vec<(usize, usize)>,
     pub subset: Subset,
     /// Reverse Pages.
     pub reverse: bool,
 }
 
 impl PageSelection {
+    /// Every page.
+    pub fn all() -> Self {
+        PageSelection::default()
+    }
+
+    /// One page: the dialog's "Current page".
+    pub fn page(page: usize) -> Self {
+        PageSelection {
+            ranges: vec![(page, page)],
+            ..PageSelection::default()
+        }
+    }
+
     /// The pages this selects from a document of `count` pages, in print
     /// order. Odd and even count from one, as the page numbers a user sees.
+    /// A range running past the end stops at the last page.
     pub fn pages(&self, count: usize) -> Vec<usize> {
         if count == 0 {
             return Vec::new();
         }
-        let (first, last) = self.range.unwrap_or((0, count - 1));
-        let last = last.min(count - 1);
-        let mut pages: Vec<usize> = (first..=last)
+        let whole = [(0, count - 1)];
+        let ranges = if self.ranges.is_empty() {
+            &whole[..]
+        } else {
+            &self.ranges[..]
+        };
+        let mut pages: Vec<usize> = ranges
+            .iter()
+            .flat_map(|(first, last)| *first..=(*last).min(count - 1))
             .filter(|page| match self.subset {
                 Subset::All => true,
                 Subset::Odd => (page + 1) % 2 == 1,
@@ -229,12 +250,22 @@ mod tests {
     #[test]
     fn a_range_is_inclusive_clamped_and_can_run_backwards() {
         let selection = PageSelection {
-            range: Some((1, 9)),
+            ranges: vec![(1, 9)],
             reverse: true,
             ..PageSelection::default()
         };
         assert_eq!(selection.pages(4), [3, 2, 1]);
-        assert!(PageSelection::default().pages(0).is_empty());
+        assert!(PageSelection::all().pages(0).is_empty());
+    }
+
+    #[test]
+    fn several_ranges_print_in_the_order_given_and_one_page_is_one_range() {
+        let selection = PageSelection {
+            ranges: vec![(6, 6), (1, 3)],
+            ..PageSelection::default()
+        };
+        assert_eq!(selection.pages(10), [6, 1, 2, 3]);
+        assert_eq!(PageSelection::page(2).pages(5), [2]);
     }
 
     #[test]
