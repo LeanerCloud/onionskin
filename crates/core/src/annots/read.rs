@@ -46,6 +46,8 @@ pub struct ReadAnnotation {
     /// `/State` and `/StateModel` on a status annotation: what it sets and in
     /// which model. `None` for every other annotation.
     pub state: Option<(String, String)>,
+    /// `/CA`, the opacity, when the dictionary gives one.
+    pub opacity: Option<f64>,
 }
 
 /// Every annotation on every page, in page order and then in `/Annots` order.
@@ -157,6 +159,7 @@ fn one(objref: ObjRef, page: usize, dict: &Dict) -> ReadAnnotation {
                 text(dict.get(b"StateModel")).unwrap_or_else(|| "Marked".to_owned()),
             )
         }),
+        opacity: dict.get(b"CA").and_then(as_number),
     }
 }
 
@@ -176,7 +179,7 @@ pub(crate) fn ink_list(object: Option<&Object>) -> Vec<Vec<(f64, f64)>> {
         .collect()
 }
 
-fn numbers(object: Option<&Object>) -> Vec<f64> {
+pub(crate) fn numbers(object: Option<&Object>) -> Vec<f64> {
     let Some(Object::Array(items)) = object else {
         return Vec::new();
     };
@@ -191,7 +194,7 @@ pub(crate) fn as_number(object: &Object) -> Option<f64> {
     }
 }
 
-fn rect(object: Option<&Object>) -> Option<Rect> {
+pub(crate) fn rect(object: Option<&Object>) -> Option<Rect> {
     let values = numbers(object);
     let [x0, y0, x1, y1] = values[..] else {
         return None;
@@ -201,7 +204,7 @@ fn rect(object: Option<&Object>) -> Option<Rect> {
 
 /// Read back in the order [`Quad`] documents: upper-left, upper-right,
 /// lower-left, lower-right.
-fn quads(object: Option<&Object>) -> Vec<Quad> {
+pub(crate) fn quads(object: Option<&Object>) -> Vec<Quad> {
     numbers(object)
         .chunks(8)
         .filter(|chunk| chunk.len() == 8)
@@ -227,7 +230,7 @@ pub(crate) fn color(object: Option<&Object>) -> Option<Color> {
 /// mark and from Latin-1 otherwise. PDFDocEncoding differs from Latin-1 in 24
 /// positions; M3 reads the common case correctly and does not pretend the rest
 /// is exact.
-fn text(object: Option<&Object>) -> Option<String> {
+pub(crate) fn text(object: Option<&Object>) -> Option<String> {
     let Some(Object::String(bytes)) = object else {
         return None;
     };

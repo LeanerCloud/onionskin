@@ -149,6 +149,7 @@ pub(super) mod tests {
                 border_width: 1.0,
                 subject: None,
                 state: None,
+                opacity: None,
             },
             replies: Vec::new(),
             status: None,

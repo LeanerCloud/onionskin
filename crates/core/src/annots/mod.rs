@@ -10,7 +10,9 @@ mod appearance;
 mod author;
 mod filter;
 mod model;
+pub mod properties;
 mod read;
+mod rebuild;
 pub mod review;
 
 pub use filter::AnnotationFilter;
