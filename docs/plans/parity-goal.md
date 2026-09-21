@@ -156,8 +156,8 @@ guesses. The scoreboard already lists them; a plan revision should confirm or
 move them, and until it does the map's precision is overstated.
 
 **M4 is not a parity milestone and should not be read as one.** Two rows. Its
-deliverables (MCP, CUPS and Windows print backends) are mostly not Acrobat
-surface. Reading the map as a slope from 49 to 323 makes M4 look like a stall;
+deliverables (the CUPS and Windows print backends; the MCP server has since
+moved to post-1.0) are mostly not Acrobat surface. Reading the map as a slope from 49 to 323 makes M4 look like a stall;
 it is not, it is a milestone the scoreboard is the wrong instrument for.
 
 ---

@@ -281,7 +281,7 @@ onionskin/
 │   │                       #   PluginManifest + PluginRegistry. GPUI-free.
 │   ├── crypto              # Signature verification (PAdES sign later),
 │   │                       #   encryption/decryption handlers used by cos.
-│   ├── mcp                 # Headless MCP server: sessions instead of windows,
+│   ├── mcp                 # Post-1.0. Headless MCP server: sessions instead of windows,
 │   │                       #   describe + generic invokers over the registry,
 │   │                       #   inline PNG page rendering. Schist's design,
 │   │                       #   near-verbatim.
@@ -491,7 +491,8 @@ what-does-not-transfer section demands:
 5. **CI gates on every push**: `cargo fmt --check`, `clippy -D warnings`,
    `cargo test --workspace`, on macOS, Linux and Windows (Schist's `ci.yml`,
    reused nearly verbatim).
-6. **MCP as the end-to-end harness.** Schist's "verified end-to-end under a
+6. **MCP as the end-to-end harness (post-1.0, with the MCP server).** Until
+   then the registry is driven in-process by the app's window tests. Schist's "verified end-to-end under a
    real window" is release discipline, not an automated harness - but its MCP
    server makes the entire registry drivable headless with inline PNG renders,
    which is what makes that discipline cheap. Onionskin does the same and goes
@@ -581,11 +582,11 @@ what-does-not-transfer section demands:
   guarantee M3 switches on carries the two CI steps the guarantee section
   requires. M3 also owes the tagged structure tree its reader, its maintenance
   hook and its invariant (decision 12), three milestones before guarantee 8.
-- **M4 - MCP server, print everywhere.** Sessions, `describe`, generic
-  invokers over the registry - Schist's `mcp` crate as the template.
-  Everything M3 can do, agent-driven, plus `render` returning inline PNG.
-  `print` gains the CUPS and Windows backends, plus booklet and poster/tile
-  imposition over M3's sheet model.
+- **M4 - Print everywhere.** `print` gains the CUPS and Windows backends,
+  plus booklet and poster/tile imposition over M3's sheet model. The MCP
+  server that M4 used to carry moved to post-1.0 (decided 2026-09-21): it is
+  Onionskin-only surface, not Acrobat parity, and nothing before 1.0 depends
+  on it.
 - **M5 - Forms, text edit, redaction.** `tools-fill-sign` and `tools-form`
   with `scripting` live (guarantee test 7: forms compute like Acrobat),
   including form auto-complete and the JS-disable preference; `tools-edit`
@@ -600,7 +601,10 @@ what-does-not-transfer section demands:
   and LTV, encrypted-document open/save, PAdES signing.
   `tools-accessibility`: checker, reading-order repair, Read Out Loud.
   `tools-measure`.
-- **Post-1.0.** `plugin-host-wasm` + `plugin-sdk`, OCR for scanned documents
+- **Post-1.0.** The MCP server (`crates/mcp`): sessions, `describe`,
+  generic invokers over the registry and `render` returning inline PNG, with
+  Schist's `mcp` crate as the template; moved here from M4. Then
+  `plugin-host-wasm` + `plugin-sdk`, OCR for scanned documents
   plus scan enhancement (deskew, descreen, background removal), reflowing
   text edit, XFDF, Compare Files, scanner capture, portfolios, guided
   actions (Action Wizard - a natural fit over the registry and MCP), layer

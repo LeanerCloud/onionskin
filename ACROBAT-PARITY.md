@@ -61,8 +61,8 @@ they say "Onionskin implements N of M rows".
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
-M4 carries only two rows because its deliverables (the MCP server, the CUPS and
-Windows print backends) are mostly not Acrobat surface. 42 rows are marked
+M4 carries only two rows because its deliverables (the CUPS and Windows print
+backends) are mostly not Acrobat surface; the MCP server moved to post-1.0. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
 should confirm or move them. Recount with:
 
