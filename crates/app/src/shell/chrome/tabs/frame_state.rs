@@ -470,6 +470,7 @@ mod tests {
             rotation: ViewRotation::None,
             can_previous_view: false,
             can_next_view: false,
+            auto_scrolling: false,
         };
         let second = CanvasViewState {
             current_page: 1,
@@ -481,6 +482,7 @@ mod tests {
             rotation: ViewRotation::Clockwise90,
             can_previous_view: true,
             can_next_view: false,
+            auto_scrolling: false,
         };
         let mut tabs = TabState::new(vec![first, second]);
 

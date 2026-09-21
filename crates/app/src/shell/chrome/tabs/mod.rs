@@ -1,4 +1,5 @@
 mod accessible;
+mod auto_scroll;
 mod context;
 mod create;
 mod dialogs;
@@ -33,6 +34,7 @@ use gpui::{
 use onionskin_core::{Document, ViewSize};
 use onionskin_plugin_api::ToolCapability;
 
+pub(in crate::shell) use self::auto_scroll::install_keybindings as install_auto_scroll_keybindings;
 pub(in crate::shell) use self::frame_state::ShellFrame;
 pub(super) use self::frame_state::TabError;
 use super::super::canvas::{CanvasModel, CanvasViewState, ViewAction};
@@ -55,7 +57,7 @@ use super::super::{record_opened, repair_notice};
 
 use self::export::{export_progress_label, ExportPhaseValue};
 use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab};
-use super::accessible::{Activation, SHELL_KEY_CONTEXT};
+use super::accessible::Activation;
 use super::global_bar::{
     main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, NO_SNAPSHOT_TOOL,
 };
@@ -134,6 +136,9 @@ impl ShellFrame {
         }
         if self.find.is_open() {
             self.dismiss_find_bar(cx);
+            return;
+        }
+        if self.stop_auto_scroll(cx) {
             return;
         }
         // The two modes that hide the chrome are the last thing Escape
@@ -1495,8 +1500,11 @@ impl Render for ShellFrame {
             // which control the keys apply to. A text field binds its own,
             // more specific, key context and keeps the keys it needs.
             .track_focus(self.a11y.focus_handle())
-            .key_context(SHELL_KEY_CONTEXT)
+            .key_context(self.key_context(cx).as_str())
             .on_action(cx.listener(Self::dismiss_overlay))
+            .on_action(cx.listener(Self::auto_scroll_faster))
+            .on_action(cx.listener(Self::auto_scroll_slower))
+            .on_action(cx.listener(Self::auto_scroll_reverse))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_action(cx.listener(Self::focus_next_in_group))
@@ -1670,6 +1678,8 @@ pub(in crate::shell) fn clipboard_image(cx: &App) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "shell-test-support")]
+    mod auto_scroll;
     #[cfg(feature = "shell-test-support")]
     mod comments;
     #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
@@ -2192,6 +2202,7 @@ mod tests {
             crate::shell::preferences_dialog::install_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
+            super::auto_scroll::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);
             super::super::global_bar::install_native_menus(cx, window, state);
         });
@@ -2222,7 +2233,7 @@ mod tests {
         let dir = crate::config::test_dir("read-mode-keymap");
         std::fs::write(
             dir.join(crate::config::KEYMAP_FILE),
-            "{\"view.read-mode\": \"cmd-shift-h\"}",
+            "{\"view.read-mode\": \"cmd-shift-r\"}",
         )
         .expect("the test writes its keymap");
         let (window, bindings) =

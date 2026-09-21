@@ -501,6 +501,7 @@ mod tests {
             rotation: ViewRotation::None,
             can_previous_view: false,
             can_next_view: false,
+            auto_scrolling: false,
         }
     }
 

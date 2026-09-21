@@ -236,6 +236,7 @@ pub(in crate::shell) enum MenuCommand {
     ToggleCover,
     Tools,
     ManageTools,
+    AutoScroll,
     ToggleNavigationPane,
     ToggleQuickAction(QuickAction),
     TogglePageControls,
@@ -988,6 +989,7 @@ fn view_menu_entries(
     let can_next_view = view.is_some_and(|view| view.can_next_view);
     let layout = view.map(|view| view.layout_mode);
     let show_cover = view.is_some_and(|view| view.show_cover);
+    let auto_scrolling = view.is_some_and(|view| view.auto_scrolling);
     let actual_size = view.is_some_and(CanvasViewState::is_actual_size);
     let fit_mode = view.and_then(CanvasViewState::fit_mode);
     let entry = |command, label, availability, selected| MenuEntry {
@@ -1136,6 +1138,12 @@ fn view_menu_entries(
             "Show Cover Page",
             availability,
             show_cover,
+        ),
+        entry(
+            MenuCommand::AutoScroll,
+            "Automatically Scroll",
+            availability,
+            auto_scrolling,
         ),
     ];
     entries.push(entry(
@@ -1286,6 +1294,7 @@ impl MenuCommand {
             | Self::Page(_)
             | Self::Tools
             | Self::ManageTools
+            | Self::AutoScroll
             | Self::ToggleNavigationPane
             | Self::ToggleQuickAction(_)
             | Self::TogglePageControls
@@ -1348,6 +1357,7 @@ impl MenuCommand {
             | Self::Page(_)
             | Self::Tools
             | Self::ManageTools
+            | Self::AutoScroll
             | Self::PreviousView
             | Self::NextView
             | Self::FirstPage
@@ -1490,6 +1500,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Preferences
         | MenuCommand::Tools
         | MenuCommand::ManageTools
+        | MenuCommand::AutoScroll
         | MenuCommand::About
         | MenuCommand::KeyboardShortcuts
         | MenuCommand::PreviousView
@@ -1568,6 +1579,7 @@ mod tests {
             rotation: ViewRotation::Clockwise90,
             can_previous_view: true,
             can_next_view: true,
+            auto_scrolling: false,
         }
     }
 

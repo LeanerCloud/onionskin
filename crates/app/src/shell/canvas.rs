@@ -21,10 +21,12 @@ use onionskin_render::PageRender;
 use onionskin_render::{BaseRaster, RasterBounds, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
+mod auto_scroll;
 mod comment_reads;
 mod edit_verbs;
 mod file_ops;
 
+pub(in crate::shell) use auto_scroll::AutoScrollChange;
 pub use comment_reads::CommentReads;
 pub use edit_verbs::edit_verb_refusal;
 pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
@@ -96,6 +98,8 @@ pub(super) struct CanvasViewState {
     pub(super) rotation: ViewRotation,
     pub(super) can_previous_view: bool,
     pub(super) can_next_view: bool,
+    /// Whether Automatically Scroll is running, for the menu's check.
+    pub(super) auto_scrolling: bool,
 }
 
 impl CanvasViewState {
@@ -479,6 +483,8 @@ pub struct CanvasModel {
     /// Each visible page's words and where they sit on the page, for the
     /// accessibility tree. Page space, so scrolling does not invalidate it.
     page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
+    /// View > Page Display > Automatically Scroll, while it runs.
+    auto_scroll: Option<onionskin_core::AutoScroll>,
 }
 
 pub(super) struct PreparedExport {
@@ -548,6 +554,7 @@ impl CanvasModel {
             comment_reads: CommentReads::default(),
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
+            auto_scroll: None,
         })
     }
 
@@ -1000,6 +1007,7 @@ impl CanvasModel {
             rotation: self.viewport.rotation(),
             can_previous_view: self.can_previous_view(),
             can_next_view: self.can_next_view(),
+            auto_scrolling: self.auto_scrolling(),
         }
     }
 
@@ -1458,6 +1466,7 @@ impl CanvasModel {
         at: Point<Pixels>,
     ) -> Result<(), CanvasError> {
         let at = self.canvas_point(at);
+        self.pause_auto_scroll(Instant::now());
         self.viewport.scroll(delta, zooming, at)?;
         Ok(())
     }
@@ -1482,6 +1491,7 @@ impl CanvasModel {
         modifiers: GpuiModifiers,
     ) -> Result<bool, CanvasError> {
         validate_pressure(pressure)?;
+        self.pause_auto_scroll(Instant::now());
         let at = self.canvas_point(position);
         if self.active_tool.is_none() {
             self.input.begin_pan(at);

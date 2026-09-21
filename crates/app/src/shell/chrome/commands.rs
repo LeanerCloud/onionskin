@@ -92,6 +92,7 @@ impl MenuCommand {
             MenuCommand::TwoPage,
             MenuCommand::TwoPageContinuous,
             MenuCommand::ToggleCover,
+            MenuCommand::AutoScroll,
             MenuCommand::Tools,
             MenuCommand::ManageTools,
             MenuCommand::ToggleNavigationPane,
@@ -185,6 +186,7 @@ impl MenuCommand {
             Self::ToggleCover => "view.show-cover-page",
             Self::Tools => "view.tools",
             Self::ManageTools => "view.manage-tools",
+            Self::AutoScroll => "view.automatically-scroll",
             Self::ToggleNavigationPane => "view.show-navigation-panes",
             Self::ToggleQuickAction(QuickAction::Select) => "view.show-quick-action-select",
             Self::ToggleQuickAction(QuickAction::Comment) => "view.show-quick-action-comment",
@@ -223,6 +225,8 @@ impl MenuCommand {
             Self::Print => "cmd-p",
             // Acrobat's Shift+Ctrl+P.
             Self::PageSetup => "cmd-shift-p",
+            // Acrobat's Ctrl+Shift+H, and free on macOS inside an app.
+            Self::AutoScroll => "cmd-shift-h",
             Self::Save => "cmd-s",
             Self::SaveAs => "cmd-shift-s",
             Self::Undo => "cmd-z",

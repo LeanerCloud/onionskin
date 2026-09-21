@@ -139,3 +139,81 @@ still fails. Fixed in its own commit.
 **Mutation run.** Dropping the "selected stays" rule (filtering hidden tools
 even when active) fails `hidden_tools_leave_the_rail_unless_selected` and
 `the_selected_tool_stays_on_the_rail_when_hidden`.
+
+## View > Page Display > Automatically Scroll (row 22)
+
+**What the user gets.**
+
+- View > Automatically Scroll, or Cmd+Shift+H (Acrobat's Ctrl+Shift+H),
+  scrolls the document in front down at a reading pace. The entry is
+  checked while it runs, and choosing it again stops it.
+- While it runs, Up is one speed faster and Down one slower (nine speeds,
+  15 to 350 view pixels a second), minus reverses the direction, and Escape
+  stops it. With no scroll running those keys are the focus ring's again.
+- A wheel scroll or a press on the page pauses it. It carries on by itself
+  two seconds after the last touch.
+- It stops by itself at the end of the document, or at the start when
+  reversed, and the menu's check goes with it.
+
+**How it is built.**
+
+- **The timing is in core, without a clock** (`core::AutoScroll`). The
+  caller passes the time of each frame; the first frame after a start or a
+  pause sets the clock and moves nothing, and one frame accounts for at
+  most 100 ms, so a window coming back from being hidden does not jump.
+- **No timer runs.** The canvas advances the scroll when it draws and asks
+  for the next frame with `request_animation_frame`. GPUI runs a window's
+  display link only while the platform reports it visible, so a hidden or
+  occluded window draws nothing and scrolls nothing. This answers the
+  review risk about a timer running for an invisible window.
+- `CanvasModel` holds the running scroll: `toggle_auto_scroll`,
+  `change_auto_scroll`, `stop_auto_scroll`, and `advance_auto_scroll`, which
+  pans the viewport and stops when the pan no longer moves it. Its `scroll`
+  and `pointer_down` pause it.
+- **Keys.** The frame adds `OnionskinAutoScroll` to its key context only
+  while the tab in front scrolls. Its Up, Down and minus are bound after the
+  shell's own keys, so at the frame's depth they win over the focus ring's
+  Up and Down, and a text field's own context still wins over both. A key
+  with nothing to steer is propagated.
+- `MenuCommand::AutoScroll` (`view.automatically-scroll`, bound to
+  `cmd-shift-h`), in the View menu's page display entries.
+- The read-mode test bound Read Mode to `cmd-shift-h` in its test keymap;
+  it now uses `cmd-shift-r`, since the default binding took that key.
+
+**Runs.**
+
+- `cargo test -p onionskin-core --lib autoscroll`, 5 tests: the first frame
+  sets the clock and later frames move at the level's speed; a 60-second gap
+  moves one 100 ms step; speed steps clamp at both ends and say when they
+  did nothing; reversing moves toward the start; a pause holds for
+  `AUTO_SCROLL_RESUME_AFTER` and restarts the clock without paying out the
+  paused time.
+- Window tests `tabs::tests::auto_scroll`, 4:
+  - `the_keystroke_starts_it_frames_move_it_and_escape_stops_it`: the
+    default keystroke starts it and checks the menu entry, 30 frames move
+    the view down, Escape stops it and clears the check.
+  - `the_arrow_keys_and_minus_steer_a_running_scroll`: "up up", "down",
+    "-" leave it one level faster and reversed. Stopped, the frame's key
+    context is the shell's alone and Down moves the focus ring again.
+  - `touching_the_document_pauses_the_scroll`: a wheel scroll and a press
+    each pause it, and the pause ends after `AUTO_SCROLL_RESUME_AFTER`.
+  - `reaching_the_end_stops_it`: at the fastest speed the frames run until
+    it stops by itself, and the menu is unchecked.
+- **Full suites.** `cargo test -p onionskin-app --features
+  shell,shell-test-support --lib`: all pass but the known environmental
+  set. With `--no-default-features`: the same. `cargo test -p
+  onionskin-core`: passes. The app's integration tests pass, the headline
+  recount at 165 planned / 133 implemented included.
+- **Lint.** `cargo clippy` for `onionskin-core` and for `onionskin-app` in
+  the four feature sets used above: clean. `cargo fmt --all --check`: clean.
+
+**Mutations run.**
+
+- Dropping the pause from `CanvasModel::scroll` fails
+  `touching_the_document_pauses_the_scroll`.
+- Never stopping at the end fails `reaching_the_end_stops_it`.
+
+**Not claimed.** The frames in the window tests are driven by calling
+`advance_auto_scroll` with computed times, not by GPUI drawing frames; the
+drawn path is one call from `Canvas::render`. That a hidden window draws no
+frames is GPUI's behaviour on macOS, read from its source, not a test here.

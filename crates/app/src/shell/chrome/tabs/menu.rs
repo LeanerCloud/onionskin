@@ -134,6 +134,10 @@ impl ShellFrame {
                 self.toggle_rail_expanded(cx);
                 Ok(())
             }
+            MenuCommand::AutoScroll => {
+                self.toggle_auto_scroll(cx);
+                Ok(())
+            }
             MenuCommand::ManageTools => {
                 self.open_manage_tools(window, cx);
                 Ok(())

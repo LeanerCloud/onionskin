@@ -678,8 +678,28 @@ impl Canvas {
     }
 }
 
+impl Canvas {
+    /// Move a running Automatically Scroll for this frame and ask for the
+    /// next one. Driven by frames rather than a timer, so a window that is
+    /// not drawn does not scroll.
+    fn drive_auto_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.model.auto_scrolling() {
+            return;
+        }
+        let result = self.model.advance_auto_scroll(std::time::Instant::now());
+        self.handle_change(result, cx);
+        if self.model.auto_scrolling() {
+            window.request_animation_frame();
+        } else {
+            // It reached the end: the menu's check has to go.
+            cx.notify();
+        }
+    }
+}
+
 impl Render for Canvas {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.drive_auto_scroll(window, cx);
         self.sync_inline_text(window, cx);
         let inline = self.render_inline_text(self.theme, cx);
         let prepare_entity = cx.entity();
@@ -845,6 +865,7 @@ where
         panes::install_comment_keybindings(cx);
         preferences_dialog::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
+        chrome::install_auto_scroll_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {
             if should_quit_after_window_closed(cx.windows().len()) {

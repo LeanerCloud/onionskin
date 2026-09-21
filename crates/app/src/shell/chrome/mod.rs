@@ -26,6 +26,7 @@ pub(in crate::shell) use export_dialog::install_keybindings as install_export_ke
 pub(in crate::shell) use global_bar::install_native_menus;
 pub(in crate::shell) use global_bar::{MenuAvailability, MenuState, RegistryFacts, RunCommand};
 pub(in crate::shell) use quick_actions::QuickAction;
+pub(in crate::shell) use tabs::install_auto_scroll_keybindings;
 pub(in crate::shell) use tabs::ShellFrame;
 pub(in crate::shell) use theme::{ShellViewState, ThemeTokens};
 pub(in crate::shell) use tool_search::install_keybindings as install_search_keybindings;
