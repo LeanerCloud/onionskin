@@ -429,6 +429,7 @@ impl ShellFrame {
             Activation::OpenStarred(index) => self.open_starred(index, cx),
             Activation::ToggleStar(path) => self.toggle_star(&path, cx),
             Activation::ToggleToolShown(id) => self.toggle_tool_shown(id, cx),
+            Activation::AdvancedSearch(action) => self.run_advanced_action(action, window, cx),
             Activation::ChooseSearchResult(result) => {
                 self.choose_search_result(result, window, cx);
             }
@@ -677,6 +678,10 @@ impl ShellFrame {
                 .print
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            TextField::AdvancedQuery | TextField::AdvancedValue => self
+                .advanced_search
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
         }
     }
 
@@ -738,6 +743,7 @@ impl ShellFrame {
             .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
             .chain([TextField::BookmarkTitle, TextField::CommentingAuthor])
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
+            .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

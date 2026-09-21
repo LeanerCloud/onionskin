@@ -239,6 +239,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) print: Option<crate::shell::chrome::print_dialog::PrintDialogState>,
     /// What Page Properties shows, read when it opened.
     pub(super) page_properties: Vec<(String, String)>,
+    /// The Advanced Search dialog, while it is open.
+    pub(super) advanced_search: Option<crate::shell::chrome::advanced_search::AdvancedSearchState>,
     /// The rail tools Manage Tools lists, read when it opened.
     pub(super) managed_tools: Vec<crate::shell::chrome::manage_tools::ManagedTool>,
     /// The Organize Pages grid, while it is open.
@@ -413,6 +415,7 @@ impl ShellFrame {
             page_grid: None,
             page_properties: Vec::new(),
             managed_tools: Vec::new(),
+            advanced_search: None,
             page_setup: Default::default(),
             unsaved: None,
             recover: None,

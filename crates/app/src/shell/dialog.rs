@@ -49,6 +49,8 @@ pub(in crate::shell) enum ShellDialog {
     PageProperties,
     /// View > Manage Tools: which tools the rail shows.
     ManageTools,
+    /// Edit > Advanced Search.
+    AdvancedSearch,
 }
 
 impl ShellDialog {
@@ -69,6 +71,7 @@ impl ShellDialog {
             Self::RollBack => "Roll Back",
             Self::PageProperties => "Page Properties",
             Self::ManageTools => "Manage Tools",
+            Self::AdvancedSearch => "Advanced Search",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -181,6 +184,12 @@ pub(in crate::shell) fn accessible(
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
         ShellDialog::PageProperties => row_labels(frame.page_property_rows()),
+        ShellDialog::AdvancedSearch => super::chrome::advanced_search::accessible(
+            frame
+                .advanced_search_dialog()
+                .expect("advanced search has state"),
+            cx,
+        ),
         ShellDialog::ManageTools => super::chrome::manage_tools::accessible(
             frame.managed_tools(),
             &frame.preferences().hidden_tools,
@@ -360,6 +369,15 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::PageProperties => rows(frame.page_property_rows(), rects.clone())
             .text_color(theme.text)
             .into_any_element(),
+        ShellDialog::AdvancedSearch => super::chrome::advanced_search::render(
+            frame
+                .advanced_search_dialog()
+                .expect("advanced search has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
         ShellDialog::ManageTools => super::chrome::manage_tools::render(
             frame.managed_tools(),
             &frame.preferences().hidden_tools,

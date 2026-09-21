@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 165 planned / 25 partial / 80 out-of-scope. 133 implemented.**
+**403 rows: 163 planned / 25 partial / 80 out-of-scope. 135 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -227,9 +227,9 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Edit > Take a Snapshot | implemented | M2 | The menu activates `tools-basic` Snapshot and copies the selected raster region. Evidence: M2-BASIC. |
 | Edit > Find (Ctrl+F) | implemented | M2 | Case, whole-word, highlight-all, next, and previous are live; Include Comments finds text in comments (M3); Include Bookmarks is not yet offered. Evidence: M2-SEARCH, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Find toolbar > Replace text | planned | M5 | Find-and-replace is named in the plan's M5 list. It writes text, so it belongs to `tools-edit` rather than to viewer search. |
-| Edit > Advanced Search, current document | partial | M2 | Current-document case, whole-word, phrase, any-word, all-word, and result paths are live; the dedicated Advanced Search surface and stemming remain missing. Evidence: M2-SEARCH. |
-| Advanced Search > include attachments | planned | M3 | Acrobat searches attached files two levels deep. (judgment) |
-| Advanced Search > document-property criteria (author, dates, keywords, metadata) | planned | M3 | (judgment) |
+| Edit > Advanced Search, current document | partial | M2 | Current-document case, whole-word, phrase, any-word, all-word, and result paths are live; the dedicated Advanced Search dialog arrived in M3 P22; stemming remains missing. Evidence: M2-SEARCH, docs/evidence/m3-p22-shell-rows.md. |
+| Advanced Search > include attachments | implemented | M3 | Edit > Advanced Search's Include PDF Attachments searches attached PDFs two levels deep, as Acrobat does, and lists each hit with the attachment path and page; one that cannot be read is named and its siblings are still searched. Clicking a hit does not open the attachment yet. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
+| Advanced Search > document-property criteria (author, dates, keywords, metadata) | implemented | M3 | One criterion over Title, Author, Subject, Keywords, Creator, Producer, Date Created or Date Modified, read from both `/Info` and XMP; a document that does not meet it is not searched. Acrobat allows several criteria lines; this offers one. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Edit > Advanced Search across multiple PDFs / a folder / an index | planned | post-1.0 | Needs the multi-document index; single-document search ships first. Boolean Query and Proximity are multi-document options in Acrobat and land here, not on the single-document row. |
 | Edit > Check Spelling (in comments and form fields) | planned | M5 | Spell check is named in the plan's M5 list. |
 | Edit > Look Up Selected Word | planned | post-1.0 | Platform dictionary only; the web lookup Acrobat uses is out of scope. |

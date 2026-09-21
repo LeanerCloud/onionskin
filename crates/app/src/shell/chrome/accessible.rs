@@ -71,6 +71,9 @@ pub(in crate::shell) enum TextField {
     PrintCopies,
     PrintPages,
     PrintScale,
+    /// Advanced Search's words, and its criterion's value.
+    AdvancedQuery,
+    AdvancedValue,
 }
 
 /// What activating an accessible element does.
@@ -100,6 +103,8 @@ pub(in crate::shell) enum Activation {
     QuickAction(QuickActionEntry),
     ToggleQuickActionCustomization,
     ToggleQuickActionVisibility(QuickAction),
+    /// A control in the Advanced Search dialog.
+    AdvancedSearch(crate::shell::chrome::advanced_search::AdvancedAction),
     /// Manage Tools: show or hide this tool's rail button.
     ToggleToolShown(&'static str),
     ToggleSidePanel,

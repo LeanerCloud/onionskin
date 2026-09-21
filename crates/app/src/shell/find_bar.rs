@@ -195,6 +195,11 @@ impl FindBarState {
         self.options
     }
 
+    /// Take a whole set of options, as Advanced Search hands them over.
+    pub(in crate::shell) fn set_options(&mut self, options: SearchOptions) {
+        self.options = options;
+    }
+
     pub(in crate::shell) fn open(&mut self) {
         self.open = true;
     }

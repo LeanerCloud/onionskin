@@ -211,6 +211,7 @@ pub(in crate::shell) enum MenuCommand {
     DeselectAll,
     TakeSnapshot,
     Find,
+    AdvancedSearch,
     Page(PageCommand),
     Preferences,
     PreviousView,
@@ -720,6 +721,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 MenuEntry {
                     command: MenuCommand::Find,
                     label: "Find…",
+                    availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::AdvancedSearch,
+                    label: "Advanced Search…",
                     availability: document_command,
                     selected: false,
                 },
@@ -1285,6 +1292,7 @@ impl MenuCommand {
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
             | Self::Find
+            | Self::AdvancedSearch
             | Self::Preferences
             | Self::Undo
             | Self::Redo
@@ -1348,6 +1356,7 @@ impl MenuCommand {
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
             | Self::Find
+            | Self::AdvancedSearch
             | Self::Preferences
             | Self::Undo
             | Self::Redo
@@ -1497,6 +1506,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Page(_)
         | MenuCommand::TakeSnapshot
         | MenuCommand::Find
+        | MenuCommand::AdvancedSearch
         | MenuCommand::Preferences
         | MenuCommand::Tools
         | MenuCommand::ManageTools
@@ -2042,6 +2052,7 @@ mod tests {
                 "Deselect All",
                 "Take a Snapshot",
                 "Find…",
+                "Advanced Search…",
                 "Organize Pages",
                 "Rotate Page Clockwise",
                 "Rotate Page Counterclockwise",

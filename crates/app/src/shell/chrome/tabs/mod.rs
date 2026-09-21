@@ -1,4 +1,5 @@
 mod accessible;
+mod advanced_search;
 mod auto_scroll;
 mod context;
 mod create;
@@ -1678,6 +1679,8 @@ pub(in crate::shell) fn clipboard_image(cx: &App) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "shell-test-support")]
+    mod advanced_search;
     #[cfg(feature = "shell-test-support")]
     mod auto_scroll;
     #[cfg(feature = "shell-test-support")]

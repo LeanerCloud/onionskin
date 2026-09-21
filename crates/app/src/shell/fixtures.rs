@@ -10,6 +10,11 @@
 /// Assemble numbered objects, in order, into a document whose `/Root` is
 /// object 1 and whose cross-reference table is correct.
 fn pdf(objects: &[&[u8]]) -> Vec<u8> {
+    pdf_with_trailer(objects, "")
+}
+
+/// [`pdf`], with `extra` added to the trailer dictionary (an `/Info`).
+fn pdf_with_trailer(objects: &[&[u8]], extra: &str) -> Vec<u8> {
     let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::with_capacity(objects.len());
     for (index, body) in objects.iter().enumerate() {
@@ -25,7 +30,7 @@ fn pdf(objects: &[&[u8]]) -> Vec<u8> {
     for offset in &offsets {
         out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
     }
-    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
+    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R {extra}>>\n").as_bytes());
     out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
     out
 }
@@ -74,6 +79,51 @@ pub(in crate::shell) fn attachment_pdf() -> Vec<u8> {
           /Desc (Reviewer notes) /EF << /F 6 0 R >> >>",
         b"<< /Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 11 >> \
           /Length 11 >>\nstream\nhello world\nendstream",
+    ])
+}
+
+/// A page saying "cover", written by Ana Pop, with `annex.pdf` attached: a
+/// PDF whose one page says "heron". For Advanced Search, which finds the
+/// word only when it searches attachments.
+pub(in crate::shell) fn attached_pdf_pdf() -> Vec<u8> {
+    let annex = text_pdf("heron");
+    let mut embedded = format!(
+        "<< /Type /EmbeddedFile /Subtype /application#2Fpdf /Length {} >>\nstream\n",
+        annex.len()
+    )
+    .into_bytes();
+    embedded.extend_from_slice(&annex);
+    embedded.extend_from_slice(b"\nendstream");
+    pdf_with_trailer(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(annex.pdf) 6 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
+               /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+            b"<< /Length 35 >>\nstream\nBT /F1 12 Tf 20 40 Td (cover) Tj ET\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Type /Filespec /F (annex.pdf) /UF (annex.pdf) /EF << /F 7 0 R >> >>",
+            &embedded,
+            b"<< /Author (Ana Pop) /CreationDate (D:20250301) >>",
+        ],
+        "/Info 8 0 R ",
+    )
+}
+
+/// One page saying `word`.
+fn text_pdf(word: &str) -> Vec<u8> {
+    let content = format!("BT /F1 12 Tf 20 40 Td ({word}) Tj ET");
+    let stream = format!(
+        "<< /Length {} >>\nstream\n{content}\nendstream",
+        content.len()
+    );
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
+           /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        stream.as_bytes(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ])
 }
 

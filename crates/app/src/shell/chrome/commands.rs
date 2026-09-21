@@ -61,6 +61,7 @@ impl MenuCommand {
             MenuCommand::DeselectAll,
             MenuCommand::TakeSnapshot,
             MenuCommand::Find,
+            MenuCommand::AdvancedSearch,
         ]);
         all.push(MenuCommand::OrganizePages);
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
@@ -161,6 +162,7 @@ impl MenuCommand {
             Self::DeselectAll => onionskin_commands_core_id::DESELECT_ALL,
             Self::TakeSnapshot => "edit.take-snapshot",
             Self::Find => "edit.find",
+            Self::AdvancedSearch => "edit.advanced-search",
             Self::Page(page) => page.id(),
             Self::Preferences => "edit.preferences",
             Self::PreviousView => "view.previous-view",
@@ -220,6 +222,8 @@ impl MenuCommand {
             Self::CloseAllTabs => "cmd-shift-w",
             Self::Quit => "cmd-q",
             Self::Find => "cmd-f",
+            // Acrobat's Ctrl+Shift+F.
+            Self::AdvancedSearch => "cmd-shift-f",
             Self::Preferences => "cmd-k",
             Self::Properties => "cmd-d",
             Self::Print => "cmd-p",

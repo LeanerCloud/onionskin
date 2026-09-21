@@ -99,6 +99,7 @@ impl ShellFrame {
         self.properties = None;
         self.bookmark_title = None;
         self.print = None;
+        self.advanced_search = None;
         self.unsaved = None;
         self.recover = None;
         cx.notify();

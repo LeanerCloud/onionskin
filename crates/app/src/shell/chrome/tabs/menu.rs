@@ -338,6 +338,10 @@ impl ShellFrame {
                 self.open_find_bar(None, window, cx);
                 Ok(())
             }
+            MenuCommand::AdvancedSearch => {
+                self.open_advanced_search(window, cx);
+                Ok(())
+            }
             // Disabled in the schema for a milestone rather than for a
             // state, so the check at the top of this function returns first.
             // Kept as a loud answer in case an entry is ever enabled before

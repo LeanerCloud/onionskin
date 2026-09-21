@@ -521,8 +521,11 @@ fn field_node(
         | TextField::PropertiesSubject
         | TextField::PropertiesKeywords
         | TextField::PropertiesCustomKey
-        | TextField::PropertiesCustomValue => accesskit::Role::TextInput,
-        TextField::Search | TextField::Find => accesskit::Role::SearchInput,
+        | TextField::PropertiesCustomValue
+        | TextField::AdvancedValue => accesskit::Role::TextInput,
+        TextField::Search | TextField::Find | TextField::AdvancedQuery => {
+            accesskit::Role::SearchInput
+        }
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)

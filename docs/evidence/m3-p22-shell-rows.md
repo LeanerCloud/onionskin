@@ -217,3 +217,112 @@ even when active) fails `hidden_tools_leave_the_rail_unless_selected` and
 `advance_auto_scroll` with computed times, not by GPUI drawing frames; the
 drawn path is one call from `Canvas::render`. That a hidden window draws no
 frames is GPUI's behaviour on macOS, read from its source, not a test here.
+
+## Advanced Search: include attachments and property criteria (rows 20, 21)
+
+**What the user gets.**
+
+- Edit > Advanced Search…, or Cmd+Shift+F (Acrobat's Ctrl+Shift+F), opens
+  a dialog over the document in front. It starts with the find bar's words
+  and options.
+- It offers:
+  - the words;
+  - Return Results Containing (the three modes);
+  - Whole words only, Case-Sensitive and Include Comments;
+  - **Include PDF Attachments**;
+  - **Use These Additional Criteria**, one line of property, test and
+    value. The property steps through Title, Author, Subject, Keywords,
+    Creator, Producer, Date Created and Date Modified. The test is
+    contains / does not contain for text, or is before / is after / is on
+    for dates, which are written YYYY-MM-DD.
+- **Search**:
+  - The criterion is checked first. A document that does not meet it is
+    not searched, and the dialog says so. A criterion that cannot apply
+    (a date that is not one) says how to write it.
+  - The pages are searched by the find bar's walk with the dialog's words
+    and options, and the Search Results pane opens on them.
+  - With Include PDF Attachments, the PDFs attached to the document, and
+    the PDFs attached to those, are searched: two levels, Acrobat's depth.
+    Each hit is listed in the dialog as "annex.pdf > appendix.pdf, page 3:
+    word". An attachment that cannot be opened is named ("broken.pdf was
+    not searched: …") and its siblings are still searched. Non-PDF
+    attachments are passed over, as in Acrobat.
+- Changing any option drops the last outcome, which no longer describes the
+  form.
+
+**How it is built.**
+
+- `core::metadata::criteria`: `PropertyCriterion::matches(info, xmp)`. A text
+  field matches when either `/Info` or the XMP packet has the value, ignoring
+  case; a date is read from `/Info` first and XMP second and compared by day.
+  A test the field does not take, or a value that is not a date, is a
+  `CriterionError` with a message.
+- `core::Document::search_attachments`: opens each attached PDF from its
+  bytes in memory, searches every page with `content::search`, and recurses
+  one level. Hits are capped at 1,000 with the true total kept. It reads
+  through a new crate-private `attached_bytes`, which does not apply the
+  encrypted-source refusal: nothing leaves the process. `attachment_bytes`,
+  the door to a file, still refuses.
+- `chrome::advanced_search`: a pure `AdvancedForm` (options, attachments,
+  criterion) with `apply`, one row list that both the accessibility tree and
+  the drawing read, and `outcome_lines`. The frame's half
+  (`tabs/advanced_search.rs`) runs criteria, then the page walk, then
+  attachments. `FindBarState::set_options` hands the dialog's options to the
+  walk.
+- `MenuCommand::AdvancedSearch` (`edit.advanced-search`, `cmd-shift-f`),
+  `ShellDialog::AdvancedSearch`, `Activation::AdvancedSearch`, and
+  `TextField::{AdvancedQuery, AdvancedValue}` wired into the focus ring.
+
+**Runs.**
+
+- `cargo test -p onionskin-core --lib criteria`, 4 tests: either copy
+  matches, case ignored; dates from `/Info` then XMP by day; errors say why;
+  every criterion must pass.
+- `cargo test -p onionskin-core --lib attachment_search`, 2 tests: a PDF by
+  its header in the first kilobyte; a skipped attachment names its path.
+- `cargo test -p onionskin-core --test advanced_search`, 4 tests over a
+  document attaching a PDF attaching a PDF attaching a PDF:
+  - "heron", only in the first attachment, is found with path `annex.pdf`
+    and page 0, and the document's own page walk does not find it;
+  - "pelican", in the second level, is found with path `annex.pdf >
+    appendix.pdf`; "walrus", in the third, is not;
+  - a broken attached PDF is named in `skipped` and a blank query searches
+    nothing;
+  - property criteria over the document's own `/Info`.
+- `chrome::advanced_search` unit tests, 6: criterion cycling, an option that
+  changes nothing, outcome lines, attachment summaries, the criterion rows
+  appearing only while used, and every control's state following its action.
+- Window tests `tabs::tests::advanced_search`, 3:
+  - `a_word_only_an_attachment_has_is_found_when_attachments_are_included`:
+    opened by its keystroke, the Include PDF Attachments checkbox is
+    unchecked; a search lists no attachment hits but runs the page walk and
+    opens the Search Results pane; with the option on, "annex.pdf, page 1:
+    heron" is listed.
+  - `a_document_that_misses_the_criterion_is_not_searched`: Author contains
+    "Radu" holds the document out and runs no page walk; "ana" matches;
+    Date Created with "March" says YYYY-MM-DD; "2025-03-02" is before.
+  - `searching_for_nothing_says_to_type_words`.
+- **Full suites.** `cargo test -p onionskin-app --features
+  shell,shell-test-support --lib` and with `--no-default-features`: all
+  pass but the known environmental set. `cargo test -p onionskin-core`:
+  passes. The app's integration tests pass, including the headline recount
+  at 163 planned / 135 implemented.
+- **Lint.** `cargo clippy` for core and for the app in the four feature
+  sets: clean. `cargo fmt --all --check`: clean.
+
+**Mutations run.**
+
+- Recursing without decrementing the depth (three levels searched) fails
+  `the_second_level_is_searched_and_the_third_is_not`.
+- Searching the pages even when the criterion fails fails
+  `a_document_that_misses_the_criterion_is_not_searched`.
+
+**Not claimed.**
+
+- Clicking an attachment hit does not open the attachment; the row says
+  where the hit is.
+- The attachment search runs on the main thread when Search is pressed.
+  It is bounded by two levels and 1,000 hits, but a very large attachment
+  would pause the window while it is read.
+- One criterion line, where Acrobat allows several. Stemming, and searching
+  across folders or indexes (the post-1.0 row), are not offered.
