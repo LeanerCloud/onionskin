@@ -58,6 +58,23 @@ pub enum Error {
     NotADictionary {
         number: u32,
     },
+    /// The document has no catalog naming an indirect `/Pages`, so there is no
+    /// page tree to rewrite.
+    NoPageTree,
+    /// A new page order named one existing page twice.
+    ///
+    /// Refused rather than aliased: copying a page within a document goes
+    /// through the importer, which renumbers the copy's references, while
+    /// aliasing puts one object in two `/Kids` slots - where editing one page
+    /// edits the other and every structural check still passes.
+    RepeatedPage {
+        index: usize,
+    },
+    /// The page tree is deeper or larger than `core::pages` will walk.
+    PageTreeTooLarge {
+        depth: usize,
+        visits: usize,
+    },
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -74,6 +91,18 @@ impl fmt::Display for Error {
             Error::NoSuchPage { page, count } => {
                 write!(f, "page {page} is outside a {count}-page document")
             }
+            Error::NoPageTree => {
+                write!(f, "the document has no indirect /Pages to rewrite")
+            }
+            Error::RepeatedPage { index } => write!(
+                f,
+                "the new page order names page {} twice; copy it through the importer instead",
+                index + 1
+            ),
+            Error::PageTreeTooLarge { depth, visits } => write!(
+                f,
+                "the page tree is too large to rewrite: depth {depth}, {visits} nodes visited"
+            ),
             Error::NoSuchAttachment { index, count } => write!(
                 f,
                 "attachment {index} is outside a document with {count} attachments"
@@ -121,6 +150,9 @@ impl std::error::Error for Error {
             Error::Worker(e) => Some(e),
             Error::SearchWorker(e) => Some(e),
             Error::EncryptedUnsupported
+            | Error::NoPageTree
+            | Error::RepeatedPage { .. }
+            | Error::PageTreeTooLarge { .. }
             | Error::NoSuchPage { .. }
             | Error::NoSuchAttachment { .. }
             | Error::NoSuchLayer { .. }

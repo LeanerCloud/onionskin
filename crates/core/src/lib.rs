@@ -14,6 +14,7 @@ mod layers;
 mod layout;
 mod outline;
 mod page;
+pub mod pages;
 mod preview;
 mod recovery;
 mod render;

@@ -17,6 +17,11 @@ onionskin-corpus-testing.workspace = true
 # `tests/edit.rs` builds base documents and reads back saved sections, which is
 # cos's surface rather than core's re-exports.
 onionskin-cos.workspace = true
+# `tests/pages.rs` asserts that nothing in `core::pages` frees an object number,
+# which T5 forbids. Parsed rather than grepped: the rule is stated in that
+# module's own doc comment, so a substring scan finds the prose that promises it
+# and reports the promise as a violation. A comment is not a token.
+syn = { version = "2", features = ["full", "visit", "parsing"] }
 
 # The decision-11 budgets, as benches that assert rather than print. Each one
 # owns its own `main` (`harness = false`) because libtest's harness measures
@@ -51,5 +56,10 @@ test = false
 # small the edit: clean thousand-page, repaired, and the largest external file.
 [[bench]]
 name = "save"
+harness = false
+test = false
+
+[[bench]]
+name = "pages"
 harness = false
 test = false

@@ -4043,6 +4043,7 @@ dependencies = [
  "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-render",
+ "syn 2.0.119",
 ]
 
 [[package]]
