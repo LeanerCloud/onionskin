@@ -710,12 +710,18 @@ mod tests {
         }
     }
 
-    /// The Select quick action goes live through the registry, with no
-    /// application-code change: `tools-basic`'s text-selection tool declares
-    /// the capability and the toolbar finds it. The rest wait for the
-    /// plugins that own them.
+    /// A quick action goes live through the registry, with no
+    /// application-code change: a tool declares the capability and the toolbar
+    /// finds it. The rest wait for the plugins that own them.
+    ///
+    /// The expected set is derived per feature rather than written out once:
+    /// `tools-basic`'s text selection lights Select, and M3's comment tools
+    /// light Comment and Highlight as they land. A fixed list here would have
+    /// to be edited by every tool package, and the edit that matters - a
+    /// capability that stops being reachable - looks exactly like the edit that
+    /// does not.
     #[test]
-    fn the_registry_makes_exactly_the_select_quick_action_live() {
+    fn the_registry_makes_exactly_the_declared_quick_actions_live() {
         let registry = crate::build_registry();
         let entries = QuickActionsState::default().entries(&registry);
 
@@ -724,12 +730,20 @@ mod tests {
             .filter(|entry| entry.availability.is_enabled())
             .map(|entry| entry.action)
             .collect::<Vec<_>>();
-        let expected = if cfg!(feature = "tools-basic") {
-            vec![QuickAction::Select]
-        } else {
-            Vec::new()
-        };
+        let expected = entries
+            .iter()
+            .map(|entry| entry.action)
+            .filter(|action| {
+                registry
+                    .tools()
+                    .any(|tool| tool.capabilities().contains(&action.capability()))
+            })
+            .collect::<Vec<_>>();
         assert_eq!(live, expected);
+        assert!(
+            expected.contains(&QuickAction::Select) == cfg!(feature = "tools-basic"),
+            "tools-basic is what lights Select"
+        );
         assert_eq!(
             entries
                 .iter()

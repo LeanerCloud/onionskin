@@ -44,6 +44,29 @@ source IDs, severity, ownership, and required proof.
   is why a fresh clone has not seen it. Not diagnosed further here; it belongs to
   whoever owns the boundary-recovery path.
 
+- **The shell test suite's first Linux run, 2026-09-21 (P9a).** With
+  `libxkbcommon-dev` and `libxkbcommon-x11-dev` installed, `cargo test -p
+  onionskin-app --features shell --lib` links and runs on Linux for the first
+  time: 441 pass, 5 fail. None of the five touches the overlay seam P9a
+  changed, and CI runs this suite only on macOS, so they are first-run findings
+  rather than regressions:
+  - `shell::canvas::tests::a_snapshot_turns_with_the_view` - raster dimensions
+    come back `(173, 432)` where the test expects `(156, 389)`. Rasterizer- or
+    font-dependent, so the expectation is probably pinned to a macOS render.
+  - `shell::canvas::tests::an_unmeasured_page_is_described_without_words_and_says_so`
+    - expects page 1 of `two-page.pdf` to still be unmeasured on the first
+    frame and finds it measured. A race with the geometry worker; it will be
+    flaky on a fast macOS machine too.
+  - `shell::canvas::tests::an_update_that_paints_nothing_leaves_no_frame_open`
+    - the tile store holds 2 entries where the test expects 1.
+  - `shell::chrome::tabs::export::tests::rollback_preserves_a_completed_page_replaced_by_a_symlink`
+    and `...replaced_by_another_writer` - both turn on a write being refused,
+    and this container runs as root, where it is not.
+  Whoever runs the shell suite on macOS should confirm which of the five pass
+  there; the three canvas ones want an expectation that is derived rather than
+  pinned, and the two export ones want a non-root runner or a different way of
+  making the write fail.
+
 - Historical corpus proof scripts are retained references, not acceptance tools:
   `tripwire.sh` mutates its checkout's workflow and masks the guarantee test's
   exit status, `rerun.sh` deletes each command's raw log and treats an empty

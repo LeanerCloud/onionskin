@@ -206,25 +206,43 @@ mod tests {
         }
     }
 
-    /// The entries that exist at M2: view rotation is the shell's own, the
-    /// snapshot tool is registered by `tools-basic`, and Copy waits for a
-    /// selection to copy.
+    /// What is live is decided by the registry and the selection, never by a
+    /// list kept here: view rotation is the shell's own, everything else needs
+    /// a tool that declares the capability, and Copy needs something selected.
+    ///
+    /// Derived rather than written out, because a fixed list has to be edited
+    /// by every tool package that lands a capability - and the edit that
+    /// matters, a capability that stopped being reachable, looks exactly like
+    /// the edit that does not. What is pinned here is the rule.
     #[test]
     fn the_registry_and_the_selection_decide_which_entries_are_live() {
         let registry = crate::build_registry();
-        let with_snapshot_tool = cfg!(feature = "tools-basic");
 
-        let mut expected = vec![CanvasContextCommand::RotateClockwise];
-        if with_snapshot_tool {
-            expected.insert(0, CanvasContextCommand::TakeASnapshot);
-        }
+        let expected: Vec<CanvasContextCommand> = CanvasContextCommand::ALL
+            .into_iter()
+            .filter(|command| match command.requirement() {
+                Requirement::Shell => true,
+                Requirement::TextSelection(..) => false,
+                Requirement::Tool(capability, _) => tool_with(&registry, capability).is_some(),
+                Requirement::Milestone(..) => false,
+            })
+            .collect();
         assert_eq!(live(&registry, false), expected);
 
-        expected.insert(0, CanvasContextCommand::Copy);
-        assert_eq!(live(&registry, true), expected);
+        let mut with_selection = expected.clone();
+        with_selection.insert(0, CanvasContextCommand::Copy);
+        assert_eq!(live(&registry, true), with_selection);
+
+        // The rule is only worth anything if it separates the two cases, so
+        // both sides of it have to be non-empty in this build.
+        assert!(
+            expected.contains(&CanvasContextCommand::RotateClockwise),
+            "an entry needing no tool is live"
+        );
         assert_eq!(
             tool_with(&registry, ToolCapability::Snapshot).is_some(),
-            with_snapshot_tool
+            cfg!(feature = "tools-basic"),
+            "tools-basic is what registers the snapshot tool"
         );
     }
 
