@@ -57,10 +57,10 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 255 planned / 16 partial / 80 out-of-scope. 52 implemented.**
+**403 rows: 202 planned / 31 partial / 80 out-of-scope. 90 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
-deliberate no. By milestone: M2 67, M3 99, M4 2, M5 52, M6 46, post-1.0 57.
+deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
 M4 carries only two rows because its deliverables (the MCP server, the CUPS and
 Windows print backends) are mostly not Acrobat surface. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
@@ -119,6 +119,18 @@ Select All for the export fields, and the 160 by 360 pixel export. The
 403-row totals and all matrix row statuses are unchanged; no parser or corpus
 plumbing is promoted to an Acrobat feature row.
 
+### M3 package reconciliation, 2026-09-21
+
+Rows closed by M3 packages with evidence docs (P1b, P8, P9a, P9b, P9c, P10,
+P11, P12, P13a, P13b, P14a) cite `docs/evidence/m3-*.md` directly in Notes.
+Those docs record Linux runs only; no macOS, Windows or hosted-CI run is
+claimed. A row closed in code but reachable only through a later package's
+dialog or grid stays `planned` (Extract, Replace, Copy or move pages between
+documents: P21). Text-entry comment rows are `partial` until the comments pane
+(P20) edits `/Contents`. `Open an encrypted document` moves from M6 to M3 as
+`partial` per ruling A. P1c and P2-P7 close no rows. Booklet and Poster / tile stay at
+M3 here; the plan's ruling B move to M4 is not yet applied.
+
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
 | M2-SHELL | `crates/app/src/shell/chrome/`, `crates/app/src/shell/{mod,input}.rs` | Global bar, tabs, rail, quick actions, page controls, side panel, theme, input, and shell tests plus screenshot `M2-AUDIT-T1-001`. |
@@ -154,7 +166,7 @@ plumbing is promoted to an Acrobat feature row.
 | Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |
 | Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, fit controls, invalid-zoom display, and numeric page-field semantics are live. Evidence: M2-SHELL and B3.7. |
 | Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
-| Convert (global bar entry point) | planned | M3 | The future button ships as one surface; its supported target list will remain deliberately smaller than Acrobat's. |
+| Convert (global bar entry point) | implemented | M3 | A global-bar panel holds Create PDF From File, From Clipboard and From Multiple Files, the page exports, and Export All Images; the target list stays deliberately smaller than Acrobat's. Evidence: docs/evidence/m3-p14a-images.md. |
 | Get a link to the document | out-of-scope | - | Cloud-tethered link sharing. |
 | Undo / Redo icons on the global bar | planned | M3 | Same commands as the Edit menu; Acrobat surfaces both. |
 | Save / Save As in the global bar | planned | M3 | Save appends an incremental section (core invariant). |
@@ -195,14 +207,14 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 |---|---|---|---|
 | File > Open | implemented | M2 | File picker, path open, and repaired-document notice are live. Evidence: M2-SHELL and M2-REPAIR. |
 | File > Open Recent | implemented | M2 | The persisted local list is live. Evidence: M2-HOME. |
-| File > Create | planned | M3 | Sources limited: see "Create a PDF". |
+| File > Create | implemented | M3 | Create PDF From File, From Clipboard and From Multiple Files; the new document is saved to a chosen path before it opens. Sources limited: see "Create a PDF". Evidence: docs/evidence/m3-p14a-images.md. |
 | File > Save | planned | M3 | Appends an incremental update section; a no-op save writes nothing. |
 | File > Save As | planned | M3 | Copy plus the same incremental discipline. |
-| File > Save as Other | planned | M3 | The future menu will expose only supported sub-targets; PDF/X and Reader-Extended variants remain out of scope. |
+| File > Save as Other | implemented | M3 | A panel lists one entry per installed export codec; with none installed the entry is disabled with a reason. PDF/X and Reader-Extended variants remain out of scope. Evidence: docs/evidence/m3-p13a-properties.md. |
 | File > Export To | partial | M2 | Text, PNG, and SVG exports have First/Last settings, plus PNG resolution; stale successful prompt writes are refused and derived destinations cannot overwrite existing files. Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.2-B4.4. |
 | File > Revert | planned | M3 | Cheap here: truncate to the previous generation. |
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
-| File > Properties (Document Properties) | planned | M3 | `commands-core`. Acrobat's current unified UI documents five tabs: Description, Security, Fonts, Initial View, Custom. The classic Advanced tab is no longer listed; confirm against the screenshot corpus before building it. |
+| File > Properties (Document Properties) | partial | M3 | `cmd-d` dialog with Description, Security (read-only), Fonts, Initial View and Custom tabs; one Apply is one undo step. The five-tab list is unconfirmed: the screenshot corpus has no capture of this dialog. Description omits PDF version, page size, tagged and fast web view. Evidence: docs/evidence/m3-p13a-properties.md. |
 | File > Print | planned | M3 | `crates/print`. |
 | File > Attach to Email | planned | M3 | Hands off to the OS mail client; no Adobe service involved. Plan does not name it; placed with `commands-core`. |
 | File > Share / Send for comments | out-of-scope | - | Cloud-tethered web review flow. |
@@ -258,16 +270,16 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. `4132a99` also rearms the canvas poll loop when the pane queues work after initial rendering has settled; its GPUI-loop-only regression prevents black placeholders. Evidence: M2-PANES, B3.1, and the partially populated B7-REF-003 ledger row pending corrected visual capture. |
 | Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented and accessible; page-mutating commands remain disabled with command-specific M3/M5 owner reasons. Evidence: M2-PANES, B3.1, and B3.6. |
 | Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
-| Bookmarks: create, rename, nest, set destination, delete | planned | M3 | Bookmark authoring is named in the plan's `commands-core` list. Acrobat's New Bookmarks From Structure needs the tagged tree and follows at M6. |
+| Bookmarks: create, rename, nest, set destination, delete | implemented | M3 | Pane behaviour over `core`: new, rename, set destination to the current page, nest, move out, delete with subtree; each is one undo step. Drag-to-reorder is not built. New Bookmarks From Structure follows at M6. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Attachments pane (list, open, save) | partial | M2 | Listing, Save, prompt-error feedback, stale successful-write protection, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES, B3.1, B4.2, and B4.3. |
-| Attachments: add and delete file attachments | planned | M3 | Attachment authoring is named in the plan's `commands-core` list. Distinct from attach-as-comment. |
-| Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | planned | M3 | Counted once for the whole menu per the context-menu carve-out; it activates with bookmark authoring in `commands-core`. New Bookmarks From Structure follows at M6 with the tagged tree. |
-| Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | planned | M3 | Counted once for the whole menu; activates with attachment authoring in `commands-core`. |
+| Attachments: add and delete file attachments | implemented | M3 | Add Attachment… and per-row Delete in the pane; delete also removes file-attachment comments carrying the stream. Distinct from attach-as-comment. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
+| Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | partial | M3 | New, Rename, Set Destination, Nest, Move Out and Delete are live and disabled with the document's reason when it may not be edited. Wrap Long Bookmarks and Properties are not offered; New Bookmarks From Structure follows at M6. Counted once per the context-menu carve-out. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
+| Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | partial | M3 | Add, Save and Delete are live; Open stays disabled until M5's trust list, and Edit Description and Search Attachments are not offered. Counted once for the whole menu. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
 | Comments pane (list, sort, filter, reply, status) | planned | M3 | Ships with `tools-comment`. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | planned | M3 | Counted once for the whole menu; ships with `tools-comment`. |
 | Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
-| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, and rendered menu access are implemented; Properties waits for M3, while merge/flatten remain post-1.0. Evidence: M2-PANES and B3.1. |
+| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, rendered menu access, and a read-only Layer Properties dialog (visibility and lock per layer) are implemented; renaming, intent changes, merge and flatten remain post-1.0 layer editing. Evidence: M2-PANES, B3.1, and docs/evidence/m3-p13a-properties.md. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
 | Content pane (document object tree) | planned | M6 | With `tools-accessibility`. |
 | Tags pane (structure tree) | planned | M6 | `core` owns the tagged-PDF structure tree; this is its UI. |
@@ -295,7 +307,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
 | Embedded search index (Manage Embedded Index) | planned | post-1.0 | Embedded search indexes are a named post-1.0 slot. |
 | Catalog (full-text index across a folder of PDFs) | out-of-scope | - | A batch indexing product in itself, with its own `.pdx` format and update lifecycle. |
-| Initial View settings (open zoom, layout, pane) | planned | M3 | Document Properties > Initial View. |
+| Initial View settings (open zoom, layout, pane) | implemented | M3 | Document Properties > Initial View sets layout, navigation pane, magnification and open page; open honours them over preferences. A Full Screen page mode is not honoured. Evidence: docs/evidence/m3-p13a-properties.md. |
 | Page transitions / set up a PDF as a presentation | planned | post-1.0 | Presentation authoring, the companion to Full Screen mode. Not named in the plan. (judgment) |
 | Reading a tagged PDF with a screen reader | planned | M6 | Document-side accessibility; the app-side tree is M2. Read Out Loud has its own rows under Menus and Prepare for accessibility. |
 | Liquid Mode | out-of-scope | - | Cloud-tethered Adobe reflow service; named out of scope in the plan. |
@@ -328,10 +340,10 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Create from a single image file | planned | M3 | `codecs-common`: "Create PDF from images". |
-| Create from multiple files | planned | M3 | Overlaps Combine files. |
-| Create a blank page | planned | M3 | With `tools-organize`. |
-| Create from the clipboard | planned | M3 | Image clipboard only. |
+| Create from a single image file | implemented | M3 | PNG, JPEG and TIFF through `codecs-common`; GIF, BMP and WebP are not imported. Evidence: docs/evidence/m3-p14a-images.md. |
+| Create from multiple files | implemented | M3 | File > Create PDF From Multiple Files… opens the Combine dialog under its own title. Evidence: docs/evidence/m3-p12-combine-split.md. |
+| Create a blank page | implemented | M3 | `tools-organize` inserts a blank page after the current one, at its size. Evidence: docs/evidence/m3-p11-organize.md. |
+| Create from the clipboard | implemented | M3 | Image clipboard only (PNG, JPEG, TIFF), through the one pasteboard read. Evidence: docs/evidence/m3-p14a-images.md. |
 | Create from a scanner | planned | post-1.0 | Scanner capture (ICA/TWAIN/WIA) is a named post-1.0 slot. |
 | Create from a web page (web capture) | out-of-scope | - | Requires bundling an HTML engine and a paginating layout pass; a product in itself. |
 | Create from an Office document | out-of-scope | - | Reading DOCX/XLSX/PPTX at fidelity is a product in itself; the plan shrinks the codec surface to image import/export. |
@@ -344,26 +356,26 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Combine files into a single PDF | planned | M3 | Named in the plan's `commands-core` list. |
-| Add files / add folders to the combine list | planned | M3 | |
-| Reorder, preview and remove entries before combining | planned | M3 | |
-| Expand a file and combine at page granularity | planned | M3 | |
+| Combine files into a single PDF | implemented | M3 | File > Combine Files… runs in the background and opens the result; pages are transitive copies, metadata is fresh, and structure is kept only when every input is tagged. No per-file bookmarks. Evidence: docs/evidence/m3-p12-combine-split.md. |
+| Add files / add folders to the combine list | implemented | M3 | Add Files and Add Folder (PDFs directly inside, sorted by name). Evidence: docs/evidence/m3-p12-combine-split.md. |
+| Reorder, preview and remove entries before combining | partial | M3 | Move Up, Move Down and Remove are live; the preview is a text label (page count and selected pages), not a thumbnail. Evidence: docs/evidence/m3-p12-combine-split.md. |
+| Expand a file and combine at page granularity | implemented | M3 | A page field expands the selected file to a page list such as "9-10, 1, 3". Evidence: docs/evidence/m3-p12-combine-split.md. |
 | Combine into a PDF Portfolio | planned | post-1.0 | Portfolios are a named post-1.0 slot. |
 
 ## Toolset: Organize pages
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Rotate pages (left / right) | planned | M3 | Named in the plan's `tools-organize` list. |
-| Reorder / move pages | planned | M3 | Named in the plan's `tools-organize` list. |
-| Insert pages (from file, blank, clipboard) | planned | M3 | Named in the plan's `tools-organize` list. |
+| Rotate pages (left / right) | implemented | M3 | Edit menu and canvas context menu rotate the current page either way, writing `/Rotate`. Multi-page selection arrives with the Organize grid row. Evidence: docs/evidence/m3-p11-organize.md. |
+| Reorder / move pages | implemented | M3 | Move the current page earlier or later from the Edit menu; drag reordering arrives with the Organize grid row. Evidence: docs/evidence/m3-p11-organize.md. |
+| Insert pages (from file, blank, clipboard) | partial | M3 | Blank insertion is live from the Edit menu. Insert from file exists in `tools-organize` but its dialog waits for P21; insert from clipboard is not built. Evidence: docs/evidence/m3-p11-organize.md. |
 | Insert > From Web Page | out-of-scope | - | The same web capture ruled out under Create a PDF: it needs a bundled HTML engine and a paginating layout pass. The menu entry does not exist rather than existing and failing. |
-| Delete pages | planned | M3 | Named in the plan's `tools-organize` list. |
-| Extract pages | planned | M3 | Named in the plan's `tools-organize` list. |
-| Split (by page count, file size, or top-level bookmarks) | planned | M3 | Named in the plan's `commands-core` list. |
-| Replace pages | planned | M3 | Named in the plan's `tools-organize` list. |
-| Copy or move pages between open documents | planned | M3 | (judgment) |
-| Renumber pages / page labels | planned | M3 | Page labels are named in the plan's `tools-organize` list. |
+| Delete pages | implemented | M3 | Deletes the current page from the Edit menu, with tagged-structure cleanup; multi-page selection arrives with the Organize grid row. Evidence: docs/evidence/m3-p11-organize.md. |
+| Extract pages | planned | M3 | Named in the plan's `tools-organize` list. `extract_pages_to` exists in `tools-organize`, but no user path reaches it until P21's dialog. Evidence: docs/evidence/m3-p11-organize.md. |
+| Split (by page count, file size, or top-level bookmarks) | implemented | M3 | File > Split Document… offers all three; output is all-or-nothing and refused on encrypted documents. Split runs on the UI thread. Evidence: docs/evidence/m3-p12-combine-split.md. |
+| Replace pages | planned | M3 | Named in the plan's `tools-organize` list. The one-undo-step replace exists in `tools-organize`, but no user path reaches it until P21's dialog. Evidence: docs/evidence/m3-p11-organize.md. |
+| Copy or move pages between open documents | planned | M3 | The copy and move functions exist in `tools-organize`, but no user path reaches them until P21's grid. Evidence: docs/evidence/m3-p11-organize.md. (judgment) |
+| Renumber pages / page labels | partial | M3 | A "number pages from 1" command is live; label styles, prefixes and ranges wait for P21's dialogs. Evidence: docs/evidence/m3-p11-organize.md. |
 | Crop pages (from Organize) | planned | M5 | Same command as Edit a PDF > Crop; delivered with `tools-edit`. |
 | Page thumbnail zoom and multi-select in the Organize grid | planned | M3 | (judgment) |
 
@@ -388,8 +400,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Export to plain text / accessible text | partial | M2 | Plain document-order text export supports a selected page range; tagged accessible reading order remains M6. Evidence: M2-EXPORT and M2-EXPORT-SETTINGS. |
 | Export pages to PNG | implemented | M2 | Selected page ranges and PNG resolution are live; filenames retain absolute page numbers padded to the document's page-count width, with no-overwrite destination reservation. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.4. |
 | Export pages to SVG | implemented | M2 | Selected page ranges and per-page vector export are live with page-count width and no-overwrite destination reservation. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.4. |
-| Export pages to JPEG / JPEG2000 / TIFF | planned | M3 | Not named in the plan; same codec crate, one milestone later. |
-| Export all images in a document | planned | M3 | (judgment) |
+| Export pages to JPEG / JPEG2000 / TIFF | partial | M3 | JPEG (with Quality) and TIFF are live with DPI; JPEG 2000 is missing because no pure-Rust encoder exists at usable quality and a C dependency is not added. Evidence: docs/evidence/m3-p14a-images.md. |
+| Export all images in a document | implemented | M3 | Asks for a folder and never overwrites; skipped names are reported. Inline images and `/SMask` merging are out of scope. Evidence: docs/evidence/m3-p14a-images.md. (judgment) |
 | Export to XML / XML spreadsheet | planned | post-1.0 | Low demand relative to cost, and no plan consumer. (judgment) |
 | Export to PostScript / EPS | out-of-scope | - | PostScript generation is a print-production concern, and print production is permanently out of scope. |
 | Save as PDF/A (archivable) | out-of-scope | - | PDF/A conversion is preflight work: it means colour conversion, font embedding and compliance verification, permanently out of scope. |
@@ -400,29 +412,29 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Sticky note | planned | M3 | Named in the plan's `tools-comment` list. |
-| Highlight text | planned | M3 | Named in the plan's `tools-comment` list. Quad points come from `content`'s glyph mapping. |
-| Underline text | planned | M3 | Named in the plan's `tools-comment` list. |
-| Strikethrough text | planned | M3 | Named in the plan's `tools-comment` list. |
-| Insert text at cursor (caret markup) | planned | M3 | |
-| Replace text (strikeout plus replacement note) | planned | M3 | |
-| Add text comment (typewriter) | planned | M3 | Plan lists "text box"; this is its sibling. |
-| Text box | planned | M3 | Named in the plan's `tools-comment` list. |
-| Callout | planned | M3 | |
-| Draw freehand (ink) | planned | M3 | With stylus pressure, per the GPUI fork. |
-| Erase ink | planned | M3 | |
-| Line | planned | M3 | |
-| Arrow | planned | M3 | |
-| Rectangle | planned | M3 | |
-| Oval | planned | M3 | |
-| Polygon | planned | M3 | |
-| Connected lines (polyline) | planned | M3 | |
-| Cloud | planned | M3 | |
-| Attach a file as a comment | planned | M3 | Named in the plan's `tools-comment` list. |
+| Sticky note | partial | M3 | Placed by a click at the icon's upper-left corner. Note text cannot be typed yet: tools have no key-input hook, and `/Contents` editing arrives with the comments pane (P20). Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Highlight text | implemented | M3 | Quad points come from `content`'s glyph mapping, one quad per line run; appearance uses `/BM /Multiply`. Evidence: docs/evidence/m3-p8-text-markup.md. |
+| Underline text | implemented | M3 | Shares the markup tool's drag and rail slot. Evidence: docs/evidence/m3-p8-text-markup.md. |
+| Strikethrough text | implemented | M3 | Shares the markup tool's drag and rail slot. Evidence: docs/evidence/m3-p8-text-markup.md. |
+| Insert text at cursor (caret markup) | partial | M3 | The caret annotation is written; the inserted text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p8-text-markup.md. |
+| Replace text (strikeout plus replacement note) | partial | M3 | Strike-out and `/IRT`-linked reply commit as one transaction; the replacement text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p8-text-markup.md. |
+| Add text comment (typewriter) | partial | M3 | Creates the `/FreeText` with `/DA` and appearance from one style; text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Text box | partial | M3 | Sized by the drag; `/DA` and appearance name the same font. Text cannot be typed until the comments pane (P20) edits `/Contents`, and wrapping is on explicit newlines only. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Callout | partial | M3 | Drag runs from target to box; a three-point `/CL` leader is written and drawn. Text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Draw freehand (ink) | implemented | M3 | Pressure sets per-segment width in the appearance; one stroke is one undo step. The Draw quick action has a tool. Evidence: docs/evidence/m3-p9b-ink.md. |
+| Erase ink | implemented | M3 | Splits strokes under the eraser and recomputes `/Rect`; an emptied annotation is removed. Evidence: docs/evidence/m3-p9b-ink.md. |
+| Line | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Arrow | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Rectangle | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Oval | implemented | M3 | Ellipse inscribed in the dragged rectangle. Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Polygon | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Connected lines (polyline) | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Cloud | implemented | M3 | Cloud intensity is fixed at 1 until the properties inspector (row: Comment properties). Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Attach a file as a comment | implemented | M3 | Embeds the chosen file with a paperclip appearance; the file is chosen before the click. Listed in the Attachments pane after reopen. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Record an audio comment | out-of-scope | - | A sound annotation is rich media, which the plan's GUI parity bullet rules out because no crate could own a capture and playback stack. |
 | Comment properties (colour, opacity, author, subject, default) | planned | M3 | |
 | Comments list: sort, filter, reply, set status, checkmark, read/unread | planned | M3 | |
-| Summarize comments (generate a summary PDF) | planned | M3 | |
+| Summarize comments (generate a summary PDF) | implemented | M3 | Two layouts (comments only, page then comments), opened in a tab; refused on encrypted documents. Connector-line and on-page sequence-number layouts are not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Print comments (document and markups, summary only) | planned | M3 | With `crates/print`. |
 | Import / export comments as FDF or XFDF | planned | post-1.0 | XFDF form-data interchange is a named post-1.0 slot; comment interchange rides with it. |
 | Enable commenting for Reader users (Reader-extended PDF) | out-of-scope | - | Adobe-signed Reader extensions; not reproducible outside Adobe. |
@@ -432,13 +444,13 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Place a stamp | planned | M3 | Named in the plan's `tools-comment` list. |
-| Standard business stamps (Approved, Draft, Confidential, ...) | planned | M3 | Icon artwork redrawn in-house, per the plan's legal line. |
-| Sign Here stamp category | planned | M3 | |
-| Dynamic stamps (name, date, time from identity and clock) | planned | M3 | Acrobat drives these with the same `AF*` JavaScript helpers `scripting` will implement at M5; at M3 Onionskin will fill them natively from the system clock and identity preference. |
-| Create a custom stamp | planned | M3 | |
-| Manage stamps (delete stamps and categories) | planned | M3 | |
-| Paste clipboard image as stamp | planned | M3 | |
+| Place a stamp | implemented | M3 | Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Standard business stamps (Approved, Draft, Confidential, ...) | implemented | M3 | 12 stamps, artwork generated in-house from one table. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Sign Here stamp category | implemented | M3 | 5 stamps. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Dynamic stamps (name, date, time from identity and clock) | partial | M3 | 5 stamps filled natively from the clock, in UTC. The name waits for the Commenting preferences identity (P20); local time is not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Create a custom stamp | implemented | M3 | From a PDF page or an image, stored under the tool's data folder. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Manage stamps (delete stamps and categories) | implemented | M3 | Edit > Stamps…; only custom stamps can be deleted, and an emptied category's folder is removed. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Paste clipboard image as stamp | implemented | M3 | Edit menu and the Stamps dialog; each paste replaces `Pasted/Clipboard Image`. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 
 ## Toolset: Fill & Sign
 
@@ -501,7 +513,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Protect using a password (open password) | planned | M6 | `tools-protect`; `cos` parses encryption from M1 and writes it at M6. Acrobat's levels: 128-bit AES and 256-bit AES. |
 | Restrict editing and printing (permissions password) | planned | M6 | |
 | Set permission details (printing allowed, changes allowed, copy, accessibility) | planned | M6 | |
-| Open an encrypted document | planned | M6 | |
+| Open an encrypted document | partial | M3 | Ruling A: empty-user-password documents open read-only, with editing disabled at open and an open-time notice. Documents with a user password are refused; writing encrypted files and `/P` enforcement are M6. Accepted regression: where `/P` bit 4 allows modification, other editors may let the user change the document. Evidence: docs/evidence/m3-p1b-encryption.md. |
 | Remove security | planned | M6 | |
 | Encrypt with a certificate | planned | M6 | `crypto` handles the recipient list. |
 | Encrypt only file attachments | planned | post-1.0 | A narrow variant of certificate and password encryption, with no plan consumer. (judgment) |
