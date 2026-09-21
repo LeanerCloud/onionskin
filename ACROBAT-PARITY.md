@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 190 planned / 24 partial / 80 out-of-scope. 109 implemented.**
+**403 rows: 187 planned / 24 partial / 80 out-of-scope. 112 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -216,14 +216,14 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | partial | M3 | `cmd-d` dialog with Description, Security (read-only), Fonts, Initial View and Custom tabs; one Apply is one undo step. The five-tab list is unconfirmed: the screenshot corpus has no capture of this dialog. Description omits PDF version, page size, tagged and fast web view. Evidence: docs/evidence/m3-p13a-properties.md. |
 | File > Print | planned | M3 | `crates/print`. |
-| File > Attach to Email | planned | M3 | Hands off to the OS mail client; no Adobe service involved. Plan does not name it; placed with `commands-core`. |
+| File > Attach to Email | implemented | M3 | Hands the saved file to the OS mail client (Mail on macOS, `xdg-email` elsewhere on Unix) as one argument, never through a shell; disabled until unsaved changes are saved. Windows has no request to make yet and says so. Evidence: docs/evidence/m3-p13c-file-edit-menus.md. |
 | File > Share / Send for comments | out-of-scope | - | Cloud-tethered web review flow. |
 | File > Get Documents Signed | out-of-scope | - | Adobe Acrobat Sign, a cloud service. |
 | File > Exit / Quit | implemented | M2 | The menu command exits through the shell action. Evidence: M2-SHELL. |
 | Edit > Undo / Redo | implemented | M3 | cmd-z / cmd-shift-z; undo past a save makes the document dirty again (T1). Evidence: docs/evidence/m3-p18-save-undo.md. |
-| Edit > Cut / Copy / Paste / Delete | planned | M3 | Scope is per active tool. |
+| Edit > Cut / Copy / Paste / Delete | implemented | M3 | Answered by the active tool through the plugin API; the text tool copies, and a verb no tool claims is disabled with the reason. Evidence: docs/evidence/m3-p13c-file-edit-menus.md. |
 | Edit > Select All / Deselect All | implemented | M2 | Both registry commands operate on the active document and page. Evidence: M2-SHELL. |
-| Edit > Copy File to Clipboard | planned | M3 | (judgment) |
+| Edit > Copy File to Clipboard | implemented | M3 | Puts the saved file's `file://` URI on the clipboard. Evidence: docs/evidence/m3-p13c-file-edit-menus.md. |
 | Edit > Take a Snapshot | implemented | M2 | The menu activates `tools-basic` Snapshot and copies the selected raster region. Evidence: M2-BASIC. |
 | Edit > Find (Ctrl+F) | implemented | M2 | Case, whole-word, highlight-all, next, and previous are live; Include Comments finds text in comments (M3); Include Bookmarks is not yet offered. Evidence: M2-SEARCH, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Find toolbar > Replace text | planned | M5 | Find-and-replace is named in the plan's M5 list. It writes text, so it belongs to `tools-edit` rather than to viewer search. |

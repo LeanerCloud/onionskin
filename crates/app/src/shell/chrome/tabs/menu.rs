@@ -23,8 +23,8 @@ use crate::preferences::{PreferenceCategory, ThemePreference};
 use crate::shell::chrome::accessible::{Activation, Surface};
 use crate::shell::chrome::combine_dialog::CombineEntryPoint;
 use crate::shell::chrome::global_bar::{
-    convert_section, main_menu_schema, save_as_other_section, MenuCommand, MenuSection, MenuState,
-    RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
+    convert_section, main_menu_schema, save_as_other_section, MenuAvailability, MenuCommand,
+    MenuSection, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
 };
 use crate::shell::chrome::tool_search::SearchSelectAll;
 use crate::shell::dialog::ShellDialog;
@@ -326,6 +326,21 @@ impl ShellFrame {
                 self.revert_active(cx);
                 Ok(())
             }
+            MenuCommand::AttachToEmail => {
+                self.dismiss_menus(cx);
+                self.attach_active_to_email(cx);
+                Ok(())
+            }
+            MenuCommand::CopyFileToClipboard => {
+                self.dismiss_menus(cx);
+                self.copy_active_file_to_clipboard(cx);
+                Ok(())
+            }
+            MenuCommand::Edit(verb) => {
+                self.dismiss_menus(cx);
+                self.run_edit_verb(verb, cx);
+                Ok(())
+            }
             MenuCommand::Undo => {
                 self.dismiss_menus(cx);
                 self.undo_active(cx);
@@ -354,6 +369,18 @@ impl ShellFrame {
                 .active()
                 .map(|tab| tab.canvas.read(cx).model.history_facts()),
         )
+        .with_edit_verbs(self.edit_verb_availability(cx))
+    }
+
+    /// What each Edit verb does now: what the active tool answers.
+    fn edit_verb_availability(&self, cx: &App) -> [MenuAvailability; 4] {
+        onionskin_plugin_api::EditVerb::ALL.map(|verb| match self.tabs.active() {
+            None => MenuAvailability::Disabled("No document is open"),
+            Some(tab) => match tab.canvas.read(cx).model.edit_verb_availability(verb) {
+                Ok(()) => MenuAvailability::Enabled,
+                Err(reason) => MenuAvailability::Disabled(reason),
+            },
+        })
     }
 
     /// What the active document's registry answers about the entries that

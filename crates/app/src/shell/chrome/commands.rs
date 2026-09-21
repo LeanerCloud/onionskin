@@ -36,6 +36,8 @@ impl MenuCommand {
             MenuCommand::Save,
             MenuCommand::SaveAs,
             MenuCommand::Revert,
+            MenuCommand::AttachToEmail,
+            MenuCommand::CopyFileToClipboard,
             MenuCommand::CombineFiles,
             MenuCommand::CreateFromFiles,
             MenuCommand::CreateFromFile,
@@ -48,10 +50,9 @@ impl MenuCommand {
             MenuCommand::SaveAsOther,
             MenuCommand::Properties,
         ]);
+        all.extend([MenuCommand::Quit, MenuCommand::Undo, MenuCommand::Redo]);
+        all.extend(onionskin_plugin_api::EditVerb::ALL.map(MenuCommand::Edit));
         all.extend([
-            MenuCommand::Quit,
-            MenuCommand::Undo,
-            MenuCommand::Redo,
             MenuCommand::SelectAll,
             MenuCommand::DeselectAll,
             MenuCommand::TakeSnapshot,
@@ -117,6 +118,14 @@ impl MenuCommand {
             Self::Save => "file.save",
             Self::SaveAs => "file.save-as",
             Self::Revert => "file.revert",
+            Self::AttachToEmail => "file.attach-to-email",
+            Self::CopyFileToClipboard => "file.copy-to-clipboard",
+            Self::Edit(verb) => match verb {
+                onionskin_plugin_api::EditVerb::Cut => "edit.cut",
+                onionskin_plugin_api::EditVerb::Copy => "edit.copy",
+                onionskin_plugin_api::EditVerb::Paste => "edit.paste",
+                onionskin_plugin_api::EditVerb::Delete => "edit.delete",
+            },
             Self::CombineFiles => "file.combine",
             Self::CreateFromFiles => "file.create-from-files",
             Self::CreateFromFile => "file.create-from-file",
@@ -203,6 +212,10 @@ impl MenuCommand {
             Self::SaveAs => "cmd-shift-s",
             Self::Undo => "cmd-z",
             Self::Redo => "cmd-shift-z",
+            Self::Edit(onionskin_plugin_api::EditVerb::Cut) => "cmd-x",
+            Self::Edit(onionskin_plugin_api::EditVerb::Copy) => "cmd-c",
+            Self::Edit(onionskin_plugin_api::EditVerb::Paste) => "cmd-v",
+            Self::Edit(onionskin_plugin_api::EditVerb::Delete) => "delete",
             Self::PreviousView => "alt-left",
             Self::NextView => "alt-right",
             // Acrobat's Shift+Ctrl+Plus, which is this key with shift held.
@@ -228,6 +241,8 @@ impl MenuCommand {
             | Self::OpenRecent
             | Self::CloseOtherTabs
             | Self::Revert
+            | Self::AttachToEmail
+            | Self::CopyFileToClipboard
             | Self::CombineFiles
             | Self::CreateFromFiles
             | Self::CreateFromFile

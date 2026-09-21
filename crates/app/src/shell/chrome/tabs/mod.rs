@@ -1617,6 +1617,8 @@ mod tests {
     #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
     mod convert;
     #[cfg(feature = "shell-test-support")]
+    mod edit_menu;
+    #[cfg(feature = "shell-test-support")]
     mod export_settings;
     #[cfg(feature = "shell-test-support")]
     mod file;

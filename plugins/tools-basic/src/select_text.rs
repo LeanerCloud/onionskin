@@ -2,7 +2,7 @@
 
 use onionskin_core::textselect::{glyph_order, nearest_glyph, selection_for};
 use onionskin_core::{Document, PagePoint, PageQuad};
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{EditVerb, Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
 use crate::marquee::is_drag;
 
@@ -90,6 +90,23 @@ impl ToolPlugin for SelectTextTool {
 
     fn capabilities(&self) -> &'static [ToolCapability] {
         &[ToolCapability::Select]
+    }
+
+    /// Copy is the only verb text selection has: the page's text is not
+    /// editable here, so there is nothing to cut, paste or delete.
+    fn claims(&self, verb: EditVerb) -> bool {
+        verb == EditVerb::Copy
+    }
+
+    fn edit(&mut self, ctx: &mut ToolCtx, verb: EditVerb, _pasted: Option<&str>) -> Option<String> {
+        if verb != EditVerb::Copy {
+            return None;
+        }
+        ctx.doc
+            .selection()
+            .text()
+            .map(|selection| selection.text.clone())
+            .filter(|text| !text.is_empty())
     }
 
     fn on_pointer_down(&mut self, ctx: &mut ToolCtx, input: PointerInput) {

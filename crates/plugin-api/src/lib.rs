@@ -213,6 +213,26 @@ pub trait ToolPlugin: Send {
         false
     }
 
+    /// Whether this tool answers Edit > Cut, Copy, Paste or Delete. The menu
+    /// entries are live only for what the active tool claims, and disabled
+    /// with a reason naming the tool otherwise, so the shell never guesses
+    /// what "Delete" means for a tool.
+    fn claims(&self, _verb: EditVerb) -> bool {
+        false
+    }
+
+    /// Run one Edit verb this tool claims. `pasted` is the clipboard's text
+    /// for Paste. Returns the text the shell puts on the clipboard, for Cut
+    /// and Copy; `None` when there is nothing to put there.
+    fn edit(
+        &mut self,
+        _ctx: &mut ToolCtx,
+        _verb: EditVerb,
+        _pasted: Option<&str>,
+    ) -> Option<String> {
+        None
+    }
+
     /// Typed features this tool exposes to shared shell surfaces.
     fn capabilities(&self) -> &'static [ToolCapability] {
         &[]
@@ -331,6 +351,29 @@ pub enum CommandEffect {
     /// Copies the document's objects out into another file, so it is refused
     /// where the encrypted-source rule refuses reading out.
     ReadsOut,
+}
+
+/// Edit > Cut, Copy, Paste and Delete, which mean what the active tool says
+/// they mean: text for the text tool, a comment for a comment tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditVerb {
+    Cut,
+    Copy,
+    Paste,
+    Delete,
+}
+
+impl EditVerb {
+    pub const ALL: [Self; 4] = [Self::Cut, Self::Copy, Self::Paste, Self::Delete];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cut => "Cut",
+            Self::Copy => "Copy",
+            Self::Paste => "Paste",
+            Self::Delete => "Delete",
+        }
+    }
 }
 
 /// A named, keybindable command. `id` is namespaced like "pages.rotate".

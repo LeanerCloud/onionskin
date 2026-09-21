@@ -55,6 +55,59 @@ impl ShellFrame {
         self.after_file_change(cx);
     }
 
+    /// File > Attach to Email: the saved file, handed to the mail client.
+    pub(super) fn attach_active_to_email(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.active_saved_path(cx) else {
+            return;
+        };
+        if let Err(message) = crate::shell::share::attach_to_email(&path) {
+            self.notices.push(message);
+        }
+        cx.notify();
+    }
+
+    /// File > Copy File to Clipboard: the saved file's `file://` URI, which
+    /// a file manager or a mail client resolves back to the file.
+    pub(super) fn copy_active_file_to_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.active_saved_path(cx) else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            crate::shell::share::file_uri(&path),
+        ));
+    }
+
+    /// Edit > Cut, Copy, Paste or Delete, run by the active tool.
+    pub(super) fn run_edit_verb(
+        &mut self,
+        verb: onionskin_plugin_api::EditVerb,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(canvas) = self.active_canvas_entity() else {
+            return;
+        };
+        let pasted = cx.read_from_clipboard().and_then(|item| item.text());
+        let copied = canvas.update(cx, |canvas, cx| {
+            let copied = canvas.model.run_edit_verb(verb, pasted.as_deref());
+            canvas.handle_change(Ok(true), cx);
+            copied
+        });
+        if let Some(text) = copied {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+        cx.notify();
+    }
+
+    /// The active document's file, when it has one on disk.
+    fn active_saved_path(&self, cx: &gpui::App) -> Option<std::path::PathBuf> {
+        let canvas = self.active_canvas_entity()?;
+        canvas
+            .read(cx)
+            .model
+            .path()
+            .map(std::path::Path::to_path_buf)
+    }
+
     pub(super) fn undo_active(&mut self, cx: &mut Context<Self>) {
         let Some(canvas) = self.active_canvas_entity() else {
             return;

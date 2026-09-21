@@ -181,6 +181,10 @@ pub(in crate::shell) enum MenuCommand {
     Save,
     SaveAs,
     Revert,
+    AttachToEmail,
+    CopyFileToClipboard,
+    /// Edit > Cut, Copy, Paste or Delete, answered by the active tool.
+    Edit(onionskin_plugin_api::EditVerb),
     CombineFiles,
     CreateFromFiles,
     CreateFromFile,
@@ -374,6 +378,9 @@ pub(in crate::shell) struct MenuState {
     recent_count: usize,
     /// The active document's history and file, when one is open.
     history: Option<crate::shell::canvas::HistoryFacts>,
+    /// Whether the active tool answers each Edit verb, in `EditVerb::ALL`
+    /// order, and why not when it does not.
+    edit_verbs: [MenuAvailability; 4],
 }
 
 impl MenuState {
@@ -383,6 +390,11 @@ impl MenuState {
         history: Option<crate::shell::canvas::HistoryFacts>,
     ) -> Self {
         Self { history, ..self }
+    }
+
+    /// The same state, knowing which Edit verbs the active tool answers.
+    pub(in crate::shell) fn with_edit_verbs(self, edit_verbs: [MenuAvailability; 4]) -> Self {
+        Self { edit_verbs, ..self }
     }
 
     pub(in crate::shell) fn new(
@@ -402,6 +414,7 @@ impl MenuState {
             registry,
             recent_count,
             history: None,
+            edit_verbs: [MenuAvailability::Disabled("No document is open"); 4],
         }
     }
 }
@@ -413,6 +426,35 @@ fn save_availability(state: MenuState) -> MenuAvailability {
         None => MenuAvailability::Disabled("No document is open"),
         Some(facts) if facts.dirty || !facts.has_path => MenuAvailability::Enabled,
         Some(_) => MenuAvailability::Disabled("No unsaved changes"),
+    }
+}
+
+/// Attach to Email sends the file on disk, so it wants one, and one that
+/// carries the user's changes.
+fn attach_availability(state: MenuState) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if !facts.has_path => {
+            MenuAvailability::Disabled("This document has never been saved")
+        }
+        Some(facts) if facts.dirty => {
+            MenuAvailability::Disabled("Save first, so the email carries your changes")
+        }
+        Some(_) if cfg!(not(unix)) => {
+            MenuAvailability::Disabled("No mail client can be asked on this platform")
+        }
+        Some(_) => MenuAvailability::Enabled,
+    }
+}
+
+/// Copy File to Clipboard names the file on disk.
+fn copy_file_availability(state: MenuState) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if !facts.has_path => {
+            MenuAvailability::Disabled("This document has never been saved")
+        }
+        Some(_) => MenuAvailability::Enabled,
     }
 }
 
@@ -524,6 +566,18 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
                 MenuEntry {
+                    command: MenuCommand::AttachToEmail,
+                    label: "Attach to Email…",
+                    availability: attach_availability(state),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::CopyFileToClipboard,
+                    label: "Copy File to Clipboard",
+                    availability: copy_file_availability(state),
+                    selected: false,
+                },
+                MenuEntry {
                     command: MenuCommand::CombineFiles,
                     label: "Combine Files…",
                     availability: core_commands(),
@@ -578,6 +632,20 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: history_availability(state, true),
                     selected: false,
                 },
+            ]
+            .into_iter()
+            .chain(
+                onionskin_plugin_api::EditVerb::ALL
+                    .into_iter()
+                    .zip(state.edit_verbs)
+                    .map(|(verb, availability)| MenuEntry {
+                        command: MenuCommand::Edit(verb),
+                        label: verb.label(),
+                        availability,
+                        selected: false,
+                    }),
+            )
+            .chain([
                 MenuEntry {
                     command: MenuCommand::SelectAll,
                     label: "Select All",
@@ -606,8 +674,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: document_command,
                     selected: false,
                 },
-            ]
-            .into_iter()
+            ])
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain([MenuEntry {
@@ -1122,6 +1189,9 @@ impl MenuCommand {
             | Self::Save
             | Self::SaveAs
             | Self::Revert
+            | Self::AttachToEmail
+            | Self::CopyFileToClipboard
+            | Self::Edit(_)
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
@@ -1175,6 +1245,9 @@ impl MenuCommand {
             | Self::Save
             | Self::SaveAs
             | Self::Revert
+            | Self::AttachToEmail
+            | Self::CopyFileToClipboard
+            | Self::Edit(_)
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
@@ -1386,6 +1459,9 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Save
         | MenuCommand::SaveAs
         | MenuCommand::Revert
+        | MenuCommand::AttachToEmail
+        | MenuCommand::CopyFileToClipboard
+        | MenuCommand::Edit(_)
         | MenuCommand::Undo
         | MenuCommand::Redo => Some(Box::new(RunCommand { command })),
         MenuCommand::LineWeights | MenuCommand::NewWindow => None,
@@ -1859,6 +1935,11 @@ mod tests {
                 // No history in this state: nothing to undo, said as such.
                 "Undo (No document is open)",
                 "Redo (No document is open)",
+                // No tool answers the Edit verbs in this state.
+                "Cut (No document is open)",
+                "Copy (No document is open)",
+                "Paste (No document is open)",
+                "Delete (No document is open)",
                 // Two tabs are open in this state, so the rest are live.
                 "Select All",
                 "Deselect All",

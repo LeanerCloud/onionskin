@@ -22,9 +22,11 @@ use onionskin_render::{BaseRaster, RasterBounds, Tile, TileCache, TileStore, TIL
 use smallvec::smallvec;
 
 mod comment_reads;
+mod edit_verbs;
 mod file_ops;
 
 pub use comment_reads::CommentReads;
+pub use edit_verbs::edit_verb_refusal;
 pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
 
 use super::input::{

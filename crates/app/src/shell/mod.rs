@@ -47,6 +47,7 @@ mod inline_text;
 pub mod input;
 mod panes;
 mod preferences_dialog;
+mod share;
 
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 860.0;
