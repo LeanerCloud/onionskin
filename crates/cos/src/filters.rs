@@ -51,6 +51,19 @@ impl Damaged {
     }
 }
 
+/// `data` compressed for a `/FlateDecode` stream with no predictor: what a
+/// writer that builds new content - an image page, a recompressed stream -
+/// encodes with, so every such writer produces what this module decodes.
+pub fn flate_encode(data: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(data)
+        .expect("writing into a Vec cannot fail");
+    encoder.finish().expect("finishing into a Vec cannot fail")
+}
+
 /// Decodes a stream's raw bytes through its `/Filter` chain.
 ///
 /// `resolve` follows indirect references found in `/Filter` or `/DecodeParms`.
@@ -641,6 +654,17 @@ mod tests {
                 b"the quick brown fox"
             );
         }
+    }
+
+    #[test]
+    fn what_flate_encode_writes_decodes_back() {
+        let data: Vec<u8> = (0..10_000u32).map(|value| (value % 251) as u8).collect();
+        let raw = flate_encode(&data);
+        assert!(raw.len() < data.len(), "it compresses");
+        assert_eq!(
+            decode(&filter_dict("FlateDecode"), &raw, &identity, Damaged::Refuse).unwrap(),
+            data
+        );
     }
 
     /// A stream cut short mid-deflate decodes to its prefix, under both

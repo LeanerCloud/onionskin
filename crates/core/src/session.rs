@@ -85,6 +85,9 @@ pub enum Error {
         replacements: usize,
         targets: usize,
     },
+    /// The image a page was to be made from is not one: its size, colour
+    /// or samples do not agree.
+    InvalidImage(String),
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -160,6 +163,9 @@ impl fmt::Display for Error {
                 write!(f, "object {number} is not a dictionary")
             }
             Error::SearchWorker(e) => write!(f, "{e}"),
+            Error::InvalidImage(detail) => {
+                write!(f, "not an image a page can be made from: {detail}")
+            }
         }
     }
 }
@@ -187,7 +193,8 @@ impl std::error::Error for Error {
             | Error::NoCatalog
             | Error::NoPath
             | Error::RevertRefused(_)
-            | Error::NotADictionary { .. } => None,
+            | Error::NotADictionary { .. }
+            | Error::InvalidImage(_) => None,
             Error::WrittenButNotReloaded(written) => Some(&*written.cause),
             Error::Recovery(error) => Some(error),
         }

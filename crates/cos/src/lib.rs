@@ -67,6 +67,7 @@ pub mod source;
 
 pub use document::{Dangling, Document, PendingEdit, Section};
 pub use error::{Error, Result};
+pub use filters::flate_encode;
 pub use object::{
     Dict, Holder, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };

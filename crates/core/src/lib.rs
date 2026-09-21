@@ -10,6 +10,7 @@ mod edit;
 mod file;
 mod generations;
 mod history;
+pub mod images;
 mod layers;
 mod layout;
 mod outline;
