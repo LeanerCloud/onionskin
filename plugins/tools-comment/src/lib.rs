@@ -10,10 +10,12 @@ mod markup;
 mod note;
 mod place;
 mod quads;
+mod shapes;
 
 pub use freetext::FreeTextTool;
 pub use markup::MarkupTool;
 pub use note::NoteTool;
+pub use shapes::ShapeTool;
 
 pub struct CommentToolsPlugin;
 
@@ -38,5 +40,12 @@ impl PluginManifest for CommentToolsPlugin {
         registry.register_tool(Box::new(FreeTextTool::typewriter()));
         registry.register_tool(Box::new(FreeTextTool::text_box()));
         registry.register_tool(Box::new(FreeTextTool::callout()));
+        registry.register_tool(Box::new(ShapeTool::line()));
+        registry.register_tool(Box::new(ShapeTool::arrow()));
+        registry.register_tool(Box::new(ShapeTool::rectangle()));
+        registry.register_tool(Box::new(ShapeTool::oval()));
+        registry.register_tool(Box::new(ShapeTool::polygon()));
+        registry.register_tool(Box::new(ShapeTool::connected_lines()));
+        registry.register_tool(Box::new(ShapeTool::cloud()));
     }
 }

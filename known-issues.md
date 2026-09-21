@@ -62,10 +62,19 @@ source IDs, severity, ownership, and required proof.
   - `shell::chrome::tabs::export::tests::rollback_preserves_a_completed_page_replaced_by_a_symlink`
     and `...replaced_by_another_writer` - both turn on a write being refused,
     and this container runs as root, where it is not.
-  Whoever runs the shell suite on macOS should confirm which of the five pass
-  there; the three canvas ones want an expectation that is derived rather than
-  pinned, and the two export ones want a non-root runner or a different way of
-  making the write fail.
+  **The failing set varies between runs.** Across four runs it has included
+  `a_zoom_change_keeps_the_raster_the_paint_will_scale` and
+  `an_update_that_paints_nothing_leaves_no_frame_open` as well, and dropped
+  others; the count stays at five or six. A varying set is the strongest
+  evidence available here that these are races against the geometry and render
+  workers rather than wrong expectations, and it means a single green run on
+  macOS would not settle it either.
+
+  Whoever runs the shell suite on macOS should run it repeatedly and confirm
+  which of these are stable there; the canvas ones want an expectation that is
+  derived or a wait that is deterministic rather than a pinned value, and the
+  export ones want a non-root runner or a different way of making the write
+  fail.
 
 - Historical corpus proof scripts are retained references, not acceptance tools:
   `tripwire.sh` mutates its checkout's workflow and masks the guarantee test's
