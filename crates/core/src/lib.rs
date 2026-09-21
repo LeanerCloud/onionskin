@@ -6,6 +6,7 @@
 
 mod annots;
 mod attachments;
+mod autoscroll;
 mod edit;
 pub mod embedded;
 mod file;
@@ -40,6 +41,10 @@ pub use annots::{
 };
 pub use annots::{properties, review};
 pub use attachments::Attachment;
+pub use autoscroll::{
+    AutoScroll, AUTO_SCROLL_MAX_STEP, AUTO_SCROLL_RESUME_AFTER, AUTO_SCROLL_SPEEDS,
+    DEFAULT_AUTO_SCROLL_LEVEL,
+};
 pub use edit::{
     Change, DocumentEdit, EditSession, Entry, History, ObjectState, Overlay, TrailerState,
     Transaction, MAX_HISTORY_BYTES,
