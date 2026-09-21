@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 171 planned / 26 partial / 80 out-of-scope. 126 implemented.**
+**403 rows: 168 planned / 25 partial / 80 out-of-scope. 130 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 98, M4 4, M5 52, M6 45, post-1.0 57.
@@ -125,8 +125,8 @@ Rows closed by M3 packages with evidence docs (P1b, P8, P9a, P9b, P9c, P10,
 P11, P12, P13a, P13b, P14a) cite `docs/evidence/m3-*.md` directly in Notes.
 Those docs record Linux runs only; no macOS, Windows or hosted-CI run is
 claimed. A row closed in code but reachable only through a later package's
-dialog or grid stays `planned` (Extract, Replace, Copy or move pages between
-documents: P21). Text-entry comment rows are `partial` until the comments pane
+dialog or grid stays `planned` until that package lands (Copy or move pages
+between documents still waits on a cross-document grid). Text-entry comment rows are `partial` until the comments pane
 (P20) edits `/Contents`. `Open an encrypted document` moves from M6 to M3 as
 `partial` per ruling A. P1c and P2-P7 close no rows. Booklet and Poster / tile moved to
 M4 with P15, per the plan's ruling B.
@@ -268,7 +268,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
 | Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. `4132a99` also rearms the canvas poll loop when the pane queues work after initial rendering has settled; its GPUI-loop-only regression prevents black placeholders. Evidence: M2-PANES, B3.1, and the partially populated B7-REF-003 ledger row pending corrected visual capture. |
-| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | partial | M2 | The menu and thumbnail sizing are implemented and accessible; page-mutating commands remain disabled with command-specific M3/M5 owner reasons. Evidence: M2-PANES, B3.1, and B3.6. |
+| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | implemented | M2 | The menu and thumbnail sizing are implemented and accessible. Since P21 every page entry runs on the page on screen (or the Organize grid's selection), refused with the document's own reason when it may not be edited; Crop Pages alone stays disabled on its M5 reason. Evidence: M2-PANES, B3.1, B3.6, docs/evidence/m3-p21-organize-grid.md. |
 | Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
 | Bookmarks: create, rename, nest, set destination, delete | implemented | M3 | Pane behaviour over `core`: new, rename, set destination to the current page, nest, move out, delete with subtree; each is one undo step. Drag-to-reorder is not built. New Bookmarks From Structure follows at M6. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Attachments pane (list, open, save) | partial | M2 | Listing, Save, prompt-error feedback, stale successful-write protection, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES, B3.1, B4.2, and B4.3. |
@@ -371,13 +371,13 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Insert pages (from file, blank, clipboard) | partial | M3 | Blank insertion is live from the Edit menu. Insert from file exists in `tools-organize` but its dialog waits for P21; insert from clipboard is not built. Evidence: docs/evidence/m3-p11-organize.md. |
 | Insert > From Web Page | out-of-scope | - | The same web capture ruled out under Create a PDF: it needs a bundled HTML engine and a paginating layout pass. The menu entry does not exist rather than existing and failing. |
 | Delete pages | implemented | M3 | Deletes the current page from the Edit menu, with tagged-structure cleanup; multi-page selection arrives with the Organize grid row. Evidence: docs/evidence/m3-p11-organize.md. |
-| Extract pages | planned | M3 | Named in the plan's `tools-organize` list. `extract_pages_to` exists in `tools-organize`, but no user path reaches it until P21's dialog. Evidence: docs/evidence/m3-p11-organize.md. |
+| Extract pages | implemented | M3 | Named in the plan's `tools-organize` list. The Organize grid's Extract… and the thumbnails menu's Extract Pages write the chosen pages to a new file and open it. Evidence: docs/evidence/m3-p11-organize.md, docs/evidence/m3-p21-organize-grid.md. |
 | Split (by page count, file size, or top-level bookmarks) | implemented | M3 | File > Split Document… offers all three; output is all-or-nothing and refused on encrypted documents. Split runs on the UI thread. Evidence: docs/evidence/m3-p12-combine-split.md. |
-| Replace pages | planned | M3 | Named in the plan's `tools-organize` list. The one-undo-step replace exists in `tools-organize`, but no user path reaches it until P21's dialog. Evidence: docs/evidence/m3-p11-organize.md. |
-| Copy or move pages between open documents | planned | M3 | The copy and move functions exist in `tools-organize`, but no user path reaches them until P21's grid. Evidence: docs/evidence/m3-p11-organize.md. (judgment) |
+| Replace pages | implemented | M3 | Named in the plan's `tools-organize` list. Replace… takes the chosen pages' places from the first pages of a chosen file, as one undo step. Evidence: docs/evidence/m3-p11-organize.md, docs/evidence/m3-p21-organize-grid.md. |
+| Copy or move pages between open documents | planned | M3 | The copy and move functions exist in `tools-organize`, and the Organize grid (P21) reorders within a document; dragging between two documents' grids is not built. Evidence: docs/evidence/m3-p11-organize.md. (judgment) |
 | Renumber pages / page labels | partial | M3 | A "number pages from 1" command is live; label styles, prefixes and ranges wait for P21's dialogs. Evidence: docs/evidence/m3-p11-organize.md. |
 | Crop pages (from Organize) | planned | M5 | Same command as Edit a PDF > Crop; delivered with `tools-edit`. |
-| Page thumbnail zoom and multi-select in the Organize grid | planned | M3 | (judgment) |
+| Page thumbnail zoom and multi-select in the Organize grid | implemented | M3 | (judgment) Edit > Organize Pages: click, Shift-click, Cmd/Ctrl-click and marquee selection, drag to reorder as one undo step, Smaller and Larger thumbnails shared with the pane. Evidence: docs/evidence/m3-p21-organize-grid.md. |
 
 ## Toolset: Compress a PDF
 

@@ -9,6 +9,7 @@ mod inspector;
 mod menu;
 mod organize;
 mod outline;
+mod page_grid;
 mod print;
 mod properties;
 mod skins;
@@ -600,6 +601,10 @@ impl ShellFrame {
             return;
         }
         self.observed_edit_epoch = epoch;
+        // A page index may now name a different page, so every picture the
+        // pane and the grid hold is of a document nobody is showing.
+        self.navigation.thumbnails_mut().invalidate_images();
+        self.follow_grid(cx);
         self.navigation.reread(&canvas, cx);
         refresh_native_menus(cx, self.menu_state(cx));
         cx.notify();
@@ -1103,6 +1108,14 @@ impl ShellFrame {
     /// navigation pane does goes through here, so this file holds which tab
     /// is active and `shell/panes/` holds what the click means.
     pub(in crate::shell) fn run_pane_action(&mut self, action: PaneAction, cx: &mut Context<Self>) {
+        // The thumbnails menu's page entries edit pages with a file prompt
+        // or the grid's selection, which are the frame's, not the pane's.
+        if let PaneAction::Thumbnail(panes::ThumbnailAction::Run(command)) = action {
+            if command.acts_on_pages() {
+                self.run_thumbnail_command(command, cx);
+                return;
+            }
+        }
         let canvas = self.tabs.active().map(|tab| tab.canvas.clone());
         let directory = self
             .tabs
@@ -1286,6 +1299,9 @@ impl Render for ShellFrame {
                 cx,
             ));
         }
+        // Organize Pages takes the page's place, and draws first because it
+        // needs the frame while the tab below is borrowed.
+        let grid = self.render_grid(theme, cx);
         if let Some(tab) = self.tabs.active() {
             let canvas = tab.canvas.clone();
             let page_controls_state =
@@ -1386,7 +1402,15 @@ impl Render for ShellFrame {
                 .flex_none()
                 .flex()
                 .flex_col()
-                .child(canvas_view)
+                .child(match grid {
+                    Some(grid) => div()
+                        .w_full()
+                        .h(document_bounds.size.height)
+                        .flex()
+                        .child(grid)
+                        .into_any_element(),
+                    None => canvas_view.into_any_element(),
+                })
                 .when(visibility.page_controls, |column| {
                     column.child(render_page_controls(
                         page_controls_state,
@@ -1637,6 +1661,8 @@ mod tests {
     mod organize_dialogs;
     #[cfg(feature = "shell-test-support")]
     mod outline;
+    #[cfg(feature = "shell-test-support")]
+    mod page_grid;
     #[cfg(feature = "shell-test-support")]
     mod print;
     #[cfg(feature = "shell-test-support")]

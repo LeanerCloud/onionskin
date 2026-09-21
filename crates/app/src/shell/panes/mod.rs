@@ -53,7 +53,7 @@ pub(in crate::shell) use self::comments::{
     CommentAction, DraftMode as CommentDraftMode,
 };
 pub(in crate::shell) use self::layers::LayersCommand;
-pub(in crate::shell) use self::thumbnails::ThumbnailAction;
+pub(in crate::shell) use self::thumbnails::{ThumbnailAction, ThumbnailsCommand, ThumbnailsState};
 
 /// The strip of pane buttons, always there while the navigation panes are.
 const STRIP_WIDTH: f32 = 48.0;
@@ -217,6 +217,20 @@ impl NavigationPanesState {
         self.attachments_menu = None;
         self.comments.document_changed();
         self.feedback = None;
+    }
+
+    /// Put the thumbnails pane's context menu away.
+    pub(in crate::shell) fn dismiss_thumbnail_menu(&mut self) {
+        self.thumbnails.dismiss_menu();
+    }
+
+    /// The pictures the pane and the Organize grid both draw from.
+    pub(in crate::shell) fn thumbnails(&self) -> &ThumbnailsState {
+        &self.thumbnails
+    }
+
+    pub(in crate::shell) fn thumbnails_mut(&mut self) -> &mut ThumbnailsState {
+        &mut self.thumbnails
     }
 
     /// Take the thumbnails the worker has answered, as images to paint.

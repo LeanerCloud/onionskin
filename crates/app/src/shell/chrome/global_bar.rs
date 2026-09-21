@@ -199,6 +199,7 @@ pub(in crate::shell) enum MenuCommand {
     PageSetup,
     Print,
     Skins,
+    OrganizePages,
     Export(ExportTarget),
     ExportAllImages,
     CloseTab,
@@ -715,6 +716,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
             ])
+            .chain([MenuEntry {
+                command: MenuCommand::OrganizePages,
+                label: "Organize Pages",
+                availability: document_command,
+                selected: false,
+            }])
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain([MenuEntry {
@@ -1234,6 +1241,7 @@ impl MenuCommand {
             | Self::PageSetup
             | Self::Print
             | Self::Skins
+            | Self::OrganizePages
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1294,6 +1302,7 @@ impl MenuCommand {
             | Self::PageSetup
             | Self::Print
             | Self::Skins
+            | Self::OrganizePages
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1512,6 +1521,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::PageSetup
         | MenuCommand::Print
         | MenuCommand::Skins
+        | MenuCommand::OrganizePages
         | MenuCommand::CopyFileToClipboard
         | MenuCommand::Edit(_)
         | MenuCommand::Undo
@@ -1997,6 +2007,7 @@ mod tests {
                 "Deselect All",
                 "Take a Snapshot",
                 "Find…",
+                "Organize Pages",
                 "Rotate Page Clockwise",
                 "Rotate Page Counterclockwise",
                 "Insert Blank Page",

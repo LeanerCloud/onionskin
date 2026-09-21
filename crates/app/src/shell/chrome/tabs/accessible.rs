@@ -127,9 +127,14 @@ impl ShellFrame {
             let canvas = tab.canvas.clone();
             let title = tab.title().to_owned();
             let with_text = self.a11y.wants_page_text();
-            root = root.child(canvas.update(cx, |canvas, _cx| {
-                canvas.accessible(&title, scale, with_text)
-            }));
+            // The grid is in the page's place while it is open, so a screen
+            // reader meets one or the other, not both.
+            root = root.child(match self.accessible_grid(cx) {
+                Some(grid) => grid,
+                None => canvas.update(cx, |canvas, _cx| {
+                    canvas.accessible(&title, scale, with_text)
+                }),
+            });
             if visibility.quick_actions {
                 let mut described = quick_actions::accessible(
                     &self.quick_action_entries(cx),
@@ -493,6 +498,7 @@ impl ShellFrame {
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),
             Activation::Skins(action) => self.run_skins_action(action, window, cx),
+            Activation::Organize(action) => self.run_organize_action(action, window, cx),
             Activation::Properties(action) => self.run_properties_action(action, window, cx),
             Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
             Activation::File(action) => self.run_file_action(action, window, cx),

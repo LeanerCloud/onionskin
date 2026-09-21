@@ -62,6 +62,7 @@ impl MenuCommand {
             MenuCommand::TakeSnapshot,
             MenuCommand::Find,
         ]);
+        all.push(MenuCommand::OrganizePages);
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
         all.extend([
             MenuCommand::Stamps,
@@ -123,6 +124,7 @@ impl MenuCommand {
             Self::SaveAs => "file.save-as",
             Self::Revert => "file.revert",
             Self::Skins => "file.skins",
+            Self::OrganizePages => "edit.organize-pages",
             Self::AttachToEmail => "file.attach-to-email",
             Self::CopyFileToClipboard => "file.copy-to-clipboard",
             Self::Edit(verb) => match verb {
@@ -253,6 +255,7 @@ impl MenuCommand {
             | Self::CloseOtherTabs
             | Self::Revert
             | Self::Skins
+            | Self::OrganizePages
             | Self::AttachToEmail
             | Self::CopyFileToClipboard
             | Self::ReduceFileSize

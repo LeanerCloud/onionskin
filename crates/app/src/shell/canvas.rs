@@ -665,6 +665,21 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// Run an edit that takes an explicit page selection, such as the
+    /// Organize Pages grid's, and rebuild the layout when it changed the
+    /// document, as a registered command does.
+    pub fn edit_pages(
+        &mut self,
+        edit: impl FnOnce(&mut Document) -> Result<(), onionskin_plugin_api::CommandError>,
+    ) -> Result<(), CanvasError> {
+        let before = self.document.edit().epoch();
+        edit(self.document.document_mut()).map_err(CanvasError::Command)?;
+        if self.document.edit().epoch() != before {
+            self.relayout_after_edit()?;
+        }
+        Ok(())
+    }
+
     /// A command changed the document, and a page command can change what
     /// the layout was built from: how many pages there are, their order, and
     /// their size once turned. So the layout is rebuilt from the document as

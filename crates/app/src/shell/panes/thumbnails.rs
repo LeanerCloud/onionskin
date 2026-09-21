@@ -49,6 +49,13 @@ pub(in crate::shell) enum ThumbnailAction {
         first: usize,
         end: usize,
     },
+    /// The pages the Organize Pages grid now shows. The grid draws from the
+    /// same pictures as the pane, so it asks through the same cache rather
+    /// than keeping a second one with a second eviction rule.
+    ShowGrid {
+        first: usize,
+        end: usize,
+    },
     Scroll(f32),
     OpenMenu(Point<Pixels>),
     Run(ThumbnailsCommand),
@@ -107,14 +114,17 @@ impl ThumbnailsCommand {
         }
     }
 
-    /// Whether the entry does anything yet, and what it says when it does
-    /// not.
+    /// Whether the entry runs, and what it says when it does not.
     ///
-    /// The two size commands are the pane's own and are live. Every other
-    /// entry writes to the document, which no M2 subsystem does: the edit
-    /// graph and `tools-organize` are M3, so the reason names that milestone
-    /// rather than pretending there is a capability to query.
-    pub(in crate::shell) fn availability(self, state: &ThumbnailsState) -> MenuAvailability {
+    /// The two size commands are the pane's own. Page Properties reads. The
+    /// page edits run `tools-organize` on the chosen pages, so they are
+    /// refused with `edits` when the document's pages may not change.
+    /// Crop Pages waits on M5.
+    pub(in crate::shell) fn availability(
+        self,
+        state: &ThumbnailsState,
+        edits: Option<&'static str>,
+    ) -> MenuAvailability {
         match self {
             Self::ReduceThumbnails => {
                 available(state.size > 0, "Already at the smallest thumbnail size")
@@ -124,8 +134,15 @@ impl ThumbnailsCommand {
                 "Already at the largest thumbnail size",
             ),
             Self::CropPages => MenuAvailability::Disabled("Available in M5 tools-organize"),
-            _ => MenuAvailability::Disabled("Available in M3 tools-organize"),
+            Self::PageProperties => MenuAvailability::Enabled,
+            _ => edits.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
         }
+    }
+
+    /// Whether the frame runs the entry, with the pages it is about, rather
+    /// than the pane.
+    pub(in crate::shell) fn acts_on_pages(self) -> bool {
+        !matches!(self, Self::ReduceThumbnails | Self::EnlargeThumbnails)
     }
 }
 
@@ -163,6 +180,8 @@ pub(in crate::shell) struct ThumbnailsState {
     /// The band the pane last asked the worker for. Kept so the pane asks
     /// once per band rather than once per frame.
     requested: Range<usize>,
+    /// The band the Organize Pages grid last asked for, when it is open.
+    grid: Range<usize>,
     menu: Option<Point<Pixels>>,
 }
 
@@ -173,6 +192,7 @@ impl Default for ThumbnailsState {
             size: DEFAULT_SIZE,
             images: BTreeMap::new(),
             requested: 0..0,
+            grid: 0..0,
             menu: None,
         }
     }
@@ -181,6 +201,56 @@ impl Default for ThumbnailsState {
 impl ThumbnailsState {
     fn row_height(&self) -> f32 {
         SIZES[self.size].1
+    }
+
+    /// Why the pictures cannot get smaller, and why they cannot get larger,
+    /// when they cannot: Reduce and Enlarge Page Thumbnails' limits.
+    pub(in crate::shell) fn size_limits(&self) -> (Option<&'static str>, Option<&'static str>) {
+        (
+            (self.size == 0).then_some("Already at the smallest thumbnail size"),
+            (self.size + 1 >= SIZES.len()).then_some("Already at the largest thumbnail size"),
+        )
+    }
+
+    /// Reduce or Enlarge Page Thumbnails, for the pane and the grid alike.
+    /// The pictures were rendered at the old size, so they go.
+    pub(in crate::shell) fn resize(&mut self, larger: bool) {
+        let size = if larger {
+            (self.size + 1).min(SIZES.len() - 1)
+        } else {
+            self.size.saturating_sub(1)
+        };
+        if size != self.size {
+            self.size = size;
+            self.invalidate_images();
+        }
+    }
+
+    /// The side of one Organize grid cell: the pane's row, so a picture
+    /// rendered for either fits both.
+    pub(in crate::shell) fn cell_size(&self) -> f32 {
+        self.row_height()
+    }
+
+    /// One page's picture and its size, when it has arrived.
+    pub(in crate::shell) fn picture(
+        &self,
+        page: PageIndex,
+    ) -> Option<(Arc<RenderImage>, f32, f32)> {
+        self.images
+            .get(&page)
+            .map(|picture| (Arc::clone(&picture.image), picture.width, picture.height))
+    }
+
+    /// The grid's band, for the test that proves it asks for what it shows.
+    #[cfg(test)]
+    pub(in crate::shell) fn grid_band(&self) -> Range<usize> {
+        self.grid.clone()
+    }
+
+    /// Whether the grid's band differs from `band`, which is when it asks.
+    pub(in crate::shell) fn grid_asks_for(&self, band: &Range<usize>) -> bool {
+        self.grid != *band
     }
 
     fn zoom(&self) -> f32 {
@@ -247,13 +317,26 @@ impl ThumbnailsState {
     /// Keep the cache bounded, dropping the pages furthest from the band
     /// being shown first.
     fn evict(&mut self) {
+        let middles: Vec<usize> = [&self.requested, &self.grid]
+            .into_iter()
+            .filter(|band| !band.is_empty())
+            .map(|band| band.start.midpoint(band.end))
+            .collect();
         while self.images.len() > MAX_IMAGES {
-            let middle = self.requested.start.midpoint(self.requested.end);
+            // Distance to the nearest band anybody is showing, so the pane
+            // and the grid each keep their own screenful.
+            let distance = |page: &PageIndex| {
+                middles
+                    .iter()
+                    .map(|middle| page.abs_diff(*middle))
+                    .min()
+                    .unwrap_or(0)
+            };
             let furthest = self
                 .images
                 .keys()
                 .copied()
-                .max_by_key(|page| page.abs_diff(middle))
+                .max_by_key(distance)
                 .expect("the cache is over its limit, so it is not empty");
             self.images.remove(&furthest);
         }
@@ -291,15 +374,17 @@ impl ThumbnailsState {
         self.scroll = 0.0;
         self.images.clear();
         self.requested = 0..0;
+        self.grid = 0..0;
         self.menu = None;
     }
 
     /// Drop the pictures without dropping the scroll position, which is what
     /// a size change needs: the rows stay where they are, the pictures are
     /// all the wrong size.
-    pub(super) fn invalidate_images(&mut self) {
+    pub(in crate::shell) fn invalidate_images(&mut self) {
         self.images.clear();
         self.requested = 0..0;
+        self.grid = 0..0;
     }
 }
 
@@ -314,6 +399,10 @@ pub(super) fn run(
             state.thumbnails.requested = first..end;
             request_band(state, canvas, cx);
         }
+        ThumbnailAction::ShowGrid { first, end } => {
+            state.thumbnails.grid = first..end;
+            request_band(state, canvas, cx);
+        }
         ThumbnailAction::Scroll(delta) => {
             let page_count = page_count(canvas, cx);
             let height = state.body_height;
@@ -323,24 +412,14 @@ pub(super) fn run(
         ThumbnailAction::OpenMenu(at) => state.thumbnails.menu = Some(at),
         ThumbnailAction::Run(command) => {
             state.thumbnails.menu = None;
-            let size = state.thumbnails.size;
             match command {
-                ThumbnailsCommand::ReduceThumbnails => {
-                    state.thumbnails.size = size.saturating_sub(1);
-                }
-                ThumbnailsCommand::EnlargeThumbnails => {
-                    state.thumbnails.size = (size + 1).min(SIZES.len() - 1);
-                }
+                // Nothing is asked for here: the rows a new size shows are
+                // not the rows the old one did, and the frame that draws
+                // them is what says which.
+                ThumbnailsCommand::ReduceThumbnails => state.thumbnails.resize(false),
+                ThumbnailsCommand::EnlargeThumbnails => state.thumbnails.resize(true),
                 // Every other entry is disabled, so nothing can raise it.
-                _ => return,
-            }
-            if state.thumbnails.size != size {
-                // The pictures were rendered at the old zoom; keeping them
-                // would show a stretched row until each one was replaced.
-                // Nothing is asked for here: the rows a bigger size shows are
-                // not the rows the old one did, and the frame that draws them
-                // is what says which.
-                state.thumbnails.invalidate_images();
+                _ => {}
             }
         }
     }
@@ -357,12 +436,15 @@ fn request_band(
         return;
     };
     let zoom = state.thumbnails.zoom();
-    let missing: Vec<PageIndex> = state
-        .thumbnails
+    let thumbnails = &state.thumbnails;
+    let mut missing: Vec<PageIndex> = thumbnails
         .requested
         .clone()
-        .filter(|page| !state.thumbnails.images.contains_key(page))
+        .chain(thumbnails.grid.clone())
+        .filter(|page| !thumbnails.images.contains_key(page))
         .collect();
+    missing.sort_unstable();
+    missing.dedup();
     let outcome = canvas.update(cx, |canvas, cx| {
         // Asked for unconditionally: the canvas skips a request that is
         // already outstanding at this size and epoch, and skipping here
@@ -403,6 +485,7 @@ pub(super) fn accessible(
         state.body_height,
         page_count(canvas, cx),
         canvas.map(|canvas| canvas.read(cx).model.viewport().current_page()),
+        page_edits(state),
     )
 }
 
@@ -417,6 +500,7 @@ fn described(
     height: f32,
     page_count: usize,
     current: Option<PageIndex>,
+    edits: Option<&'static str>,
 ) -> Vec<Element> {
     if page_count == 0 {
         return vec![Element::new(
@@ -449,7 +533,7 @@ fn described(
             ThumbnailsCommand::ALL.map(|command| {
                 (
                     command.label(),
-                    command.availability(thumbnails),
+                    command.availability(thumbnails, edits),
                     run_command(command),
                 )
             }),
@@ -570,13 +654,19 @@ pub(super) fn render(
         .flex_col()
         .child(rows);
     if let Some(at) = thumbnails.menu {
-        body = body.child(render_menu(thumbnails, at, theme, cx));
+        body = body.child(render_menu(thumbnails, page_edits(state), at, theme, cx));
     }
     body.into_any_element()
 }
 
+/// Why the page edits cannot run on this document, when they cannot.
+fn page_edits(state: &NavigationPanesState) -> Option<&'static str> {
+    crate::shell::organize::page_edit_refusal(state.edit_refusal)
+}
+
 fn render_menu(
     state: &ThumbnailsState,
+    edits: Option<&'static str>,
     at: Point<Pixels>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
@@ -597,7 +687,7 @@ fn render_menu(
             "thumbnail-menu-entry",
             index,
             command.label(),
-            command.availability(state),
+            command.availability(state, edits),
             run_command(command),
             theme,
             cx,
@@ -715,7 +805,7 @@ mod tests {
         assert_eq!(ThumbnailsCommand::ALL.len(), 11);
         for command in ThumbnailsCommand::ALL {
             assert!(!command.label().is_empty());
-            let availability = command.availability(&pane);
+            let availability = command.availability(&pane, None);
             if !availability.is_enabled() {
                 assert!(
                     !availability.reason().expect("disabled says why").is_empty(),
@@ -726,35 +816,44 @@ mod tests {
         }
     }
 
-    /// The page-mutating entries wait on their owning milestones and say so.
-    /// Asserted on the milestone rather than the whole sentence: pinning the
-    /// prose would keep passing once the owner lands, which is the state this
-    /// test exists to catch.
+    /// The page entries run on any document that may be edited, are
+    /// refused with the document's own reason on one that may not, and Crop
+    /// Pages alone still waits, on M5, so the test proves the mechanism
+    /// rather than that everything was switched on.
     #[test]
-    fn every_page_editing_entry_is_disabled_and_names_its_milestone() {
+    fn page_entries_follow_the_documents_edit_refusal_and_crop_waits_on_m5() {
         let pane = state(DEFAULT_SIZE, 0.0);
-
-        for (command, milestone) in [
-            (ThumbnailsCommand::InsertPages, "M3"),
-            (ThumbnailsCommand::ExtractPages, "M3"),
-            (ThumbnailsCommand::ReplacePages, "M3"),
-            (ThumbnailsCommand::DeletePages, "M3"),
-            (ThumbnailsCommand::RotatePages, "M3"),
-            (ThumbnailsCommand::CropPages, "M5"),
-            (ThumbnailsCommand::PageProperties, "M3"),
-            (ThumbnailsCommand::EmbedThumbnails, "M3"),
-            (ThumbnailsCommand::RemoveThumbnails, "M3"),
-        ] {
-            let reason = command
-                .availability(&pane)
-                .reason()
-                .expect("a page-editing entry is disabled");
+        let edits = [
+            ThumbnailsCommand::InsertPages,
+            ThumbnailsCommand::ExtractPages,
+            ThumbnailsCommand::ReplacePages,
+            ThumbnailsCommand::DeletePages,
+            ThumbnailsCommand::RotatePages,
+            ThumbnailsCommand::EmbedThumbnails,
+            ThumbnailsCommand::RemoveThumbnails,
+        ];
+        for command in edits {
             assert!(
-                reason.contains(milestone),
-                "{} should name {milestone}, said {reason:?}",
+                command.availability(&pane, None).is_enabled(),
+                "{}",
                 command.label()
             );
+            assert_eq!(
+                command.availability(&pane, Some("Encrypted")).reason(),
+                Some("Encrypted"),
+                "{}",
+                command.label()
+            );
+            assert!(command.acts_on_pages());
         }
+        assert!(
+            ThumbnailsCommand::PageProperties
+                .availability(&pane, Some("Encrypted"))
+                .is_enabled(),
+            "reading is never refused"
+        );
+        let crop = ThumbnailsCommand::CropPages.availability(&pane, None);
+        assert!(crop.reason().expect("disabled").contains("M5"));
     }
 
     /// The two size commands are the pane's own, so they are live, and they
@@ -764,26 +863,26 @@ mod tests {
     fn the_size_commands_are_live_until_the_ends_of_the_size_list() {
         let middle = state(DEFAULT_SIZE, 0.0);
         assert!(ThumbnailsCommand::ReduceThumbnails
-            .availability(&middle)
+            .availability(&middle, None)
             .is_enabled());
         assert!(ThumbnailsCommand::EnlargeThumbnails
-            .availability(&middle)
+            .availability(&middle, None)
             .is_enabled());
 
         let smallest = state(0, 0.0);
         assert!(!ThumbnailsCommand::ReduceThumbnails
-            .availability(&smallest)
+            .availability(&smallest, None)
             .is_enabled());
         assert!(ThumbnailsCommand::EnlargeThumbnails
-            .availability(&smallest)
+            .availability(&smallest, None)
             .is_enabled());
 
         let largest = state(SIZES.len() - 1, 0.0);
         assert!(ThumbnailsCommand::ReduceThumbnails
-            .availability(&largest)
+            .availability(&largest, None)
             .is_enabled());
         assert!(!ThumbnailsCommand::EnlargeThumbnails
-            .availability(&largest)
+            .availability(&largest, None)
             .is_enabled());
     }
 
@@ -819,7 +918,7 @@ mod tests {
         let pane = state(DEFAULT_SIZE, 0.0);
         let band = pane.visible_rows(700.0, 1_000);
 
-        let described = described(&pane, 700.0, 1_000, Some(2));
+        let described = described(&pane, 700.0, 1_000, Some(2), None);
         let rows = &described[0].children;
 
         assert_eq!(described.len(), 1, "no menu is open");
@@ -842,7 +941,7 @@ mod tests {
     fn a_scrolled_pane_describes_the_band_it_draws() {
         let pane = state(DEFAULT_SIZE, 148.0 * 40.0);
 
-        let described = described(&pane, 700.0, 1_000, None);
+        let described = described(&pane, 700.0, 1_000, None, None);
         let rows = &described[0].children;
 
         assert_eq!(rows[0].label, "Page 40", "the band starts at row 39");
@@ -854,7 +953,7 @@ mod tests {
     /// of pages.
     #[test]
     fn a_pane_with_no_document_says_so_instead_of_describing_no_rows() {
-        let described = described(&state(DEFAULT_SIZE, 0.0), 700.0, 0, None);
+        let described = described(&state(DEFAULT_SIZE, 0.0), 700.0, 0, None, None);
 
         assert_eq!(described.len(), 1);
         assert_eq!(described[0].role, Role::Label);
@@ -869,7 +968,7 @@ mod tests {
         let mut pane = state(0, 0.0);
         pane.menu = Some(gpui::Point::new(px(0.0), px(12.0)));
 
-        let open = described(&pane, 700.0, 3, None);
+        let open = described(&pane, 700.0, 3, None, None);
         let menu = open
             .iter()
             .find(|element| element.role == Role::Menu)
@@ -881,11 +980,11 @@ mod tests {
             assert_eq!(entry.activation, Some(run_command(command)));
             assert_eq!(
                 entry.state.disabled,
-                !command.availability(&pane).is_enabled()
+                !command.availability(&pane, None).is_enabled()
             );
             assert_eq!(
                 entry.description.as_deref(),
-                command.availability(&pane).reason()
+                command.availability(&pane, None).reason()
             );
         }
         let reduce = menu
@@ -900,7 +999,7 @@ mod tests {
         );
 
         pane.menu = None;
-        assert!(described(&pane, 700.0, 3, None)
+        assert!(described(&pane, 700.0, 3, None, None)
             .iter()
             .all(|element| element.role != Role::Menu));
     }

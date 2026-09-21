@@ -225,6 +225,11 @@ impl ShellFrame {
                 self.open_page_setup(window, cx);
                 Ok(())
             }
+            MenuCommand::OrganizePages => {
+                self.dismiss_menus(cx);
+                self.toggle_organize(cx);
+                Ok(())
+            }
             MenuCommand::Skins => {
                 self.dismiss_menus(cx);
                 self.run_skins_action(crate::shell::skins::SkinsAction::Toggle, window, cx);

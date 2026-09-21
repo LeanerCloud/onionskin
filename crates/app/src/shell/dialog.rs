@@ -45,6 +45,8 @@ pub(in crate::shell) enum ShellDialog {
     PageSetup,
     /// The skins panel's confirmation before a roll back.
     RollBack,
+    /// The thumbnails pane's Page Properties.
+    PageProperties,
 }
 
 impl ShellDialog {
@@ -63,6 +65,7 @@ impl ShellDialog {
             Self::Print => "Print",
             Self::PageSetup => "Page Setup",
             Self::RollBack => "Roll Back",
+            Self::PageProperties => "Page Properties",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -174,6 +177,7 @@ pub(in crate::shell) fn accessible(
             cx,
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
+        ShellDialog::PageProperties => row_labels(frame.page_property_rows()),
         ShellDialog::UnsavedChanges => super::chrome::file_dialogs::accessible_unsaved(
             frame.unsaved_dialog().expect("unsaved dialog has state"),
         ),
@@ -346,6 +350,9 @@ pub(in crate::shell) fn render_dialog(
             cx,
         )
         .into_any_element(),
+        ShellDialog::PageProperties => rows(frame.page_property_rows(), rects.clone())
+            .text_color(theme.text)
+            .into_any_element(),
         ShellDialog::LayerProperties => rows(frame.layer_property_rows(), rects)
             .text_color(theme.text)
             .into_any_element(),

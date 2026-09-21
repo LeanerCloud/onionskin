@@ -237,6 +237,10 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) bookmark_title: Option<crate::shell::chrome::bookmark_dialog::BookmarkTitleState>,
     /// The Print dialog, while it is open.
     pub(super) print: Option<crate::shell::chrome::print_dialog::PrintDialogState>,
+    /// What Page Properties shows, read when it opened.
+    pub(super) page_properties: Vec<(String, String)>,
+    /// The Organize Pages grid, while it is open.
+    pub(super) page_grid: Option<crate::shell::organize::OrganizeState>,
     /// The skins panel, while it is open.
     pub(super) skins: Option<crate::shell::skins::SkinsState>,
     /// Paper and orientation, which Page Setup and the Print dialog share.
@@ -404,6 +408,8 @@ impl ShellFrame {
             bookmark_title: None,
             print: None,
             skins: None,
+            page_grid: None,
+            page_properties: Vec::new(),
             page_setup: Default::default(),
             unsaved: None,
             recover: None,

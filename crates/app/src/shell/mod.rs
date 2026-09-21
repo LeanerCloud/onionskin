@@ -45,6 +45,7 @@ mod home;
 mod initial_view;
 mod inline_text;
 pub mod input;
+mod organize;
 mod panes;
 mod preferences_dialog;
 mod share;
