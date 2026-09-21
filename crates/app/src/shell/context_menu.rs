@@ -36,7 +36,7 @@ pub(in crate::shell) enum CanvasContextCommand {
     AddBookmark,
     RotateClockwise,
     Print,
-    PageCommands,
+    RotatePage,
 }
 
 impl CanvasContextCommand {
@@ -54,7 +54,7 @@ impl CanvasContextCommand {
         Self::AddBookmark,
         Self::RotateClockwise,
         Self::Print,
-        Self::PageCommands,
+        Self::RotatePage,
     ];
 
     pub(in crate::shell) fn label(self) -> &'static str {
@@ -71,7 +71,7 @@ impl CanvasContextCommand {
             Self::AddBookmark => "Add Bookmark",
             Self::RotateClockwise => "Rotate Clockwise",
             Self::Print => "Print",
-            Self::PageCommands => "Page Commands",
+            Self::RotatePage => "Rotate Page",
         }
     }
 
@@ -81,6 +81,13 @@ impl CanvasContextCommand {
     /// live with no change here.
     pub(in crate::shell) fn capability(self) -> Option<ToolCapability> {
         self.requirement().capability()
+    }
+
+    /// The registered command this entry runs, for the entries that are a
+    /// command rather than a tool: the id its availability asked about, so the
+    /// entry runs exactly what made it live.
+    pub(in crate::shell) fn command_id(self) -> Option<&'static str> {
+        self.requirement().command_id()
     }
 
     fn requirement(self) -> Requirement {
@@ -110,8 +117,10 @@ impl CanvasContextCommand {
                 id: command_ids::PRINT,
                 reason: "Available with printing",
             },
-            Self::PageCommands => Requirement::Command {
-                id: command_ids::PAGE_COMMANDS,
+            // The page itself, where Rotate Clockwise above turns the view:
+            // this one writes `/Rotate` and is saved with the document.
+            Self::RotatePage => Requirement::Command {
+                id: command_ids::ROTATE_PAGE_CLOCKWISE,
                 reason: "Available with page organization",
             },
             Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
@@ -128,15 +137,24 @@ pub(in crate::shell) struct CanvasContextEntry {
     pub(in crate::shell) availability: MenuAvailability,
 }
 
+/// Why the open document refuses what an entry would do, from `core`'s
+/// protection queries. Default is a document that refuses nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::shell) struct Refusals {
+    pub(in crate::shell) edit: Option<&'static str>,
+    pub(in crate::shell) read_out: Option<&'static str>,
+}
+
 pub(in crate::shell) fn canvas_context_entries(
     registry: &PluginRegistry,
     has_text_selection: bool,
-    edit_refusal: Option<&'static str>,
+    refusals: Refusals,
 ) -> Vec<CanvasContextEntry> {
     let session = Session {
         registry,
         has_text_selection,
-        edit_refusal,
+        edit_refusal: refusals.edit,
+        read_out_refusal: refusals.read_out,
     };
     CanvasContextCommand::ALL
         .into_iter()
@@ -153,7 +171,7 @@ mod tests {
     use super::*;
 
     fn live(registry: &PluginRegistry, has_text_selection: bool) -> Vec<CanvasContextCommand> {
-        canvas_context_entries(registry, has_text_selection, None)
+        canvas_context_entries(registry, has_text_selection, Refusals::default())
             .into_iter()
             .filter(|entry| entry.availability.is_enabled())
             .map(|entry| entry.command)
@@ -165,7 +183,7 @@ mod tests {
     /// missing: absence reads as "Onionskin does not have this".
     #[test]
     fn every_named_entry_is_present_and_every_disabled_one_says_why() {
-        let entries = canvas_context_entries(&crate::build_registry(), false, None);
+        let entries = canvas_context_entries(&crate::build_registry(), false, Refusals::default());
 
         // Pinned to the count in the row itself, not to `ALL`, which would
         // agree with itself while quietly dropping an entry.
@@ -247,7 +265,7 @@ mod tests {
     #[test]
     fn print_and_add_bookmark_go_live_when_their_command_is_registered() {
         let mut registry = PluginRegistry::new();
-        let before = canvas_context_entries(&registry, true, None);
+        let before = canvas_context_entries(&registry, true, Refusals::default());
         for command in [
             CanvasContextCommand::Print,
             CanvasContextCommand::AddBookmark,
@@ -272,13 +290,14 @@ mod tests {
                         id,
                         title: id,
                         keybind: None,
+                        effect: onionskin_plugin_api::CommandEffect::Reads,
                         run: Box::new(|_| Ok(())),
                     })
                     .collect()
             }
         }
         registry.register_commands(&Stub);
-        let after = canvas_context_entries(&registry, true, None);
+        let after = canvas_context_entries(&registry, true, Refusals::default());
         for command in [
             CanvasContextCommand::Print,
             CanvasContextCommand::AddBookmark,
@@ -302,11 +321,18 @@ mod tests {
     fn a_document_that_may_not_be_edited_disables_exactly_the_entries_that_edit() {
         let registry = crate::build_registry();
         let refusal = "Encrypted document: editing arrives in M6";
-        let open = canvas_context_entries(&registry, true, None);
-        let locked = canvas_context_entries(&registry, true, Some(refusal));
+        let open = canvas_context_entries(&registry, true, Refusals::default());
+        let locked = canvas_context_entries(
+            &registry,
+            true,
+            Refusals {
+                edit: Some(refusal),
+                read_out: None,
+            },
+        );
 
         for (free, gated) in open.iter().zip(&locked) {
-            if free.command.requirement().edits() {
+            if free.command.requirement().edits(&registry) {
                 assert_eq!(
                     gated.availability.reason(),
                     Some(refusal),
@@ -323,14 +349,15 @@ mod tests {
             }
         }
         assert!(
-            open.iter().any(|entry| entry.command.requirement().edits()),
+            open.iter()
+                .any(|entry| entry.command.requirement().edits(&registry)),
             "the menu has to contain an editing entry, or this proves nothing"
         );
     }
 
     #[test]
     fn future_editing_entries_name_their_m5_milestone() {
-        let entries = canvas_context_entries(&crate::build_registry(), true, None);
+        let entries = canvas_context_entries(&crate::build_registry(), true, Refusals::default());
         let reason = |command| {
             entries
                 .iter()

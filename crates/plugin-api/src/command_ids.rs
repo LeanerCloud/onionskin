@@ -15,5 +15,11 @@ pub const EXPORT_SELECTION: &str = "file.export-selection";
 pub const ADD_BOOKMARK: &str = "document.add-bookmark";
 /// File > Print. P15 to P17.
 pub const PRINT: &str = "file.print";
-/// The page-organization commands. P11.
-pub const PAGE_COMMANDS: &str = "organize.page-commands";
+/// Page organization, P11: each acts on the page the viewport is on.
+pub const ROTATE_PAGE_CLOCKWISE: &str = "organize.rotate-page-clockwise";
+pub const ROTATE_PAGE_COUNTERCLOCKWISE: &str = "organize.rotate-page-counterclockwise";
+pub const DELETE_PAGE: &str = "organize.delete-page";
+pub const INSERT_BLANK_PAGE: &str = "organize.insert-blank-page";
+pub const MOVE_PAGE_EARLIER: &str = "organize.move-page-earlier";
+pub const MOVE_PAGE_LATER: &str = "organize.move-page-later";
+pub const RESET_PAGE_NUMBERING: &str = "organize.reset-page-numbering";

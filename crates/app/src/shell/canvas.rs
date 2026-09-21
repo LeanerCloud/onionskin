@@ -523,6 +523,17 @@ impl CanvasModel {
         self.document.edit_refusal().map(|refusal| refusal.reason())
     }
 
+    /// Both of the document's refusals, as the context menu asks for them.
+    pub(super) fn refusals(&self) -> super::context_menu::Refusals {
+        super::context_menu::Refusals {
+            edit: self.edit_refusal(),
+            read_out: self
+                .document
+                .read_out_refusal()
+                .map(|refusal| refusal.reason()),
+        }
+    }
+
     /// What to tell the user about this document when it opens, if anything.
     pub fn protection_notice(&self) -> Option<String> {
         self.document.protection_notice()

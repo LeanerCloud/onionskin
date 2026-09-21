@@ -12,7 +12,8 @@
 //! plugin is missing instead of showing an entry that would do nothing.
 
 use onionskin_plugin_api::{
-    Command, CommandCtx, CommandError, CommandPlugin, PluginManifest, PluginRegistry, TextSelection,
+    Command, CommandCtx, CommandEffect, CommandError, CommandPlugin, PluginManifest,
+    PluginRegistry, TextSelection,
 };
 
 pub const SELECT_ALL: &str = "edit.select-all";
@@ -41,12 +42,14 @@ impl CommandPlugin for CoreCommandsPlugin {
                 id: SELECT_ALL,
                 title: "Select All",
                 keybind: Some("cmd-a"),
+                effect: CommandEffect::Reads,
                 run: Box::new(select_all),
             },
             Command {
                 id: DESELECT_ALL,
                 title: "Deselect All",
                 keybind: Some("cmd-shift-a"),
+                effect: CommandEffect::Reads,
                 run: Box::new(deselect_all),
             },
         ]

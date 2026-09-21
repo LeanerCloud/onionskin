@@ -112,7 +112,7 @@ impl ShellFrame {
                 self.run_view_action(ViewAction::RotateClockwise, cx)
             }
             // Spelled out rather than left to a wildcard: every remaining
-            // entry activates a tool, and an entry added without a decision
+            // entry runs its registered command or activates a tool, and an entry added without a decision
             // here has to be a compile error rather than a silent tool
             // lookup that finds nothing and returns.
             other @ (CanvasContextCommand::CopyWithFormatting
@@ -125,7 +125,10 @@ impl ShellFrame {
             | CanvasContextCommand::TakeASnapshot
             | CanvasContextCommand::AddBookmark
             | CanvasContextCommand::Print
-            | CanvasContextCommand::PageCommands) => {
+            | CanvasContextCommand::RotatePage) => {
+                if let Some(id) = other.command_id() {
+                    return self.run_registry_command(id, cx);
+                }
                 let Some(index) = other
                     .capability()
                     .and_then(|capability| tool_with(canvas.read(cx).model.registry(), capability))
@@ -146,7 +149,7 @@ impl ShellFrame {
                 canvas_context_entries(
                     model.registry(),
                     model.selection_text().is_some_and(|text| !text.is_empty()),
-                    model.edit_refusal(),
+                    model.refusals(),
                 )
             })
             .unwrap_or_default()

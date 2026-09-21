@@ -14,7 +14,7 @@
 //!   with the document's own reason, through this same query, rather than
 //!   through a second flag someone could forget to consult.
 
-use crate::{PluginRegistry, ToolCapability};
+use crate::{CommandEffect, PluginRegistry, ToolCapability};
 
 /// Whether an entry is live, and if not, what to tell the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,10 @@ pub struct Session<'a> {
     /// `core`'s protection query, which derives it from the document; the shell
     /// never sets it by hand.
     pub edit_refusal: Option<&'static str>,
+    /// Why the open document's objects may not be copied into another file,
+    /// or `None` when they may: the encrypted-source rule, for a command whose
+    /// input is this session. Set from the same `core` query.
+    pub read_out_refusal: Option<&'static str>,
 }
 
 impl Requirement {
@@ -83,7 +87,7 @@ impl Requirement {
     /// "this document is encrypted" is the true answer even when the tool is
     /// also missing.
     pub fn availability(self, session: &Session<'_>) -> Availability {
-        if let (Some(refusal), true) = (session.edit_refusal, self.edits()) {
+        if let (Some(refusal), true) = (session.edit_refusal, self.edits(session.registry)) {
             return Availability::Disabled(refusal);
         }
         match self {
@@ -94,23 +98,43 @@ impl Requirement {
             Requirement::Tool(capability, reason) => {
                 Availability::when(tool_with(session.registry, capability).is_some(), reason)
             }
-            Requirement::Command { id, reason } => Availability::when(
-                session
+            Requirement::Command { id, reason } => {
+                let Some(command) = session
                     .registry
                     .commands()
                     .iter()
-                    .any(|command| command.id == id),
-                reason,
-            ),
+                    .find(|command| command.id == id)
+                else {
+                    return Availability::Disabled(reason);
+                };
+                match (command.effect, session.read_out_refusal) {
+                    (CommandEffect::ReadsOut, Some(refusal)) => Availability::Disabled(refusal),
+                    _ => Availability::Enabled,
+                }
+            }
             Requirement::Milestone(reason) => Availability::Disabled(reason),
         }
     }
 
-    /// Whether meeting this requirement leads to an edit of the document.
-    pub fn edits(self) -> bool {
+    /// Whether meeting this requirement leads to an edit of the document: a
+    /// tool whose capability edits, or a registered command that declares
+    /// [`CommandEffect::Edits`].
+    pub fn edits(self, registry: &PluginRegistry) -> bool {
         match self {
             Requirement::Tool(capability, _) => capability.edits_document(),
+            Requirement::Command { id, .. } => registry
+                .commands()
+                .iter()
+                .any(|command| command.id == id && command.effect == CommandEffect::Edits),
             _ => false,
+        }
+    }
+
+    /// The command this entry runs, for an entry that is a registered command.
+    pub fn command_id(self) -> Option<&'static str> {
+        match self {
+            Requirement::Command { id, .. } => Some(id),
+            _ => None,
         }
     }
 
@@ -130,4 +154,95 @@ pub fn tool_with(registry: &PluginRegistry, capability: ToolCapability) -> Optio
     registry
         .tools()
         .position(|tool| tool.capabilities().contains(&capability))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Command, CommandPlugin};
+
+    struct OneOfEach;
+
+    impl CommandPlugin for OneOfEach {
+        fn commands(&self) -> Vec<Command> {
+            [
+                ("test.reads", CommandEffect::Reads),
+                ("test.edits", CommandEffect::Edits),
+                ("test.reads-out", CommandEffect::ReadsOut),
+            ]
+            .into_iter()
+            .map(|(id, effect)| Command {
+                id,
+                title: id,
+                keybind: None,
+                effect,
+                run: Box::new(|_| Ok(())),
+            })
+            .collect()
+        }
+    }
+
+    fn registry() -> PluginRegistry {
+        let mut registry = PluginRegistry::default();
+        registry.register_commands(&OneOfEach);
+        registry
+    }
+
+    fn command(id: &'static str) -> Requirement {
+        Requirement::Command {
+            id,
+            reason: "missing",
+        }
+    }
+
+    fn availability(
+        registry: &PluginRegistry,
+        id: &'static str,
+        edit: Option<&'static str>,
+        read_out: Option<&'static str>,
+    ) -> Availability {
+        command(id).availability(&Session {
+            registry,
+            has_text_selection: false,
+            edit_refusal: edit,
+            read_out_refusal: read_out,
+        })
+    }
+
+    /// Each refusal disables exactly the commands with that effect: an
+    /// encrypted document refuses both, and each with its own reason.
+    #[test]
+    fn a_refusal_disables_exactly_the_commands_whose_effect_it_refuses() {
+        let registry = registry();
+        let cases = [
+            (None, None, ["enabled", "enabled", "enabled"]),
+            (Some("no edit"), None, ["enabled", "no edit", "enabled"]),
+            (None, Some("no copy"), ["enabled", "enabled", "no copy"]),
+            (
+                Some("no edit"),
+                Some("no copy"),
+                ["enabled", "no edit", "no copy"],
+            ),
+        ];
+        for (edit, read_out, expected) in cases {
+            let got: Vec<&str> = ["test.reads", "test.edits", "test.reads-out"]
+                .into_iter()
+                .map(|id| {
+                    availability(&registry, id, edit, read_out)
+                        .reason()
+                        .unwrap_or("enabled")
+                })
+                .collect();
+            assert_eq!(got, expected, "edit {edit:?}, read-out {read_out:?}");
+        }
+    }
+
+    #[test]
+    fn a_command_nobody_registered_reports_its_own_reason() {
+        let registry = registry();
+        assert_eq!(
+            availability(&registry, "test.absent", Some("no edit"), Some("no copy")),
+            Availability::Disabled("missing")
+        );
+    }
 }

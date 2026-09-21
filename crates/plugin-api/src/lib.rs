@@ -196,12 +196,19 @@ pub enum CommandError {
         page: PageIndex,
         source: onionskin_core::Error,
     },
+    /// The edit the command is named for was refused or failed, and nothing
+    /// was changed: `label` is the undo label it would have had.
+    Edit {
+        label: &'static str,
+        source: onionskin_core::Error,
+    },
 }
 
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Page { page, source } => write!(f, "page {}: {source}", page + 1),
+            Self::Edit { label, source } => write!(f, "{label}: {source}"),
         }
     }
 }
@@ -209,13 +216,30 @@ impl std::fmt::Display for CommandError {
 impl std::error::Error for CommandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Page { source, .. } => Some(source),
+            Self::Page { source, .. } | Self::Edit { source, .. } => Some(source),
         }
     }
 }
 
 /// What a command does when it is run.
 pub type CommandBody = Box<dyn Fn(&mut CommandCtx) -> Result<(), CommandError> + Send>;
+
+/// What running a command does to, or with, the open document.
+///
+/// Declared once per command, like a tool's [`ToolCapability`], so a document
+/// that refuses something disables every command that would do it through the
+/// one requirement query - rather than through a list in the shell of which
+/// commands happen to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandEffect {
+    /// Changes nothing in the document: a selection, a view.
+    Reads,
+    /// Changes the document, so it is refused where editing is.
+    Edits,
+    /// Copies the document's objects out into another file, so it is refused
+    /// where the encrypted-source rule refuses reading out.
+    ReadsOut,
+}
 
 /// A named, keybindable command. `id` is namespaced like "pages.rotate".
 pub struct Command {
@@ -224,6 +248,7 @@ pub struct Command {
     /// Default keybinding in GPUI keystroke syntax, e.g. "cmd-shift-r"
     /// ("cmd" is mapped to ctrl on Linux and Windows by the app shell).
     pub keybind: Option<&'static str>,
+    pub effect: CommandEffect,
     pub run: CommandBody,
 }
 

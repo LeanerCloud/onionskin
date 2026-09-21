@@ -912,12 +912,14 @@ mod tests {
                     id: "pages.rotate",
                     title: "Rotate Clockwise",
                     keybind: None,
+                    effect: onionskin_plugin_api::CommandEffect::Reads,
                     run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
                 Command {
                     id: "document.properties",
                     title: "Document Properties",
                     keybind: None,
+                    effect: onionskin_plugin_api::CommandEffect::Reads,
                     run: Box::new(|_: &mut CommandCtx| Ok(())),
                 },
             ]
