@@ -24,6 +24,7 @@ pub use onionskin_core::{
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
 
 pub mod codec;
+pub mod contract;
 pub mod registry;
 
 /// A pointer event, already transformed out of window space into the page

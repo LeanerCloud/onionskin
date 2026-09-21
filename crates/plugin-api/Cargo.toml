@@ -7,3 +7,4 @@ publish.workspace = true
 
 [dependencies]
 onionskin-core.workspace = true
+onionskin-cos.workspace = true
