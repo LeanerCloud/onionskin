@@ -53,6 +53,7 @@ impl Fixture {
             at: PagePoint { page: 0, x, y },
             pressure: 1.0,
             modifiers: Modifiers::default(),
+            clicks: 1,
         };
         tool.on_pointer_down(&mut ctx, input);
         tool.on_pointer_up(&mut ctx, input);

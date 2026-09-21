@@ -133,6 +133,16 @@ pub(super) enum ViewAction {
     SetShowCover(bool),
 }
 
+/// A comment a text tool has just placed, and where it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextTarget {
+    pub annotation: ObjRef,
+    pub page: PageIndex,
+    pub rect: onionskin_core::Rect,
+    /// A pop-up beside it, for a note; the comment's own box, for free text.
+    pub popup: bool,
+}
+
 #[derive(Debug)]
 pub enum CanvasError {
     EmptyDocument,
@@ -392,7 +402,7 @@ struct RenderSignature {
     zoom_bits: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ToolPointerPhase {
     Down,
     Move,
@@ -450,6 +460,10 @@ pub struct CanvasModel {
     /// checked against it every frame, so none of those has to remember to
     /// say the page changed.
     pixels_epoch: u64,
+    /// The click count the next press carries; see [`Self::set_click_count`].
+    click_count: u8,
+    /// The comment a text tool just placed, waiting to be written in.
+    text_target: Option<TextTarget>,
     /// Thumbnails answered and not yet collected. The pane takes them,
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
@@ -520,6 +534,8 @@ impl CanvasModel {
             pending_thumbnails: BTreeMap::new(),
             thumbnail_epoch: 0,
             pixels_epoch: 0,
+            click_count: 1,
+            text_target: None,
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
         })
@@ -1430,12 +1446,19 @@ impl CanvasModel {
             return Ok(true);
         }
 
-        let Some(input) = self.map_pointer(at, pressure, modifiers)? else {
+        let Some(mut input) = self.map_pointer(at, pressure, modifiers)? else {
             return Ok(false);
         };
+        input.clicks = std::mem::replace(&mut self.click_count, 1).max(1);
         self.input.begin_tool();
         self.dispatch_tool(ToolPointerPhase::Down, input);
         Ok(true)
+    }
+
+    /// The platform's click count for the press about to be reported, which
+    /// is how a double click reaches a tool.
+    pub fn set_click_count(&mut self, clicks: usize) {
+        self.click_count = u8::try_from(clicks).unwrap_or(u8::MAX);
     }
 
     pub fn pointer_move(
@@ -2108,7 +2131,120 @@ impl CanvasModel {
         let index = self
             .active_tool
             .expect("tool dispatch requires an active tool");
-        let document = &mut self.document;
+        // A tool that places something to write in: note what was on the page
+        // before the release, so what the release added can be found and a
+        // text field opened on it.
+        let takes_text = phase == ToolPointerPhase::Up
+            && self
+                .registry
+                .tool(index)
+                .is_some_and(|tool| tool.takes_text());
+        let before = if takes_text {
+            self.document.document_mut().annotations().ok()
+        } else {
+            None
+        };
+        self.dispatch_tool_inner(phase, input, index);
+        if let Some(before) = before {
+            self.text_target = self.newly_placed(&before);
+        }
+    }
+
+    /// What a text tool's release just placed: the comment to write in. A
+    /// Replace Text writes a strike-out and a note answering it, and the note
+    /// is where the replacement is typed, so a note or free text is preferred
+    /// over the markup that came with it.
+    fn newly_placed(&mut self, before: &[onionskin_core::ReadAnnotation]) -> Option<TextTarget> {
+        let after = self.document.document_mut().annotations().ok()?;
+        let fresh: Vec<_> = after
+            .into_iter()
+            .filter(|annotation| !before.iter().any(|old| old.objref == annotation.objref))
+            .collect();
+        let chosen = fresh
+            .iter()
+            .find(|annotation| {
+                matches!(
+                    annotation.subtype,
+                    Some(onionskin_core::Subtype::Text | onionskin_core::Subtype::FreeText)
+                )
+            })
+            .or_else(|| fresh.first())?;
+        Some(TextTarget {
+            annotation: chosen.objref,
+            page: chosen.page,
+            rect: chosen.rect,
+            popup: chosen.subtype != Some(onionskin_core::Subtype::FreeText),
+        })
+    }
+
+    /// The comment a text tool just placed, waiting for its text, if any.
+    pub fn text_target(&self) -> Option<TextTarget> {
+        self.text_target
+    }
+
+    /// Where the text field for [`Self::text_target`] goes, in canvas
+    /// coordinates: over a free text's own box, or as a pop-up beside a note,
+    /// where Acrobat opens its pop-up note.
+    pub fn text_target_rect(&self) -> Option<(ViewPoint, f32, f32)> {
+        let target = self.text_target?;
+        let corner = |x: f64, y: f64| {
+            self.map_point(PagePoint {
+                page: target.page,
+                x,
+                y,
+            })
+        };
+        let top_left = corner(target.rect.x0, target.rect.y1)?;
+        let bottom_right = corner(target.rect.x1, target.rect.y0)?;
+        let (left, right) = (
+            top_left.x.min(bottom_right.x),
+            top_left.x.max(bottom_right.x),
+        );
+        let (top, bottom) = (
+            top_left.y.min(bottom_right.y),
+            top_left.y.max(bottom_right.y),
+        );
+        if target.popup {
+            Some((
+                ViewPoint {
+                    x: right + 8.0,
+                    y: top,
+                },
+                260.0,
+                32.0,
+            ))
+        } else {
+            Some((
+                ViewPoint { x: left, y: top },
+                (right - left).max(160.0),
+                (bottom - top).max(28.0),
+            ))
+        }
+    }
+
+    /// Write `text` into the waiting comment, as one undoable step, and stop
+    /// waiting. Nothing is written for an empty text: the comment stays as
+    /// placed, which Undo can take away.
+    pub fn finish_text(&mut self, text: &str) -> Result<bool, CanvasError> {
+        let Some(target) = self.text_target.take() else {
+            return Ok(false);
+        };
+        if text.trim().is_empty() {
+            return Ok(false);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64);
+        self.document
+            .document_mut()
+            .edit_document("Edit Comment Text", |tx| {
+                onionskin_core::review::set_contents(tx, target.annotation, text, now)
+            })?;
+        Ok(true)
+    }
+
+    fn dispatch_tool_inner(&mut self, phase: ToolPointerPhase, input: PointerInput, index: usize) {
+        let document = self.document.document_mut();
         let viewport = &mut self.viewport;
         let tool = self
             .registry
@@ -3125,7 +3261,7 @@ mod tests {
             .expect("the polygon tool is installed");
         model.activate_tool(polygon).expect("activates");
         let (_, hint) = model.active_tool_help().expect("a tool is active");
-        assert!(hint.expect("a hint").contains("Enter"));
+        assert!(hint.expect("a hint").contains("Double-click"));
 
         let centre = page_center(&model);
         let click = |model: &mut CanvasModel, dx: f32, dy: f32| {

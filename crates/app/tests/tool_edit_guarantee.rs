@@ -107,6 +107,7 @@ fn highlight_once(file: &mut DocumentFile) {
         at,
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     };
     let mut ctx = ToolCtx {
         doc: document,

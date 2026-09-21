@@ -326,3 +326,79 @@ fn the_first_bookmark_is_made_from_the_panes_own_button(cx: &mut TestAppContext)
         })
         .unwrap();
 }
+
+/// Acrobat types a comment where it is: "Click where you want to place the
+/// note. Type text in the pop-up note." Placing a sticky note or a text box
+/// opens a focused field on it, and what is typed becomes the comment's
+/// text, drawn into a text box's appearance.
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn placing_a_text_comment_opens_a_field_and_the_typed_text_is_its_text(cx: &mut TestAppContext) {
+    for tool_id in ["sticky-note", "text-box"] {
+        let (_dir, path) = seed_copy("hello.pdf");
+        let window = window_on(&path, cx);
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame.tabs.active().expect("a tab").canvas.clone();
+                canvas.update(cx, |canvas, _| {
+                    let index = canvas
+                        .model
+                        .registry()
+                        .tools()
+                        .position(|tool| tool.id() == tool_id)
+                        .expect("installed");
+                    canvas.model.activate_tool(index).expect("activates");
+                    let page = canvas.model.viewport().visible_pages().unwrap()[0].rect;
+                    let at = gpui::point(
+                        px(page.origin.x + page.size.width / 3.0),
+                        px(page.origin.y + page.size.height / 3.0),
+                    );
+                    canvas
+                        .model
+                        .pointer_down(at, 1.0, gpui::Modifiers::default())
+                        .unwrap();
+                    canvas
+                        .model
+                        .pointer_up(at, 1.0, gpui::Modifiers::default())
+                        .unwrap();
+                    assert!(
+                        canvas.model.text_target().is_some(),
+                        "{tool_id}: the placed comment waits for its text"
+                    );
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, window, cx| {
+                let canvas = frame.tabs.active().expect("a tab").canvas.clone();
+                canvas.update(cx, |canvas, cx| {
+                    canvas.sync_inline_text(window, cx);
+                    let input = canvas
+                        .inline
+                        .as_ref()
+                        .expect("the field is open")
+                        .input
+                        .clone();
+                    assert!(
+                        input.read(cx).focus_handle(cx).is_focused(window),
+                        "{tool_id}: typing goes straight into it"
+                    );
+                    input.update(cx, |input, cx| input.set_query("Check this figure", cx));
+                    canvas.finish_inline_text(cx);
+                    assert!(canvas.inline.is_none(), "Enter closed it");
+                    let annotations = canvas.model.document_mut().annotations().expect("reads");
+                    let placed = annotations
+                        .iter()
+                        .find(|annotation| annotation.in_reply_to.is_none())
+                        .expect("the comment");
+                    assert_eq!(
+                        placed.contents.as_deref(),
+                        Some("Check this figure"),
+                        "{tool_id}"
+                    );
+                });
+            })
+            .unwrap();
+    }
+}

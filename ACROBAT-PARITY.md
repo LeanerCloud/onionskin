@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 195 planned / 31 partial / 80 out-of-scope. 97 implemented.**
+**403 rows: 195 planned / 25 partial / 80 out-of-scope. 103 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -412,23 +412,23 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Sticky note | partial | M3 | Placed by a click at the icon's upper-left corner. Note text cannot be typed yet: tools have no key-input hook, and `/Contents` editing arrives with the comments pane (P20). Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Sticky note | implemented | M3 | Placed by a click at the icon's upper-left corner; a field opens beside it and Enter finishes. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
 | Highlight text | implemented | M3 | Quad points come from `content`'s glyph mapping, one quad per line run; appearance uses `/BM /Multiply`. Evidence: docs/evidence/m3-p8-text-markup.md. |
 | Underline text | implemented | M3 | Shares the markup tool's drag and rail slot. Evidence: docs/evidence/m3-p8-text-markup.md. |
 | Strikethrough text | implemented | M3 | Shares the markup tool's drag and rail slot. Evidence: docs/evidence/m3-p8-text-markup.md. |
-| Insert text at cursor (caret markup) | partial | M3 | The caret annotation is written; the inserted text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p8-text-markup.md. |
-| Replace text (strikeout plus replacement note) | partial | M3 | Strike-out and `/IRT`-linked reply commit as one transaction; the replacement text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p8-text-markup.md. |
-| Add text comment (typewriter) | partial | M3 | Creates the `/FreeText` with `/DA` and appearance from one style; text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
-| Text box | partial | M3 | Sized by the drag; `/DA` and appearance name the same font. Text cannot be typed until the comments pane (P20) edits `/Contents`, and wrapping is on explicit newlines only. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
-| Callout | partial | M3 | Drag runs from target to box; a three-point `/CL` leader is written and drawn. Text cannot be typed until the comments pane (P20) edits `/Contents`. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. |
+| Insert text at cursor (caret markup) | implemented | M3 | The caret annotation is written and a field opens for the inserted text. Evidence: docs/evidence/m3-p8-text-markup.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
+| Replace text (strikeout plus replacement note) | implemented | M3 | Strike-out and `/IRT`-linked reply commit as one transaction; a field opens for the replacement text. Evidence: docs/evidence/m3-p8-text-markup.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
+| Add text comment (typewriter) | implemented | M3 | Creates the `/FreeText` with `/DA` and appearance from one style; the text is typed in place and the appearance is redrawn from `/DA`. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
+| Text box | implemented | M3 | Sized by the drag; `/DA` and appearance name the same font. Text is typed in place, one line at a time; wrapping is on explicit newlines only. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
+| Callout | implemented | M3 | Drag runs from target to box; a three-point `/CL` leader is written and drawn, and the text is typed in place. Evidence: docs/evidence/m3-p9a-notes-and-free-text.md. Typed in place: docs/evidence/m3-typing-in-place.md. |
 | Draw freehand (ink) | implemented | M3 | Pressure sets per-segment width in the appearance; one stroke is one undo step. The Draw quick action has a tool. Evidence: docs/evidence/m3-p9b-ink.md. |
 | Erase ink | implemented | M3 | Splits strokes under the eraser and recomputes `/Rect`; an emptied annotation is removed. Evidence: docs/evidence/m3-p9b-ink.md. |
 | Line | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Arrow | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Rectangle | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Oval | implemented | M3 | Ellipse inscribed in the dragged rectangle. Evidence: docs/evidence/m3-p9c-shapes.md. |
-| Polygon | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
-| Connected lines (polyline) | implemented | M3 | Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Polygon | implemented | M3 | A double-click on the last corner, or a click on the first, finishes it. Evidence: docs/evidence/m3-p9c-shapes.md. |
+| Connected lines (polyline) | implemented | M3 | A double-click on the last point finishes it. Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Cloud | implemented | M3 | Cloud intensity is fixed at 1 until the properties inspector (row: Comment properties). Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Attach a file as a comment | implemented | M3 | Embeds the chosen file with a paperclip appearance; the file is chosen before the click. Listed in the Attachments pane after reopen. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Record an audio comment | out-of-scope | - | A sound annotation is rich media, which the plan's GUI parity bullet rules out because no crate could own a capture and playback stack. |

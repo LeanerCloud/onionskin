@@ -46,6 +46,7 @@ impl Fixture {
             at: PagePoint { page: 0, x, y },
             pressure: 1.0,
             modifiers: Modifiers::default(),
+            clicks: 1,
         };
         let mut ctx = self.ctx();
         tool.on_pointer_down(&mut ctx, input(from));
@@ -139,6 +140,7 @@ fn a_sticky_note_release_without_a_press_writes_nothing() {
         },
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     };
     let mut ctx = fixture.ctx();
     tool.on_pointer_up(&mut ctx, input);
@@ -328,6 +330,7 @@ fn a_gesture_on_no_page_writes_nothing() {
             },
             pressure: 1.0,
             modifiers: Modifiers::default(),
+            clicks: 1,
         };
         let mut ctx = fixture.ctx();
         tool.on_pointer_down(&mut ctx, off);
@@ -352,6 +355,7 @@ fn escape_mid_drag_writes_nothing_and_does_not_leak_into_the_next_gesture() {
         at: PagePoint { page: 0, x, y },
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     };
     {
         let mut ctx = fixture.ctx();
@@ -379,6 +383,7 @@ fn the_preview_shows_the_box_and_a_callouts_leader() {
         at: PagePoint { page: 0, x, y },
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     };
     {
         let mut ctx = fixture.ctx();

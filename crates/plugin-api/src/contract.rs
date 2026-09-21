@@ -176,6 +176,7 @@ fn gesture() -> [PointerInput; 3] {
         },
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     };
     [at(20.0, 20.0), at(60.0, 40.0), at(100.0, 60.0)]
 }

@@ -40,6 +40,11 @@ pub struct PointerInput {
     /// 0.0..=1.0; a mouse reports 1.0.
     pub pressure: f32,
     pub modifiers: Modifiers,
+    /// Which click of a run this press is: 1 for a single click, 2 for a
+    /// double click. What ends a shape built by clicking, the way Acrobat's
+    /// Polygon and Connected Lines end on a double click. 1 on a move or a
+    /// release.
+    pub clicks: u8,
 }
 
 /// Overlay primitives a tool asks the canvas to draw: selection ants,
@@ -186,6 +191,14 @@ pub trait ToolPlugin: Send {
     /// panel with the tool's name alone.
     fn hint(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Whether what this tool places is written in: a note, a text box, a
+    /// caret. The shell then opens a text field on the comment it just
+    /// placed, where Acrobat opens its pop-up note or puts the cursor in the
+    /// box, so the text is typed where the comment is.
+    fn takes_text(&self) -> bool {
+        false
     }
 
     /// Typed features this tool exposes to shared shell surfaces.

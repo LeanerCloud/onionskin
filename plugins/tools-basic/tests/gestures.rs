@@ -94,6 +94,7 @@ fn input(at: PagePoint, modifiers: Modifiers) -> PointerInput {
         at,
         pressure: 1.0,
         modifiers,
+        clicks: 1,
     }
 }
 

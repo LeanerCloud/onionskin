@@ -2093,6 +2093,7 @@ mod tests {
         cx.update(|cx| {
             crate::shell::chrome::install_search_keybindings(cx);
             crate::shell::find_bar::install_keybindings(cx);
+            crate::shell::inline_text::install_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);
@@ -2766,6 +2767,7 @@ mod tests {
                 at: expected,
                 pressure: 1.0,
                 modifiers: onionskin_core::Modifiers::default(),
+                clicks: 1,
             }]
         );
         assert_eq!(canvas.model.canvas_origin(), origin);

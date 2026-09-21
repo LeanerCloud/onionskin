@@ -282,7 +282,7 @@ impl ToolPlugin for ShapeTool {
             Shape::Line { .. } => "Drag from where the line starts to where it ends.",
             Shape::Boxed(_) => "Drag a rectangle to size the shape.",
             Shape::Vertices { .. } => {
-                "Click each corner in turn, then press Enter to finish. Escape abandons it."
+                "Click each corner in turn. Double-click the last one, or click the first again, to finish. Escape abandons it."
             }
         })
     }
@@ -304,6 +304,14 @@ impl ToolPlugin for ShapeTool {
             self.anchor = Some(input.at);
             self.at = Some(input.at);
             self.dragging = true;
+            return;
+        }
+        // A double click ends the shape at the last point, as Acrobat's
+        // Connected Lines and Polygon end ("To end lines, double-click the
+        // last point"). Its first click already placed that point.
+        if input.clicks >= 2 && !self.vertices.is_empty() {
+            self.at = None;
+            self.commit(ctx);
             return;
         }
         // A click on the first vertex closes the shape, which is how a polygon

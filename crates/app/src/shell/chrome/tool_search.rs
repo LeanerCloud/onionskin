@@ -281,7 +281,7 @@ impl SearchInput {
         Self::with_placeholder("global-search-input", "Search tools or document", theme, cx)
     }
 
-    pub(super) fn with_placeholder(
+    pub(in crate::shell) fn with_placeholder(
         element_id: &'static str,
         placeholder: impl Into<SharedString>,
         theme: ThemeTokens,
@@ -308,7 +308,7 @@ impl SearchInput {
         cx.notify();
     }
 
-    pub(super) fn query(&self) -> &str {
+    pub(in crate::shell) fn query(&self) -> &str {
         &self.buffer.content
     }
 

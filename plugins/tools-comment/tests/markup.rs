@@ -66,6 +66,7 @@ impl Fixture {
                 shift,
                 ..Modifiers::default()
             },
+            clicks: 1,
         };
         let mut ctx = self.ctx();
         tool.on_pointer_down(&mut ctx, input(from));

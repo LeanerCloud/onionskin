@@ -143,6 +143,7 @@ fn every_tool_survives_a_degenerate_document() {
                     },
                     pressure: 1.0,
                     modifiers: Modifiers::default(),
+                    clicks: 1,
                 };
                 tool.on_pointer_down(&mut ctx, input);
                 tool.on_pointer_move(&mut ctx, input);

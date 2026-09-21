@@ -43,6 +43,7 @@ mod find_bar;
 mod fixtures;
 mod home;
 mod initial_view;
+mod inline_text;
 pub mod input;
 mod panes;
 mod preferences_dialog;
@@ -269,6 +270,8 @@ pub struct Canvas {
     polling: bool,
     snapshot_generation: u64,
     theme: ThemeTokens,
+    /// The field a just-placed comment is typed into, while it is open.
+    inline: Option<inline_text::InlineText>,
 }
 
 impl Canvas {
@@ -278,6 +281,7 @@ impl Canvas {
             polling: false,
             snapshot_generation: 0,
             theme,
+            inline: None,
         }
     }
 
@@ -601,6 +605,10 @@ impl Canvas {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Pressing anywhere else on the canvas finishes the comment being
+        // typed, as clicking away from Acrobat's pop-up does.
+        self.finish_inline_text(cx);
+        self.model.set_click_count(event.click_count);
         let result = self
             .model
             .pointer_down(event.position, event.pressure, event.modifiers);
@@ -667,7 +675,9 @@ impl Canvas {
 }
 
 impl Render for Canvas {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_inline_text(window, cx);
+        let inline = self.render_inline_text(self.theme, cx);
         let prepare_entity = cx.entity();
         let exit_entity = cx.entity();
         let error_entity = cx.entity();
@@ -676,6 +686,7 @@ impl Render for Canvas {
         let mut root = div()
             .id("canvas")
             .size_full()
+            .relative()
             .overflow_hidden()
             .bg(self.theme.canvas)
             .on_mouse_down(
@@ -778,6 +789,9 @@ impl Render for Canvas {
                     .child(status),
             );
         }
+        if let Some(inline) = inline {
+            root = root.child(inline);
+        }
         root
     }
 }
@@ -823,6 +837,7 @@ where
         install_search_keybindings(cx);
         install_export_keybindings(cx);
         find_bar::install_keybindings(cx);
+        inline_text::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {

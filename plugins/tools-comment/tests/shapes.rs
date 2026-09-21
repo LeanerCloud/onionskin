@@ -127,6 +127,7 @@ fn at((x, y): (f64, f64)) -> PointerInput {
         at: PagePoint { page: 0, x, y },
         pressure: 1.0,
         modifiers: Modifiers::default(),
+        clicks: 1,
     }
 }
 
@@ -646,4 +647,27 @@ fn blank_page() -> Vec<u8> {
     out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
     out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
     out
+}
+
+/// Acrobat's way to end a vertex shape: "To end lines, double-click the last
+/// point." The double click's first half placed the point; the second ends
+/// the shape there, with no keyboard.
+#[test]
+fn a_double_click_ends_a_vertex_shape_at_the_last_point() {
+    let mut fixture = Fixture::blank();
+    let mut tool = ShapeTool::connected_lines();
+    let mut ctx = fixture.ctx();
+    for point in [(100.0, 700.0), (300.0, 700.0), (200.0, 560.0)] {
+        tool.on_pointer_down(&mut ctx, at(point));
+        tool.on_pointer_up(&mut ctx, at(point));
+    }
+    let mut second = at((200.0, 560.0));
+    second.clicks = 2;
+    tool.on_pointer_down(&mut ctx, second);
+    tool.on_pointer_up(&mut ctx, second);
+    assert_eq!(
+        numbers(fixture.only_annotation().get(b"Vertices")),
+        vec![100.0, 700.0, 300.0, 700.0, 200.0, 560.0],
+        "three points, the double-clicked one not repeated"
+    );
 }

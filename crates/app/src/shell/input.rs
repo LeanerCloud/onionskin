@@ -86,6 +86,7 @@ fn map_pointer_with(
             alt: modifiers.alt,
             ctrl_or_cmd: modifiers.control || modifiers.platform,
         },
+        clicks: 1,
     }))
 }
 

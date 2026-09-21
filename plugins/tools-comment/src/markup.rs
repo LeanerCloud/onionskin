@@ -275,10 +275,14 @@ impl ToolPlugin for MarkupTool {
         self.name
     }
 
+    fn takes_text(&self) -> bool {
+        matches!(self.writes, Writes::Caret | Writes::Replacement)
+    }
+
     fn hint(&self) -> Option<&'static str> {
         Some(match self.id {
-            "insert-text" => "Click in the text where words should go. Typing them arrives with the Comments pane.",
-            "replace-text" => "Drag across the text to replace. Typing the replacement arrives with the Comments pane.",
+            "insert-text" => "Click in the text where words should go, then type them in the pop-up. Enter finishes.",
+            "replace-text" => "Drag across the text to replace, then type the replacement in the pop-up. Enter finishes.",
             _ => "Drag across text on the page. Works only on real text, not on scanned images.",
         })
     }

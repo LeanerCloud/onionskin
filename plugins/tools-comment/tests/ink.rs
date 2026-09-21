@@ -77,6 +77,7 @@ fn at((x, y): (f64, f64), pressure: f32) -> PointerInput {
         at: PagePoint { page: 0, x, y },
         pressure,
         modifiers: Modifiers::default(),
+        clicks: 1,
     }
 }
 
