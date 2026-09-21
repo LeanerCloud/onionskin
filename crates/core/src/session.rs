@@ -857,13 +857,17 @@ impl Document {
                 }));
             }
         };
-        let page = match content::page(&self.cos, index) {
+        // The edited document, as `page_geometry` reads it, not the file on
+        // disk: after Insert Blank Page the base has one page fewer, and a
+        // page the edit added failed here with "the page tree reaches 2"
+        // (found by hand on macOS).
+        let page = match self
+            .structure()
+            .and_then(|structure| Ok(content::page(structure, index)?))
+        {
             Ok(page) => page,
             Err(error) => {
-                return Ok(Some(PageGeometryResponse::Failed {
-                    page: index,
-                    error: error.into(),
-                }));
+                return Ok(Some(PageGeometryResponse::Failed { page: index, error }));
             }
         };
         let geometry = PageGeometry::new(&page, rendered);

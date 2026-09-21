@@ -427,3 +427,35 @@ fn pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
     );
     out
 }
+
+/// Found by hand on macOS: after Insert Blank Page the canvas asked for the
+/// new last page's geometry and got "page 2 requested, the page tree reaches
+/// 2", because the answer's page boxes were read from the file on disk rather
+/// than the edited document. The canvas could then never scroll to it.
+#[test]
+fn geometry_is_answered_for_a_page_an_edit_added_and_for_a_turned_one() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("opens");
+    document
+        .edit_pages("Insert Blank Page", |tx, structure| {
+            onionskin_core::pages::insert_blank_pages(tx, structure, 2, 1, [0.0, 0.0, 300.0, 500.0])
+        })
+        .expect("inserts");
+    document
+        .edit_pages("Rotate", |tx, _| {
+            onionskin_core::pages::rotate_pages(tx, &[0], 1)
+        })
+        .expect("rotates");
+
+    assert!(document.request_page_geometry(2).expect("asks"));
+    let PageGeometryResponse::Ready(added) = collect_geometry(&mut document) else {
+        panic!("the added page has geometry");
+    };
+    assert_eq!(added.index, 2);
+    assert_eq!(added.media_box, [0.0, 0.0, 300.0, 500.0]);
+
+    assert!(document.request_page_geometry(0).expect("asks"));
+    let PageGeometryResponse::Ready(turned) = collect_geometry(&mut document) else {
+        panic!("the turned page has geometry");
+    };
+    assert_eq!(turned.rotate, 90, "the edited rotation, not the file's");
+}
