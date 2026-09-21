@@ -341,20 +341,36 @@ fn quick_action_entry(
             availability: QuickActionAvailability::Refused { reason },
         };
     }
-    let availability = registry
-        .tools()
-        .enumerate()
-        .find(|(_, tool)| tool.capabilities().contains(&action.capability()))
-        .map_or(
-            QuickActionAvailability::Disabled {
-                stage: action.unavailable_stage(),
-            },
-            |(tool_index, _)| QuickActionAvailability::Enabled { tool_index },
-        );
+    let availability = tool_for(registry, action.capability()).map_or(
+        QuickActionAvailability::Disabled {
+            stage: action.unavailable_stage(),
+        },
+        |tool_index| QuickActionAvailability::Enabled { tool_index },
+    );
     QuickActionEntry {
         action,
         availability,
     }
+}
+
+/// The tool a quick action picks: the first whose own purpose is the
+/// capability (it lists it first), else the first that lists it at all.
+///
+/// Highlight also lists Comment, because a highlight is a comment, but the
+/// Comment quick action is Acrobat's sticky note, not the highlighter that
+/// happens to be registered before it.
+fn tool_for(registry: &PluginRegistry, capability: ToolCapability) -> Option<usize> {
+    let listing = |primary_only: bool| {
+        registry.tools().position(|tool| {
+            let capabilities = tool.capabilities();
+            if primary_only {
+                capabilities.first() == Some(&capability)
+            } else {
+                capabilities.contains(&capability)
+            }
+        })
+    };
+    listing(true).or_else(|| listing(false))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -837,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_capabilities_enable_every_match_and_the_first_matching_tool_wins() {
+    fn multiple_capabilities_enable_every_match_and_a_tool_made_for_the_action_wins() {
         let mut registry = PluginRegistry::new();
         registry.register_tool(Box::new(CapabilityTool {
             id: "multi",
@@ -866,9 +882,46 @@ mod tests {
                 QuickAction::AddSignature,
             ]
         );
-        assert!(enabled
-            .iter()
-            .all(|entry| entry.availability.tool_index() == Some(0)));
+        let tool = |action| {
+            enabled
+                .iter()
+                .find(|entry| entry.action == action)
+                .and_then(|entry| entry.availability.tool_index())
+        };
+        assert_eq!(
+            tool(QuickAction::Select),
+            Some(0),
+            "multi is made for Select"
+        );
+        assert_eq!(
+            tool(QuickAction::Draw),
+            Some(1),
+            "later-draw is made for drawing; multi only also draws"
+        );
+        assert_eq!(tool(QuickAction::AddSignature), Some(0), "the only one");
+    }
+
+    /// Acrobat's Comment quick action places a sticky note, and Highlight
+    /// and Draw are the highlighter and the pencil, all live and carrying no
+    /// reason. Read from the registry the app builds, not from a list.
+    #[cfg(feature = "tools-comment")]
+    #[test]
+    fn comment_highlight_and_draw_are_live_on_the_tools_acrobat_uses() {
+        let registry = crate::build_registry();
+        let entries = QuickActionsState::default().entries(&registry, None);
+        let tool_id = |action| {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.action == action)
+                .expect("offered");
+            assert!(entry.availability.is_enabled(), "{action:?}");
+            assert_eq!(entry.availability.reason(), None, "{action:?}");
+            let index = entry.availability.tool_index().expect("a tool");
+            registry.tools().nth(index).expect("registered").id()
+        };
+        assert_eq!(tool_id(QuickAction::Comment), "sticky-note");
+        assert_eq!(tool_id(QuickAction::Highlight), "highlight");
+        assert_eq!(tool_id(QuickAction::Draw), "ink");
     }
 
     #[test]

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 192 planned / 27 partial / 80 out-of-scope. 104 implemented.**
+**403 rows: 192 planned / 26 partial / 80 out-of-scope. 105 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -162,7 +162,7 @@ M3 here; the plan's ruling B move to M4 is not yet applied.
 | Document tab context menu (Close, Close Others, Close All, Show Containing Folder, Copy Path) | implemented | M2 | All named entries are live. Counted once per the context-menu carve-out. Evidence: M2-SHELL. (judgment) |
 | All tools pane (left tool rail) | implemented | M2 | The registry-driven rail, compact icon rendering, and tool activation are live. Evidence: M2-SHELL and B3.8. |
 | "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
-| Quick action toolbar (floating over the page) | partial | M2 | Toolbar, dragging, customization, and Select are live; Comment, Highlight, Draw, Fill text fields, and Add Sign remain disabled until their owning milestones. Evidence: M2-SHELL. |
+| Quick action toolbar (floating over the page) | implemented | M2 | Toolbar, dragging, customization, Select, Comment (sticky note), Highlight and Draw are live; Fill text fields and Add Sign are disabled with their M5 reason. Evidence: M2-SHELL, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |
 | Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, fit controls, invalid-zoom display, and numeric page-field semantics are live. Evidence: M2-SHELL and B3.7. |
 | Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
