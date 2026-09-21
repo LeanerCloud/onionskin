@@ -40,6 +40,11 @@ impl DocumentFile {
         DocumentFile { document }
     }
 
+    /// The document, to ask it something without changing it.
+    pub fn document(&self) -> &Document {
+        &self.document
+    }
+
     /// What tools and commands are handed.
     pub fn document_mut(&mut self) -> &mut Document {
         &mut self.document

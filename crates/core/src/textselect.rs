@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 
 use onionskin_content::{Glyph, Mapping, PageText, TextRun};
 
-use crate::{PagePoint, PageQuad, TextSelection};
+use crate::{PagePoint, PageQuad, TextSelection, TextSpan};
 
 /// The selection between two points on one page, in the order the page drew
 /// its glyphs.
@@ -100,17 +100,48 @@ pub fn selection_for(
         runs.push(clip_run(&page.runs[run], first, last));
     }
 
+    let clipped = PageText {
+        page: page.page,
+        runs,
+        warnings: Vec::new(),
+    };
+    let (text, spans) = styled_text(&clipped);
     TextSelection {
         page: page.page,
         quads,
-        text: PageText {
-            page: page.page,
-            runs,
-            warnings: Vec::new(),
-        }
-        .flatten()
-        .text,
+        text,
+        spans,
     }
+}
+
+/// A page's flattened text, and the same text cut into spans of one face
+/// and size. A separator the join added belongs to the span before it, so
+/// the spans joined are exactly the text.
+pub fn styled_text(page: &PageText) -> (String, Vec<TextSpan>) {
+    let flattened = page.flatten();
+    let mut spans: Vec<TextSpan> = Vec::new();
+    let mut at = 0;
+    for (range, index) in flattened.pieces() {
+        let run = &page.runs[*index];
+        if range.start > at {
+            if let Some(last) = spans.last_mut() {
+                last.text.push_str(&flattened.text[at..range.start]);
+            }
+        }
+        let piece = &flattened.text[range.clone()];
+        match spans.last_mut() {
+            Some(last) if last.font == run.font_name && last.size == run.size => {
+                last.text.push_str(piece);
+            }
+            _ => spans.push(TextSpan {
+                text: piece.to_owned(),
+                font: run.font_name.clone(),
+                size: run.size,
+            }),
+        }
+        at = range.end;
+    }
+    (flattened.text, spans)
 }
 
 /// A copy of `run` holding only glyphs `first..=last` and the text they

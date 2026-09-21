@@ -83,7 +83,7 @@ pub use render::{
 };
 pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
-pub use selection::{Selection, TextSelection};
+pub use selection::{Selection, TextSelection, TextSpan};
 pub use session::{Document, Error, ExportSnapshot, PageGeometryResponse, Result, SnapshotRequest};
 pub use signatures::SignatureField;
 pub use structure::{

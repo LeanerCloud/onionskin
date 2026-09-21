@@ -94,6 +94,9 @@ fn select_all(ctx: &mut CommandCtx) -> Result<(), CommandError> {
         .doc
         .page_text(page)
         .map_err(|source| CommandError::Page { page, source })?;
+    // Flattened rather than joined here, so the rules that decide where a
+    // space or a line break goes stay in `content`.
+    let (flat, spans) = onionskin_core::textselect::styled_text(text);
     let selection = TextSelection {
         page: text.page,
         quads: text
@@ -101,9 +104,8 @@ fn select_all(ctx: &mut CommandCtx) -> Result<(), CommandError> {
             .iter()
             .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
             .collect(),
-        // Flattened rather than joined here, so the rules that decide where a
-        // space or a line break goes stay in `content`.
-        text: text.flatten().text,
+        text: flat,
+        spans,
     };
     ctx.doc.selection_mut().set_text(selection);
     Ok(())

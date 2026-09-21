@@ -76,6 +76,7 @@ fn the_edit_verbs_are_what_the_active_tool_answers(cx: &mut TestAppContext) {
                         page: 0,
                         quads: Vec::new(),
                         text: "Hello, world".into(),
+                        spans: Vec::new(),
                     });
             });
             let entries = edit_entries(frame, cx);

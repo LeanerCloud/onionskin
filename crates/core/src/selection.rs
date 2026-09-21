@@ -22,6 +22,19 @@ pub struct TextSelection {
     pub page: PageIndex,
     pub quads: Vec<PageQuad>,
     pub text: String,
+    /// `text` cut where the face or size changes, for a writer that keeps
+    /// formatting (Export Selection As RTF). Joined, the spans are `text`.
+    pub spans: Vec<TextSpan>,
+}
+
+/// A stretch of selected text in one face and size.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSpan {
+    pub text: String,
+    /// `/BaseFont`, subset prefix stripped.
+    pub font: String,
+    /// The `Tf` size, in text space units.
+    pub size: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -85,6 +98,7 @@ mod tests {
                 corners: [(0.0, 1.0), (1.0, 1.0), (0.0, 0.0), (1.0, 0.0)],
             }],
             text: "a".into(),
+            spans: Vec::new(),
         });
         assert!(selection.region().is_none());
         assert_eq!(selection.text_quads().len(), 1);

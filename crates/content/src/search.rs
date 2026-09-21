@@ -76,6 +76,13 @@ impl PageText {
 }
 
 impl Flattened {
+    /// `(range in the text, index into the page's runs)` for every run that
+    /// wrote text, in order. What lies between two pieces is a separator
+    /// the join added.
+    pub fn pieces(&self) -> &[(Range<usize>, usize)] {
+        &self.pieces
+    }
+
     /// Runs overlapping a byte range of [`Flattened::text`], each with that
     /// range expressed in the run's own text.
     pub fn runs_for<'a>(
