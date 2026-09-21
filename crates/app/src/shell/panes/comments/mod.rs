@@ -8,17 +8,18 @@
 //! is in `actions`; drawing and describing are in `view`.
 
 mod actions;
+mod commands;
 mod model;
 mod view;
 
-use gpui::Entity;
+use gpui::{Entity, Pixels, Point};
 use onionskin_core::ObjRef;
 
 use super::super::chrome::SearchInput;
 
 pub(in crate::shell) use self::actions::{install_keybindings, run, start_draft};
 pub(in crate::shell) use self::model::{CommentFilter, CommentSort, FilterField};
-pub(super) use self::view::{accessible, render};
+pub(super) use self::view::{accessible, render, Facts};
 
 /// The element id the draft field publishes.
 pub(in crate::shell) const DRAFT_ID: &str = "comment-draft";
@@ -49,6 +50,10 @@ pub(in crate::shell) enum CommentAction {
     ToggleMark,
     /// Delete the chosen comment with its replies.
     Delete,
+    /// Mark the chosen comment read, or unread again.
+    ToggleRead,
+    /// Choose `comment` and open the context menu on it at `at`.
+    OpenMenu { comment: ObjRef, at: Point<Pixels> },
 }
 
 /// What the field is writing.
@@ -83,6 +88,8 @@ pub(in crate::shell) struct CommentsState {
     pub(in crate::shell) filter: CommentFilter,
     pub(in crate::shell) selected: Option<ObjRef>,
     pub(in crate::shell) draft: Option<Draft>,
+    /// Where the context menu is open, on the chosen comment.
+    pub(in crate::shell) menu: Option<Point<Pixels>>,
 }
 
 impl CommentsState {
@@ -91,6 +98,7 @@ impl CommentsState {
     pub(in crate::shell) fn document_changed(&mut self) {
         self.selected = None;
         self.draft = None;
+        self.menu = None;
     }
 
     /// The draft field, for the frame's focus ring.

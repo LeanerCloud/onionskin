@@ -4,16 +4,18 @@
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    div, px, Context, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
 };
-use onionskin_core::review::REVIEW_STATES;
 use onionskin_core::ReadAnnotation;
 
 use super::super::super::chrome::accessible::{Activation, Element, TextField};
 use super::super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::{empty_message, error_message, list, PaneAction, ROW_HEIGHT};
 use super::actions::{CancelCommentDraft, SaveCommentDraft, DRAFT_KEY_CONTEXT};
+use super::commands::{
+    accessible_menu, activation, commands, draft_commands, render_menu, Command,
+};
 use super::model::{display_date, kind, listing, FilterField, Listing, Thread};
 use super::{CommentAction, CommentsState, DraftMode};
 use crate::a11y::State as A11yState;
@@ -24,19 +26,10 @@ const NOTHING_MATCHES: &str = "No comment matches the filters.";
 const NO_TEXT: &str = "(no text)";
 const REPLY_INDENT: f32 = 16.0;
 
-/// A control the pane shows: a label, whether it can be used now, and what
-/// it runs.
-type Command = (String, MenuAvailability, Activation);
-
-fn activation(action: CommentAction) -> Activation {
-    Activation::Pane(PaneAction::Comment(action))
-}
-
 /// The sort and filter controls above the list, each showing its value.
-fn toolbar(state: &CommentsState) -> Vec<Command> {
+fn toolbar(state: &CommentsState) -> Vec<(String, Activation)> {
     let mut controls = vec![(
         format!("Sort: {}", state.sort.label()),
-        MenuAvailability::Enabled,
         activation(CommentAction::CycleSort),
     )];
     controls.extend(FilterField::ALL.into_iter().map(|field| {
@@ -46,58 +39,44 @@ fn toolbar(state: &CommentsState) -> Vec<Command> {
                 field.label(),
                 state.filter.value(field).unwrap_or("All")
             ),
-            MenuAvailability::Enabled,
             activation(CommentAction::CycleFilter(field)),
         )
     }));
     controls
 }
 
-/// What can be done to the chosen comment. A document that may not be
-/// edited disables every one with its reason.
-fn commands(thread: &Thread, refusal: Option<&'static str>) -> Vec<Command> {
-    let availability = refusal.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled);
-    let mut listed = vec![
-        ("Reply".to_owned(), CommentAction::Reply),
-        ("Edit Text".to_owned(), CommentAction::Edit),
-    ];
-    listed.extend(REVIEW_STATES.into_iter().map(|status| {
-        let label = if status == "None" {
-            "Clear Status".to_owned()
-        } else {
-            status.to_owned()
-        };
-        (label, CommentAction::SetStatus(status))
-    }));
-    listed.push((
-        if thread.checked { "Uncheck" } else { "Check" }.to_owned(),
-        CommentAction::ToggleMark,
-    ));
-    listed.push(("Delete".to_owned(), CommentAction::Delete));
-    listed
-        .into_iter()
-        .map(|(label, action)| (label, availability, activation(action)))
-        .collect()
+/// What the pane is drawn from besides the comments themselves.
+pub(in crate::shell::panes) struct Facts<'a> {
+    pub(in crate::shell::panes) state: &'a CommentsState,
+    /// Why the document may not be edited, if it may not.
+    pub(in crate::shell::panes) refusal: Option<&'static str>,
+    /// Whether the user has read a comment, this session.
+    pub(in crate::shell::panes) is_read: &'a dyn Fn(&ReadAnnotation) -> bool,
 }
 
-fn draft_commands() -> Vec<Command> {
-    vec![
-        (
-            "Save".to_owned(),
-            MenuAvailability::Enabled,
-            activation(CommentAction::SaveDraft),
-        ),
-        (
-            "Cancel".to_owned(),
-            MenuAvailability::Enabled,
-            activation(CommentAction::CancelDraft),
-        ),
-    ]
+impl Facts<'_> {
+    fn commands(&self, thread: &Thread) -> Vec<Command> {
+        commands(thread, (self.is_read)(&thread.comment), self.refusal)
+    }
+
+    /// The chosen comment's thread, when it is listed.
+    fn chosen<'l>(&self, listed: &'l Listing) -> Option<&'l Thread> {
+        let chosen = self.state.selected?;
+        listed
+            .threads
+            .iter()
+            .find(|thread| thread.comment.objref == chosen)
+    }
 }
 
 /// The comment's first line in the list: what kind, by whom, and its status.
-fn heading(thread: &Thread) -> String {
-    let mut heading = kind(&thread.comment);
+fn heading(thread: &Thread, read: bool) -> String {
+    let mut heading = if read {
+        String::new()
+    } else {
+        "● ".to_owned()
+    };
+    heading.push_str(&kind(&thread.comment));
     if let Some(author) = &thread.comment.author {
         heading.push_str(" · ");
         heading.push_str(author);
@@ -140,11 +119,18 @@ fn current_listing(state: &CommentsState, annotations: &[ReadAnnotation]) -> Lis
     listing(annotations, state.sort, &state.filter)
 }
 
+fn empty_text(annotations: &[ReadAnnotation]) -> &'static str {
+    if annotations.is_empty() {
+        NO_COMMENTS
+    } else {
+        NOTHING_MATCHES
+    }
+}
+
 /// What the pane tells a screen reader.
 pub(in crate::shell::panes) fn accessible(
-    state: &CommentsState,
+    facts: &Facts<'_>,
     annotations: Result<&[ReadAnnotation], &String>,
-    refusal: Option<&'static str>,
     cx: &Context<ShellFrame>,
 ) -> Vec<Element> {
     let annotations = match annotations {
@@ -157,25 +143,31 @@ pub(in crate::shell::panes) fn accessible(
             )]
         }
     };
+    let controls = toolbar(facts.state)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (label, activation))| {
+            Element::new(("comment-control", index), Role::Button, label)
+                .with_activation(activation)
+        })
+        .collect();
     let mut described = vec![
-        Element::new("comment-toolbar", Role::Toolbar, "Sort and Filter")
-            .with_children(buttons("comment-control", toolbar(state))),
+        Element::new("comment-toolbar", Role::Toolbar, "Sort and Filter").with_children(controls),
     ];
-    let listed = current_listing(state, annotations);
+    let listed = current_listing(facts.state, annotations);
     if listed.threads.is_empty() && listed.orphans.is_empty() {
-        let message = if annotations.is_empty() {
-            NO_COMMENTS
-        } else {
-            NOTHING_MATCHES
-        };
-        described.push(Element::new("comment-rows-empty", Role::Label, message));
+        described.push(Element::new(
+            "comment-rows-empty",
+            Role::Label,
+            empty_text(annotations),
+        ));
         return described;
     }
     let rows = listed
         .threads
         .iter()
         .enumerate()
-        .map(|(index, thread)| describe_thread(state, index, thread, refusal, cx))
+        .map(|(index, thread)| describe_thread(facts, index, thread, cx))
         .chain(listed.orphans.iter().enumerate().map(|(index, orphan)| {
             Element::new(
                 ("comment-orphan", index),
@@ -186,17 +178,21 @@ pub(in crate::shell::panes) fn accessible(
         }))
         .collect();
     described.push(Element::new("comment-rows", Role::List, "Comments").with_children(rows));
+    if let (Some(_), Some(thread)) = (facts.state.menu, facts.chosen(&listed)) {
+        described.push(accessible_menu(facts.commands(thread)));
+    }
     described
 }
 
 fn describe_thread(
-    state: &CommentsState,
+    facts: &Facts<'_>,
     index: usize,
     thread: &Thread,
-    refusal: Option<&'static str>,
     cx: &Context<ShellFrame>,
 ) -> Element {
+    let state = facts.state;
     let selected = state.selected == Some(thread.comment.objref);
+    let read = (facts.is_read)(&thread.comment);
     let mut children: Vec<Element> = thread
         .replies
         .iter()
@@ -210,7 +206,7 @@ fn describe_thread(
         })
         .collect();
     if selected {
-        children.extend(buttons("comment-command", commands(thread, refusal)));
+        children.extend(buttons("comment-command", facts.commands(thread)));
         if let Some(draft) = state.draft.as_ref() {
             children.push(
                 draft
@@ -221,12 +217,17 @@ fn describe_thread(
             children.extend(buttons("comment-draft-command", draft_commands()));
         }
     }
+    let unread = if read { "" } else { "Unread. " };
     Element::new(
         ("comment-row", index),
         Role::ListItem,
         text(&thread.comment),
     )
-    .with_description(format!("{}. {}", heading(thread), place(&thread.comment)))
+    .with_description(format!(
+        "{unread}{}. {}",
+        heading(thread, true),
+        place(&thread.comment)
+    ))
     .with_state(A11yState::selected(selected))
     .with_activation(activation(CommentAction::Select(thread.comment.objref)))
     .with_children(children)
@@ -255,11 +256,11 @@ fn buttons(id: &'static str, commands: Vec<Command>) -> Vec<Element> {
         .collect()
 }
 
-/// The pane's body: the controls, then the list.
+/// The pane's body: the controls, then the list, then the context menu when
+/// one is open.
 pub(in crate::shell::panes) fn render(
-    state: &CommentsState,
+    facts: &Facts<'_>,
     annotations: Result<&[ReadAnnotation], &String>,
-    refusal: Option<&'static str>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> gpui::AnyElement {
@@ -267,23 +268,24 @@ pub(in crate::shell::panes) fn render(
         Ok(annotations) => annotations,
         Err(message) => return error_message(message, theme),
     };
-    let body = div().flex_1().min_h_0().flex().flex_col().child(
-        render_buttons("comment-control", toolbar(state), theme, cx)
+    let controls = toolbar(facts.state)
+        .into_iter()
+        .map(|(label, activation)| (label, MenuAvailability::Enabled, activation))
+        .collect();
+    let body = div().relative().flex_1().min_h_0().flex().flex_col().child(
+        render_buttons("comment-control", controls, theme, cx)
             .px_2()
             .pb_1(),
     );
-    let listed = current_listing(state, annotations);
+    let listed = current_listing(facts.state, annotations);
     if listed.threads.is_empty() && listed.orphans.is_empty() {
-        let message = if annotations.is_empty() {
-            NO_COMMENTS
-        } else {
-            NOTHING_MATCHES
-        };
-        return body.child(empty_message(message, theme)).into_any_element();
+        return body
+            .child(empty_message(empty_text(annotations), theme))
+            .into_any_element();
     }
     let mut rows = list("comment-rows");
     for (index, thread) in listed.threads.iter().enumerate() {
-        rows = rows.child(render_thread(state, index, thread, refusal, theme, cx));
+        rows = rows.child(render_thread(facts, index, thread, theme, cx));
     }
     for (index, orphan) in listed.orphans.iter().enumerate() {
         rows = rows.child(
@@ -299,19 +301,27 @@ pub(in crate::shell::panes) fn render(
                 )),
         );
     }
-    body.child(rows).into_any_element()
+    let menu = match (facts.state.menu, facts.chosen(&listed)) {
+        (Some(at), Some(thread)) => Some(render_menu(facts.commands(thread), at, theme, cx)),
+        _ => None,
+    };
+    body.child(rows)
+        .when_some(menu, |body, menu| body.child(menu))
+        .into_any_element()
 }
 
 fn render_thread(
-    state: &CommentsState,
+    facts: &Facts<'_>,
     index: usize,
     thread: &Thread,
-    refusal: Option<&'static str>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
-    let selected = state.selected == Some(thread.comment.objref);
-    let select = activation(CommentAction::Select(thread.comment.objref));
+    let state = facts.state;
+    let comment = thread.comment.objref;
+    let selected = state.selected == Some(comment);
+    let read = (facts.is_read)(&thread.comment);
+    let select = activation(CommentAction::Select(comment));
     let mut row = div()
         .id(("comment-row", index))
         .min_h(px(ROW_HEIGHT))
@@ -328,13 +338,31 @@ fn render_thread(
         .on_click(cx.listener(move |frame, _event, window, cx| {
             frame.run_activation(select.clone(), window, cx);
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |frame, event: &gpui::MouseDownEvent, _window, cx| {
+                frame.run_pane_action(
+                    PaneAction::Comment(CommentAction::OpenMenu {
+                        comment,
+                        at: event.position,
+                    }),
+                    cx,
+                );
+                cx.stop_propagation();
+            }),
+        )
         .child(
             div()
                 .text_xs()
                 .text_color(theme.secondary_text)
-                .child(heading(thread)),
+                .child(heading(thread, read)),
         )
-        .child(div().text_sm().child(text(&thread.comment)))
+        .child(
+            div()
+                .text_sm()
+                .when(!read, |text| text.font_weight(gpui::FontWeight::SEMIBOLD))
+                .child(text(&thread.comment)),
+        )
         .child(
             div()
                 .text_xs()
@@ -353,49 +381,60 @@ fn render_thread(
     if selected {
         row = row.child(render_buttons(
             "comment-command",
-            commands(thread, refusal),
+            facts.commands(thread),
             theme,
             cx,
         ));
         if let Some(draft) = state.draft.as_ref() {
-            row = row.child(
-                div()
-                    .key_context(DRAFT_KEY_CONTEXT)
-                    .on_action(cx.listener(|frame, _: &SaveCommentDraft, window, cx| {
-                        frame.run_activation(activation(CommentAction::SaveDraft), window, cx);
-                    }))
-                    .on_action(cx.listener(|frame, _: &CancelCommentDraft, window, cx| {
-                        frame.run_activation(activation(CommentAction::CancelDraft), window, cx);
-                    }))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .p_1()
-                            .rounded_sm()
-                            .bg(theme.raised)
-                            .border_1()
-                            .border_color(theme.selected)
-                            .child(draft.input.clone()),
-                    )
-                    .child(render_buttons(
-                        "comment-draft-command",
-                        draft_commands(),
-                        theme,
-                        cx,
-                    )),
-            );
+            row = row.child(render_draft(draft, theme, cx));
         }
     }
     row
 }
 
-/// A wrapping row of small buttons; a disabled one is greyed and says why on
-/// hover through its tooltip text in the tree.
-fn render_buttons(
+fn render_draft(
+    draft: &super::Draft,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    div()
+        .key_context(DRAFT_KEY_CONTEXT)
+        .on_action(cx.listener(|frame, _: &SaveCommentDraft, window, cx| {
+            frame.run_activation(activation(CommentAction::SaveDraft), window, cx);
+        }))
+        .on_action(cx.listener(|frame, _: &CancelCommentDraft, window, cx| {
+            frame.run_activation(activation(CommentAction::CancelDraft), window, cx);
+        }))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .p_1()
+                .rounded_sm()
+                .bg(theme.raised)
+                .border_1()
+                .border_color(theme.selected)
+                .child(draft.input.clone()),
+        )
+        .child(render_buttons(
+            "comment-draft-command",
+            draft_commands()
+                .into_iter()
+                .map(|(label, availability, activation)| {
+                    (label.to_owned(), availability, activation)
+                })
+                .collect(),
+            theme,
+            cx,
+        ))
+}
+
+/// A wrapping row of small buttons. A disabled one is greyed; its reason is
+/// in the accessibility tree.
+fn render_buttons<L: Into<gpui::SharedString>>(
     id: &'static str,
-    commands: Vec<Command>,
+    commands: Vec<(L, MenuAvailability, Activation)>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> gpui::Div {
@@ -415,7 +454,7 @@ fn render_buttons(
             } else {
                 theme.disabled_text
             })
-            .child(label);
+            .child(label.into());
         if enabled {
             button = button
                 .cursor_pointer()
@@ -431,74 +470,16 @@ fn render_buttons(
 
 #[cfg(test)]
 mod tests {
-    use onionskin_core::{Flags, ObjRef, Rect, Subtype};
-
+    use super::super::commands::tests::thread;
     use super::*;
 
-    fn comment(status: Option<&str>, checked: bool) -> Thread {
-        Thread {
-            comment: ReadAnnotation {
-                objref: ObjRef::new(5, 0),
-                page: 2,
-                subtype: None::<Subtype>,
-                raw_subtype: "Highlight".into(),
-                rect: Rect::new(0.0, 0.0, 1.0, 1.0),
-                quads: Vec::new(),
-                contents: None,
-                author: Some("Ana".into()),
-                modified: Some("D:20260921143000".into()),
-                color: None,
-                flags: Flags(4),
-                in_reply_to: None,
-                has_appearance: true,
-                ink: Vec::new(),
-                border_width: 1.0,
-                subject: None,
-                state: None,
-            },
-            replies: Vec::new(),
-            status: status.map(str::to_owned),
-            checked,
-        }
-    }
-
     #[test]
-    fn a_row_says_what_by_whom_where_and_when() {
-        let thread = comment(Some("Accepted"), true);
-        assert_eq!(heading(&thread), "Highlight · Ana · Accepted · ✓");
-        assert_eq!(place(&thread.comment), "Page 3 · 2026-09-21 14:30");
-        assert_eq!(text(&thread.comment), NO_TEXT);
-    }
-
-    #[test]
-    fn a_refused_document_disables_every_command_with_its_reason() {
-        let labels: Vec<String> = commands(&comment(None, false), None)
-            .into_iter()
-            .map(|(label, availability, _)| {
-                assert!(availability.is_enabled());
-                label
-            })
-            .collect();
-        assert_eq!(
-            labels,
-            [
-                "Reply",
-                "Edit Text",
-                "Accepted",
-                "Rejected",
-                "Cancelled",
-                "Completed",
-                "Clear Status",
-                "Check",
-                "Delete"
-            ]
-        );
-        assert!(
-            commands(&comment(None, false), Some("The document is encrypted"))
-                .iter()
-                .all(|(_, availability, _)| availability.reason()
-                    == Some("The document is encrypted"))
-        );
-        assert_eq!(commands(&comment(None, true), None)[7].0, "Uncheck");
+    fn a_row_says_what_by_whom_where_and_when_and_whether_it_is_read() {
+        let mut listed = thread(true);
+        listed.status = Some("Accepted".into());
+        assert_eq!(heading(&listed, true), "Highlight · Ana · Accepted · ✓");
+        assert_eq!(heading(&listed, false), "● Highlight · Ana · Accepted · ✓");
+        assert_eq!(place(&listed.comment), "Page 3 · 2026-09-21 14:30");
+        assert_eq!(text(&listed.comment), NO_TEXT);
     }
 }

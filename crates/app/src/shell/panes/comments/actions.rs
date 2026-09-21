@@ -38,8 +38,14 @@ pub(in crate::shell) fn run(
     action: CommentAction,
     cx: &mut Context<ShellFrame>,
 ) {
+    state.comments.menu = None;
     match action {
         CommentAction::Select(comment) => select(state, canvas, comment, cx),
+        CommentAction::OpenMenu { comment, at } => {
+            select(state, canvas, comment, cx);
+            state.comments.menu = Some(at);
+        }
+        CommentAction::ToggleRead => toggle_read(state, canvas, cx),
         CommentAction::CycleSort => state.comments.sort = state.comments.sort.next(),
         CommentAction::CycleFilter(field) => {
             let values = filter_values(state.comment_snapshot().unwrap_or(&[]), field);
@@ -111,12 +117,33 @@ fn select(
 ) {
     state.comments.selected = Some(comment);
     state.comments.draft = None;
+    if let Some(canvas) = canvas {
+        canvas.update(cx, |canvas, _| canvas.model.set_comment_read(comment, true));
+    }
     let page = find(state.comment_snapshot().unwrap_or(&[]), comment).map(|found| found.page);
     if let Some(page) = page {
         navigate(state, canvas, cx, move |canvas| {
             canvas.model.go_to_page(page)
         });
     }
+}
+
+fn toggle_read(
+    state: &mut NavigationPanesState,
+    canvas: Option<&Entity<Canvas>>,
+    cx: &mut Context<ShellFrame>,
+) {
+    let (Some(canvas), Some(chosen)) = (canvas, state.comments.selected) else {
+        return;
+    };
+    let Some(comment) = find(state.comment_snapshot().unwrap_or(&[]), chosen).cloned() else {
+        return;
+    };
+    canvas.update(cx, |canvas, _| {
+        let model = &mut canvas.model;
+        let read = model.comment_reads().is_read(&comment, model.author());
+        model.set_comment_read(chosen, !read);
+    });
 }
 
 fn selected_is_checked(state: &NavigationPanesState) -> bool {

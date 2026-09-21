@@ -21,8 +21,10 @@ use onionskin_render::PageRender;
 use onionskin_render::{BaseRaster, RasterBounds, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
+mod comment_reads;
 mod file_ops;
 
+pub use comment_reads::CommentReads;
 pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
 
 use super::input::{
@@ -466,6 +468,8 @@ pub struct CanvasModel {
     text_target: Option<TextTarget>,
     /// The name comments are signed with, from the tool environment.
     author: Option<String>,
+    /// Which comments the user has read this session; never saved.
+    comment_reads: CommentReads,
     /// Thumbnails answered and not yet collected. The pane takes them,
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
@@ -539,6 +543,7 @@ impl CanvasModel {
             click_count: 1,
             text_target: None,
             author: None,
+            comment_reads: CommentReads::default(),
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
         })

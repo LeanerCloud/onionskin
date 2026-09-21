@@ -391,6 +391,7 @@ pub(in crate::shell) fn apply(
             state.layers_menu = None;
             state.bookmarks_menu = None;
             state.attachments_menu = None;
+            state.comments.menu = None;
             state.thumbnails.dismiss_menu();
         }
         PaneAction::GoToPage(page) => {
@@ -545,7 +546,14 @@ fn accessible_body(
             signatures::accessible(items.as_deref())
         }
         (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
-            comments::accessible(&state.comments, items.as_deref(), state.edit_refusal, cx)
+            let (reads, author) = comment_reads(canvas, cx);
+            let is_read = |comment: &ReadAnnotation| reads.is_read(comment, author.as_deref());
+            let facts = comments::Facts {
+                state: &state.comments,
+                refusal: state.edit_refusal,
+                is_read: &is_read,
+            };
+            comments::accessible(&facts, items.as_deref(), cx)
         }
         _ => vec![Element::new(
             "navigation-pane-empty",
@@ -700,17 +708,35 @@ fn render_body(
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::render(items.as_deref(), theme)
         }
-        (NavigationPane::Comments, Some(PaneContent::Comments(items))) => comments::render(
-            &state.comments,
-            items.as_deref(),
-            state.edit_refusal,
-            theme,
-            cx,
-        ),
+        (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
+            let (reads, author) = comment_reads(canvas, cx);
+            let is_read = |comment: &ReadAnnotation| reads.is_read(comment, author.as_deref());
+            let facts = comments::Facts {
+                state: &state.comments,
+                refusal: state.edit_refusal,
+                is_read: &is_read,
+            };
+            comments::render(&facts, items.as_deref(), theme, cx)
+        }
         // The snapshot is always the open pane's, taken when it opened, so
         // the mismatched arms are unreachable rather than a state to draw.
         _ => empty_message(NOTHING_YET, theme).into_any_element(),
     }
+}
+
+/// The session's read marks and the name the user signs with, copied out
+/// of the canvas so the pane can be drawn while the frame is borrowed.
+fn comment_reads(
+    canvas: Option<&Entity<Canvas>>,
+    cx: &gpui::App,
+) -> (super::canvas::CommentReads, Option<String>) {
+    canvas.map_or_else(Default::default, |canvas| {
+        let model = &canvas.read(cx).model;
+        (
+            model.comment_reads().clone(),
+            model.author().map(str::to_owned),
+        )
+    })
 }
 
 /// The one shape every pane uses for "nothing here", so a document without

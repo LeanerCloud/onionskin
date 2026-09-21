@@ -97,10 +97,7 @@ fn a_comment_is_replied_to_given_a_status_checked_edited_and_deleted_from_the_pa
                 .expect("the note is listed");
             assert_eq!(row.label, "Is this figure right?");
             assert!(
-                row.description
-                    .as_deref()
-                    .unwrap()
-                    .starts_with("Note · Zoe"),
+                row.description.as_deref().unwrap().contains("Note · Zoe"),
                 "{:?}",
                 row.description
             );
@@ -252,6 +249,84 @@ fn sorting_and_filtering_step_through_their_values(cx: &mut TestAppContext) {
                 cx,
             );
             assert_eq!(control(frame, window, cx, 2), "Author: Zoe");
+        })
+        .unwrap();
+}
+
+/// Someone else's comment is unread until it is opened, and the user can
+/// mark it unread again. The marks are the reader's own: nothing is written
+/// to the document, and they survive switching tabs.
+#[gpui::test]
+fn a_comment_is_unread_until_opened_and_marking_it_writes_nothing(cx: &mut TestAppContext) {
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let note = add_note(frame, "Please look", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            assert!(row_description(frame, window, cx).starts_with("Unread."));
+
+            let canvas = frame.tabs.active().unwrap().canvas.clone();
+            let epoch = canvas.read(cx).model.edit_epoch();
+            frame.run_activation(comment(CommentAction::Select(note)), window, cx);
+            assert!(!row_description(frame, window, cx).starts_with("Unread."));
+
+            frame.run_activation(comment(CommentAction::ToggleRead), window, cx);
+            assert!(row_description(frame, window, cx).starts_with("Unread."));
+            assert_eq!(
+                canvas.read(cx).model.edit_epoch(),
+                epoch,
+                "reading is not an edit"
+            );
+        })
+        .unwrap();
+}
+
+/// The right-click menu offers the same commands as the row, on the comment
+/// it was opened on, and running one closes it.
+#[gpui::test]
+fn the_context_menu_runs_the_rows_commands_on_the_comment_it_was_opened_on(
+    cx: &mut TestAppContext,
+) {
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let note = add_note(frame, "Menu me", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            frame.run_pane_action(
+                PaneAction::Comment(CommentAction::OpenMenu {
+                    comment: note,
+                    at: gpui::point(px(10.0), px(40.0)),
+                }),
+                cx,
+            );
+            let tree = frame.accessible(window, cx);
+            let menu = tree
+                .find(&"comments-context-menu".into())
+                .expect("the menu is described");
+            let labels: Vec<&str> = menu
+                .children
+                .iter()
+                .map(|entry| entry.label.as_str())
+                .collect();
+            assert!(
+                labels.contains(&"Reply") && labels.contains(&"Delete"),
+                "{labels:?}"
+            );
+            let accepted = menu
+                .children
+                .iter()
+                .find(|entry| entry.label == "Accepted")
+                .and_then(|entry| entry.activation.clone())
+                .expect("Accepted runs something");
+            frame.run_activation(accepted, window, cx);
+            let tree = frame.accessible(window, cx);
+            assert!(
+                tree.find(&"comments-context-menu".into()).is_none(),
+                "it closed"
+            );
+            assert!(row_description(frame, window, cx).contains("Accepted"));
         })
         .unwrap();
 }
