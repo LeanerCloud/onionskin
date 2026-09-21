@@ -413,7 +413,9 @@ impl ShellFrame {
                     eprintln!("onionskin: {error}");
                 }
             }
-            Activation::CanvasContext(command) => self.run_canvas_context_command(command, cx),
+            Activation::CanvasContext(command) => {
+                self.run_canvas_context_command(command, window, cx)
+            }
             Activation::DismissNotice(index) => self.dismiss_notice(index, cx),
             Activation::OpenRecent(index) => self.open_recent(index, cx),
             Activation::ChooseSearchResult(result) => {
@@ -486,6 +488,7 @@ impl ShellFrame {
             Activation::Split(action) => self.run_split_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
+            Activation::Print(action) => self.run_print_action(action, window, cx),
             Activation::Properties(action) => self.run_properties_action(action, window, cx),
             Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
             Activation::File(action) => self.run_file_action(action, window, cx),
@@ -657,6 +660,10 @@ impl ShellFrame {
             TextField::CommentingAuthor => Some(&self.commenting_author),
             TextField::InspectorAuthor => Some(&self.inspector.author),
             TextField::InspectorSubject => Some(&self.inspector.subject),
+            TextField::PrintCopies | TextField::PrintPages | TextField::PrintScale => self
+                .print
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
         }
     }
 
@@ -717,6 +724,7 @@ impl ShellFrame {
             .into_iter()
             .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
             .chain([TextField::BookmarkTitle, TextField::CommentingAuthor])
+            .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

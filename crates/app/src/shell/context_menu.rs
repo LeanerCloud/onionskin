@@ -113,10 +113,8 @@ impl CanvasContextCommand {
                 id: command_ids::ADD_BOOKMARK,
                 reason: "Available with bookmark authoring",
             },
-            Self::Print => Requirement::Command {
-                id: command_ids::PRINT,
-                reason: "Available with printing",
-            },
+            // The shell's own dialog, as File > Print, not a registry command.
+            Self::Print => Requirement::Shell,
             // The page itself, where Rotate Clockwise above turns the view:
             // this one writes `/Rotate` and is saved with the document.
             Self::RotatePage => Requirement::Command {
@@ -259,59 +257,41 @@ mod tests {
         }
     }
 
-    /// Print and Add Bookmark are the two the plan calls out by name. They
-    /// are queries: registering a command under the id makes the entry live,
-    /// with no change here.
+    /// Print and Add Bookmark are the two the plan calls out by name. Print
+    /// is the shell's own dialog now (P17), live on any open document; Add
+    /// Bookmark is still a query, live once a command registers its id.
     #[test]
-    fn print_and_add_bookmark_go_live_when_their_command_is_registered() {
+    fn print_is_live_and_add_bookmark_goes_live_when_its_command_is_registered() {
         let mut registry = PluginRegistry::new();
-        let before = canvas_context_entries(&registry, true, Refusals::default());
-        for command in [
-            CanvasContextCommand::Print,
-            CanvasContextCommand::AddBookmark,
-        ] {
-            let entry = before
+        let entry = |entries: &[CanvasContextEntry], command| {
+            entries
                 .iter()
                 .find(|entry| entry.command == command)
-                .expect("present");
-            assert!(
-                !entry.availability.is_enabled(),
-                "{} is live with no command",
-                command.label()
-            );
-        }
+                .expect("present")
+                .availability
+        };
+        let before = canvas_context_entries(&registry, true, Refusals::default());
+        assert!(entry(&before, CanvasContextCommand::Print).is_enabled());
+        assert_eq!(
+            entry(&before, CanvasContextCommand::AddBookmark).reason(),
+            Some("Available with bookmark authoring")
+        );
 
         struct Stub;
         impl onionskin_plugin_api::CommandPlugin for Stub {
             fn commands(&self) -> Vec<onionskin_plugin_api::Command> {
-                [command_ids::PRINT, command_ids::ADD_BOOKMARK]
-                    .into_iter()
-                    .map(|id| onionskin_plugin_api::Command {
-                        id,
-                        title: id,
-                        keybind: None,
-                        effect: onionskin_plugin_api::CommandEffect::Reads,
-                        run: Box::new(|_| Ok(())),
-                    })
-                    .collect()
+                vec![onionskin_plugin_api::Command {
+                    id: command_ids::ADD_BOOKMARK,
+                    title: command_ids::ADD_BOOKMARK,
+                    keybind: None,
+                    effect: onionskin_plugin_api::CommandEffect::Reads,
+                    run: Box::new(|_| Ok(())),
+                }]
             }
         }
         registry.register_commands(&Stub);
         let after = canvas_context_entries(&registry, true, Refusals::default());
-        for command in [
-            CanvasContextCommand::Print,
-            CanvasContextCommand::AddBookmark,
-        ] {
-            let entry = after
-                .iter()
-                .find(|entry| entry.command == command)
-                .expect("present");
-            assert!(
-                entry.availability.is_enabled(),
-                "{} did not go live",
-                command.label()
-            );
-        }
+        assert!(entry(&after, CanvasContextCommand::AddBookmark).is_enabled());
     }
 
     /// P1b's editing gate, reached through the same query: on a document that

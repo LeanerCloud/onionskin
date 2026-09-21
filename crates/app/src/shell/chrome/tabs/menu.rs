@@ -217,6 +217,14 @@ impl ShellFrame {
                 self.open_split_dialog(window, cx);
                 Ok(())
             }
+            MenuCommand::Print => {
+                self.open_print_dialog(window, cx);
+                Ok(())
+            }
+            MenuCommand::PageSetup => {
+                self.open_page_setup(window, cx);
+                Ok(())
+            }
             MenuCommand::Page(page) => {
                 self.dismiss_menus(cx);
                 self.run_registry_command(page.id(), cx);

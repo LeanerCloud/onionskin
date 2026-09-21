@@ -4088,6 +4088,7 @@ dependencies = [
  "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-plugin-api",
+ "onionskin-print",
  "onionskin-redact",
  "onionskin-render",
  "onionskin-tools-accessibility",

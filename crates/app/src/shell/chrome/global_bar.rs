@@ -196,6 +196,8 @@ pub(in crate::shell) enum MenuCommand {
     Properties,
     SaveAsOther,
     ReduceFileSize,
+    PageSetup,
+    Print,
     Export(ExportTarget),
     ExportAllImages,
     CloseTab,
@@ -613,6 +615,18 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 MenuEntry {
                     command: MenuCommand::Properties,
                     label: "Properties…",
+                    availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::PageSetup,
+                    label: "Page Setup…",
+                    availability: Enabled,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::Print,
+                    label: "Print…",
                     availability: document_command,
                     selected: false,
                 },
@@ -1199,6 +1213,8 @@ impl MenuCommand {
             | Self::Revert
             | Self::AttachToEmail
             | Self::ReduceFileSize
+            | Self::PageSetup
+            | Self::Print
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1256,6 +1272,8 @@ impl MenuCommand {
             | Self::Revert
             | Self::AttachToEmail
             | Self::ReduceFileSize
+            | Self::PageSetup
+            | Self::Print
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1471,6 +1489,8 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Revert
         | MenuCommand::AttachToEmail
         | MenuCommand::ReduceFileSize
+        | MenuCommand::PageSetup
+        | MenuCommand::Print
         | MenuCommand::CopyFileToClipboard
         | MenuCommand::Edit(_)
         | MenuCommand::Undo

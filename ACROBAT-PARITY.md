@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 185 planned / 24 partial / 80 out-of-scope. 114 implemented.**
+**403 rows: 171 planned / 26 partial / 80 out-of-scope. 126 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 98, M4 4, M5 52, M6 45, post-1.0 57.
@@ -170,7 +170,7 @@ M4 with P15, per the plan's ruling B.
 | Get a link to the document | out-of-scope | - | Cloud-tethered link sharing. |
 | Undo / Redo icons on the global bar | implemented | M3 | Global bar buttons carrying the Edit menu entries' own availability; disabled with "Nothing to undo" rather than absent. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | Save / Save As in the global bar | implemented | M3 | Both are global bar buttons carrying the File menu entries' availability; Save appends an incremental section. Evidence: docs/evidence/m3-p18-save-undo.md. |
-| Print button | planned | M3 | `crates/print`, macOS backend at M3. |
+| Print button | implemented | M3 | The global bar's printer button, carrying File > Print's availability. Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Share button | out-of-scope | - | Cloud-tethered: Adobe cloud link sharing. Plan states all cloud-tethered surface is out of scope. |
 | AI Assistant button | out-of-scope | - | Cloud-tethered generative service. Plan names AI Assistant explicitly as out of scope. |
 | Account / profile menu | out-of-scope | - | Requires an Adobe account; Onionskin has no account system. |
@@ -215,7 +215,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Revert | implemented | M3 | Discards unsaved edits by reopening the file; the history goes with them. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | partial | M3 | `cmd-d` dialog with Description, Security (read-only), Fonts, Initial View and Custom tabs; one Apply is one undo step. The five-tab list is unconfirmed: the screenshot corpus has no capture of this dialog. Description omits PDF version, page size, tagged and fast web view. Evidence: docs/evidence/m3-p13a-properties.md. |
-| File > Print | planned | M3 | `crates/print`. |
+| File > Print | implemented | M3 | Cmd/Ctrl+P, and the canvas context menu's Print, open the Print dialog. Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | File > Attach to Email | implemented | M3 | Hands the saved file to the OS mail client (Mail on macOS, `xdg-email` elsewhere on Unix) as one argument, never through a shell; disabled until unsaved changes are saved. Windows has no request to make yet and says so. Evidence: docs/evidence/m3-p13c-file-edit-menus.md. |
 | File > Share / Send for comments | out-of-scope | - | Cloud-tethered web review flow. |
 | File > Get Documents Signed | out-of-scope | - | Adobe Acrobat Sign, a cloud service. |
@@ -301,7 +301,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
 | Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
 | Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live, with stale async completion guards. Evidence: M2-BASIC. |
-| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; future editing/print commands remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
+| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); future editing commands remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
 | Copy with formatting / Export selected text | planned | M3 | (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
 | Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
@@ -435,7 +435,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Comment properties (colour, opacity, author, subject, default) | implemented | M3 | The side panel's inspector for the chosen comment: eight swatches, four opacities, author and subject, each an undoable edit that redraws the appearance; Make Current Properties Default sets the next comment of that kind's colour and opacity. docs/evidence/m3-p20b-comment-surfaces.md |
 | Comments list: sort, filter, reply, set status, checkmark, read/unread | implemented | M3 | Sort, filter, reply, status, checkmark, edit text and delete are live and undoable; read/unread is the session's own state and never written to the file. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Summarize comments (generate a summary PDF) | implemented | M3 | Two layouts (comments only, page then comments), opened in a tab; refused on encrypted documents. Connector-line and on-page sequence-number layouts are not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
-| Print comments (document and markups, summary only) | planned | M3 | With `crates/print`. |
+| Print comments (document and markups, summary only) | partial | M3 | Document and Markups prints every comment's appearance through the Comments & Forms choice. Summary-only printing waits on row 96. Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Import / export comments as FDF or XFDF | planned | post-1.0 | XFDF form-data interchange is a named post-1.0 slot; comment interchange rides with it. |
 | Enable commenting for Reader users (Reader-extended PDF) | out-of-scope | - | Adobe-signed Reader extensions; not reproducible outside Adobe. |
 | Commenting preferences | implemented | M3 | Preferences > Commenting sets the author name that signs every comment, reply, status and dynamic stamp, in every open tab at once. Acrobat's display options (pop-up font and opacity, print notes) are not offered. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
@@ -634,22 +634,22 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Print dialog | planned | M3 | Decision 13: `crates/print` is our own pipeline, with Acrobat print-dialog parity. macOS (NSPrintOperation) at M3: the backend landed in P16 (docs/evidence/m3-p16-macos-print.md), the dialog is P17. |
+| Print dialog | implemented | M3 | Decision 13: `crates/print` is our own pipeline. Printer, copies and collation, Pages to Print, Page Sizing & Handling, Multiple Pages per Sheet, orientation, paper, Comments & Forms, duplex, Print as Image and a preview drawn from the same sheets the backend prints. Save as PDF on every platform; printers through the macOS backend, whose manual run is pending (docs/evidence/m3-p16-macos-print.md). Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Print on Linux (CUPS) | planned | M4 | |
 | Print on Windows | planned | M4 | |
-| Page range and subset (all, current, custom, odd/even) | planned | M3 | Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | planned | M3 | Named in the plan's print-parity list. Fit fits to the paper, not a printer's printable area. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Multiple pages per sheet (N-up) | planned | M3 | Named in the plan's print-parity list. Order and borders included. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Page range and subset (all, current, custom, odd/even) | implemented | M3 | All, Current page, typed ranges like 2-4, 7 (a backwards range is refused, not reversed), odd or even, and Reverse pages. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | implemented | M3 | Fit fits to the paper, not a printer's printable area. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Multiple pages per sheet (N-up) | implemented | M3 | 1, 2, 4, 6, 9 or 16 a sheet, Acrobat's four orders, and page borders. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Booklet | planned | M4 | Moved from M3 by the M3 plan's ruling B: pure imposition over P15's sheet model, added at M4 without reopening it. |
 | Poster / tile | planned | M4 | Moved from M3 by the M3 plan's ruling B: the only placement that clips, so the clip lands with it at M4 on P15's sheet model. |
-| Print on both sides / duplex | planned | M3 | (judgment) Sheet order (a blank back for an odd count) is P15's imposition; long- or short-edge flipping reaches the printer through the P16 macOS backend's `PMSetDuplex` (docs/evidence/m3-p16-macos-print.md). Stays `planned` until the P17 print dialog makes it reachable and the manual print run is recorded. |
-| Orientation (auto, portrait, landscape) | planned | M3 | (judgment) Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | planned | M3 | (judgment) Printed annotations are each one's normal appearance where `/F` says it prints. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Page Setup dialog (paper size, orientation) | planned | M3 | (judgment) |
-| Summarize comments in the print output | planned | M3 | (judgment) |
-| Print as image | planned | M3 | Named in the plan's print-parity list. The only way an encrypted document prints, under the encrypted-source rule. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Print to file / print to PDF | planned | M3 | The plan makes the print-to-PDF-file backend the first one, so print output is testable in CI. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
-| Advanced Print Setup dialog | planned | M3 | The future supported subset includes Print as Image and Print to File; Output, Marks and Bleeds, PostScript options, and print colour management remain out of scope. No usable subset has shipped. |
+| Print on both sides / duplex | partial | M3 | (judgment) Sheet order (a blank back for an odd count) is imposition and is in every printed file; long- or short-edge flipping reaches a printer through the macOS backend's `PMSetDuplex`, which has not yet been run on a Mac (docs/evidence/m3-p16-macos-print.md). Evidence: docs/evidence/m3-p17-print-dialog.md. |
+| Orientation (auto, portrait, landscape) | implemented | M3 | (judgment) Auto turns the sheet to suit the first page and the pages per sheet. Shared with Page Setup. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | implemented | M3 | (judgment) Printed annotations are each one's normal appearance where `/F` says it prints. Form Fields Only prints no markups, since M3 authors no fields. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Page Setup dialog (paper size, orientation) | implemented | M3 | (judgment) File > Page Setup (Cmd/Ctrl+Shift+P): Letter, Legal or A4 and the orientation, held in one place the Print dialog reads too, so the two cannot disagree. Evidence: docs/evidence/m3-p17-print-dialog.md. |
+| Summarize comments in the print output | planned | M3 | (judgment) Not in the P17 dialog: Summarize Comments writes the summary as its own PDF, which prints like any document. Appending it to a print job as extra sheets needs the job to span two documents, which `crates/print` does not do yet. |
+| Print as image | implemented | M3 | Named in the plan's print-parity list. The only way an encrypted document prints, under the encrypted-source rule: the dialog locks it on and says why. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Print to file / print to PDF | implemented | M3 | The Printer list's Save as PDF writes the composed sheets to a file. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
+| Advanced Print Setup dialog | implemented | M3 | The supported subset only: Print as Image in the dialog's Advanced group, and Print to File as the Save as PDF destination. Output, Marks and Bleeds, PostScript options and print colour management are absent, not disabled, and stay out of scope. Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Print colour PDFs (separations, colour handling) | out-of-scope | - | Separation printing and colour handling are prepress work, permanently out of scope. |
 | Print a PDF Portfolio | planned | post-1.0 | Rides with portfolios. |
 

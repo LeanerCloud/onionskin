@@ -9,6 +9,7 @@ mod inspector;
 mod menu;
 mod organize;
 mod outline;
+mod print;
 mod properties;
 mod stamps;
 mod summary;
@@ -754,7 +755,7 @@ impl ShellFrame {
             .collect()
     }
 
-    /// The global bar's Save, Undo and Redo, each with the menu entry's own
+    /// The global bar's Save, Undo, Redo and Print, each with the menu entry's own
     /// availability, so the bar and the menu cannot disagree about whether
     /// a command runs. The glyph is what is drawn; the menu label is what a
     /// screen reader hears.
@@ -771,6 +772,7 @@ impl ShellFrame {
             ("global-save-as", "Save As", MenuCommand::SaveAs),
             ("global-undo", "↶", MenuCommand::Undo),
             ("global-redo", "↷", MenuCommand::Redo),
+            ("global-print", "🖨", MenuCommand::Print),
         ]
         .into_iter()
         .filter_map(|(id, glyph, command)| {
@@ -1630,6 +1632,8 @@ mod tests {
     mod organize_dialogs;
     #[cfg(feature = "shell-test-support")]
     mod outline;
+    #[cfg(feature = "shell-test-support")]
+    mod print;
     #[cfg(feature = "shell-test-support")]
     mod properties;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]

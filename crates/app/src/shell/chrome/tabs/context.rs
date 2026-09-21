@@ -86,6 +86,7 @@ impl ShellFrame {
     pub(super) fn run_canvas_context_command(
         &mut self,
         command: CanvasContextCommand,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.context_menus.canvas_context_menu = None;
@@ -111,6 +112,8 @@ impl ShellFrame {
             CanvasContextCommand::RotateClockwise => {
                 self.run_view_action(ViewAction::RotateClockwise, cx)
             }
+            // The print dialog, as File > Print opens it.
+            CanvasContextCommand::Print => self.open_print_dialog(window, cx),
             // Spelled out rather than left to a wildcard: every remaining
             // entry runs its registered command or activates a tool, and an entry added without a decision
             // here has to be a compile error rather than a silent tool
@@ -124,7 +127,6 @@ impl ShellFrame {
             | CanvasContextCommand::CreateLink
             | CanvasContextCommand::TakeASnapshot
             | CanvasContextCommand::AddBookmark
-            | CanvasContextCommand::Print
             | CanvasContextCommand::RotatePage) => {
                 if let Some(id) = other.command_id() {
                     return self.run_registry_command(id, cx);
@@ -269,9 +271,9 @@ impl ShellFrame {
                         row.cursor_pointer()
                             .hover(move |row| row.bg(theme.selected))
                     })
-                    .on_click(cx.listener(move |frame, _event, _window, cx| {
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
                         if enabled {
-                            frame.run_canvas_context_command(command, cx);
+                            frame.run_canvas_context_command(command, window, cx);
                         }
                     }))
                     .child(entry.label)
@@ -528,9 +530,9 @@ mod tests {
         // Nothing is selected in a freshly opened document.
         assert!(!live(CanvasContextCommand::Copy));
 
-        cx.update(|_window, app| {
+        cx.update(|window, app| {
             frame.update(app, |frame, cx| {
-                frame.run_canvas_context_command(CanvasContextCommand::TakeASnapshot, cx);
+                frame.run_canvas_context_command(CanvasContextCommand::TakeASnapshot, window, cx);
             });
         });
         cx.update(|_window, app| {
@@ -546,10 +548,10 @@ mod tests {
             );
         });
 
-        cx.update(|_window, app| {
+        cx.update(|window, app| {
             frame.update(app, |frame, cx| {
                 frame.open_canvas_context_menu(&right_click, cx);
-                frame.run_canvas_context_command(CanvasContextCommand::RotateClockwise, cx);
+                frame.run_canvas_context_command(CanvasContextCommand::RotateClockwise, window, cx);
             });
         });
         cx.update(|_window, app| {

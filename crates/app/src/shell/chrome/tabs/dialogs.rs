@@ -98,6 +98,7 @@ impl ShellFrame {
         self.summary = None;
         self.properties = None;
         self.bookmark_title = None;
+        self.print = None;
         self.unsaved = None;
         self.recover = None;
         cx.notify();

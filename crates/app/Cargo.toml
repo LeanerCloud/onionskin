@@ -24,6 +24,7 @@ required-features = ["a11y-spike"]
 # already links it, and the preferences and recents files are expressed in
 # its types.
 onionskin-core.workspace = true
+onionskin-print = { workspace = true, optional = true }
 onionskin-plugin-api.workspace = true
 onionskin-render = { workspace = true, optional = true }
 
@@ -132,6 +133,7 @@ shell = [
     "dep:accesskit_macos",
     "dep:raw-window-handle",
     "dep:tempfile",
+    "dep:onionskin-print",
 ]
 shell-test-support = ["shell", "gpui/test-support"]
 # Builds the app so that it reads its own accessibility tree back off the

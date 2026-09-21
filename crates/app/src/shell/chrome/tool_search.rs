@@ -506,8 +506,11 @@ fn field_node(
         | TextField::ExportDpi
         | TextField::ExportQuality
         | TextField::SplitValue
+        | TextField::PrintCopies
+        | TextField::PrintScale
         | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
         TextField::CombinePages
+        | TextField::PrintPages
         | TextField::BookmarkTitle
         | TextField::CommentDraft
         | TextField::CommentingAuthor

@@ -235,6 +235,10 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) summary: Option<crate::shell::chrome::summary_dialog::SummaryDialogState>,
     pub(super) properties: Option<crate::shell::chrome::properties_dialog::PropertiesDialogState>,
     pub(super) bookmark_title: Option<crate::shell::chrome::bookmark_dialog::BookmarkTitleState>,
+    /// The Print dialog, while it is open.
+    pub(super) print: Option<crate::shell::chrome::print_dialog::PrintDialogState>,
+    /// Paper and orientation, which Page Setup and the Print dialog share.
+    pub(super) page_setup: crate::shell::chrome::print_dialog::PageSetup,
     /// The question before closing unsaved documents, while it is asked.
     pub(super) unsaved: Option<crate::shell::chrome::file_dialogs::UnsavedState>,
     /// The recovery being offered, and the ones waiting their turn.
@@ -396,6 +400,8 @@ impl ShellFrame {
             summary: None,
             properties: None,
             bookmark_title: None,
+            print: None,
+            page_setup: Default::default(),
             unsaved: None,
             recover: None,
             pending_recoveries: std::collections::VecDeque::new(),

@@ -41,6 +41,8 @@ pub(in crate::shell) enum ShellDialog {
     UnsavedChanges,
     Recover,
     ReduceFileSize,
+    Print,
+    PageSetup,
 }
 
 impl ShellDialog {
@@ -56,6 +58,8 @@ impl ShellDialog {
             Self::UnsavedChanges => "Unsaved Changes",
             Self::Recover => "Recover Unsaved Changes",
             Self::ReduceFileSize => "Reduce File Size",
+            Self::Print => "Print",
+            Self::PageSetup => "Page Setup",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -174,6 +178,12 @@ pub(in crate::shell) fn accessible(
             frame.recover_dialog().expect("recover dialog has state"),
         ),
         ShellDialog::ReduceFileSize => super::chrome::file_dialogs::accessible_reduce(),
+        ShellDialog::Print => super::chrome::print_dialog::accessible(
+            frame.print_dialog().expect("print dialog has state"),
+            frame.page_setup(),
+            cx,
+        ),
+        ShellDialog::PageSetup => super::chrome::print_dialog::accessible_setup(frame.page_setup()),
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::accessible(
             frame
                 .bookmark_title_dialog()
@@ -301,6 +311,18 @@ pub(in crate::shell) fn render_dialog(
         .into_any_element(),
         ShellDialog::ReduceFileSize => {
             super::chrome::file_dialogs::render_reduce(focused, theme, cx).into_any_element()
+        }
+        ShellDialog::Print => super::chrome::print_dialog::render(
+            frame.print_dialog().expect("print dialog has state"),
+            frame.page_setup(),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::PageSetup => {
+            super::chrome::print_dialog::render_setup(frame.page_setup(), focused, theme, cx)
+                .into_any_element()
         }
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::render(
             frame

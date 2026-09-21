@@ -67,6 +67,10 @@ pub(in crate::shell) enum TextField {
     /// The properties inspector's author and subject.
     InspectorAuthor,
     InspectorSubject,
+    /// The Print dialog's copies, pages and custom scale.
+    PrintCopies,
+    PrintPages,
+    PrintScale,
 }
 
 /// What activating an accessible element does.
@@ -117,6 +121,8 @@ pub(in crate::shell) enum Activation {
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
     BookmarkTitle(crate::shell::chrome::bookmark_dialog::BookmarkTitleAction),
     File(crate::shell::chrome::file_dialogs::FileAction),
+    /// The Print and Page Setup dialogs.
+    Print(crate::shell::chrome::print_dialog::PrintAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.

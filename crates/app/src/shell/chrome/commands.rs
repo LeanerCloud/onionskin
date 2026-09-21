@@ -50,6 +50,8 @@ impl MenuCommand {
             MenuCommand::SaveAsOther,
             MenuCommand::ReduceFileSize,
             MenuCommand::Properties,
+            MenuCommand::PageSetup,
+            MenuCommand::Print,
         ]);
         all.extend([MenuCommand::Quit, MenuCommand::Undo, MenuCommand::Redo]);
         all.extend(onionskin_plugin_api::EditVerb::ALL.map(MenuCommand::Edit));
@@ -139,6 +141,8 @@ impl MenuCommand {
             Self::Properties => "file.properties",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::ReduceFileSize => onionskin_plugin_api::command_ids::REDUCE_FILE_SIZE,
+            Self::PageSetup => "file.page-setup",
+            Self::Print => onionskin_plugin_api::command_ids::PRINT,
             Self::Export(ExportTarget::Text) => "file.export-text",
             Self::Export(ExportTarget::Png) => "file.export-png",
             Self::Export(ExportTarget::Svg) => "file.export-svg",
@@ -210,6 +214,9 @@ impl MenuCommand {
             Self::Find => "cmd-f",
             Self::Preferences => "cmd-k",
             Self::Properties => "cmd-d",
+            Self::Print => "cmd-p",
+            // Acrobat's Shift+Ctrl+P.
+            Self::PageSetup => "cmd-shift-p",
             Self::Save => "cmd-s",
             Self::SaveAs => "cmd-shift-s",
             Self::Undo => "cmd-z",
