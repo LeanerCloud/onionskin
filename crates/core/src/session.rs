@@ -1005,7 +1005,12 @@ impl Document {
     }
 
     /// Convert one page to SVG on the same worker and render options.
+    ///
+    /// Refused on an encrypted document: SVG is a vector transcription of
+    /// the page's paths, text and images into another file, which is what
+    /// the encrypted-source rule forbids.
     pub fn page_svg(&mut self, page: PageIndex) -> Result<PageSvg> {
+        crate::protection::read_out(&self.cos).map_err(Error::Protected)?;
         self.sync_worker()?;
         self.check_page(page)?;
         Ok(self.render.page_svg(page)?)
@@ -1052,7 +1057,11 @@ impl Document {
     /// one name tree may both be `notes.txt`, and extracting "the one called
     /// notes.txt" would then be a coin toss. Nothing is written here; the
     /// caller decides where the bytes go.
+    ///
+    /// Refused on an encrypted document: the bytes are the embedded file,
+    /// decrypted, and every caller writes them to a file of their own.
     pub fn attachment_bytes(&mut self, index: usize) -> Result<Vec<u8>> {
+        crate::protection::read_out(&self.cos).map_err(Error::Protected)?;
         let count = self.attachments()?.len();
         let attachment = self
             .attachments

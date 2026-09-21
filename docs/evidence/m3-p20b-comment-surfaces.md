@@ -280,3 +280,52 @@ disabled with "Comments arrive with the comment tools in M3", is live.
 - `find_with_include_comments_finds_a_comments_text`, on a window: 0 hits,
   then 1 after the checkbox.
 
+## The encrypted-source sweep
+
+No row. This is P1b's rule, which P20 owes the sweep for. P20 is the first
+package with commands, organize tools and codecs all registered.
+
+**What changed in behaviour.** Three read-outs of an encrypted document
+were reachable, and are now refused with the encrypted-source reason:
+
+- **SVG export:** `Document::page_svg` refuses. SVG is a vector
+  transcription of the page into another file.
+- **Attachment extraction:** `Document::attachment_bytes` refuses. It wrote
+  the embedded file, decrypted, to disk.
+- **Text export:** the text codec refuses. Reading page text for a
+  selection, a search or the clipboard stays allowed, because it writes no
+  file.
+
+**How it is built.** The sweep is `crates/app/tests/encrypted_sweep.rs`.
+Every entry is refused, provably raster-only, or named as reading into
+session state and writing no file.
+
+- **Commands:**
+  - an `Edits` command is disabled with the edit reason, and run on every
+    page it moves no edit epoch; at least one must actually be refused;
+  - a `ReadsOut` command is disabled with the read-out reason;
+  - a `Reads` command must be named in `READS_INTO_SESSION` with why it is
+    safe. Those are Select All and Deselect All.
+- **Codecs:** each is run on the encrypted fixture. It is refused by the
+  rule, or its output starts with PNG, JPEG or TIFF bytes. At least five
+  codecs are seen.
+- **`core`'s read-outs:**
+  - `attachment_bytes` and `page_svg` are refused;
+  - `page_text` is allowed, for selection and search;
+  - `export_snapshot` feeds only the raster export the codec sweep checks.
+
+**Runs and mutations.**
+
+- `cargo test -p onionskin-app --features shell,shell-test-support --test
+  encrypted_sweep`: 3 pass.
+- **Mutations:** taking the text codec's guard out fails the codec sweep
+  ("text wrote something other than pixels"). Taking `attachment_bytes`'
+  guard out fails the core read-out test.
+- **Weak spot:** the committed encrypted fixture has no attachment, so the
+  `attachment_bytes` mutation fails on the wrong error rather than on
+  extracted bytes. An encrypted fixture with an embedded file would make it
+  sharper.
+- **Full app run:** 681 pass and 5 fail. The 5 are the environmental set
+  and the timing-sensitive snapshot test named above. Every integration
+  binary passes. `cargo clippy` over the workspace is clean apart from the
+  Linux-only dead code in `a11y/mod.rs`.

@@ -42,6 +42,15 @@ impl CodecPlugin for TextCodec {
         page: PageIndex,
         first_in_request: bool,
     ) -> Result<Vec<u8>, ExportError> {
+        // The page's text written to a file is the document read out: refused
+        // on an encrypted one, like SVG. Reading text for a selection or the
+        // clipboard stays allowed; that writes no file.
+        if let Some(refusal) = doc.read_out_refusal() {
+            return Err(ExportError::Page {
+                page,
+                source: onionskin_core::Error::Protected(refusal),
+            });
+        }
         let text = doc
             .page_text(page)
             .map_err(|source| ExportError::Page { page, source })?;
