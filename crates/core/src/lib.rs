@@ -5,6 +5,7 @@
 //! history, save, and shell integration land in later milestones.
 
 mod annots;
+mod attachment_search;
 mod attachments;
 mod autoscroll;
 mod edit;
@@ -40,6 +41,9 @@ pub use annots::{
     ReadAnnotation, Rect, StampArt, Subtype, TextStyle,
 };
 pub use annots::{properties, review};
+pub use attachment_search::{
+    AttachmentHit, AttachmentSearch, ATTACHMENT_SEARCH_DEPTH, MAX_ATTACHMENT_HITS,
+};
 pub use attachments::Attachment;
 pub use autoscroll::{
     AutoScroll, AUTO_SCROLL_MAX_STEP, AUTO_SCROLL_RESUME_AFTER, AUTO_SCROLL_SPEEDS,

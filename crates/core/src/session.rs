@@ -1086,6 +1086,14 @@ impl Document {
     /// decrypted, and every caller writes them to a file of their own.
     pub fn attachment_bytes(&mut self, index: usize) -> Result<Vec<u8>> {
         crate::protection::read_out(&self.cos).map_err(Error::Protected)?;
+        self.attached_bytes(index)
+    }
+
+    /// The bytes of one attachment for reading in memory, as Advanced
+    /// Search does. Not refused on an encrypted document, because nothing
+    /// here leaves the process: [`Document::attachment_bytes`] is the door
+    /// to a file, and it is the one that refuses.
+    pub(crate) fn attached_bytes(&mut self, index: usize) -> Result<Vec<u8>> {
         let count = self.attachments()?.len();
         let attachment = self
             .attachments
