@@ -17,3 +17,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # LZW, for the older producers whose content streams and CMaps use it. It moved
 # here with the rest of the filter set when `decode_stream` became public.
 weezl = "0.1"
+
+# `tests/encryption_classes.rs` validates the owner password for its
+# measurement table, which `cos` itself never does: M3 opens with the user
+# password and does not escalate.
+[dev-dependencies]
+onionskin-crypto.workspace = true

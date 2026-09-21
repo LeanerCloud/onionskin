@@ -19,7 +19,7 @@ mod filters;
 mod standard;
 
 pub use filters::Method;
-pub use standard::{EncryptDict, Permissions, SecurityHandler};
+pub use standard::{validates_owner_password, EncryptDict, Permissions, SecurityHandler};
 
 use std::fmt;
 

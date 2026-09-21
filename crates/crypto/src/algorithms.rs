@@ -34,6 +34,7 @@ pub(crate) const PAD: [u8; 32] = [
 /// The inputs algorithm 2 hashes. Named, because the order is the algorithm
 /// and a positional argument list of five byte slices is a list someone will
 /// eventually pass in the wrong order.
+#[derive(Clone, Copy)]
 pub(crate) struct KeyInputs<'a> {
     pub(crate) password: &'a [u8],
     pub(crate) owner: &'a [u8],
@@ -150,6 +151,70 @@ pub(crate) fn file_key_r5_r6(
         .decrypt_padded_mut::<NoPadding>(&mut key)
         .map_err(|_| Error::Malformed("/UE does not decrypt to a whole number of blocks"))?;
     Ok(key)
+}
+
+/// Algorithms 7 and 12: whether `password` is the owner password.
+///
+/// Only the measurement asks: M3 opens with the user password and never
+/// escalates. Algorithm 7 (`/R` 2-4) recovers the padded user password from
+/// `/O` with a key derived from the owner password, then checks it as a user
+/// password. Algorithm 12 (`/R` 5-6) hashes the owner password with `/O`'s
+/// validation salt **and the whole of `/U`**, which is the one place the user
+/// key enters an owner check and the step a short implementation drops.
+///
+/// `inputs.password` is the candidate owner password; `user` is `/U`.
+pub(crate) fn owner_password_matches(inputs: &KeyInputs<'_>, user: &[u8]) -> bool {
+    let KeyInputs {
+        password,
+        owner,
+        permissions,
+        file_id,
+        revision,
+        length,
+        encrypt_metadata,
+    } = *inputs;
+    match revision {
+        2..=4 => {
+            let mut key = Md5::digest(padded(password)).to_vec();
+            if revision >= 3 {
+                for _ in 0..50 {
+                    key = Md5::digest(&key[..length]).to_vec();
+                }
+            }
+            key.truncate(if revision == 2 { 5 } else { length });
+            if owner.len() < 32 {
+                return false;
+            }
+            let mut recovered = owner[..32].to_vec();
+            if revision == 2 {
+                rc4_in_place(&key, &mut recovered);
+            } else {
+                for round in (0u8..=19).rev() {
+                    let step: Vec<u8> = key.iter().map(|byte| byte ^ round).collect();
+                    rc4_in_place(&step, &mut recovered);
+                }
+            }
+            let file_key = file_key_r2_to_r4(&KeyInputs {
+                password: &recovered,
+                owner,
+                permissions,
+                file_id,
+                revision,
+                length: if revision == 2 { 5 } else { length },
+                encrypt_metadata,
+            });
+            user_password_matches(&file_key, user, file_id, revision)
+        }
+        5 | 6 => {
+            if owner.len() < 40 || user.len() < 48 {
+                return false;
+            }
+            let password = &password[..password.len().min(127)];
+            let check = hash_for(revision, password, &owner[32..40], &user[..48]);
+            check[..] == owner[..32]
+        }
+        _ => false,
+    }
 }
 
 /// The hash `/R` 5 or `/R` 6 uses, chosen by revision rather than by guessing.

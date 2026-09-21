@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use crate::algorithms::{
-    file_key_r2_to_r4, file_key_r5_r6, object_key, user_password_matches, KeyInputs,
+    file_key_r2_to_r4, file_key_r5_r6, object_key, owner_password_matches, user_password_matches,
+    KeyInputs,
 };
 use crate::filters::{decrypt, Method};
 use crate::Error;
@@ -189,6 +190,29 @@ impl SecurityHandler {
         };
         decrypt(method, &key, data)
     }
+}
+
+/// Whether `password` is the owner password, for the measurement table.
+///
+/// Not part of opening a document: M3 opens with the user password and never
+/// escalates to owner rights, which would be a way around the permission bits.
+pub fn validates_owner_password(dict: &EncryptDict, file_id: &[u8], password: &[u8]) -> bool {
+    let length = match dict.r {
+        2 => 5,
+        _ => (dict.length.unwrap_or(40) / 8).clamp(5, 16) as usize,
+    };
+    owner_password_matches(
+        &KeyInputs {
+            password,
+            owner: &dict.o,
+            permissions: dict.p,
+            file_id,
+            revision: dict.r,
+            length,
+            encrypt_metadata: dict.encrypt_metadata,
+        },
+        &dict.u,
+    )
 }
 
 /// The methods for streams and strings, from `/V` and the crypt filters.
