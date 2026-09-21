@@ -10,12 +10,22 @@ onionskin-plugin-api.workspace = true
 # PNG encoding lives here rather than in `render`, so that crate's seam stays
 # about rasters and gains no file formats. Already in the tree: `app` uses it
 # behind `shell` and `hayro-svg` for its embedded images.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# TIFF directly rather than through `image`: `image` converts CMYK to RGB on
+# the way in and has no way to write the resolution tags on the way out, and
+# a CMYK scan destined for print is exactly the file that must keep both.
+# Already in the lock through `image`'s own TIFF support in the shell build.
+tiff = "0.11"
+# The page an image becomes is `core::images`' to write.
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
 
 # The round-trip tests compare an export against the canvas render path, which
 # means driving `core`'s interactive render queue directly.
 [dev-dependencies]
-onionskin-core.workspace = true
+# Decodes the TIFF exports back through `image`'s own reader, and writes the
+# fixtures the import tests read.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff"] }
 onionskin-corpus-testing.workspace = true
 # Rasterizes an exported SVG back to pixels, so the SVG round trip is checked
 # against the PNG rather than against a shape of text. Already in the lock:

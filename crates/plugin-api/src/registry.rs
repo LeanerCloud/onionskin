@@ -127,6 +127,14 @@ impl PluginRegistry {
             .find(|codec| codec.id() == id)
             .map(Arc::clone)
     }
+
+    /// The codec that imports `bytes`, recognised by their signature.
+    pub fn importer(&self, bytes: &[u8]) -> Option<Arc<dyn CodecPlugin + Send + Sync>> {
+        self.codecs
+            .iter()
+            .find(|codec| codec.reads(bytes))
+            .map(Arc::clone)
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +207,53 @@ mod tests {
             "test"
         );
         assert!(registry.codec("png").is_none());
+    }
+
+    struct Importing;
+
+    impl CodecPlugin for Importing {
+        fn id(&self) -> &'static str {
+            "importing"
+        }
+        fn name(&self) -> &'static str {
+            "Importing"
+        }
+        fn extension(&self) -> &'static str {
+            "imp"
+        }
+        fn output_kind(&self) -> ExportOutputKind {
+            ExportOutputKind::Single
+        }
+        fn export_page(
+            &self,
+            _doc: &mut Document,
+            _request: &ExportRequest,
+            _page: PageIndex,
+            _first_in_request: bool,
+        ) -> Result<Vec<u8>, ExportError> {
+            Ok(Vec::new())
+        }
+        fn reads(&self, bytes: &[u8]) -> bool {
+            bytes.starts_with(b"IMP")
+        }
+    }
+
+    #[test]
+    fn an_importer_is_found_by_signature_and_an_export_only_codec_imports_nothing() {
+        let mut registry = PluginRegistry::new();
+        registry.register_codec(Box::new(TestCodec));
+        registry.register_codec(Box::new(Importing));
+
+        assert_eq!(
+            registry.importer(b"IMP...").expect("recognised").id(),
+            "importing"
+        );
+        assert!(registry.importer(b"%PDF-").is_none());
+        assert!(matches!(
+            TestCodec.import(b"anything"),
+            Err(crate::ImportError::NotImported)
+        ));
+        assert!(!TestCodec.reads(b"IMP"));
     }
 
     #[test]

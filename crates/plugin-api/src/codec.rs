@@ -1,9 +1,13 @@
 //! The codec contract: turning pages of an open document into some other
-//! format.
+//! format, and a file in some other format into a new document.
 //!
-//! M2 has three consumers, all in `codecs-common` and all exports: plain
-//! text, PNG and SVG. Import is deliberately absent - reading a format *into*
-//! a `Document` needs an edit graph to build one, which is M3.
+//! Export has five consumers in `codecs-common`: plain text, PNG, SVG, JPEG
+//! and TIFF. Import has three callers, and the shape is theirs: Create From
+//! File hands one file's bytes, Create From Multiple Files hands each input's
+//! bytes and joins the one-page results with `core::pages::Assembly`, and
+//! Create From Clipboard hands the encoded image the pasteboard holds. All
+//! three have bytes and want a document, so that is the whole import half: a
+//! format check and a conversion, both over bytes.
 
 use std::fmt;
 use std::ops::RangeInclusive;
@@ -141,7 +145,44 @@ impl std::error::Error for ExportError {
     }
 }
 
-/// A format an open document can be written out to.
+/// Why a file did not become a document.
+#[derive(Debug)]
+pub enum ImportError {
+    /// This codec does not read the format, or does not read files at all.
+    NotImported,
+    /// The file claims the format and is not a valid instance of it.
+    Decode(String),
+    /// The file decoded, and the document could not be made from it.
+    Document(onionskin_core::Error),
+}
+
+impl fmt::Display for ImportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotImported => write!(f, "this format cannot be made into a PDF"),
+            Self::Decode(detail) => write!(f, "the file does not decode: {detail}"),
+            Self::Document(source) => write!(f, "{source}"),
+        }
+    }
+}
+
+impl std::error::Error for ImportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Document(source) => Some(source),
+            Self::NotImported | Self::Decode(_) => None,
+        }
+    }
+}
+
+impl From<onionskin_core::Error> for ImportError {
+    fn from(source: onionskin_core::Error) -> Self {
+        Self::Document(source)
+    }
+}
+
+/// A format an open document can be written out to, and optionally read
+/// from.
 pub trait CodecPlugin: Send + Sync {
     /// Stable identifier, e.g. "png". Namespaced by the plugin that registers
     /// it only if it needs to be; these are file formats, not commands.
@@ -161,6 +202,17 @@ pub trait CodecPlugin: Send + Sync {
         page: PageIndex,
         first_in_request: bool,
     ) -> Result<Vec<u8>, ExportError>;
+
+    /// Whether `bytes` are a file this codec imports, by its signature rather
+    /// than a file name: the clipboard has no file name, and a name can lie.
+    fn reads(&self, _bytes: &[u8]) -> bool {
+        false
+    }
+
+    /// A new document made from `bytes`, as a complete PDF file.
+    fn import(&self, _bytes: &[u8]) -> Result<Vec<u8>, ImportError> {
+        Err(ImportError::NotImported)
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +262,26 @@ mod tests {
             request(f32::NAN).zoom(),
             Err(ExportError::InvalidDpi(_))
         ));
+    }
+
+    #[test]
+    fn import_failures_say_what_went_wrong_in_the_users_terms() {
+        assert_eq!(
+            ImportError::NotImported.to_string(),
+            "this format cannot be made into a PDF"
+        );
+        let decode = ImportError::Decode("a PNG with no IHDR".into());
+        assert_eq!(
+            decode.to_string(),
+            "the file does not decode: a PNG with no IHDR"
+        );
+        assert!(std::error::Error::source(&decode).is_none());
+        let document = ImportError::from(onionskin_core::Error::WouldLeaveNoPages);
+        assert!(std::error::Error::source(&document).is_some());
+        assert_eq!(
+            document.to_string(),
+            "a document has to keep at least one page"
+        );
     }
 
     /// Every message a user could see names a one-based page, because the

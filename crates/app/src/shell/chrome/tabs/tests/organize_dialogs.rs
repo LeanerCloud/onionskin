@@ -14,7 +14,11 @@ fn seed(name: &str) -> PathBuf {
 
 fn entry(path: PathBuf) -> CombineEntry {
     CombineEntry {
-        page_count: onionskin_commands_core::combine::page_count(&path).map_err(|e| e.to_string()),
+        page_count: onionskin_commands_core::combine::page_count(
+            &path,
+            &onionskin_commands_core::combine::PdfOnly,
+        )
+        .map_err(|e| e.to_string()),
         path,
         pages: None,
     }

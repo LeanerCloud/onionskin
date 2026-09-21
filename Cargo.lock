@@ -4015,8 +4015,10 @@ dependencies = [
  "image",
  "onionskin-core",
  "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
  "resvg",
+ "tiff",
 ]
 
 [[package]]

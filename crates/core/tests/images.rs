@@ -21,6 +21,7 @@ fn samples(width: u32, height: u32, color: ImageColor, dpi: f64, data: Vec<u8>) 
         data: ImageData::Samples(data),
         alpha: None,
         inverted_cmyk: false,
+        icc: None,
     }
 }
 
@@ -160,6 +161,7 @@ fn a_jpeg_is_embedded_as_it_is() {
         data: ImageData::Jpeg(jpeg.clone()),
         alpha: None,
         inverted_cmyk: true,
+        icc: None,
     };
     let mut doc = Document::open_bytes(image_document(&image).expect("writes")).expect("opens");
     let images = document_images(doc.structure().expect("the document")).expect("reads");
@@ -182,6 +184,38 @@ fn a_jpeg_is_embedded_as_it_is() {
         decode,
         &Object::Array([1, 0, 1, 0, 1, 0, 1, 0].map(Object::Integer).to_vec())
     );
+}
+
+#[test]
+fn an_embedded_profile_becomes_the_images_colour_space() {
+    let profile = b"an ICC profile, carried and not interpreted".to_vec();
+    let mut image = samples(2, 2, ImageColor::Rgb, 72.0, vec![90; 12]);
+    image.icc = Some(profile.clone());
+    let mut doc = Document::open_bytes(image_document(&image).expect("writes")).expect("opens");
+    let images = document_images(doc.structure().expect("the document")).expect("reads");
+    assert_eq!(
+        images[0].content,
+        Ok((ImageColor::Rgb, ImageData::Samples(vec![90; 12]))),
+        "an ICC-based image still reads back by its component count"
+    );
+
+    let current = doc.structure().expect("the document");
+    let parsed = current.get(images[0].object.number).expect("the image");
+    let Object::Stream(stream) = parsed.object else {
+        panic!("an image stream");
+    };
+    let Some(Object::Array(space)) = stream.dict.get(b"ColorSpace") else {
+        panic!("an /ICCBased array");
+    };
+    assert_eq!(space[0], Object::name("ICCBased"));
+    let Object::Ref(icc) = space[1] else {
+        panic!("the profile is a stream");
+    };
+    let Object::Stream(icc) = current.get(icc.number).expect("the profile").object else {
+        panic!("the profile is a stream");
+    };
+    assert_eq!(icc.dict.get(b"N"), Some(&Object::Integer(3)));
+    assert_eq!(current.decode_stream(&icc).expect("decodes"), profile);
 }
 
 #[test]

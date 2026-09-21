@@ -220,11 +220,12 @@ impl ShellFrame {
 fn expand_inputs(paths: &[PathBuf], folder: bool) -> Result<Vec<CombineEntry>, String> {
     use onionskin_commands_core::combine;
 
+    let codecs = combine::codecs(&crate::build_registry());
     let files = if folder {
         let mut files = Vec::new();
         for dir in paths {
             files.extend(
-                combine::pdfs_in_folder(dir)
+                combine::files_in_folder(dir, &codecs)
                     .map_err(|error| format!("{}: {error}", dir.display()))?,
             );
         }
@@ -235,7 +236,7 @@ fn expand_inputs(paths: &[PathBuf], folder: bool) -> Result<Vec<CombineEntry>, S
     Ok(files
         .into_iter()
         .map(|path| CombineEntry {
-            page_count: combine::page_count(&path).map_err(|error| error.to_string()),
+            page_count: combine::page_count(&path, &codecs).map_err(|error| error.to_string()),
             path,
             pages: None,
         })
@@ -262,7 +263,11 @@ fn combine_files(
             pages: pages.clone(),
         })
         .collect();
-    let combined = combine::combine(&inputs, output).map_err(|error| error.to_string())?;
+    // A list may hold images as well as PDFs: the codecs this build
+    // registered make them pages, and a build without them says the file is
+    // not a PDF.
+    let codecs = combine::codecs(&crate::build_registry());
+    let combined = combine::combine(&inputs, output, &codecs).map_err(|error| error.to_string())?;
     let tagging = match combined.tagging {
         Tagging::Tagged => "",
         Tagging::Untagged(_) => " It is untagged: not every input was a whole tagged document.",

@@ -9,7 +9,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use onionskin_commands_core::combine::{self, CombineError, Input};
+use onionskin_commands_core::combine::{self, CombineError, Combined, Importer, Input, PdfOnly};
 use onionskin_commands_core::publish::PublishError;
 use onionskin_commands_core::split::{self, SplitBy, SplitError};
 use onionskin_commands_core::CoreCommandsPlugin;
@@ -26,12 +26,116 @@ use onionskin_plugin_api::{
 // Combine
 // ---------------------------------------------------------------------------
 
+fn combine_pdfs(inputs: &[Input], output: &Path) -> Result<Combined, CombineError> {
+    combine::combine(inputs, output, &PdfOnly)
+}
+
+/// Stands in for the image codecs: a file starting `IMG` becomes a document
+/// of that many pages as the byte after it says, and `IMG!` does not decode.
+struct FakeImages;
+
+impl Importer for FakeImages {
+    fn reads(&self, bytes: &[u8]) -> bool {
+        bytes.starts_with(b"IMG")
+    }
+
+    fn import(&self, bytes: &[u8]) -> Result<Vec<u8>, onionskin_plugin_api::ImportError> {
+        match bytes.get(3) {
+            Some(count @ b'1'..=b'9') => Ok(numbered(usize::from(count - b'0'), &[])),
+            _ => Err(onionskin_plugin_api::ImportError::Decode(
+                "not an image".into(),
+            )),
+        }
+    }
+}
+
+/// Create PDF From Multiple Files over a PDF and two images: each image goes
+/// through the importer, the PDF does not, and the order is the list's.
+#[test]
+fn images_in_the_list_are_imported_and_combined_in_order() {
+    let dir = tempfile::tempdir().expect("dir");
+    let scan = write(dir.path(), "scan.png", b"IMG2");
+    let photo = write(dir.path(), "photo", b"IMG1");
+    let output = dir.path().join("out.pdf");
+    let combined = combine::combine(
+        &[
+            Input::whole(&scan),
+            Input::whole(seed("two-page.pdf")),
+            Input::whole(&photo),
+        ],
+        &output,
+        &FakeImages,
+    )
+    .expect("combines");
+    assert_eq!(combined.page_count, 2 + 2 + 1);
+    let mut expected = texts_of(&write(dir.path(), "two.pdf", &numbered(2, &[])));
+    expected.extend(texts_of(&seed("two-page.pdf")));
+    expected.extend(texts_of(&write(dir.path(), "one.pdf", &numbered(1, &[]))));
+    assert_eq!(texts_of(&output), expected);
+
+    assert_eq!(
+        combine::page_count(&scan, &FakeImages).expect("counts"),
+        2,
+        "the dialog's preview counts an image's pages the same way"
+    );
+}
+
+#[test]
+fn an_image_that_does_not_decode_is_named_and_nothing_is_written() {
+    let dir = tempfile::tempdir().expect("dir");
+    let broken = write(dir.path(), "broken.jpg", b"IMG!");
+    let output = dir.path().join("out.pdf");
+    let refused = combine::combine(
+        &[Input::whole(seed("two-page.pdf")), Input::whole(&broken)],
+        &output,
+        &FakeImages,
+    );
+    let Err(CombineError::Import { path, .. }) = refused else {
+        panic!("an import refusal: {refused:?}");
+    };
+    assert_eq!(path, broken);
+    assert!(!output.exists());
+
+    let without_codecs = combine::combine(&[Input::whole(&broken)], &output, &PdfOnly);
+    assert!(
+        matches!(without_codecs, Err(CombineError::Open { .. })),
+        "with no importer it is a file that is not a PDF"
+    );
+}
+
+#[test]
+fn add_folder_takes_the_images_the_importer_reads() {
+    let dir = tempfile::tempdir().expect("dir");
+    for (name, body) in [("b.pdf", &b"x"[..]), ("a.tif", b"IMG1"), ("c.txt", b"text")] {
+        write(dir.path(), name, body);
+    }
+    let names = |found: Vec<PathBuf>| -> Vec<String> {
+        found
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .expect("name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(combine::files_in_folder(dir.path(), &FakeImages).expect("lists")),
+        ["a.tif", "b.pdf"]
+    );
+    assert_eq!(
+        names(combine::files_in_folder(dir.path(), &PdfOnly).expect("lists")),
+        ["b.pdf"]
+    );
+}
+
 #[test]
 fn combine_writes_every_input_in_order() {
     let dir = tempfile::tempdir().expect("dir");
     let third = write(dir.path(), "third.pdf", &numbered(3, &[]));
     let output = dir.path().join("combined.pdf");
-    let combined = combine::combine(
+    let combined = combine_pdfs(
         &[
             Input::whole(organize_fixture("embedded-font.pdf")),
             Input::whole(seed("two-page.pdf")),
@@ -58,7 +162,7 @@ fn an_encrypted_input_in_position_two_refuses_the_combine_and_names_it() {
     let encrypted = encrypted_fixture("r4-aes-128.pdf");
     let output = dir.path().join("combined.pdf");
 
-    let refused = combine::combine(
+    let refused = combine_pdfs(
         &[
             Input::whole(&first),
             Input::whole(&encrypted),
@@ -80,7 +184,7 @@ fn an_encrypted_input_in_position_two_refuses_the_combine_and_names_it() {
 fn a_file_that_is_not_a_pdf_is_named() {
     let dir = tempfile::tempdir().expect("dir");
     let bogus = write(dir.path(), "notes.pdf", b"not a pdf at all");
-    let refused = combine::combine(&[Input::whole(&bogus)], &dir.path().join("out.pdf"));
+    let refused = combine_pdfs(&[Input::whole(&bogus)], &dir.path().join("out.pdf"));
     assert!(
         matches!(&refused, Err(CombineError::Open { path, .. }) if *path == bogus),
         "{refused:?}"
@@ -92,7 +196,7 @@ fn a_file_combined_with_itself_is_there_twice() {
     let dir = tempfile::tempdir().expect("dir");
     let source = write(dir.path(), "source.pdf", &numbered(2, &[]));
     let output = dir.path().join("twice.pdf");
-    combine::combine(&[Input::whole(&source), Input::whole(&source)], &output).expect("combines");
+    combine_pdfs(&[Input::whole(&source), Input::whole(&source)], &output).expect("combines");
     assert_eq!(texts_of(&output), ["Page 1", "Page 2", "Page 1", "Page 2"]);
 }
 
@@ -103,7 +207,7 @@ fn an_expanded_input_contributes_the_pages_picked_in_the_order_picked() {
     let dir = tempfile::tempdir().expect("dir");
     let source = write(dir.path(), "source.pdf", &numbered(4, &[]));
     let output = dir.path().join("picked.pdf");
-    combine::combine(
+    combine_pdfs(
         &[Input {
             path: source,
             pages: Some(vec![3, 0]),
@@ -119,7 +223,7 @@ fn an_existing_output_is_not_overwritten() {
     let dir = tempfile::tempdir().expect("dir");
     let source = write(dir.path(), "source.pdf", &numbered(1, &[]));
     let output = write(dir.path(), "taken.pdf", b"mine");
-    let refused = combine::combine(&[Input::whole(&source)], &output);
+    let refused = combine_pdfs(&[Input::whole(&source)], &output);
     assert!(matches!(
         refused,
         Err(CombineError::Publish(PublishError::Exists(_)))
@@ -134,7 +238,7 @@ fn add_folder_adds_the_pdfs_in_it_by_name_and_nothing_else() {
         write(dir.path(), name, b"x");
     }
     std::fs::create_dir(dir.path().join("nested.pdf")).expect("a directory named like a pdf");
-    let found = combine::pdfs_in_folder(dir.path()).expect("lists");
+    let found = combine::files_in_folder(dir.path(), &PdfOnly).expect("lists");
     let names: Vec<_> = found
         .iter()
         .map(|path| {
@@ -150,7 +254,7 @@ fn add_folder_adds_the_pdfs_in_it_by_name_and_nothing_else() {
 #[test]
 fn the_page_count_the_dialog_previews_is_the_files() {
     assert_eq!(
-        combine::page_count(&organize_fixture("embedded-font.pdf")).expect("counts"),
+        combine::page_count(&organize_fixture("embedded-font.pdf"), &PdfOnly).expect("counts"),
         2
     );
 }

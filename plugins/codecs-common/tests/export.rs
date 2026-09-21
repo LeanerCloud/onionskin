@@ -4,7 +4,9 @@
 
 use std::time::{Duration, Instant};
 
-use onionskin_codecs_common::{CommonCodecsPlugin, PngCodec, SvgCodec, TextCodec};
+use onionskin_codecs_common::{
+    CommonCodecsPlugin, JpegCodec, PngCodec, SvgCodec, TextCodec, TiffCodec,
+};
 use onionskin_core::{BaseRaster, Document, RenderRequest, RenderResponse};
 use onionskin_corpus_testing::seed;
 use onionskin_plugin_api::{
@@ -69,7 +71,7 @@ fn collect_raster(doc: &mut Document) -> BaseRaster {
 }
 
 #[test]
-fn the_manifest_registers_exactly_the_three_export_formats() {
+fn the_manifest_registers_exactly_the_five_export_formats() {
     let mut registry = PluginRegistry::new();
     registry.install(&CommonCodecsPlugin);
 
@@ -79,7 +81,13 @@ fn the_manifest_registers_exactly_the_three_export_formats() {
         .collect();
     assert_eq!(
         installed,
-        vec![("text", "txt"), ("png", "png"), ("svg", "svg")]
+        vec![
+            ("text", "txt"),
+            ("png", "png"),
+            ("svg", "svg"),
+            ("jpeg", "jpg"),
+            ("tiff", "tif")
+        ]
     );
 }
 
@@ -88,6 +96,11 @@ fn codecs_declare_their_destination_layout() {
     assert_eq!(TextCodec.output_kind(), ExportOutputKind::Single);
     assert_eq!(PngCodec.output_kind(), ExportOutputKind::PerPage);
     assert_eq!(SvgCodec.output_kind(), ExportOutputKind::PerPage);
+    assert_eq!(
+        JpegCodec::default().output_kind(),
+        ExportOutputKind::PerPage
+    );
+    assert_eq!(TiffCodec.output_kind(), ExportOutputKind::PerPage);
 }
 
 /// The text codec adds no interpretation of its own: what it writes for one

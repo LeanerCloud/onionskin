@@ -80,6 +80,9 @@ pub struct ImagePage {
     /// A CMYK JPEG written by Adobe software stores its channels inverted,
     /// which its APP14 marker says; the image's `/Decode` undoes it.
     pub inverted_cmyk: bool,
+    /// The source's embedded ICC profile, carried as the image's
+    /// `/ICCBased` colour space so its colours mean what they meant.
+    pub icc: Option<Vec<u8>>,
 }
 
 impl ImagePage {
@@ -125,7 +128,7 @@ impl ImagePage {
 pub fn image_document(image: &ImagePage) -> Result<Vec<u8>> {
     image.validate()?;
     let (width, height) = image.page_size();
-    let (catalog, pages, page, content, xobject, smask) = (1, 2, 3, 4, 5, 6);
+    let (catalog, pages, page, content, xobject, smask, profile) = (1, 2, 3, 4, 5, 6, 7);
 
     let mut objects = vec![
         (
@@ -173,9 +176,19 @@ pub fn image_document(image: &ImagePage) -> Result<Vec<u8>> {
         ),
         (
             ObjRef::new(xobject, 0),
-            Object::Stream(image_xobject(image, image.alpha.as_ref().map(|_| smask))),
+            Object::Stream(image_xobject(
+                image,
+                image.alpha.as_ref().map(|_| smask),
+                image.icc.as_ref().map(|_| profile),
+            )),
         ),
     ];
+    if let Some(icc) = &image.icc {
+        objects.push((
+            ObjRef::new(profile, 0),
+            Object::Stream(icc_stream(image.color, icc)),
+        ));
+    }
     if let Some(alpha) = &image.alpha {
         objects.push((
             ObjRef::new(smask, 0),
@@ -193,7 +206,7 @@ pub fn image_document(image: &ImagePage) -> Result<Vec<u8>> {
     Ok(CosDocument::write_new(&objects, trailer)?)
 }
 
-fn image_xobject(image: &ImagePage, smask: Option<u32>) -> Stream {
+fn image_xobject(image: &ImagePage, smask: Option<u32>, profile: Option<u32>) -> Stream {
     let mut xobject = match &image.data {
         ImageData::Jpeg(bytes) => {
             let mut dict = image_dict(image.width, image.height, image.color);
@@ -213,7 +226,26 @@ fn image_xobject(image: &ImagePage, smask: Option<u32>) -> Stream {
     if let Some(smask) = smask {
         xobject.dict.set(Name::new("SMask"), reference(smask));
     }
+    if let Some(profile) = profile {
+        xobject.dict.set(
+            Name::new("ColorSpace"),
+            Object::Array(vec![Object::name("ICCBased"), reference(profile)]),
+        );
+    }
     xobject
+}
+
+/// An ICC profile stream, with the device space a reader that cannot use the
+/// profile falls back to.
+fn icc_stream(color: ImageColor, icc: &[u8]) -> Stream {
+    let Object::Dict(dict) = dict(&[
+        ("N", Object::Integer(color.components() as i64)),
+        ("Alternate", Object::name(color.device_name())),
+        ("Filter", Object::name("FlateDecode")),
+    ]) else {
+        unreachable!("dict builds a dictionary");
+    };
+    stream(dict, flate_encode(icc))
 }
 
 fn samples_xobject(width: u32, height: u32, color: ImageColor, samples: &[u8]) -> Stream {
