@@ -435,6 +435,12 @@ pub struct CanvasModel {
     /// because a thumbnail is not part of the interactive queue's generation
     /// and would otherwise have nothing to be stale against.
     thumbnail_epoch: u64,
+    /// The document's edit epoch the cached pixels were drawn from. An edit,
+    /// an undo or a redo moves the epoch, whichever surface made it: a
+    /// tool's pointer-up, a pane, a dialog or a command. The pixels are
+    /// checked against it every frame, so none of those has to remember to
+    /// say the page changed.
+    pixels_epoch: u64,
     /// Thumbnails answered and not yet collected. The pane takes them,
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
@@ -503,6 +509,7 @@ impl CanvasModel {
             pending_reveal: None,
             pending_thumbnails: BTreeMap::new(),
             thumbnail_epoch: 0,
+            pixels_epoch: 0,
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
         })
@@ -792,6 +799,17 @@ impl CanvasModel {
         }
         self.invalidate_rendered_pixels();
         Ok(true)
+    }
+
+    /// Drop the cached pixels when the document has been edited since they
+    /// were drawn. A new comment is on the page the moment it is committed,
+    /// not the next time the zoom changes.
+    fn drop_pixels_older_than_the_document(&mut self) {
+        let epoch = self.document.edit().epoch();
+        if epoch != self.pixels_epoch {
+            self.pixels_epoch = epoch;
+            self.invalidate_rendered_pixels();
+        }
     }
 
     /// Forget every cached raster and make the visible pages be rendered
@@ -1513,6 +1531,7 @@ impl CanvasModel {
         self.drain_geometry_responses()?;
         self.apply_pending_reveal()?;
 
+        self.drop_pixels_older_than_the_document();
         let visible = self.viewport.visible_pages()?;
         self.update_signature(&visible)?;
         // The rasters this drains are exempt from eviction until the frame
@@ -3104,6 +3123,46 @@ mod tests {
         assert!(model.generation > generation);
         model.tiles.begin_frame();
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
+    }
+
+    /// Found by hand on macOS: a rectangle drawn with the Rectangle tool was
+    /// in the document and not on the screen until the zoom changed, because
+    /// the page's cached raster was keyed by page and zoom only. Any edit
+    /// now drops the pixels on the next frame and asks for the page again.
+    #[test]
+    fn an_edit_drops_the_cached_pixels_and_asks_for_the_page_again() {
+        let mut model = optional_content_model();
+        let request = prepare_request(&mut model);
+        assert!(model.apply_render_response(RenderResponse::Raster {
+            request,
+            render: PageRender {
+                raster: raster(&model, request.page, request.zoom, [10, 10, 10, 255]),
+                warnings: Vec::new(),
+            },
+        }));
+        model.drop_pixels_older_than_the_document();
+        assert!(
+            model.tiles.base(0).is_some(),
+            "no edit, so the raster stays"
+        );
+
+        model
+            .document_mut()
+            .edit_document("Add Bookmark", |tx| {
+                onionskin_core::add_bookmark(tx, &[], None, "edited", None)
+            })
+            .expect("edits");
+        model.drop_pixels_older_than_the_document();
+
+        assert!(model.tiles.base(0).is_none(), "the old raster is gone");
+        let visible = model.viewport.visible_pages().unwrap();
+        assert!(model.update_signature(&visible).unwrap());
+        model.tiles.begin_frame();
+        assert_eq!(
+            model.schedule_visible_renders(&visible).unwrap(),
+            1,
+            "and the page is asked for again"
+        );
     }
 
     fn thumbnail_response(model: &CanvasModel, page: PageIndex, zoom: f32) -> ThumbnailResponse {
