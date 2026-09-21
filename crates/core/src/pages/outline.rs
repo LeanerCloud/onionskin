@@ -85,7 +85,7 @@ pub(crate) fn repair(
     // Only the survivors are written back. The dropped dictionaries stay in
     // the file, unreferenced, per the free-nothing rule.
     for (number, dict) in &items {
-        tx.set_object(*number, 0, Object::Dict(dict.clone()))?;
+        tx.put_object(*number, 0, Object::Dict(dict.clone()))?;
     }
     Ok(dropped.len())
 }

@@ -49,18 +49,18 @@ pub(crate) fn repair(
     }
 
     match fields_entry.as_ref().and_then(Object::as_reference) {
-        Some(objref) => tx.set_object(objref.number, objref.generation, Object::Array(kept))?,
+        Some(objref) => tx.put_object(objref.number, objref.generation, Object::Array(kept))?,
         None => {
             let mut acroform = acroform.clone();
             acroform.set(Name::new("Fields"), Object::Array(kept));
             match acroform_entry.as_ref().and_then(Object::as_reference) {
                 Some(objref) => {
-                    tx.set_object(objref.number, objref.generation, Object::Dict(acroform))?
+                    tx.put_object(objref.number, objref.generation, Object::Dict(acroform))?
                 }
                 None => {
                     let mut catalog = dict_at(tx, catalog_ref)?;
                     catalog.set(Name::new("AcroForm"), Object::Dict(acroform));
-                    tx.set_object(
+                    tx.put_object(
                         catalog_ref.number,
                         catalog_ref.generation,
                         Object::Dict(catalog),
@@ -129,14 +129,14 @@ fn write_kids(
     kept: Vec<Object>,
 ) -> Result<()> {
     match kids_entry.and_then(Object::as_reference) {
-        Some(objref) => tx.set_object(objref.number, objref.generation, Object::Array(kept))?,
+        Some(objref) => tx.put_object(objref.number, objref.generation, Object::Array(kept))?,
         None => {
             let Some(objref) = field.as_reference() else {
                 return Ok(());
             };
             let mut dict = dict.clone();
             dict.set(Name::new("Kids"), Object::Array(kept));
-            tx.set_object(objref.number, objref.generation, Object::Dict(dict))?;
+            tx.put_object(objref.number, objref.generation, Object::Dict(dict))?;
         }
     }
     Ok(())

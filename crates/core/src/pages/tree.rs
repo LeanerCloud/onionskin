@@ -133,7 +133,7 @@ pub(crate) fn write(
         // root, and writing one there makes some readers refuse the tree.
         let mut dict = Dict::new();
         dict.set(Name::new(kind.key()), flatten(entries));
-        tx.set_object(root.number, root.generation, Object::Dict(dict))?;
+        tx.put_object(root.number, root.generation, Object::Dict(dict))?;
         return Ok(Some(root));
     }
 
@@ -146,13 +146,13 @@ pub(crate) fn write(
         // this leaf no longer has.
         leaf.set(Name::new("Limits"), limits(chunk));
         let objref = ObjRef::new(tx.reserve(), 0);
-        tx.set_object(objref.number, 0, Object::Dict(leaf))?;
+        tx.put_object(objref.number, 0, Object::Dict(leaf))?;
         kids.push(Object::Ref(objref));
     }
 
     let mut dict = Dict::new();
     dict.set(Name::new("Kids"), Object::Array(kids));
-    tx.set_object(root.number, root.generation, Object::Dict(dict))?;
+    tx.put_object(root.number, root.generation, Object::Dict(dict))?;
     Ok(Some(root))
 }
 

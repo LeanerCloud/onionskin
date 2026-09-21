@@ -67,7 +67,7 @@ pub(crate) fn repair(
 
         match annots_entry.as_ref().and_then(Object::as_reference) {
             Some(objref) if !kept.is_empty() => {
-                tx.set_object(objref.number, objref.generation, Object::Array(kept))?;
+                tx.put_object(objref.number, objref.generation, Object::Array(kept))?;
             }
             _ => {
                 let mut dict = dict_at(tx, page)?;
@@ -79,7 +79,7 @@ pub(crate) fn repair(
                 } else {
                     dict.set(Name::new("Annots"), Object::Array(kept));
                 }
-                tx.set_object(page.number, page.generation, Object::Dict(dict))?;
+                tx.put_object(page.number, page.generation, Object::Dict(dict))?;
             }
         }
     }

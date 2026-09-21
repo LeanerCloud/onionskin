@@ -79,7 +79,7 @@ pub(crate) fn remove_page(
         if let Some(struct_type) = &element.struct_type {
             dict.set(Name::new("S"), Object::Name(struct_type.clone()));
         }
-        tx.set_object(*number, element.objref.generation, Object::Dict(dict))?;
+        tx.put_object(*number, element.objref.generation, Object::Dict(dict))?;
     }
 
     rewrite_kids_without(tx, tree, &doomed, page)?;
@@ -138,7 +138,7 @@ fn rewrite_kids_without(
         };
         let mut dict = dict.clone();
         dict.set(Name::new("K"), kids_array(&kept, tree));
-        tx.set_object(*number, state.generation, Object::Dict(dict))?;
+        tx.put_object(*number, state.generation, Object::Dict(dict))?;
     }
 
     let kept: Vec<&Kid> = tree
@@ -236,7 +236,7 @@ fn rewrite_parent_tree_without(
     // the shape the reader hands back. A balanced rebuild would be a
     // performance choice with no correctness content at M3's sizes.
     root_dict.set(Name::new("ParentTree"), Object::Dict(parent_tree));
-    tx.set_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
+    tx.put_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
     Ok(())
 }
 
@@ -298,7 +298,7 @@ fn rewrite_id_tree_without(
     id_tree.set(Name::new("Names"), Object::Array(names));
     let mut root_dict = root_dict.clone();
     root_dict.set(Name::new("IDTree"), Object::Dict(id_tree));
-    tx.set_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
+    tx.put_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
     Ok(())
 }
 
@@ -381,7 +381,7 @@ fn set_root_kids(tx: &mut Transaction<'_>, tree: &StructureTree, kids: &[&Kid]) 
     };
     let mut root_dict = root_dict.clone();
     root_dict.set(Name::new("K"), kids_array(kids, tree));
-    tx.set_object(tree.root.number, state.generation, Object::Dict(root_dict))
+    tx.put_object(tree.root.number, state.generation, Object::Dict(root_dict))
 }
 
 /// Attach an `/Annot` structure element for an annotation, with a fresh
@@ -414,7 +414,7 @@ pub(crate) fn attach_annotation(
     dict.set(Name::new("P"), Object::Ref(tree.root));
     dict.set(Name::new("Pg"), Object::Ref(page));
     dict.set(Name::new("K"), Object::Dict(object_reference));
-    tx.set_object(number, 0, Object::Dict(dict))?;
+    tx.put_object(number, 0, Object::Dict(dict))?;
 
     let mut roots: Vec<Kid> = tree.roots.clone();
     roots.push(Kid::Element(number));
@@ -448,7 +448,7 @@ pub(crate) fn attach_annotation(
     root_dict.set(Name::new("ParentTree"), Object::Dict(parent_tree));
     root_dict.set(Name::new("K"), kids_array(&root_kids, tree));
     root_dict.set(Name::new("ParentTreeNextKey"), Object::Integer(key + 1));
-    tx.set_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
+    tx.put_object(tree.root.number, state.generation, Object::Dict(root_dict))?;
 
     Ok((Maintenance::Changed, Some(key)))
 }

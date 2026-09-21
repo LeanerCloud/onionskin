@@ -43,7 +43,7 @@ pub(crate) fn repair(
 
     let mut catalog = dict_at(tx, catalog_ref)?;
     catalog.remove(b"OpenAction");
-    tx.set_object(
+    tx.put_object(
         catalog_ref.number,
         catalog_ref.generation,
         Object::Dict(catalog),

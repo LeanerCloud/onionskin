@@ -56,12 +56,12 @@ fn flat(tx: &mut Transaction<'_>, catalog_ref: ObjRef, removed: &BTreeSet<u32>) 
 
     match entry.as_reference() {
         Some(objref) => {
-            tx.set_object(objref.number, objref.generation, Object::Dict(kept))?;
+            tx.put_object(objref.number, objref.generation, Object::Dict(kept))?;
         }
         None => {
             let mut catalog = dict_at(tx, catalog_ref)?;
             catalog.set(Name::new("Dests"), Object::Dict(kept));
-            tx.set_object(
+            tx.put_object(
                 catalog_ref.number,
                 catalog_ref.generation,
                 Object::Dict(catalog),
@@ -120,11 +120,11 @@ fn write_names(
     names: Dict,
 ) -> Result<()> {
     match entry.and_then(Object::as_reference) {
-        Some(objref) => tx.set_object(objref.number, objref.generation, Object::Dict(names))?,
+        Some(objref) => tx.put_object(objref.number, objref.generation, Object::Dict(names))?,
         None => {
             let mut catalog = dict_at(tx, catalog_ref)?;
             catalog.set(Name::new("Names"), Object::Dict(names));
-            tx.set_object(
+            tx.put_object(
                 catalog_ref.number,
                 catalog_ref.generation,
                 Object::Dict(catalog),

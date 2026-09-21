@@ -110,7 +110,7 @@ pub fn rewrite_page_tree(
                 // Materialized before the parent pointer changes; see
                 // `Leaf::materialized` for why the order is the thing.
                 let dict = leaf.materialized(root);
-                tx.set_object(
+                tx.put_object(
                     leaf.objref.number,
                     leaf.objref.generation,
                     Object::Dict(dict),
@@ -121,7 +121,7 @@ pub fn rewrite_page_tree(
                 let mut dict = dict_at(tx, *objref)?;
                 dict.set(Name::new("Parent"), Object::Ref(root));
                 dict.set(Name::new("Type"), Object::name("Page"));
-                tx.set_object(objref.number, objref.generation, Object::Dict(dict))?;
+                tx.put_object(objref.number, objref.generation, Object::Dict(dict))?;
                 kids.push(Object::Ref(*objref));
             }
         }
@@ -134,7 +134,7 @@ pub fn rewrite_page_tree(
     flat.set(Name::new("Type"), Object::name("Pages"));
     flat.set(Name::new("Count"), Object::Integer(kids.len() as i64));
     flat.set(Name::new("Kids"), Object::Array(kids));
-    tx.set_object(root.number, root.generation, Object::Dict(flat))?;
+    tx.put_object(root.number, root.generation, Object::Dict(flat))?;
 
     let mut report = Rewrite {
         pages_before: leaves.len(),

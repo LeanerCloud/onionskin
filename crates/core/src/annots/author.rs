@@ -26,7 +26,7 @@ pub(crate) fn add(
     let annotation_number = tx.reserve();
     let annotation_ref = ObjRef::new(annotation_number, 0);
 
-    tx.set_object(
+    tx.put_object(
         appearance_number,
         0,
         Object::Stream(normal_appearance(annotation)),
@@ -42,7 +42,7 @@ pub(crate) fn add(
         parent_key,
         now,
     );
-    tx.set_object(annotation_number, 0, Object::Dict(dict))?;
+    tx.put_object(annotation_number, 0, Object::Dict(dict))?;
 
     append_to_page_annots(tx, page, annotation_ref)?;
     Ok(annotation_ref)
@@ -327,7 +327,7 @@ fn write_annots(
             let generation = tx
                 .object(objref.number)?
                 .map_or(objref.generation, |state| state.generation);
-            tx.set_object(objref.number, generation, Object::Array(items))
+            tx.put_object(objref.number, generation, Object::Array(items))
         }
         AnnotsHolder::Inline => {
             let Some(state) = tx.object(page.number)? else {
@@ -348,7 +348,7 @@ fn write_annots(
             } else {
                 dict.set(Name::new("Annots"), Object::Array(items));
             }
-            tx.set_object(page.number, state.generation, Object::Dict(dict))
+            tx.put_object(page.number, state.generation, Object::Dict(dict))
         }
     }
 }

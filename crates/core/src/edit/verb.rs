@@ -44,7 +44,7 @@ impl DocumentEdit {
 
     pub(crate) fn apply(&self, tx: &mut Transaction<'_>) -> Result<()> {
         match self {
-            DocumentEdit::SetInfoField { key, value } => set_info_field(tx, key, value.as_ref()),
+            DocumentEdit::SetInfoField { key, value } => write_info_field(tx, key, value.as_ref()),
             DocumentEdit::SetCatalogEntry { key, value } => {
                 set_catalog_entry(tx, key, value.as_ref())
             }
@@ -56,17 +56,17 @@ impl DocumentEdit {
 /// write **and** one trailer write, which is why `Change::TrailerKey` is not
 /// speculative: without it an undo drops the object and leaves the trailer
 /// naming it.
-fn set_info_field(tx: &mut Transaction<'_>, key: &Name, value: Option<&Object>) -> Result<()> {
+fn write_info_field(tx: &mut Transaction<'_>, key: &Name, value: Option<&Object>) -> Result<()> {
     match info_reference(tx)? {
         Some(objref) => {
             let dict = dict_at(tx, objref.number)?;
             let updated = with_entry(dict, key, value);
-            tx.set_object(objref.number, objref.generation, Object::Dict(updated))
+            tx.put_object(objref.number, objref.generation, Object::Dict(updated))
         }
         None => {
             let number = tx.reserve();
             let dict = with_entry(Dict::new(), key, value);
-            tx.set_object(number, 0, Object::Dict(dict))?;
+            tx.put_object(number, 0, Object::Dict(dict))?;
             tx.set_trailer(Name::new("Info"), Some(Object::Ref(ObjRef::new(number, 0))))
         }
     }
@@ -76,7 +76,7 @@ fn set_catalog_entry(tx: &mut Transaction<'_>, key: &Name, value: Option<&Object
     let objref = catalog_reference(tx)?;
     let dict = dict_at(tx, objref.number)?;
     let updated = with_entry(dict, key, value);
-    tx.set_object(objref.number, objref.generation, Object::Dict(updated))
+    tx.put_object(objref.number, objref.generation, Object::Dict(updated))
 }
 
 /// The live `/Info` reference: the overlay's trailer if it has one, else the

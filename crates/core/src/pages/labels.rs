@@ -110,7 +110,7 @@ pub(crate) fn rebuild(
             catalog.remove(b"PageLabels");
         }
     }
-    tx.set_object(
+    tx.put_object(
         catalog_ref.number,
         catalog_ref.generation,
         Object::Dict(catalog),

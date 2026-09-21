@@ -67,7 +67,7 @@ fn one_reorder_entry(path: &std::path::Path) -> usize {
             // A reorder rewrites each leaf; which key moves does not change the
             // resident cost, and /Rotate keeps the document valid.
             dict.set(Name::new("Rotate"), Object::Integer(90));
-            tx.set_object(
+            tx.put_object(
                 page.objref.number,
                 page.objref.generation,
                 Object::Dict(dict),
@@ -93,13 +93,13 @@ fn a_hundred_annotation_entries(path: &std::path::Path) -> usize {
         let page = &pages[index % pages.len()];
         edit.transact(&base, "Highlight", |tx| {
             let number = tx.reserve();
-            tx.set_object(number, 0, highlight())?;
+            tx.put_object(number, 0, highlight())?;
             let mut dict = page.dict.clone();
             dict.set(
                 Name::new("Annots"),
                 Object::Array(vec![Object::Ref(onionskin_cos::ObjRef::new(number, 0))]),
             );
-            tx.set_object(
+            tx.put_object(
                 page.objref.number,
                 page.objref.generation,
                 Object::Dict(dict),

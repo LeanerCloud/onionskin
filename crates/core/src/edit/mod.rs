@@ -218,7 +218,7 @@ impl Transaction<'_> {
         self.overlay.reserve()
     }
 
-    pub fn set_object(&mut self, number: u32, generation: u16, object: Object) -> Result<()> {
+    pub fn put_object(&mut self, number: u32, generation: u16, object: Object) -> Result<()> {
         let before = self.overlay.capture_object(self.base, number)?;
         let after = Some(ObjectState::new(generation, object));
         self.record(Change::Object {

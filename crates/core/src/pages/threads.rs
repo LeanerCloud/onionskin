@@ -58,7 +58,7 @@ pub(crate) fn repair(
 
     match threads_entry.as_ref().and_then(Object::as_reference) {
         Some(objref) if !kept_threads.is_empty() => {
-            tx.set_object(
+            tx.put_object(
                 objref.number,
                 objref.generation,
                 Object::Array(kept_threads),
@@ -71,7 +71,7 @@ pub(crate) fn repair(
             } else {
                 catalog.set(Name::new("Threads"), Object::Array(kept_threads));
             }
-            tx.set_object(
+            tx.put_object(
                 catalog_ref.number,
                 catalog_ref.generation,
                 Object::Dict(catalog),
@@ -145,7 +145,7 @@ fn repair_one(
         let mut bead = beads[&objref.number].clone();
         bead.set(Name::new("N"), Object::Ref(next));
         bead.set(Name::new("V"), Object::Ref(previous));
-        tx.set_object(objref.number, objref.generation, Object::Dict(bead))?;
+        tx.put_object(objref.number, objref.generation, Object::Dict(bead))?;
     }
 
     // The thread's `/F` has to name a bead that is still in the ring.
@@ -153,7 +153,7 @@ fn repair_one(
         if let Some(objref) = thread.as_reference() {
             let mut dict = dict.clone();
             dict.set(Name::new("F"), Object::Ref(survivors[0]));
-            tx.set_object(objref.number, objref.generation, Object::Dict(dict))?;
+            tx.put_object(objref.number, objref.generation, Object::Dict(dict))?;
         }
     }
     Ok(true)

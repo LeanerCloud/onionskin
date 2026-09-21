@@ -76,7 +76,7 @@ fn before_is_captured_from_the_base_by_value_at_edit_time() {
     let (base, mut edit) = session();
     let catalog_before = base.get(1).expect("the catalog parses").object;
 
-    edit.transact(&base, "Marker", |tx| tx.set_object(1, 0, marker(1)))
+    edit.transact(&base, "Marker", |tx| tx.put_object(1, 0, marker(1)))
         .expect("the transaction commits");
 
     assert_eq!(edit.history().reach(), 1, "one transaction makes one entry");
@@ -110,9 +110,9 @@ fn before_is_captured_from_the_base_by_value_at_edit_time() {
 fn second_edit_undone_restores_the_first_edit_not_the_base() {
     let (base, mut edit) = session();
 
-    edit.transact(&base, "First", |tx| tx.set_object(1, 0, marker(1)))
+    edit.transact(&base, "First", |tx| tx.put_object(1, 0, marker(1)))
         .expect("the first edit commits");
-    edit.transact(&base, "Second", |tx| tx.set_object(1, 0, marker(2)))
+    edit.transact(&base, "Second", |tx| tx.put_object(1, 0, marker(2)))
         .expect("the second edit commits");
 
     assert!(edit.undo(&base).expect("undo runs"), "there is a step back");
@@ -133,7 +133,7 @@ fn no_change_carries_before_none_for_a_number_the_base_has() {
 
     for (number, value) in &sequence {
         edit.transact(&base, "Marker", |tx| {
-            tx.set_object(*number, 0, marker(*value))
+            tx.put_object(*number, 0, marker(*value))
         })
         .expect("the edit commits");
     }
@@ -172,7 +172,7 @@ fn undoing_every_edit_leaves_the_overlay_empty() {
 
     for (number, value) in &sequence {
         edit.transact(&base, "Marker", |tx| {
-            tx.set_object(*number, 0, marker(*value))
+            tx.put_object(*number, 0, marker(*value))
         })
         .expect("the edit commits");
     }
@@ -190,9 +190,9 @@ fn undoing_every_edit_leaves_the_overlay_empty() {
 #[test]
 fn redo_after_undo_restores_exactly() {
     let (base, mut edit) = session();
-    edit.transact(&base, "First", |tx| tx.set_object(1, 0, marker(1)))
+    edit.transact(&base, "First", |tx| tx.put_object(1, 0, marker(1)))
         .expect("the first edit commits");
-    edit.transact(&base, "Second", |tx| tx.set_object(1, 0, marker(2)))
+    edit.transact(&base, "Second", |tx| tx.put_object(1, 0, marker(2)))
         .expect("the second edit commits");
     let after_both = edit.overlay().clone();
 
@@ -209,15 +209,15 @@ fn redo_after_undo_restores_exactly() {
 #[test]
 fn an_edit_after_an_undo_truncates_the_redo_tail() {
     let (base, mut edit) = session();
-    edit.transact(&base, "First", |tx| tx.set_object(1, 0, marker(1)))
+    edit.transact(&base, "First", |tx| tx.put_object(1, 0, marker(1)))
         .expect("the first edit commits");
-    edit.transact(&base, "Second", |tx| tx.set_object(1, 0, marker(2)))
+    edit.transact(&base, "Second", |tx| tx.put_object(1, 0, marker(2)))
         .expect("the second edit commits");
 
     assert!(edit.undo(&base).expect("undo runs"));
     assert_eq!(edit.history().redo_reach(), 1);
 
-    edit.transact(&base, "Third", |tx| tx.set_object(1, 0, marker(3)))
+    edit.transact(&base, "Third", |tx| tx.put_object(1, 0, marker(3)))
         .expect("the third edit commits");
 
     assert_eq!(
@@ -275,8 +275,8 @@ fn two_producers_in_one_transaction_make_one_change_per_object() {
         let catalog_before = base.get(1).expect("the catalog parses").object;
 
         edit.transact(&base, "Two producers", |tx| {
-            tx.set_object(1, 0, marker(first))?;
-            tx.set_object(1, 0, marker(second))
+            tx.put_object(1, 0, marker(first))?;
+            tx.put_object(1, 0, marker(second))
         })
         .expect("the transaction commits");
 
@@ -308,14 +308,14 @@ fn two_producers_in_one_transaction_make_one_change_per_object() {
 #[test]
 fn an_aborted_transaction_leaves_the_overlay_and_the_counter_unchanged() {
     let (base, mut edit) = session();
-    edit.transact(&base, "First", |tx| tx.set_object(1, 0, marker(1)))
+    edit.transact(&base, "First", |tx| tx.put_object(1, 0, marker(1)))
         .expect("the first edit commits");
     let before = edit.overlay().clone();
 
     let outcome: Result<(), _> = edit.transact(&base, "Aborted", |tx| {
-        tx.set_object(1, 0, marker(9))?;
+        tx.put_object(1, 0, marker(9))?;
         let reserved = tx.reserve();
-        tx.set_object(reserved, 0, marker(10))?;
+        tx.put_object(reserved, 0, marker(10))?;
         Err(onionskin_core::Error::NoCatalog)
     });
     assert!(outcome.is_err(), "the transaction aborted");
@@ -531,7 +531,7 @@ fn a_history_past_its_bound_drops_oldest_and_says_so() {
     let mut edit = EditSession::with_history_bound(&base, 512);
 
     for n in 0..64 {
-        edit.transact(&base, "Marker", |tx| tx.set_object(1, 0, marker(n)))
+        edit.transact(&base, "Marker", |tx| tx.put_object(1, 0, marker(n)))
             .expect("the edit commits");
     }
 

@@ -347,7 +347,7 @@ fn attaching_an_annotation_takes_the_next_free_parent_key() {
             let mut annot = onionskin_cos::Dict::new();
             annot.set(Name::new("Type"), Object::name("Annot"));
             annot.set(Name::new("Subtype"), Object::name("Text"));
-            tx.set_object(annotation, 0, Object::Dict(annot))?;
+            tx.put_object(annotation, 0, Object::Dict(annot))?;
             let (done, key) = attach_annotation(
                 tx,
                 &structure,
@@ -402,7 +402,7 @@ fn remove_second_page(tx: &mut onionskin_core::Transaction<'_>) -> onionskin_cor
         Object::Array(vec![Object::Ref(ObjRef::new(3, 0))]),
     );
     pages.set(Name::new("Count"), Object::Integer(1));
-    tx.set_object(2, 0, Object::Dict(pages))
+    tx.put_object(2, 0, Object::Dict(pages))
 }
 
 fn section(base: &CosDocument, edit: &EditSession) -> Option<Vec<u8>> {

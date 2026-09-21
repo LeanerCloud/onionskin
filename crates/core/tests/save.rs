@@ -304,12 +304,12 @@ fn apply_shape(document: &mut Document, shape: &str) {
                 let number = tx.reserve();
                 let mut dict = Dict::new();
                 dict.set(Name::new("Type"), Object::name("Metadata"));
-                tx.set_object(number, 0, Object::Dict(dict))?;
+                tx.put_object(number, 0, Object::Dict(dict))?;
                 // Reachable, or the section writer has an object nothing names.
                 let catalog = tx.object(1)?.expect("catalog");
                 let mut updated = catalog.object.as_dict().expect("dict").clone();
                 updated.set(Name::new("PieceInfo"), Object::Ref(ObjRef::new(number, 0)));
-                tx.set_object(1, catalog.generation, Object::Dict(updated))
+                tx.put_object(1, catalog.generation, Object::Dict(updated))
             })
             .expect("create");
         }
@@ -608,7 +608,7 @@ fn a_routed_reader_sees_an_unsaved_edit() {
         let mut ocg = Dict::new();
         ocg.set(Name::new("Type"), Object::name("OCG"));
         ocg.set(Name::new("Name"), Object::String(b"Notes".to_vec()));
-        tx.set_object(group, 0, Object::Dict(ocg))?;
+        tx.put_object(group, 0, Object::Dict(ocg))?;
 
         let group_ref = Object::Ref(ObjRef::new(group, 0));
         let mut default_config = Dict::new();
@@ -620,7 +620,7 @@ fn a_routed_reader_sees_an_unsaved_edit() {
         let catalog = tx.object(1)?.expect("catalog");
         let mut updated = catalog.object.as_dict().expect("dict").clone();
         updated.set(Name::new("OCProperties"), Object::Dict(properties));
-        tx.set_object(1, catalog.generation, Object::Dict(updated))
+        tx.put_object(1, catalog.generation, Object::Dict(updated))
     })
     .expect("layer added");
 
