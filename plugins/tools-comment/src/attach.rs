@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use onionskin_core::embedded::{embed_file, NewAttachment};
+use onionskin_core::embedded::{embed_file, mime_for, NewAttachment};
 use onionskin_core::{add_annotation, Annotation, Color, PagePoint, Rect, Subtype};
 use onionskin_plugin_api::{PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin};
 
@@ -75,29 +75,6 @@ impl AttachFileTool {
             add_annotation(tx, structure, page, &annotation, when).map(|_| ())
         });
     }
-}
-
-/// A MIME type from the file's extension, for the common ones; `None`
-/// rather than a guess for the rest, which is what the format allows.
-pub(crate) fn mime_for(name: &str) -> Option<&'static str> {
-    let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
-    Some(match extension.as_str() {
-        "pdf" => "application/pdf",
-        "txt" => "text/plain",
-        "csv" => "text/csv",
-        "html" | "htm" => "text/html",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "zip" => "application/zip",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "tif" | "tiff" => "image/tiff",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        _ => return None,
-    })
 }
 
 impl ToolPlugin for AttachFileTool {
@@ -165,14 +142,6 @@ impl ToolPlugin for AttachFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn common_extensions_have_a_type_and_the_rest_have_none() {
-        assert_eq!(mime_for("Report.PDF"), Some("application/pdf"));
-        assert_eq!(mime_for("photo.jpeg"), Some("image/jpeg"));
-        assert_eq!(mime_for("archive.7z"), None);
-        assert_eq!(mime_for("README"), None);
-    }
 
     #[test]
     fn only_an_existing_file_can_be_chosen() {

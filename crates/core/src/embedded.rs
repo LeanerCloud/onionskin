@@ -15,7 +15,7 @@ use onionskin_cos::{flate_encode, Dict, Name, ObjRef, Object, Stream};
 
 use crate::annots::{pdf_date, text_string};
 use crate::edit::Transaction;
-use crate::pages::{dict_at, resolve};
+use crate::pages::{dict_at, page_ref, resolve};
 use crate::{Error, Result};
 
 /// How deep an existing name tree is followed when it is rewritten; the
@@ -42,6 +42,29 @@ pub fn check_name(name: &str) -> Result<()> {
         return Err(Error::InvalidAttachmentName(name.to_owned()));
     }
     Ok(())
+}
+
+/// A MIME type from the file's extension, for the common ones; `None`
+/// rather than a guess for the rest, which is what the format allows.
+pub fn mime_for(name: &str) -> Option<&'static str> {
+    let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "zip" => "application/zip",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "tif" | "tiff" => "image/tiff",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => return None,
+    })
 }
 
 /// Write the embedded file stream and its file specification, returning the
@@ -92,12 +115,109 @@ fn file_stream(file: &NewAttachment<'_>, now: i64) -> Stream {
 /// Name `spec` in the document's `/Names /EmbeddedFiles`, under `name` or,
 /// if that key is taken, `name (2)`, `name (3)` and so on: two attachments
 /// with one key would leave one of them unreachable. Returns the key used.
-///
-/// The existing tree is read whole and written back as one sorted leaf. A
-/// tree built of `/Kids` is flattened in the process, which changes its
-/// shape and nothing it resolves to.
 pub fn add_to_attachments(tx: &mut Transaction<'_>, name: &str, spec: ObjRef) -> Result<String> {
     check_name(name)?;
+    let mut used = String::new();
+    rewrite_attachments(tx, |entries| {
+        used = unique_key(name, entries);
+        entries.push((key_bytes(&used), Object::Ref(spec)));
+        Ok(())
+    })?;
+    Ok(used)
+}
+
+/// Delete the embedded file whose stream is object `stream`: every
+/// `/Names /EmbeddedFiles` entry naming it, and every file attachment comment
+/// carrying it. Returns how many places named it; zero changes nothing.
+///
+/// The file specification and the stream stay in the file, unreferenced:
+/// nothing is freed, and an undo puts the names back.
+pub fn remove_attachment(tx: &mut Transaction<'_>, stream: u32) -> Result<usize> {
+    let mut entries = Vec::new();
+    read_entries(tx, &mut entries)?;
+    let mut doomed = Vec::new();
+    for entry in entries {
+        if embeds(tx, &entry.1, stream)? {
+            doomed.push(entry);
+        }
+    }
+    if !doomed.is_empty() {
+        rewrite_attachments(tx, |entries| {
+            entries.retain(|entry| !doomed.contains(entry));
+            Ok(())
+        })?;
+    }
+    Ok(doomed.len() + remove_comments(tx, stream)?)
+}
+
+/// Every `/FileAttachment` comment carrying `stream`, taken off its page.
+fn remove_comments(tx: &mut Transaction<'_>, stream: u32) -> Result<usize> {
+    let mut removed = 0;
+    for index in 0..crate::pages::page_count(tx)? {
+        let page = page_ref(tx, index)?;
+        let annots = match resolve(tx, dict_at(tx, page)?.get(b"Annots"))? {
+            Some(Object::Array(annots)) => annots,
+            _ => continue,
+        };
+        for annotation in annots.iter().filter_map(Object::as_reference) {
+            let Ok(dict) = dict_at(tx, annotation) else {
+                continue;
+            };
+            let is_attachment = dict
+                .get(b"Subtype")
+                .and_then(Object::as_name)
+                .is_some_and(|name| name.as_bytes() == b"FileAttachment");
+            let carries = match dict.get(b"FS") {
+                Some(spec) if is_attachment => embeds(tx, spec, stream)?,
+                _ => false,
+            };
+            if carries && crate::annots::remove_annotation(tx, page, annotation)? {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Whether the file specification `spec` embeds object `stream`.
+fn embeds(tx: &Transaction<'_>, spec: &Object, stream: u32) -> Result<bool> {
+    let Some(Object::Dict(spec)) = resolve(tx, Some(spec))? else {
+        return Ok(false);
+    };
+    let Some(Object::Dict(files)) = resolve(tx, spec.get(b"EF"))? else {
+        return Ok(false);
+    };
+    Ok([b"UF".as_slice(), b"F"].into_iter().any(|key| {
+        files
+            .get(key)
+            .and_then(Object::as_reference)
+            .is_some_and(|objref| objref.number == stream)
+    }))
+}
+
+/// The attachments name tree, read whole.
+fn read_entries(tx: &Transaction<'_>, entries: &mut Vec<(Vec<u8>, Object)>) -> Result<()> {
+    let catalog_ref = tx
+        .trailer_value(b"Root")
+        .and_then(|root| root.as_reference())
+        .ok_or(Error::NoCatalog)?;
+    let catalog = dict_at(tx, catalog_ref)?;
+    let Some(Object::Dict(names)) = resolve(tx, catalog.get(b"Names"))? else {
+        return Ok(());
+    };
+    if let Some(tree) = resolve(tx, names.get(b"EmbeddedFiles"))? {
+        flatten(tx, &tree, 0, entries)?;
+    }
+    Ok(())
+}
+
+/// Read the attachments name tree whole, let `change` edit its entries, and
+/// write it back as one sorted leaf. A tree built of `/Kids` is flattened in
+/// the process, which changes its shape and nothing it resolves to.
+fn rewrite_attachments(
+    tx: &mut Transaction<'_>,
+    change: impl FnOnce(&mut Vec<(Vec<u8>, Object)>) -> Result<()>,
+) -> Result<()> {
     let catalog_ref = tx
         .trailer_value(b"Root")
         .and_then(|root| root.as_reference())
@@ -108,14 +228,9 @@ pub fn add_to_attachments(tx: &mut Transaction<'_>, name: &str, spec: ObjRef) ->
         Some(Object::Dict(dict)) => dict,
         _ => Dict::new(),
     };
-    let tree = resolve(tx, names.get(b"EmbeddedFiles"))?;
     let mut entries = Vec::new();
-    if let Some(tree) = tree {
-        flatten(tx, &tree, 0, &mut entries)?;
-    }
-
-    let key = unique_key(name, &entries);
-    entries.push((key_bytes(&key), Object::Ref(spec)));
+    read_entries(tx, &mut entries)?;
+    change(&mut entries)?;
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut leaf = Dict::new();
@@ -148,7 +263,7 @@ pub fn add_to_attachments(tx: &mut Transaction<'_>, name: &str, spec: ObjRef) ->
             )?;
         }
     }
-    Ok(key)
+    Ok(())
 }
 
 /// Every `(key, value)` of a name tree, leaves and kids alike.
@@ -234,6 +349,14 @@ mod tests {
         ] {
             assert!(check_name(good).is_ok(), "{good:?}");
         }
+    }
+
+    #[test]
+    fn a_mime_type_comes_from_a_known_extension_and_is_none_otherwise() {
+        assert_eq!(mime_for("Report.PDF"), Some("application/pdf"));
+        assert_eq!(mime_for("photo.jpeg"), Some("image/jpeg"));
+        assert_eq!(mime_for("archive.7z"), None);
+        assert_eq!(mime_for("README"), None);
     }
 
     #[test]

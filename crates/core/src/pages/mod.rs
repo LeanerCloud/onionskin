@@ -64,7 +64,7 @@ mod tree;
 
 pub use assemble::{Assembled, Assembly, Tagging, Untagged};
 pub use import::{extract_pages, import_page_as_form, import_pages};
-pub(crate) use ops::current_page_count;
+pub(crate) use ops::{current_page_count, page_ref};
 pub use ops::{
     delete_pages, insert_blank_pages, insert_pages_from, move_pages, page_count,
     replace_pages_from, rotate_pages, set_page_labels, LabelRange, LabelStyle,

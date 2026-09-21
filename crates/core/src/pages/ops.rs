@@ -35,6 +35,18 @@ pub fn page_count(tx: &Transaction<'_>) -> Result<usize> {
     Ok(leaves(tx)?.len())
 }
 
+/// The page object at `index`, in the document as the transaction sees it.
+pub(crate) fn page_ref(tx: &Transaction<'_>, index: usize) -> Result<ObjRef> {
+    let leaves = leaves(tx)?;
+    leaves
+        .get(index)
+        .map(|leaf| leaf.objref)
+        .ok_or(Error::NoSuchPage {
+            page: index,
+            count: leaves.len(),
+        })
+}
+
 fn leaves(tx: &Transaction<'_>) -> Result<Vec<super::inherit::Leaf>> {
     let catalog = catalog_ref(tx)?;
     let mut resolve = resolver(tx);

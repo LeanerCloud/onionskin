@@ -6,19 +6,16 @@
 //! being dropped or defaulted to page one: the pane shows it and says it has
 //! nowhere to go, which is what the file says.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use onionskin_cos::{Dict, Document as CosDocument, Object};
 
 use crate::{Error, PageIndex, Result};
 
-/// A hostile `/Outlines` can chain siblings without ever repeating a node on
-/// one path, so the cycle set alone does not bound the walk. Both caps are
-/// generous against real files: the largest outline in the corpus is under
-/// 3000 entries, and nesting past 32 is a producer bug rather than a
-/// structure a reader has to serve.
-const MAX_ITEMS: usize = 20_000;
-const MAX_DEPTH: usize = 32;
+mod chain;
+pub mod write;
+
+pub(crate) use chain::{Walk, MAX_DEPTH};
 
 /// One bookmark.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,8 +60,7 @@ pub(crate) fn read(doc: &CosDocument, page_count: usize) -> Result<Vec<OutlineIt
         doc,
         page_count,
         pages: None,
-        seen: BTreeSet::new(),
-        budget: MAX_ITEMS,
+        walk: Walk::new(),
     };
     reader.siblings(&outlines, 0)
 }
@@ -76,11 +72,8 @@ struct Reader<'a> {
     /// most once, and only when a destination actually names a page by
     /// reference, because building it walks the page tree once per page.
     pages: Option<BTreeMap<u32, PageIndex>>,
-    /// Object numbers already turned into an item. A node reached twice is a
-    /// cycle or a shared subtree; either way, following it again would not
-    /// terminate.
-    seen: BTreeSet<u32>,
-    budget: usize,
+    /// The shared chain walk, which takes each item once.
+    walk: Walk,
 }
 
 impl Reader<'_> {
@@ -89,22 +82,17 @@ impl Reader<'_> {
         if depth >= MAX_DEPTH {
             return Ok(Vec::new());
         }
-        let mut items = Vec::new();
-        let mut next = parent.get(b"First").and_then(Object::as_reference);
-        while let Some(node) = next {
-            if self.budget == 0 || !self.seen.insert(node.number) {
-                break;
-            }
-            self.budget -= 1;
-            let Some(dict) = self.doc.get(node.number)?.object.as_dict().cloned() else {
-                break;
-            };
+        let doc = self.doc;
+        let chain = self.walk.children(parent, &mut |node| {
+            Ok(doc.get(node.number)?.object.as_dict().cloned())
+        })?;
+        let mut items = Vec::with_capacity(chain.len());
+        for (_, dict) in chain {
             items.push(OutlineItem {
                 title: title(&dict),
                 page: self.destination(&dict)?,
                 children: self.siblings(&dict, depth + 1)?,
             });
-            next = dict.get(b"Next").and_then(Object::as_reference);
         }
         Ok(items)
     }

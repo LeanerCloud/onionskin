@@ -59,6 +59,9 @@ pub use onionskin_cos::{ObjRef, Provenance};
 /// [`Document::page_svg`] hand these back: a caller outside `core` has to be
 /// able to name what it received.
 pub use onionskin_render::{BaseRaster, PageRender, PageSvg};
+pub use outline::write::{
+    add_bookmark, delete_bookmark, move_bookmark, rename_bookmark, set_bookmark_destination,
+};
 pub use outline::OutlineItem;
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,

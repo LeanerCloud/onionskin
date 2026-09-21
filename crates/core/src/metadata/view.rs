@@ -7,7 +7,7 @@
 use onionskin_cos::{Dict, Document as CosDocument, Name, ObjRef, Object};
 
 use crate::edit::Transaction;
-use crate::pages::{dict_at, resolve};
+use crate::pages::{dict_at, page_ref};
 use crate::{Error, Result};
 
 /// `/PageLayout`.
@@ -240,46 +240,6 @@ fn set_name(dict: &mut Dict, key: &str, value: Option<&str>) {
             dict.remove(key.as_bytes());
         }
     }
-}
-
-/// The page object at `index`, in the document as the transaction sees it.
-fn page_ref(tx: &Transaction<'_>, index: usize) -> Result<ObjRef> {
-    let catalog_ref = tx
-        .trailer_value(b"Root")
-        .and_then(|root| root.as_reference())
-        .ok_or(Error::NoCatalog)?;
-    let catalog = dict_at(tx, catalog_ref)?;
-    let pages = catalog
-        .get(b"Pages")
-        .and_then(Object::as_reference)
-        .ok_or(Error::NoPageTree)?;
-    let mut leaves = Vec::new();
-    collect_leaves(tx, pages, &mut leaves, 0)?;
-    leaves.get(index).copied().ok_or(Error::NoSuchPage {
-        page: index,
-        count: leaves.len(),
-    })
-}
-
-fn collect_leaves(
-    tx: &Transaction<'_>,
-    node: ObjRef,
-    into: &mut Vec<ObjRef>,
-    depth: usize,
-) -> Result<()> {
-    if depth > 64 {
-        return Ok(());
-    }
-    let dict = dict_at(tx, node)?;
-    match resolve(tx, dict.get(b"Kids"))? {
-        Some(Object::Array(kids)) => {
-            for kid in kids.iter().filter_map(Object::as_reference) {
-                collect_leaves(tx, kid, into, depth + 1)?;
-            }
-        }
-        _ => into.push(node),
-    }
-    Ok(())
 }
 
 fn destination(page: ObjRef, fit: OpenFit) -> Vec<Object> {

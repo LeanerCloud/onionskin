@@ -93,6 +93,9 @@ pub enum Error {
     /// A custom document property's key is empty, has spaces, or is one of
     /// the keys `/Info` defines itself.
     InvalidMetadataKey(String),
+    /// No bookmark is at this path: its index among its siblings at each
+    /// level, from the top.
+    NoSuchBookmark(Vec<usize>),
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -176,6 +179,7 @@ impl fmt::Display for Error {
                 f,
                 "{key:?} cannot be a custom property's name: it is empty, has spaces, or is a standard property"
             ),
+            Error::NoSuchBookmark(path) => write!(f, "there is no bookmark at {path:?}"),
             Error::InvalidImage(detail) => {
                 write!(f, "not an image a page can be made from: {detail}")
             }
@@ -209,7 +213,8 @@ impl std::error::Error for Error {
             | Error::NotADictionary { .. }
             | Error::InvalidImage(_)
             | Error::InvalidAttachmentName(_)
-            | Error::InvalidMetadataKey(_) => None,
+            | Error::InvalidMetadataKey(_)
+            | Error::NoSuchBookmark(_) => None,
             Error::WrittenButNotReloaded(written) => Some(&*written.cause),
             Error::Recovery(error) => Some(error),
         }

@@ -5,7 +5,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use onionskin_core::embedded::{add_to_attachments, embed_file, NewAttachment};
+use onionskin_core::embedded::{add_to_attachments, embed_file, remove_attachment, NewAttachment};
 use onionskin_core::{add_annotation, Annotation, Document, DocumentFile, Error, Rect, Subtype};
 
 const NOW: i64 = 1_758_000_000;
@@ -209,4 +209,78 @@ fn ink(document: &mut Document) -> usize {
         .chunks_exact(4)
         .filter(|pixel| i32::from(pixel[2]) > i32::from(pixel[0]) + 40)
         .count()
+}
+
+/// Delete rewrites the name tree without the entry and frees nothing: the
+/// file specification and the stream stay behind, unreferenced, and the
+/// appended section carries no free entry.
+#[test]
+fn a_deleted_attachment_leaves_the_tree_and_its_bytes_become_garbage() {
+    use common::{pdf, stream};
+
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /Names 4 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>".to_vec(),
+        b"<< /EmbeddedFiles 5 0 R >>".to_vec(),
+        b"<< /Names [(gone.txt) 6 0 R (kept.txt) 8 0 R] >>".to_vec(),
+        b"<< /Type /Filespec /F (gone.txt) /EF << /F 7 0 R >> >>".to_vec(),
+        stream("gone"),
+        b"<< /Type /Filespec /F (kept.txt) /EF << /F 9 0 R >> >>".to_vec(),
+        stream("kept"),
+    ]);
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("two.pdf");
+    std::fs::write(&path, &bytes).expect("writes");
+    let mut file = DocumentFile::open(&path).expect("opens");
+    let removed = file
+        .document_mut()
+        .edit_document("Delete Attachment", |tx| remove_attachment(tx, 7))
+        .expect("deletes");
+    assert_eq!(removed, 1);
+    file.save().expect("saves");
+    drop(file);
+
+    let saved = std::fs::read(&path).expect("reads");
+    let appended = String::from_utf8_lossy(&saved[bytes.len()..]).into_owned();
+    assert!(
+        appended.contains("xref"),
+        "a classic section, so its entries can be read"
+    );
+    let frees: Vec<&str> = appended
+        .lines()
+        .filter(|line| line.trim_end().ends_with(" f") && !line.starts_with("0000000000 65535"))
+        .collect();
+    assert_eq!(frees, Vec::<&str>::new(), "nothing is freed");
+
+    let mut reopened = Document::open_path(&path).expect("reopens");
+    let names: Vec<String> = reopened
+        .attachments()
+        .expect("lists")
+        .iter()
+        .map(|attachment| attachment.name.clone())
+        .collect();
+    assert_eq!(names, ["kept.txt"]);
+    let structure = reopened.structure().expect("doc");
+    assert_eq!(structure.audit_references().expect("audits"), Vec::new());
+    assert!(structure.get(7).is_ok(), "the stream is still in the file");
+}
+
+#[test]
+fn deleting_a_comments_file_takes_the_comment_off_its_page() {
+    let mut document = Document::open_path(&seed("hello.pdf")).expect("opens");
+    attach_as_comment(&mut document, "note.bin", b"x").expect("attaches");
+    let stream = document.attachments().expect("lists")[0].stream;
+    let removed = document
+        .edit_document("Delete Attachment", |tx| remove_attachment(tx, stream))
+        .expect("deletes");
+    assert_eq!(removed, 1);
+    assert!(document.attachments().expect("lists").is_empty());
+    assert!(
+        document
+            .edit_document("Delete Attachment", |tx| remove_attachment(tx, stream))
+            .expect("runs")
+            == 0,
+        "a second delete finds nothing"
+    );
 }
