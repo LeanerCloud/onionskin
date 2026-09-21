@@ -9,6 +9,13 @@ publish.workspace = true
 onionskin-core.workspace = true
 onionskin-cos.workspace = true
 
+# The macOS backend. Target-gated, so no other build links AppKit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-pdf-kit = "0.3"
+
 [dev-dependencies]
 onionskin-corpus-testing.workspace = true
 onionskin-content.workspace = true

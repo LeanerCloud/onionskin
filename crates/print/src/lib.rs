@@ -10,7 +10,11 @@ pub mod job;
 pub mod sheet;
 
 pub use backend::file::{print_to_file, FileBackend};
-pub use backend::{PrintBackend, PrintError};
+#[cfg(target_os = "macos")]
+pub use backend::macos::{printers, MacBackend};
+pub use backend::{native_backend, PrintBackend, PrintError};
 pub use impose::{impose, PageSize};
-pub use job::{NUp, NUpOrder, Orientation, PageSelection, PaperSize, PrintJob, Sizing, Subset};
+pub use job::{
+    Duplex, NUp, NUpOrder, Orientation, PageSelection, PaperSize, PrintJob, Sizing, Subset,
+};
 pub use sheet::{Placement, Sheet};

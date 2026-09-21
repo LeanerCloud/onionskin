@@ -63,7 +63,7 @@ pub fn impose(job: &PrintJob, pages: &[PageSize]) -> Vec<Sheet> {
             sheet
         })
         .collect();
-    if job.duplex && sheets.len() % 2 == 1 {
+    if job.duplex.is_on() && sheets.len() % 2 == 1 {
         sheets.push(Sheet {
             width,
             height,
@@ -125,7 +125,7 @@ fn place(size: PageSize, origin: (f64, f64), cell: (f64, f64), sizing: Sizing) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::job::{NUp, PageSelection, PaperSize};
+    use crate::job::{Duplex, NUp, PageSelection, PaperSize};
 
     const LETTER_PAGE: PageSize = (612.0, 792.0);
 
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn an_odd_page_count_in_duplex_leaves_the_last_back_blank() {
         let job = PrintJob {
-            duplex: true,
+            duplex: Duplex::LongEdge,
             ..job()
         };
         let sheets = impose(&job, &[LETTER_PAGE; 3]);

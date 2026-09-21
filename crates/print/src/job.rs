@@ -146,6 +146,23 @@ impl NUp {
     }
 }
 
+/// Print on Both Sides of Paper, and which edge the sheet turns on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Duplex {
+    #[default]
+    Off,
+    /// Flip on long edge: the usual choice for portrait sheets.
+    LongEdge,
+    /// Flip on short edge: the usual choice for landscape sheets.
+    ShortEdge,
+}
+
+impl Duplex {
+    pub fn is_on(self) -> bool {
+        self != Duplex::Off
+    }
+}
+
 /// Everything a print asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrintJob {
@@ -156,7 +173,14 @@ pub struct PrintJob {
     pub n_up: NUp,
     /// Print on Both Sides of Paper. The sheet count is kept even, so the
     /// last page's back is blank rather than the next job's front.
-    pub duplex: bool,
+    pub duplex: Duplex,
+    /// How many copies, at least one.
+    pub copies: u16,
+    /// Collate: each copy printed whole before the next starts.
+    pub collate: bool,
+    /// The printer by name; `None` for the system's default. The file
+    /// backend has no printer and ignores it.
+    pub printer: Option<String>,
     /// Comments & Forms.
     pub comments: AnnotationFilter,
     /// Print as Image: every sheet becomes pixels.
@@ -173,7 +197,10 @@ impl Default for PrintJob {
             selection: PageSelection::default(),
             sizing: Sizing::Fit,
             n_up: NUp::default(),
-            duplex: false,
+            duplex: Duplex::Off,
+            copies: 1,
+            collate: true,
+            printer: None,
             comments: AnnotationFilter::DocumentAndMarkups,
             print_as_image: false,
             image_dpi: 150.0,

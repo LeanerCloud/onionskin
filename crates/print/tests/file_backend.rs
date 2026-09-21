@@ -9,7 +9,9 @@ use onionskin_core::{
 };
 use onionskin_corpus_testing::{encrypted_fixture, seed};
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
-use onionskin_print::{print_to_file, NUp, Orientation, PaperSize, PrintError, PrintJob, Sizing};
+use onionskin_print::{
+    print_to_file, Duplex, NUp, Orientation, PaperSize, PrintError, PrintJob, Sizing,
+};
 
 const NOW: i64 = 1_758_000_000;
 
@@ -428,7 +430,7 @@ fn a_rotated_page_prints_turned_as_a_reader_shows_it() {
 fn duplex_with_an_odd_page_count_writes_a_blank_last_sheet() {
     let mut doc = marked(&[(612.0, 792.0, 0); 3]);
     let job = PrintJob {
-        duplex: true,
+        duplex: Duplex::LongEdge,
         ..letter()
     };
     let sheets = read_sheets(&print_to_file(&mut doc, &job).expect("prints"));
