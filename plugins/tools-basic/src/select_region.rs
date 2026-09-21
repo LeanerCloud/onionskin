@@ -27,6 +27,10 @@ impl ToolPlugin for SelectRegionTool {
         "Select Region"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag a rectangle to select part of the page.")
+    }
+
     fn icon(&self) -> &'static str {
         "select-region"
     }

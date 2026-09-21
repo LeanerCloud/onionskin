@@ -277,6 +277,16 @@ impl ToolPlugin for ShapeTool {
         self.name
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some(match self.shape {
+            Shape::Line { .. } => "Drag from where the line starts to where it ends.",
+            Shape::Boxed(_) => "Drag a rectangle to size the shape.",
+            Shape::Vertices { .. } => {
+                "Click each corner in turn, then press Enter to finish. Escape abandons it."
+            }
+        })
+    }
+
     fn icon(&self) -> &'static str {
         self.icon
     }

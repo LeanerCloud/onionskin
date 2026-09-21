@@ -396,7 +396,9 @@ enum ToolPointerPhase {
 }
 
 pub struct CanvasModel {
-    document: Document,
+    /// The document with its file: what Save, Save As, Revert and autosave
+    /// act through. Tools and commands are handed only the `Document` inside.
+    document: onionskin_core::DocumentFile,
     viewport: Viewport,
     view_history: ViewHistory,
     registry: PluginRegistry,
@@ -488,7 +490,7 @@ impl CanvasModel {
             .protection_notice()
             .map(|message| CanvasStatus::Notice { message });
         Ok(Self {
-            document,
+            document: onionskin_core::DocumentFile::from_document(document),
             viewport,
             view_history: ViewHistory::new(VIEW_HISTORY_CAPACITY),
             registry,
@@ -538,7 +540,7 @@ impl CanvasModel {
     /// The document itself, for work that reads it out into new files - a
     /// split - and changes nothing the canvas draws.
     pub(super) fn document_mut(&mut self) -> &mut Document {
-        &mut self.document
+        self.document.document_mut()
     }
 
     /// Why the open document may not be edited, as the short reason a disabled
@@ -2115,6 +2117,48 @@ impl CanvasModel {
         }
     }
 
+    /// Enter on the canvas: the active tool finishes what it has pending,
+    /// which is how a polygon or a connected line built by clicking ends.
+    pub fn commit_active_tool(&mut self) -> bool {
+        let Some(index) = self.active_tool else {
+            return false;
+        };
+        let document = self.document.document_mut();
+        let viewport = &mut self.viewport;
+        let tool = self
+            .registry
+            .tool_mut(index)
+            .expect("the active tool remains registered");
+        tool.on_commit(&mut ToolCtx {
+            doc: document,
+            viewport,
+        });
+        true
+    }
+
+    /// Whether the active tool is part way through something: it is drawing
+    /// a preview of it. Escape abandons that before it does anything else.
+    pub fn tool_has_pending_gesture(&self) -> bool {
+        self.active_tool
+            .and_then(|index| self.registry.tool(index))
+            .is_some_and(|tool| !tool.overlays(&self.document).is_empty())
+    }
+
+    /// Escape on the canvas: drop the active tool's pending gesture.
+    pub fn cancel_tool_gesture(&mut self) -> bool {
+        if self.active_tool.is_none() {
+            return false;
+        }
+        self.cancel_active_tool();
+        true
+    }
+
+    /// The active tool's name and how it is used, for the side panel.
+    pub fn active_tool_help(&self) -> Option<(&'static str, Option<&'static str>)> {
+        let tool = self.registry.tool(self.active_tool?)?;
+        Some((tool.name(), tool.hint()))
+    }
+
     fn cancel_active_tool(&mut self) {
         let Some(index) = self.active_tool else {
             return;
@@ -3051,6 +3095,65 @@ mod tests {
             }));
         }
         (model_with_registry(registry), events)
+    }
+
+    /// Found by hand: nothing sent Enter to the tool, so a polygon built by
+    /// clicking could never be finished. Enter now commits it, and Escape
+    /// abandons one part built.
+    #[cfg(feature = "tools-comment")]
+    #[test]
+    fn enter_finishes_a_polygon_and_escape_abandons_one() {
+        let path = onionskin_corpus_testing::seed("hello.pdf");
+        let mut model = CanvasModel::new(
+            Document::open_path(&path).expect("seed opens"),
+            crate::build_registry(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        let polygon = model
+            .registry()
+            .tools()
+            .position(|tool| tool.id() == "polygon")
+            .expect("the polygon tool is installed");
+        model.activate_tool(polygon).expect("activates");
+        let (_, hint) = model.active_tool_help().expect("a tool is active");
+        assert!(hint.expect("a hint").contains("Enter"));
+
+        let centre = page_center(&model);
+        let click = |model: &mut CanvasModel, dx: f32, dy: f32| {
+            let at = point(centre.x + px(dx), centre.y + px(dy));
+            model
+                .pointer_down(at, 1.0, GpuiModifiers::default())
+                .unwrap();
+            model.pointer_up(at, 1.0, GpuiModifiers::default()).unwrap();
+        };
+        click(&mut model, 0.0, 0.0);
+        click(&mut model, 60.0, 0.0);
+        assert!(model.tool_has_pending_gesture());
+        assert!(model.cancel_tool_gesture());
+        assert!(!model.tool_has_pending_gesture(), "Escape abandoned it");
+        assert!(!model.document.is_dirty());
+
+        click(&mut model, 0.0, 0.0);
+        click(&mut model, 60.0, 0.0);
+        click(&mut model, 30.0, 50.0);
+        assert!(!model.document.is_dirty(), "nothing is written until Enter");
+        assert!(model.commit_active_tool());
+        assert!(model.document.is_dirty(), "Enter wrote the polygon");
+    }
+
+    /// Every tool on the rail says how it is used: the rail draws a glyph,
+    /// and the side panel's sentence is the only place that says what a
+    /// click or a drag will do. A new tool without one fails here.
+    #[test]
+    fn every_rail_tool_carries_a_hint() {
+        let registry = crate::build_registry();
+        let missing: Vec<_> = registry
+            .tools()
+            .filter(|tool| tool.in_rail() && tool.hint().is_none())
+            .map(|tool| tool.name())
+            .collect();
+        assert_eq!(missing, Vec::<&str>::new());
     }
 
     fn page_center(model: &CanvasModel) -> Point<Pixels> {

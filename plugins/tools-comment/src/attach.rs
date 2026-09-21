@@ -86,6 +86,10 @@ impl ToolPlugin for AttachFileTool {
         "Attach File"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Picking this tool asks for a file. Then click where its paperclip goes on the page.")
+    }
+
     fn icon(&self) -> &'static str {
         "attach-file"
     }

@@ -72,6 +72,10 @@ impl ToolPlugin for SelectTextTool {
         "Select Text"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag across text to select it. Cmd-C or the right-click menu copies it.")
+    }
+
     fn icon(&self) -> &'static str {
         "select-text"
     }

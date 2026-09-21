@@ -62,20 +62,27 @@ fn toggle_name(state: SidePanelState) -> &'static str {
     }
 }
 
+/// The active tool's name and how it is used, when a tool is active.
+pub(super) type ToolHelp = Option<(&'static str, Option<&'static str>)>;
+
 /// What the side panel tells a screen reader.
-pub(super) fn accessible(state: SidePanelState) -> Element {
+pub(super) fn accessible(state: SidePanelState, help: ToolHelp) -> Element {
     let toggle = Element::new("side-panel-toggle", Role::Button, toggle_name(state))
         .with_state(A11yState::toggled(state.is_open()))
         .with_activation(Activation::ToggleSidePanel);
     let panel = Element::new("side-panel", Role::Complementary, PANEL_LABEL);
     if state.is_open() {
-        panel
-            .child(Element::new(
-                "side-panel-empty",
-                Role::Label,
-                EMPTY_PANEL_MESSAGE,
-            ))
-            .child(toggle)
+        let body = match help {
+            Some((name, hint)) => {
+                let tool = Element::new("side-panel-tool", Role::Heading, name);
+                match hint {
+                    Some(hint) => tool.with_description(hint),
+                    None => tool,
+                }
+            }
+            None => Element::new("side-panel-empty", Role::Label, EMPTY_PANEL_MESSAGE),
+        };
+        panel.child(body).child(toggle)
     } else {
         panel.child(toggle)
     }
@@ -83,6 +90,7 @@ pub(super) fn accessible(state: SidePanelState) -> Element {
 
 pub(super) fn render_side_panel(
     state: SidePanelState,
+    help: ToolHelp,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -119,14 +127,27 @@ pub(super) fn render_side_panel(
                 .child(PANEL_LABEL)
                 .child(toggle),
         );
-        panel = panel.child(
-            div()
+        panel = panel.child(match help {
+            // The tool the canvas is in and what to do with it: every rail
+            // icon is a glyph, and without this nothing on screen says what a
+            // drag or a click will do.
+            Some((name, hint)) => div()
+                .id("side-panel-tool")
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().child(name))
+                .children(
+                    hint.map(|hint| div().text_xs().text_color(theme.muted_text).child(hint)),
+                ),
+            None => div()
                 .id("side-panel-empty")
                 .p_3()
                 .text_sm()
                 .text_color(theme.muted_text)
                 .child(EMPTY_PANEL_MESSAGE),
-        );
+        });
     } else {
         panel = panel
             .flex()
@@ -142,6 +163,21 @@ pub(super) fn render_side_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_active_tool_and_its_hint_are_described_in_place_of_the_empty_message() {
+        let panel = accessible(
+            SidePanelState::OpenEmpty,
+            Some(("Draw", Some("Drag on the page to draw freehand."))),
+        );
+        let tool = panel.find(&"side-panel-tool".into()).expect("described");
+        assert_eq!(tool.label, "Draw");
+        assert_eq!(
+            tool.description.as_deref(),
+            Some("Drag on the page to draw freehand.")
+        );
+        assert!(panel.find(&"side-panel-empty".into()).is_none());
+    }
 
     #[test]
     fn the_empty_host_opens_by_default_and_toggles_without_content() {
@@ -163,7 +199,7 @@ mod tests {
     #[test]
     fn the_toggle_is_announced_by_words_rather_than_by_the_chevron_it_draws() {
         for state in [SidePanelState::OpenEmpty, SidePanelState::Closed] {
-            let toggle = accessible(state)
+            let toggle = accessible(state, None)
                 .find(&"side-panel-toggle".into())
                 .expect("the panel describes its toggle")
                 .clone();
@@ -173,14 +209,14 @@ mod tests {
         }
 
         assert_eq!(
-            accessible(SidePanelState::OpenEmpty)
+            accessible(SidePanelState::OpenEmpty, None)
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
             "Close Side Panel"
         );
         assert_eq!(
-            accessible(SidePanelState::Closed)
+            accessible(SidePanelState::Closed, None)
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
@@ -190,8 +226,8 @@ mod tests {
 
     #[test]
     fn the_toggle_carries_whether_the_panel_is_open_as_state_and_the_action_its_click_runs() {
-        let open = accessible(SidePanelState::OpenEmpty);
-        let closed = accessible(SidePanelState::Closed);
+        let open = accessible(SidePanelState::OpenEmpty, None);
+        let closed = accessible(SidePanelState::Closed, None);
 
         let open = open.find(&"side-panel-toggle".into()).unwrap();
         let closed = closed.find(&"side-panel-toggle".into()).unwrap();
@@ -203,7 +239,7 @@ mod tests {
 
     #[test]
     fn the_panel_describes_the_empty_state_and_its_control() {
-        let described = accessible(SidePanelState::OpenEmpty);
+        let described = accessible(SidePanelState::OpenEmpty, None);
 
         assert_eq!(described.role, Role::Complementary);
         assert_eq!(described.label, PANEL_LABEL);
@@ -212,7 +248,7 @@ mod tests {
         assert_eq!(described.children[0].label, EMPTY_PANEL_MESSAGE);
         assert_eq!(described.children[1].role, Role::Button);
 
-        let closed = accessible(SidePanelState::Closed);
+        let closed = accessible(SidePanelState::Closed, None);
         assert_eq!(closed.children.len(), 1);
         assert_eq!(closed.children[0].role, Role::Button);
     }

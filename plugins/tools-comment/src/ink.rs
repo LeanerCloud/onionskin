@@ -119,6 +119,10 @@ impl ToolPlugin for InkTool {
         "Draw"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag on the page to draw freehand. Each stroke is one ink comment.")
+    }
+
     fn icon(&self) -> &'static str {
         "ink"
     }
@@ -336,6 +340,10 @@ impl ToolPlugin for EraseInkTool {
 
     fn name(&self) -> &'static str {
         "Erase Ink"
+    }
+
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag across a drawing to erase the part you cross.")
     }
 
     fn icon(&self) -> &'static str {

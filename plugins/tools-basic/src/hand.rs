@@ -44,6 +44,10 @@ impl ToolPlugin for HandTool {
         "Hand"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag the page to scroll it.")
+    }
+
     fn icon(&self) -> &'static str {
         "hand"
     }

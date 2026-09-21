@@ -275,6 +275,14 @@ impl ToolPlugin for MarkupTool {
         self.name
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some(match self.id {
+            "insert-text" => "Click in the text where words should go. Typing them arrives with the Comments pane.",
+            "replace-text" => "Drag across the text to replace. Typing the replacement arrives with the Comments pane.",
+            _ => "Drag across text on the page. Works only on real text, not on scanned images.",
+        })
+    }
+
     fn icon(&self) -> &'static str {
         self.icon
     }

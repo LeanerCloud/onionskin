@@ -217,6 +217,14 @@ impl ToolPlugin for FreeTextTool {
         self.name
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some(match self.shape {
+            Shape::Typewriter => "Click where the text goes. Typing the text arrives with the Comments pane, so for now the comment is placed empty.",
+            Shape::Box => "Drag a box, or click for a default size. Typing the text arrives with the Comments pane, so for now the comment is placed empty.",
+            Shape::Callout => "Click the point to call out, or drag from it to where the box goes. Typing the text arrives with the Comments pane, so for now the comment is placed empty.",
+        })
+    }
+
     fn icon(&self) -> &'static str {
         self.icon
     }

@@ -113,6 +113,10 @@ impl PluginRegistry {
         }
     }
 
+    pub fn tool(&self, index: usize) -> Option<&dyn ToolPlugin> {
+        self.tools.get(index).map(|tool| tool.as_ref())
+    }
+
     pub fn tool_mut(&mut self, index: usize) -> Option<&mut (dyn ToolPlugin + '_)> {
         match self.tools.get_mut(index) {
             Some(tool) => Some(tool.as_mut()),

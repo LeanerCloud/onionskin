@@ -181,6 +181,13 @@ pub trait ToolPlugin: Send {
         true
     }
 
+    /// One sentence saying how the tool is used, for the side panel: what to
+    /// click or drag, and anything the tool cannot do yet. `None` leaves the
+    /// panel with the tool's name alone.
+    fn hint(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Typed features this tool exposes to shared shell surfaces.
     fn capabilities(&self) -> &'static [ToolCapability] {
         &[]

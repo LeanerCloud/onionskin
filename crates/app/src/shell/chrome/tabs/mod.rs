@@ -132,6 +132,21 @@ impl ShellFrame {
         // closes, innermost first. Without this a window in Full Screen has
         // no chrome to leave it from, and Read Mode ships unbound because
         // Acrobat's Ctrl+H is Hide on macOS.
+        // A shape half built by clicking is the next thing Escape abandons,
+        // before the modes that hide the chrome.
+        if let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) {
+            let pending = canvas.update(cx, |canvas, cx| {
+                let had = canvas.model.tool_has_pending_gesture();
+                if had {
+                    canvas.model.cancel_tool_gesture();
+                    canvas.handle_change(Ok(true), cx);
+                }
+                had
+            });
+            if pending {
+                return;
+            }
+        }
         if self.shell_view_state.fullscreen() {
             self.toggle_fullscreen(window, cx);
             return;
@@ -703,6 +718,13 @@ impl ShellFrame {
             .iter()
             .map(|tab| tab.canvas.clone())
             .collect()
+    }
+
+    /// The active tool's name and how it is used, for the side panel.
+    pub(super) fn active_tool_help(&self, cx: &App) -> super::side_panel::ToolHelp {
+        self.tabs
+            .active()
+            .and_then(|tab| tab.canvas.read(cx).model.active_tool_help())
     }
 
     fn render_global_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1285,7 +1307,12 @@ impl Render for ShellFrame {
             ));
         }
         body = body.when(visibility.side_panel, |body| {
-            body.child(render_side_panel(self.side_panel_state, theme, cx))
+            body.child(render_side_panel(
+                self.side_panel_state,
+                self.active_tool_help(cx),
+                theme,
+                cx,
+            ))
         });
 
         // Read Mode and Full Screen take the top bars away, and what is left

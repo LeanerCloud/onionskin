@@ -34,6 +34,10 @@ impl ToolPlugin for ZoomTool {
         "Marquee Zoom"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag a rectangle to zoom into it. Click to zoom in a step; Option-click zooms out.")
+    }
+
     fn icon(&self) -> &'static str {
         "zoom"
     }
@@ -205,6 +209,10 @@ impl ToolPlugin for DynamicZoomTool {
 
     fn name(&self) -> &'static str {
         "Dynamic Zoom"
+    }
+
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag up to zoom in and down to zoom out.")
     }
 
     fn icon(&self) -> &'static str {

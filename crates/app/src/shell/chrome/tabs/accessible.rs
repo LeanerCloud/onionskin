@@ -165,7 +165,10 @@ impl ShellFrame {
             ));
         }
         if visibility.side_panel {
-            root = root.child(side_panel::accessible(self.side_panel_state));
+            root = root.child(side_panel::accessible(
+                self.side_panel_state,
+                self.active_tool_help(cx),
+            ));
         }
         if self.menus.main_menu_open {
             root = root.child(self.accessible_main_menu(cx));
@@ -622,10 +625,30 @@ impl ShellFrame {
             return;
         }
         let Some(activation) = self.a11y.focused_activation() else {
+            // Nothing in the chrome has the ring, so Enter is the canvas's:
+            // the active tool finishes what it has pending. Without this a
+            // polygon or connected line built by clicking could never end.
+            if self.commit_canvas_tool(cx) {
+                return;
+            }
             cx.propagate();
             return;
         };
         self.run_activation(activation, window, cx);
+    }
+
+    /// Enter for the canvas: the active tool commits its pending gesture.
+    pub(super) fn commit_canvas_tool(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return false;
+        };
+        canvas.update(cx, |canvas, cx| {
+            let committed = canvas.model.commit_active_tool();
+            if committed {
+                canvas.handle_change(Ok(true), cx);
+            }
+            committed
+        })
     }
 
     /// The element id of the text field GPUI's focus is in, if it is in one.

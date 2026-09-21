@@ -28,6 +28,10 @@ impl ToolPlugin for SnapshotTool {
         "Take A Snapshot"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Drag a rectangle. That part of the page is copied to the clipboard as an image.")
+    }
+
     fn icon(&self) -> &'static str {
         "snapshot"
     }

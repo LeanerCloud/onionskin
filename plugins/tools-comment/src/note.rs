@@ -56,6 +56,10 @@ impl ToolPlugin for NoteTool {
         "Sticky Note"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Click where the note goes. Typing the text arrives with the Comments pane, so for now the comment is placed empty.")
+    }
+
     fn icon(&self) -> &'static str {
         "sticky-note"
     }

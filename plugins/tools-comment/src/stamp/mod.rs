@@ -225,6 +225,10 @@ impl ToolPlugin for StampTool {
         "Stamp"
     }
 
+    fn hint(&self) -> Option<&'static str> {
+        Some("Click where the stamp goes. File > Stamps chooses which stamp.")
+    }
+
     fn icon(&self) -> &'static str {
         "stamp"
     }
