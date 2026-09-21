@@ -66,12 +66,24 @@ fn toggle_name(state: SidePanelState) -> &'static str {
 pub(super) type ToolHelp = Option<(&'static str, Option<&'static str>)>;
 
 /// What the side panel tells a screen reader.
-pub(super) fn accessible(state: SidePanelState, help: ToolHelp) -> Element {
+pub(super) fn accessible(
+    state: SidePanelState,
+    help: ToolHelp,
+    inspector: Option<Vec<Element>>,
+) -> Element {
     let toggle = Element::new("side-panel-toggle", Role::Button, toggle_name(state))
         .with_state(A11yState::toggled(state.is_open()))
         .with_activation(Activation::ToggleSidePanel);
     let panel = Element::new("side-panel", Role::Complementary, PANEL_LABEL);
     if state.is_open() {
+        if let Some(inspector) = inspector {
+            return panel
+                .child(
+                    Element::new("inspector", Role::Group, "Comment Properties")
+                        .with_children(inspector),
+                )
+                .child(toggle);
+        }
         let body = match help {
             Some((name, hint)) => {
                 let tool = Element::new("side-panel-tool", Role::Heading, name);
@@ -91,6 +103,7 @@ pub(super) fn accessible(state: SidePanelState, help: ToolHelp) -> Element {
 pub(super) fn render_side_panel(
     state: SidePanelState,
     help: ToolHelp,
+    inspector: Option<gpui::AnyElement>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
@@ -127,6 +140,11 @@ pub(super) fn render_side_panel(
                 .child(PANEL_LABEL)
                 .child(toggle),
         );
+        if let Some(inspector) = inspector {
+            // A chosen comment's properties are what the panel is for while
+            // one is chosen, as Acrobat's properties bar is.
+            return panel.child(inspector);
+        }
         panel = panel.child(match help {
             // The tool the canvas is in and what to do with it: every rail
             // icon is a glyph, and without this nothing on screen says what a
@@ -169,6 +187,7 @@ mod tests {
         let panel = accessible(
             SidePanelState::OpenEmpty,
             Some(("Draw", Some("Drag on the page to draw freehand."))),
+            None,
         );
         let tool = panel.find(&"side-panel-tool".into()).expect("described");
         assert_eq!(tool.label, "Draw");
@@ -199,7 +218,7 @@ mod tests {
     #[test]
     fn the_toggle_is_announced_by_words_rather_than_by_the_chevron_it_draws() {
         for state in [SidePanelState::OpenEmpty, SidePanelState::Closed] {
-            let toggle = accessible(state, None)
+            let toggle = accessible(state, None, None)
                 .find(&"side-panel-toggle".into())
                 .expect("the panel describes its toggle")
                 .clone();
@@ -209,14 +228,14 @@ mod tests {
         }
 
         assert_eq!(
-            accessible(SidePanelState::OpenEmpty, None)
+            accessible(SidePanelState::OpenEmpty, None, None)
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
             "Close Side Panel"
         );
         assert_eq!(
-            accessible(SidePanelState::Closed, None)
+            accessible(SidePanelState::Closed, None, None)
                 .find(&"side-panel-toggle".into())
                 .unwrap()
                 .label,
@@ -226,8 +245,8 @@ mod tests {
 
     #[test]
     fn the_toggle_carries_whether_the_panel_is_open_as_state_and_the_action_its_click_runs() {
-        let open = accessible(SidePanelState::OpenEmpty, None);
-        let closed = accessible(SidePanelState::Closed, None);
+        let open = accessible(SidePanelState::OpenEmpty, None, None);
+        let closed = accessible(SidePanelState::Closed, None, None);
 
         let open = open.find(&"side-panel-toggle".into()).unwrap();
         let closed = closed.find(&"side-panel-toggle".into()).unwrap();
@@ -239,7 +258,7 @@ mod tests {
 
     #[test]
     fn the_panel_describes_the_empty_state_and_its_control() {
-        let described = accessible(SidePanelState::OpenEmpty, None);
+        let described = accessible(SidePanelState::OpenEmpty, None, None);
 
         assert_eq!(described.role, Role::Complementary);
         assert_eq!(described.label, PANEL_LABEL);
@@ -248,7 +267,7 @@ mod tests {
         assert_eq!(described.children[0].label, EMPTY_PANEL_MESSAGE);
         assert_eq!(described.children[1].role, Role::Button);
 
-        let closed = accessible(SidePanelState::Closed, None);
+        let closed = accessible(SidePanelState::Closed, None, None);
         assert_eq!(closed.children.len(), 1);
         assert_eq!(closed.children[0].role, Role::Button);
     }

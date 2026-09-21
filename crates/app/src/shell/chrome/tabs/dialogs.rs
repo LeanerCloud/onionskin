@@ -39,17 +39,28 @@ impl ShellFrame {
     pub(in crate::shell) fn save_commenting_author(&mut self, cx: &mut Context<Self>) {
         let typed = self.commenting_author.read(cx).query().trim().to_owned();
         self.settings.preferences.commenting_author = (!typed.is_empty()).then_some(typed);
+        self.apply_tool_environment(cx);
+        self.save_preferences();
+        cx.notify();
+    }
+
+    /// Hand every open tab's tools the settings they are configured from, so
+    /// a change applies to the next comment anywhere.
+    pub(in crate::shell) fn apply_tool_environment(&mut self, cx: &mut Context<Self>) {
         let environment = self.settings.tool_environment();
         for tab in self.tabs.tabs() {
             tab.canvas
                 .update(cx, |canvas, _| canvas.model.configure_tools(&environment));
         }
+    }
+
+    /// Write the preferences file, reporting a failure as a notice.
+    pub(in crate::shell) fn save_preferences(&mut self) {
         if let Some(path) = self.settings.paths.preferences.as_deref() {
             if let Err(error) = self.settings.preferences.save(path) {
                 self.notices.push(error.to_string());
             }
         }
-        cx.notify();
     }
 
     pub(super) fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) {

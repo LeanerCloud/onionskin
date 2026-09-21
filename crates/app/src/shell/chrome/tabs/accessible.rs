@@ -169,6 +169,7 @@ impl ShellFrame {
             root = root.child(side_panel::accessible(
                 self.side_panel_state,
                 self.active_tool_help(cx),
+                self.accessible_inspector(cx),
             ));
         }
         if self.menus.main_menu_open {
@@ -477,6 +478,7 @@ impl ShellFrame {
             Activation::ShowPreferences(category) => self.show_preferences(category, window, cx),
             Activation::ChangePreference(change) => self.change_preference(change, cx),
             Activation::SaveCommentingAuthor => self.save_commenting_author(cx),
+            Activation::Inspector(action) => self.run_inspector_action(action, cx),
             Activation::CloseDialog => self.close_dialog(window, cx),
             Activation::SubmitExport => self.submit_export(window, cx),
             Activation::CancelExport => self.cancel_export(cx),
@@ -653,6 +655,8 @@ impl ShellFrame {
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
             TextField::CommentDraft => self.navigation.comment_draft(),
             TextField::CommentingAuthor => Some(&self.commenting_author),
+            TextField::InspectorAuthor => Some(&self.inspector.author),
+            TextField::InspectorSubject => Some(&self.inspector.subject),
         }
     }
 
@@ -724,6 +728,7 @@ impl ShellFrame {
         ]
         .into_iter()
         .chain(self.navigation.comment_draft())
+        .chain([&self.inspector.author, &self.inspector.subject])
         .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
         .map(|input| input.read(cx).element_id().into())
     }

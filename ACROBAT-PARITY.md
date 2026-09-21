@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 191 planned / 25 partial / 80 out-of-scope. 107 implemented.**
+**403 rows: 190 planned / 24 partial / 80 out-of-scope. 109 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -163,7 +163,7 @@ M3 here; the plan's ruling B move to M4 is not yet applied.
 | All tools pane (left tool rail) | implemented | M2 | The registry-driven rail, compact icon rendering, and tool activation are live. Evidence: M2-SHELL and B3.8. |
 | "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
 | Quick action toolbar (floating over the page) | implemented | M2 | Toolbar, dragging, customization, Select, Comment (sticky note), Highlight and Draw are live; Fill text fields and Add Sign are disabled with their M5 reason. Evidence: M2-SHELL, docs/evidence/m3-p20b-comment-surfaces.md. |
-| Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; tool-specific content starts at M3. Evidence: M2-SHELL and B3.7. |
+| Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; it shows the active tool's use and, for a chosen comment, the properties inspector. Evidence: M2-SHELL, B3.7 and docs/evidence/m3-p20b-comment-surfaces.md. |
 | Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, fit controls, invalid-zoom display, and numeric page-field semantics are live. Evidence: M2-SHELL and B3.7. |
 | Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
 | Convert (global bar entry point) | implemented | M3 | A global-bar panel holds Create PDF From File, From Clipboard and From Multiple Files, the page exports, and Export All Images; the target list stays deliberately smaller than Acrobat's. Evidence: docs/evidence/m3-p14a-images.md. |
@@ -277,7 +277,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | partial | M3 | Add, Save and Delete are live; Open stays disabled until M5's trust list, and Edit Description and Search Attachments are not offered. Counted once for the whole menu. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
 | Comments pane (list, sort, filter, reply, status) | implemented | M3 | Lists every comment the edited document holds, with replies, status and checkmark; follows edits made anywhere. Sits in the left column for now. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
-| Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | partial | M3 | Reply, Edit Text, Set Status, Check, Mark as Read/Unread and Delete; Properties and Make Current Properties Default arrive with the properties inspector. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
+| Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | implemented | M3 | Reply, Edit Text, Set Status, Check, Mark as Read/Unread, Delete, Properties and Make Current Properties Default. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
 | Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, rendered menu access, and a read-only Layer Properties dialog (visibility and lock per layer) are implemented; renaming, intent changes, merge and flatten remain post-1.0 layer editing. Evidence: M2-PANES, B3.1, and docs/evidence/m3-p13a-properties.md. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
@@ -432,7 +432,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Cloud | implemented | M3 | Cloud intensity is fixed at 1 until the properties inspector (row: Comment properties). Evidence: docs/evidence/m3-p9c-shapes.md. |
 | Attach a file as a comment | implemented | M3 | Embeds the chosen file with a paperclip appearance; the file is chosen before the click. Listed in the Attachments pane after reopen. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Record an audio comment | out-of-scope | - | A sound annotation is rich media, which the plan's GUI parity bullet rules out because no crate could own a capture and playback stack. |
-| Comment properties (colour, opacity, author, subject, default) | planned | M3 | |
+| Comment properties (colour, opacity, author, subject, default) | implemented | M3 | The side panel's inspector for the chosen comment: eight swatches, four opacities, author and subject, each an undoable edit that redraws the appearance; Make Current Properties Default sets the next comment of that kind's colour and opacity. docs/evidence/m3-p20b-comment-surfaces.md |
 | Comments list: sort, filter, reply, set status, checkmark, read/unread | implemented | M3 | Sort, filter, reply, status, checkmark, edit text and delete are live and undoable; read/unread is the session's own state and never written to the file. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Summarize comments (generate a summary PDF) | implemented | M3 | Two layouts (comments only, page then comments), opened in a tab; refused on encrypted documents. Connector-line and on-page sequence-number layouts are not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Print comments (document and markups, summary only) | planned | M3 | With `crates/print`. |

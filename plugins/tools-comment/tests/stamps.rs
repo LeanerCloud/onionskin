@@ -131,6 +131,7 @@ fn tool_at(clock: i64, author: Option<&str>, data_dir: Option<&Path>) -> StampTo
     tool.configure(&ToolEnvironment {
         author: author.map(str::to_owned),
         data_dir: data_dir.map(Path::to_path_buf),
+        ..ToolEnvironment::default()
     });
     tool
 }
@@ -327,7 +328,7 @@ fn a_file_chosen_for_attach_goes_into_the_document_where_it_was_clicked() {
     let mut tool = AttachFileTool::new();
     tool.configure(&ToolEnvironment {
         author: Some("Ana".into()),
-        data_dir: None,
+        ..ToolEnvironment::default()
     });
     let mut fixture = Fixture::blank();
     fixture.click(&mut tool, (100.0, 700.0));

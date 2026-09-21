@@ -5,6 +5,7 @@ mod commands;
 pub(in crate::shell) mod export_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;
+pub(in crate::shell) mod inspector;
 mod page_controls;
 pub(in crate::shell) mod properties_dialog;
 mod quick_actions;

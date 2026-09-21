@@ -390,3 +390,140 @@ fn the_author_name_saved_in_preferences_signs_the_next_comment(cx: &mut TestAppC
         })
         .unwrap();
 }
+
+/// The properties inspector: Properties opens it on the chosen comment,
+/// colour and opacity apply at once as undoable edits, author and subject
+/// wait for Save, and "Make Current Properties Default" makes the look the
+/// next comment of that kind's.
+#[gpui::test]
+fn the_inspector_changes_a_comment_and_makes_its_look_the_default(cx: &mut TestAppContext) {
+    use crate::shell::chrome::inspector::InspectorAction;
+
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let note = add_note(frame, "Colour me", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            frame.run_activation(comment(CommentAction::Select(note)), window, cx);
+            frame.run_activation(Activation::Inspector(InspectorAction::Show), window, cx);
+            let tree = frame.accessible(window, cx);
+            assert!(
+                tree.find(&"inspector".into()).is_some(),
+                "the panel shows it"
+            );
+            let author = tree
+                .find(&crate::shell::chrome::inspector::AUTHOR_ID.into())
+                .expect("the author field");
+            assert_eq!(
+                author.value.as_deref(),
+                Some("Zoe"),
+                "filled from the comment"
+            );
+
+            frame.run_activation(Activation::Inspector(InspectorAction::Color(0)), window, cx);
+            frame.run_activation(
+                Activation::Inspector(InspectorAction::Opacity(50)),
+                window,
+                cx,
+            );
+            let placed = annotations(frame, cx).remove(0);
+            assert_eq!(
+                placed.color.map(crate::shell::chrome::inspector::to_rgb),
+                Some(crate::shell::chrome::inspector::PALETTE[0].1)
+            );
+            assert_eq!(placed.opacity, Some(0.5));
+            let tree = frame.accessible(window, cx);
+            let red = tree.find(&("inspector-color", 0usize).into()).unwrap();
+            assert_eq!(red.state.selected, Some(true));
+
+            frame
+                .inspector
+                .author
+                .update(cx, |input, cx| input.set_query("Max", cx));
+            frame
+                .inspector
+                .subject
+                .update(cx, |input, cx| input.set_query("Layout", cx));
+            frame.run_activation(Activation::Inspector(InspectorAction::SaveText), window, cx);
+            let placed = annotations(frame, cx).remove(0);
+            assert_eq!(placed.author.as_deref(), Some("Max"));
+            assert_eq!(placed.subject.as_deref(), Some("Layout"));
+
+            frame.run_activation(
+                Activation::Inspector(InspectorAction::MakeDefault),
+                window,
+                cx,
+            );
+            let default = frame.preferences().comment_defaults["Text"];
+            assert_eq!(
+                default.color,
+                Some(crate::shell::chrome::inspector::PALETTE[0].1)
+            );
+            assert_eq!(default.opacity_percent, 50);
+        })
+        .unwrap();
+}
+
+/// End to end through the tool, as the plan asks: after "Make Current
+/// Properties Default" on a sticky note, the next sticky note the tool
+/// places has that colour and opacity.
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn the_next_sticky_note_takes_the_default_the_inspector_made(cx: &mut TestAppContext) {
+    use crate::shell::chrome::inspector::{InspectorAction, PALETTE};
+
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let note = add_note(frame, "The model", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            frame.run_activation(comment(CommentAction::Select(note)), window, cx);
+            frame.run_activation(Activation::Inspector(InspectorAction::Color(4)), window, cx);
+            frame.run_activation(
+                Activation::Inspector(InspectorAction::Opacity(75)),
+                window,
+                cx,
+            );
+            frame.run_activation(
+                Activation::Inspector(InspectorAction::MakeDefault),
+                window,
+                cx,
+            );
+
+            let canvas = frame.tabs.active().unwrap().canvas.clone();
+            canvas.update(cx, |canvas, _| {
+                let index = canvas
+                    .model
+                    .registry()
+                    .tools()
+                    .position(|tool| tool.id() == "sticky-note")
+                    .expect("installed");
+                canvas.model.activate_tool(index).expect("activates");
+                let page = canvas.model.viewport().visible_pages().unwrap()[0].rect;
+                let at = gpui::point(
+                    px(page.origin.x + page.size.width / 2.0),
+                    px(page.origin.y + page.size.height / 2.0),
+                );
+                canvas
+                    .model
+                    .pointer_down(at, 1.0, gpui::Modifiers::default())
+                    .unwrap();
+                canvas
+                    .model
+                    .pointer_up(at, 1.0, gpui::Modifiers::default())
+                    .unwrap();
+            });
+            let placed = annotations(frame, cx)
+                .into_iter()
+                .find(|annotation| annotation.objref != note && annotation.in_reply_to.is_none())
+                .expect("the tool placed a note");
+            assert_eq!(
+                placed.color.map(crate::shell::chrome::inspector::to_rgb),
+                Some(PALETTE[4].1)
+            );
+            assert_eq!(placed.opacity, Some(0.75));
+        })
+        .unwrap();
+}

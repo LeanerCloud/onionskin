@@ -5,6 +5,7 @@ mod dialogs;
 mod export;
 mod file;
 mod frame_state;
+mod inspector;
 mod menu;
 mod organize;
 mod outline;
@@ -1103,6 +1104,7 @@ impl ShellFrame {
             .active()
             .and_then(|tab| tab.source.parent().map(Path::to_path_buf));
         panes::apply(&mut self.navigation, canvas.as_ref(), directory, action, cx);
+        self.follow_chosen_comment(cx);
     }
 
     /// Show what a pane's own asynchronous work could not do, in the pane
@@ -1401,9 +1403,11 @@ impl Render for ShellFrame {
             ));
         }
         body = body.when(visibility.side_panel, |body| {
+            let inspector = self.render_inspector(theme, cx);
             body.child(render_side_panel(
                 self.side_panel_state,
                 self.active_tool_help(cx),
+                inspector,
                 theme,
                 cx,
             ))

@@ -318,6 +318,22 @@ impl NavigationPanesState {
         }
     }
 
+    /// The comment chosen in the Comments pane, while that pane is open.
+    pub(in crate::shell) fn chosen_comment(&self) -> Option<&ReadAnnotation> {
+        if self.active != Some(NavigationPane::Comments) {
+            return None;
+        }
+        let chosen = self.comments.selected?;
+        self.comment_snapshot()?
+            .iter()
+            .find(|comment| comment.objref == chosen)
+    }
+
+    /// Why the open document may not be edited, as read with the pane.
+    pub(in crate::shell) fn edit_refusal(&self) -> Option<&'static str> {
+        self.edit_refusal
+    }
+
     /// The comments pane's open field, which the frame's focus ring and Tab
     /// order include.
     pub(in crate::shell) fn comment_draft(&self) -> Option<&Entity<super::chrome::SearchInput>> {

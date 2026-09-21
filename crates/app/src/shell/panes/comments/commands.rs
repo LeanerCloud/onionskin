@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use super::super::super::chrome::accessible::{Activation, Element};
+use super::super::super::chrome::inspector::InspectorAction;
 use super::super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
 use super::super::{menu_element, menu_row, PaneAction};
 use super::model::Thread;
@@ -60,10 +61,23 @@ pub(super) fn commands(thread: &Thread, read: bool, refusal: Option<&'static str
         CommentAction::ToggleRead,
     ));
     listed.push(("Delete", writes, CommentAction::Delete));
-    listed
+    let mut commands: Vec<Command> = listed
         .into_iter()
         .map(|(label, availability, action)| (label, availability, activation(action)))
-        .collect()
+        .collect();
+    // These two change the side panel and the preferences, not the
+    // document, so a document that may not be edited still offers them.
+    commands.push((
+        "Properties",
+        MenuAvailability::Enabled,
+        Activation::Inspector(InspectorAction::Show),
+    ));
+    commands.push((
+        "Make Current Properties Default",
+        MenuAvailability::Enabled,
+        Activation::Inspector(InspectorAction::MakeDefault),
+    ));
+    commands
 }
 
 pub(super) fn draft_commands() -> Vec<Command> {
@@ -176,7 +190,9 @@ pub(super) mod tests {
                 "Clear Status",
                 "Check",
                 "Mark as Read",
-                "Delete"
+                "Delete",
+                "Properties",
+                "Make Current Properties Default"
             ]
         );
         assert!(offered
@@ -193,7 +209,10 @@ pub(super) mod tests {
     fn a_refused_document_disables_every_command_that_writes_with_its_reason() {
         let reason = "The document is encrypted";
         for (label, availability, _) in commands(&thread(false), false, Some(reason)) {
-            if label == "Mark as Read" {
+            if matches!(
+                label,
+                "Mark as Read" | "Properties" | "Make Current Properties Default"
+            ) {
                 assert!(availability.is_enabled());
             } else {
                 assert_eq!(availability.reason(), Some(reason), "{label}");

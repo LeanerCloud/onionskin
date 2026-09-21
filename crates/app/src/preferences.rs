@@ -16,11 +16,13 @@
 //! than stopping the app, and a value outside the set its setting allows is
 //! named rather than rounded to something plausible.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use onionskin_core::{FitMode, MatchMode, PageLayoutMode, SearchOptions};
+pub use onionskin_plugin_api::CommentDefault;
 
 /// How the shell picks light or dark. `System` follows the window's
 /// appearance, which is what makes it the default.
@@ -162,6 +164,9 @@ pub struct Preferences {
     /// Commenting: the name comments are signed with. `None` until the user
     /// chooses one; the operating system's account name is never used.
     pub commenting_author: Option<String>,
+    /// Commenting: each kind of comment's default look, set with "Make
+    /// Current Properties Default", keyed by `/Subtype`.
+    pub comment_defaults: BTreeMap<String, CommentDefault>,
 }
 
 impl Default for Preferences {
@@ -175,6 +180,7 @@ impl Default for Preferences {
             zoom: ZoomPreference::default(),
             search: SearchOptions::default(),
             commenting_author: None,
+            comment_defaults: BTreeMap::new(),
         }
     }
 }
@@ -357,6 +363,12 @@ impl Preferences {
         if let Some(author) = &self.commenting_author {
             file.insert("commenting_author".into(), author.clone().into());
         }
+        if !self.comment_defaults.is_empty() {
+            file.insert(
+                "comment_defaults".into(),
+                defaults_json(&self.comment_defaults),
+            );
+        }
         carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
@@ -386,6 +398,10 @@ fn apply(
         "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
         "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
         "commenting_author" => preferences.commenting_author = author(path, setting, value)?,
+        "comment_defaults" => {
+            preferences.comment_defaults = comment_defaults(value)
+                .ok_or_else(|| unknown_value(path, setting, value, DEFAULTS))?;
+        }
         _ => {
             return Err(PreferencesError::UnknownSetting {
                 path: path.to_path_buf(),
@@ -407,6 +423,60 @@ fn named<T>(
         .as_str()
         .and_then(parse)
         .ok_or_else(|| unknown_value(path, setting, value, allowed))
+}
+
+const DEFAULTS: &str =
+    "an object of comment kinds, each {\"color\": \"#rrggbb\" or null, \"opacity\": 0 to 100}";
+
+/// `comment_defaults` as the file writes it: `{"Square": {"color":
+/// "#ff0000", "opacity": 50}}`. One malformed entry refuses the whole
+/// setting, so a half-read table never overwrites what the user wrote.
+fn comment_defaults(value: &serde_json::Value) -> Option<BTreeMap<String, CommentDefault>> {
+    value
+        .as_object()?
+        .iter()
+        .map(|(kind, entry)| {
+            let color = match entry.get("color") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(color) => Some(parse_hex(color.as_str()?)?),
+            };
+            let opacity_percent = u8::try_from(entry.get("opacity")?.as_u64()?)
+                .ok()
+                .filter(|percent| *percent <= 100)?;
+            Some((
+                kind.clone(),
+                CommentDefault {
+                    color,
+                    opacity_percent,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn parse_hex(hex: &str) -> Option<[u8; 3]> {
+    let digits = hex.strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let channel = |at: usize| u8::from_str_radix(digits.get(at..at + 2)?, 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
+}
+
+fn defaults_json(defaults: &BTreeMap<String, CommentDefault>) -> serde_json::Value {
+    defaults
+        .iter()
+        .map(|(kind, default)| {
+            let color = default.color.map_or(serde_json::Value::Null, |[r, g, b]| {
+                format!("#{r:02x}{g:02x}{b:02x}").into()
+            });
+            (
+                kind.clone(),
+                serde_json::json!({ "color": color, "opacity": default.opacity_percent }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
 /// A name to sign comments with. An empty or blank one is no name.
@@ -559,6 +629,31 @@ mod tests {
         )
     }
 
+    /// A default table with one bad entry is refused whole, and says what
+    /// the setting takes; the rest of the file still applies.
+    #[test]
+    fn a_malformed_comment_default_refuses_the_table_and_names_the_shape() {
+        let (preferences, errors) = parse(
+            r##"{"theme": "dark", "comment_defaults": {"Square": {"color": "#ff0000", "opacity": 50}, "Ink": {"color": "red", "opacity": 50}}}"##,
+        );
+        assert!(preferences.comment_defaults.is_empty());
+        assert_eq!(preferences.theme, ThemePreference::Dark);
+        assert!(errors[0].contains("#rrggbb"), "{errors:?}");
+        let (preferences, _) =
+            parse(r#"{"comment_defaults": {"Ink": {"color": null, "opacity": 100}}}"#);
+        assert_eq!(
+            preferences.comment_defaults["Ink"],
+            CommentDefault {
+                color: None,
+                opacity_percent: 100
+            }
+        );
+        assert!(parse(r#"{"comment_defaults": {"Ink": {"opacity": 101}}}"#)
+            .0
+            .comment_defaults
+            .is_empty());
+    }
+
     /// A blank name is no name: comments are then signed by nobody rather
     /// than by an empty string a reader would show as a blank author.
     #[test]
@@ -602,6 +697,13 @@ mod tests {
                 mode: MatchMode::AllWords,
             },
             commenting_author: Some("Ana Pop".into()),
+            comment_defaults: BTreeMap::from([(
+                "Square".to_owned(),
+                CommentDefault {
+                    color: Some([255, 0, 16]),
+                    opacity_percent: 50,
+                },
+            )]),
         };
 
         written.save(&path).expect("preferences save");

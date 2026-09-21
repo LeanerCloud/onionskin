@@ -124,6 +124,7 @@ impl ShellSettings {
     pub(in crate::shell) fn tool_environment(&self) -> onionskin_plugin_api::ToolEnvironment {
         onionskin_plugin_api::ToolEnvironment {
             author: self.preferences.commenting_author.clone(),
+            comment_defaults: self.preferences.comment_defaults.clone(),
             data_dir: self.paths.data.clone(),
         }
     }

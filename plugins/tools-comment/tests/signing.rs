@@ -3,7 +3,7 @@
 //! when there is no name.
 
 use onionskin_core::{Document, FitMode, Modifiers, PagePoint, ViewSize, Viewport};
-use onionskin_plugin_api::{PointerInput, ToolCtx, ToolEnvironment, ToolPlugin};
+use onionskin_plugin_api::{CommentDefault, PointerInput, ToolCtx, ToolEnvironment, ToolPlugin};
 use onionskin_tools_comment::{FreeTextTool, InkTool, NoteTool, ShapeTool};
 
 fn document() -> (Document, Viewport) {
@@ -33,7 +33,7 @@ fn authors_after(
 ) -> Vec<Option<String>> {
     tool.configure(&ToolEnvironment {
         author: author.map(str::to_owned),
-        data_dir: None,
+        ..ToolEnvironment::default()
     });
     let (mut doc, mut viewport) = document();
     let input = |(x, y): (f64, f64)| PointerInput {
@@ -94,6 +94,50 @@ fn each_tool_signs_its_comment_with_the_configured_author() {
         let authors = authors_after(tool.as_mut(), Some("Ana Pop"), from, to);
         assert_eq!(authors, [Some("Ana Pop".to_owned())], "{name}");
     }
+}
+
+/// "Make Current Properties Default": a kind with a default takes its colour
+/// and opacity; a kind without one keeps the tool's own look.
+#[test]
+fn a_default_look_applies_to_its_own_kind_only() {
+    let environment = ToolEnvironment {
+        comment_defaults: [(
+            "Square".to_owned(),
+            CommentDefault {
+                color: Some([255, 0, 0]),
+                opacity_percent: 50,
+            },
+        )]
+        .into(),
+        ..ToolEnvironment::default()
+    };
+    let place = |tool: &mut dyn ToolPlugin| {
+        tool.configure(&environment);
+        let (mut doc, mut viewport) = document();
+        let input = |(x, y): (f64, f64)| PointerInput {
+            at: PagePoint { page: 0, x, y },
+            pressure: 1.0,
+            modifiers: Modifiers::default(),
+            clicks: 1,
+        };
+        let mut ctx = ToolCtx {
+            doc: &mut doc,
+            viewport: &mut viewport,
+        };
+        tool.on_pointer_down(&mut ctx, input((100.0, 700.0)));
+        tool.on_pointer_move(&mut ctx, input((300.0, 600.0)));
+        tool.on_pointer_up(&mut ctx, input((300.0, 600.0)));
+        doc.annotations().expect("reads").remove(0)
+    };
+    let rectangle = place(&mut ShapeTool::rectangle());
+    assert_eq!(
+        rectangle.color,
+        Some(onionskin_core::Color::new(1.0, 0.0, 0.0))
+    );
+    assert_eq!(rectangle.opacity, Some(0.5));
+    let oval = place(&mut ShapeTool::oval());
+    assert_ne!(oval.color, Some(onionskin_core::Color::new(1.0, 0.0, 0.0)));
+    assert_eq!(oval.opacity, None);
 }
 
 #[test]

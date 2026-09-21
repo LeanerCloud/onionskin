@@ -64,6 +64,9 @@ pub(in crate::shell) enum TextField {
     CommentDraft,
     /// Commenting preferences' author name.
     CommentingAuthor,
+    /// The properties inspector's author and subject.
+    InspectorAuthor,
+    InspectorSubject,
 }
 
 /// What activating an accessible element does.
@@ -102,6 +105,8 @@ pub(in crate::shell) enum Activation {
     ChangePreference(PreferenceChange),
     /// Save the name typed in Commenting preferences.
     SaveCommentingAuthor,
+    /// The comment properties inspector in the side panel.
+    Inspector(super::inspector::InspectorAction),
     CloseDialog,
     SubmitExport,
     CancelExport,

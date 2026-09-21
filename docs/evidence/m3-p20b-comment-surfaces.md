@@ -159,3 +159,81 @@ Rows:
 - `cargo test -p onionskin-app --features shell,shell-test-support --lib`:
   675 pass and 4 fail. The 4 are the environmental set in
   `known-issues.md`: the snapshot test and the three rollback tests.
+
+## Comment properties, and Make Current Properties Default
+
+Rows:
+
+- Comment properties (colour, opacity, author, subject, default) moves from
+  `planned` to `implemented`.
+- Comments list context menu moves from `partial` to `implemented`: it now
+  has Properties and Make Current Properties Default.
+- Right-hand side panel: its note now names the inspector as its first
+  tool-specific content.
+
+**What the user gets.**
+
+- **Opening it:** choose a comment in the Comments pane, then use
+  Properties from its row or its right-click menu. The side panel shows
+  Comment Properties.
+- **Colour and opacity:** eight colour swatches and four opacities (100,
+  75, 50 and 25 percent). Each applies on the click, as one undoable edit,
+  and the comment is drawn again in its new colour and opacity.
+- **Author and subject:** two fields, filled from the comment, which wait
+  for Save Author and Subject.
+- **Make Current Properties Default:** the comment's colour and opacity
+  become the look of the next comment of its kind, in every open tab. The
+  default is saved to `preferences.json` under `comment_defaults`, as
+  `{"Text": {"color": "#e53935", "opacity": 50}}`.
+- **On a document that may not be edited,** every control that writes is
+  disabled with the reason. Properties and Make Current Properties Default
+  stay live, because they change the panel and the preferences, not the
+  document.
+
+**How it is built.**
+
+- **`core::properties::set_properties`** writes `/C`, `/CA`, `/T` and
+  `/Subj` and draws the appearance again, in one edit. Full opacity and
+  blank text remove their keys instead of writing defaults.
+- **`core::annots::rebuild`** reads the drawable model back from the
+  dictionary for every subtype `core` draws: shapes, lines with their
+  endings, polygons and clouds, ink, text markup, notes and free text.
+  `set_contents` now shares it. A stamp or attachment is not redrawn from
+  its dictionary; its appearance is left as it was.
+- **`ReadAnnotation` carries `/CA`,** so the inspector shows the opacity in
+  force.
+- **Defaults reach the tools through `ToolEnvironment::comment_defaults`.**
+  The shared `Signer` that signs each comment also applies its kind's
+  default colour and opacity. A kind with no default keeps the tool's own
+  look.
+
+**Runs.**
+
+- `core/tests/properties.rs`:
+  - colour, opacity, author and subject are written;
+  - the appearance is drawn in the new colour with an opacity state;
+  - Undo takes all of it back;
+  - full opacity and blank text remove their keys.
+- `rebuild::tests`: an arrow keeps its line, endings, colour and opacity; a
+  cloud keeps its vertices and intensity; a stamp is not redrawn; `/DA`
+  reads back.
+- `tools-comment/tests/signing.rs::a_default_look_applies_to_its_own_kind_only`.
+- `the_inspector_changes_a_comment_and_makes_its_look_the_default`, on a
+  window:
+  - the panel shows the inspector with the author filled in;
+  - red and 50 percent are written, and red is announced as chosen;
+  - the author and subject are saved;
+  - the default is stored for `Text`.
+- `the_next_sticky_note_takes_the_default_the_inspector_made`: end to end
+  through the tool, as the plan asks. After Make Current Properties Default,
+  a sticky note placed with the tool has the default's colour and 75
+  percent opacity.
+- `preferences.rs`: the defaults round-trip, and one malformed entry
+  refuses the whole table with a message that shows the shape.
+- `cargo test -p onionskin-app --features shell,shell-test-support --lib`:
+  678 pass and 6 fail.
+  - 4 of the failures are the environmental set in `known-issues.md`.
+  - The other 2, `an_update_that_paints_nothing_leaves_no_frame_open` (also
+    listed in `known-issues.md`) and
+    `snapshot_tool_drag_copies_a_background_encoded_png`, pass when run on
+    their own. They are timing-sensitive under a loaded two-core machine.

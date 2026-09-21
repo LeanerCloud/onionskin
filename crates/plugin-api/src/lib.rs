@@ -157,6 +157,18 @@ pub struct ToolEnvironment {
     /// A directory the tool may keep its own files in - a stamp library - or
     /// `None` when the shell has nowhere to put one.
     pub data_dir: Option<std::path::PathBuf>,
+    /// What the user made the default look for a kind of comment, keyed by
+    /// its `/Subtype` ("Square", "Highlight"): Acrobat's "Make Current
+    /// Properties Default". A kind with no entry keeps the tool's own look.
+    pub comment_defaults: std::collections::BTreeMap<String, CommentDefault>,
+}
+
+/// One kind of comment's default look. Whole numbers, so a preference file
+/// round-trips exactly: colour channels 0 to 255 and opacity in percent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommentDefault {
+    pub color: Option<[u8; 3]>,
+    pub opacity_percent: u8,
 }
 
 /// A canvas tool. One is active at a time; the canvas routes pointer

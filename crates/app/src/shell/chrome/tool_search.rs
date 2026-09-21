@@ -511,6 +511,8 @@ fn field_node(
         | TextField::BookmarkTitle
         | TextField::CommentDraft
         | TextField::CommentingAuthor
+        | TextField::InspectorAuthor
+        | TextField::InspectorSubject
         | TextField::PropertiesTitle
         | TextField::PropertiesAuthor
         | TextField::PropertiesSubject
