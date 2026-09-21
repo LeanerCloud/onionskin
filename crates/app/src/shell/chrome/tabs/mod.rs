@@ -231,6 +231,29 @@ impl ShellFrame {
         self.open_documents(&[path], cx);
     }
 
+    /// Home's Starred section.
+    pub(in crate::shell) fn open_starred(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(path) = self.settings.recents.starred().get(index).cloned() else {
+            return;
+        };
+        self.open_documents(&[path], cx);
+    }
+
+    /// Star a document, or unstar it, and write the list.
+    pub(in crate::shell) fn toggle_star(&mut self, path: &Path, cx: &mut Context<Self>) {
+        match self.settings.recents.toggle_star(path) {
+            Ok(_) => {
+                if let Some(file) = self.settings.paths.recents.as_deref() {
+                    if let Err(error) = self.settings.recents.save(file) {
+                        self.notices.push(error.to_string());
+                    }
+                }
+            }
+            Err(error) => self.notices.push(error.to_string()),
+        }
+        cx.notify();
+    }
+
     /// Open documents into tabs, in the order they were chosen, and record
     /// them as recent.
     ///
@@ -2558,6 +2581,47 @@ mod tests {
                         .is_some_and(Result::is_ok),
                     "the recent document has no page on its card"
                 );
+            })
+            .unwrap();
+    }
+
+    /// Starring from Home writes the star to the recents file, survives the
+    /// app starting again, and the Starred row opens the document.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_star_on_home_is_saved_and_opens_its_document(cx: &mut TestAppContext) {
+        let dir = crate::config::test_dir("home-star");
+        let _ = std::fs::remove_file(dir.join(crate::config::RECENTS_FILE));
+        let (window, _) = bound_window_in(&[], crate::config::ConfigPaths::in_dir(&dir), cx);
+        let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf");
+        let seed = std::path::absolute(seed).unwrap();
+
+        window
+            .update(cx, |frame, window, cx| {
+                frame.open_documents(std::slice::from_ref(&seed), cx);
+                frame.run_tab_command(TabCommand::CloseAll, 0, cx).unwrap();
+                let tree = frame.accessible(window, cx);
+                let star = tree
+                    .find(&("home-star", 0usize).into())
+                    .expect("the row has a star")
+                    .activation
+                    .clone()
+                    .expect("operable");
+                frame.run_activation(star, window, cx);
+            })
+            .unwrap();
+        let (reloaded, errors) =
+            crate::recents::Recents::load(Some(&dir.join(crate::config::RECENTS_FILE)));
+        assert!(errors.is_empty());
+        assert_eq!(
+            reloaded.starred(),
+            std::slice::from_ref(&seed),
+            "written, and read back"
+        );
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::OpenStarred(0), window, cx);
+                assert_eq!(frame.tabs.tabs().len(), 1, "the starred document opened");
             })
             .unwrap();
     }

@@ -1,7 +1,8 @@
 //! The recents list behind File > Open Recent and the Home view.
 //!
-//! Local only, as the parity rows say: no account, no cloud, no starred
-//! list (that is M3). The file is `~/.config/onionskin/recents.json` and is
+//! Local only, as the parity rows say: no account and no cloud. Starred
+//! documents are kept in the same file, on this machine, where Acrobat keeps
+//! them in its cloud storage. The file is `~/.config/onionskin/recents.json` and is
 //! written owner-only, because a list of document paths says what a user has
 //! been reading and a home directory is not always theirs alone.
 //!
@@ -45,6 +46,11 @@ impl RecentDocument {
     pub fn display_path(&self, home: Option<&Path>) -> String {
         abbreviate(&self.path, home)
     }
+}
+
+/// A path as a person reads it, the home directory written `~`.
+pub fn abbreviate_path(path: &Path, home: Option<&Path>) -> String {
+    abbreviate(path, home)
 }
 
 fn abbreviate(path: &Path, home: Option<&Path>) -> String {
@@ -111,12 +117,19 @@ impl std::error::Error for RecentsError {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RecentsFile {
     documents: Vec<RecentDocument>,
+    /// Absent from a file written before Starred existed.
+    #[serde(default)]
+    starred: Vec<PathBuf>,
 }
 
-/// The list, most recently opened first.
+/// The list, most recently opened first, and the documents the user
+/// starred, in the order they were starred.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Recents {
     documents: Vec<RecentDocument>,
+    /// Kept apart from the recents, so the recents limit never unstars a
+    /// document and starring never changes what is recent.
+    starred: Vec<PathBuf>,
 }
 
 impl Recents {
@@ -130,6 +143,7 @@ impl Recents {
                 Ok(file) => (
                     Self {
                         documents: file.documents,
+                        starred: file.starred,
                     },
                     Vec::new(),
                 ),
@@ -202,6 +216,32 @@ impl Recents {
         Ok(before != self.documents)
     }
 
+    /// The starred documents, oldest star first.
+    pub fn starred(&self) -> &[PathBuf] {
+        &self.starred
+    }
+
+    pub fn is_starred(&self, path: &Path) -> bool {
+        self.starred.iter().any(|starred| starred == path)
+    }
+
+    /// Star `path`, or unstar it if it is starred; the new state. Refused,
+    /// as `record` refuses it, for a path JSON cannot write down.
+    pub fn toggle_star(&mut self, path: &Path) -> Result<bool, RecentsError> {
+        if path.to_str().is_none() {
+            return Err(RecentsError::Unrepresentable {
+                path: path.to_path_buf(),
+            });
+        }
+        if self.is_starred(path) {
+            self.starred.retain(|starred| starred != path);
+            Ok(false)
+        } else {
+            self.starred.push(path.to_path_buf());
+            Ok(true)
+        }
+    }
+
     /// Drop everything past `limit`, which the Documents preference sets.
     pub fn truncate(&mut self, limit: usize) {
         self.documents.truncate(limit);
@@ -211,6 +251,7 @@ impl Recents {
     pub fn save(&self, path: &Path) -> Result<(), RecentsError> {
         let json = serde_json::to_string_pretty(&RecentsFile {
             documents: self.documents.clone(),
+            starred: self.starred.clone(),
         })
         // Total: `record` is the only way in and it refuses a path serde
         // cannot write, and a list read back from JSON is UTF-8 already.
@@ -426,5 +467,55 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o077, 0, "group and other must have no access");
+    }
+
+    #[test]
+    fn a_star_is_kept_apart_from_the_recents_and_survives_their_limit() {
+        let mut recents = Recents::default();
+        record(&mut recents, "/docs/a.pdf", 1);
+        record(&mut recents, "/docs/b.pdf", 2);
+        assert!(recents.toggle_star(Path::new("/docs/a.pdf")).unwrap());
+        assert!(recents.toggle_star(Path::new("/docs/c.pdf")).unwrap());
+        assert!(recents.is_starred(Path::new("/docs/a.pdf")));
+        recents.truncate(0);
+        assert!(recents.is_empty(), "the recents went");
+        assert_eq!(
+            recents.starred(),
+            [PathBuf::from("/docs/a.pdf"), PathBuf::from("/docs/c.pdf")],
+            "the stars did not"
+        );
+        assert!(!recents.toggle_star(Path::new("/docs/a.pdf")).unwrap());
+        assert_eq!(recents.starred(), [PathBuf::from("/docs/c.pdf")]);
+    }
+
+    #[test]
+    fn stars_round_trip_through_the_file_and_an_old_file_has_none() {
+        let dir = crate::config::test_dir("recents-stars");
+        let path = dir.join("recents.json");
+        let mut recents = Recents::default();
+        record(&mut recents, "/docs/a.pdf", 1);
+        recents.toggle_star(Path::new("/docs/a.pdf")).unwrap();
+        recents.save(&path).expect("saves");
+        let (loaded, errors) = Recents::load(Some(&path));
+        assert!(errors.is_empty());
+        assert_eq!(loaded, recents);
+
+        std::fs::write(&path, r#"{"documents":[]}"#).expect("writes");
+        let (old, errors) = Recents::load(Some(&path));
+        assert!(errors.is_empty(), "a file from before Starred still loads");
+        assert!(old.starred().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_json_cannot_write_is_never_starred() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut recents = Recents::default();
+        let bad = Path::new(std::ffi::OsStr::from_bytes(b"/docs/\xff.pdf"));
+        assert!(matches!(
+            recents.toggle_star(bad),
+            Err(RecentsError::Unrepresentable { .. })
+        ));
+        assert!(recents.starred().is_empty());
     }
 }

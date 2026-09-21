@@ -426,6 +426,8 @@ impl ShellFrame {
             }
             Activation::DismissNotice(index) => self.dismiss_notice(index, cx),
             Activation::OpenRecent(index) => self.open_recent(index, cx),
+            Activation::OpenStarred(index) => self.open_starred(index, cx),
+            Activation::ToggleStar(path) => self.toggle_star(&path, cx),
             Activation::ChooseSearchResult(result) => {
                 self.choose_search_result(result, window, cx);
             }

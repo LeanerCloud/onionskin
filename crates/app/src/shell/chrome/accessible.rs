@@ -90,6 +90,10 @@ pub(in crate::shell) enum Activation {
     CanvasContext(CanvasContextCommand),
     DismissNotice(usize),
     OpenRecent(usize),
+    /// Home's Starred section: open the starred document at this index.
+    OpenStarred(usize),
+    /// Star or unstar a document on Home.
+    ToggleStar(std::path::PathBuf),
     ChooseSearchResult(crate::shell::chrome::tool_search::SearchResult),
     Rail(RailEntry),
     ToggleRailExpanded,

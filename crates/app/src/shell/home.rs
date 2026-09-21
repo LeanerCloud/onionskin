@@ -2,9 +2,10 @@
 //!
 //! Acrobat's Home is the first thing its users meet, and the plan's candor
 //! list flags that the M2 text never mentioned it. What it carries here is
-//! the two rows the scoreboard puts in this milestone: Recents, and the
-//! list/thumbnail toggle over them. Starred is M3, and everything
-//! cloud-tethered is out of scope, so there are no other sections to show.
+//! Recents with the list/thumbnail toggle over them, and Starred: documents
+//! the user starred, kept on this machine rather than in a cloud account.
+//! Everything cloud-tethered is out of scope, so there are no other
+//! sections to show.
 //!
 //! Thumbnails are the first page of each recent document, rendered once
 //! per document and kept until the window closes, including the failures:
@@ -44,6 +45,22 @@ const THUMBNAIL_WIDTH: f32 = 132.0;
 /// so the pixels and the node describing them cannot say different things.
 const OPEN_LABEL: &str = "Open File…";
 const EMPTY_MESSAGE: &str = "No documents yet. Open one, and it will be here next time.";
+const NO_STARS: &str = "Star a recent document to keep it here.";
+
+/// What a star button says, for the state it would change.
+fn star_label(starred: bool) -> &'static str {
+    if starred {
+        "Unstar"
+    } else {
+        "Star"
+    }
+}
+
+fn file_title(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::shell) enum HomeView {
@@ -210,10 +227,16 @@ pub(in crate::shell) fn accessible(
             Some(Err(reason)) if thumbnail_view => reason.clone(),
             _ => recent.display_path(home),
         };
+        let starred = recents.is_starred(&recent.path);
         list = list.child(
             Element::new(key, Role::ListItem, recent.title())
                 .with_description(description)
-                .with_activation(Activation::OpenRecent(index)),
+                .with_activation(Activation::OpenRecent(index))
+                .child(
+                    Element::new(("home-star", index), Role::Button, star_label(starred))
+                        .with_state(A11yState::toggled(starred))
+                        .with_activation(Activation::ToggleStar(recent.path.clone())),
+                ),
         );
     }
     rects.place(Surface::Home, &mut list);
@@ -224,7 +247,32 @@ pub(in crate::shell) fn accessible(
         // list so that no stale rectangle can be paired with it.
         root = root.child(Element::new("home-empty", Role::Label, EMPTY_MESSAGE));
     }
-    root
+    root.child(accessible_starred(recents, home))
+}
+
+/// The Starred section, for a screen reader.
+fn accessible_starred(recents: &Recents, home: Option<&Path>) -> Element {
+    let mut starred = Element::new("home-starred", Role::List, "Starred");
+    for (index, path) in recents.starred().iter().enumerate() {
+        starred = starred.child(
+            Element::new(
+                ("home-starred-row", index),
+                Role::ListItem,
+                file_title(path),
+            )
+            .with_description(crate::recents::abbreviate_path(path, home))
+            .with_activation(Activation::OpenStarred(index))
+            .child(
+                Element::new(("home-unstar", index), Role::Button, star_label(true))
+                    .with_state(A11yState::toggled(true))
+                    .with_activation(Activation::ToggleStar(path.clone())),
+            ),
+        );
+    }
+    if recents.starred().is_empty() {
+        starred = starred.with_description(NO_STARS);
+    }
+    starred
 }
 
 pub(in crate::shell) fn render_home(
@@ -299,6 +347,79 @@ pub(in crate::shell) fn render_home(
         .text_color(theme.text)
         .child(header)
         .child(body)
+        .child(starred(recents, home, theme, cx))
+}
+
+/// A star that toggles without opening the row it sits on.
+fn star(
+    id: impl Into<gpui::ElementId>,
+    path: &Path,
+    starred: bool,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    let path = path.to_path_buf();
+    div()
+        .id(id)
+        .px_1()
+        .cursor_pointer()
+        .text_color(if starred {
+            theme.text
+        } else {
+            theme.muted_text
+        })
+        .hover(move |star| star.bg(theme.subtle_hover))
+        .on_click(cx.listener(move |frame, _event, window, cx| {
+            cx.stop_propagation();
+            frame.run_activation(Activation::ToggleStar(path.clone()), window, cx);
+        }))
+        .child(if starred { "★" } else { "☆" })
+}
+
+/// The Starred section, drawn.
+fn starred(
+    recents: &Recents,
+    home: Option<&Path>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> gpui::Div {
+    let mut section = div()
+        .pt_4()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_lg().pb_2().child("Starred"));
+    if recents.starred().is_empty() {
+        return section.child(div().text_color(theme.secondary_text).child(NO_STARS));
+    }
+    for (index, path) in recents.starred().iter().enumerate() {
+        section = section.child(
+            div()
+                .id(("home-starred-row", index))
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(move |row| row.bg(theme.selected))
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::OpenStarred(index), window, cx);
+                }))
+                .child(star(("home-unstar", index), path, true, theme, cx))
+                .child(div().flex_none().child(file_title(path)))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_right()
+                        .text_xs()
+                        .text_color(theme.muted_text)
+                        .child(crate::recents::abbreviate_path(path, home)),
+                ),
+        );
+    }
+    section
 }
 
 fn list(
@@ -332,6 +453,13 @@ fn list(
                 .on_click(cx.listener(move |frame, _event, window, cx| {
                     frame.run_activation(Activation::OpenRecent(index), window, cx);
                 }))
+                .child(star(
+                    ("home-star", index),
+                    &recent.path,
+                    recents.is_starred(&recent.path),
+                    theme,
+                    cx,
+                ))
                 .child(div().flex_none().child(recent.title()))
                 .child(
                     div()
@@ -622,5 +750,56 @@ mod tests {
         state.set_view(HomeView::List, &recents);
 
         assert!(state.thumbnail(&seed("hello.pdf")).is_none());
+    }
+
+    /// Every recent row carries its star, and a starred document is listed
+    /// under Starred with the way to open it and to unstar it.
+    #[test]
+    fn a_starred_recent_is_marked_on_its_row_and_listed_under_starred() {
+        let mut recents = Recents::default();
+        for name in ["hello.pdf", "minimal.pdf"] {
+            recents
+                .record(&seed(name), UNIX_EPOCH, 10)
+                .expect("the seed path records");
+        }
+        recents.toggle_star(&seed("hello.pdf")).expect("stars");
+
+        let described = accessible(&HomeState::default(), &recents, None, &Rects::default());
+
+        let star = |index: usize| {
+            described
+                .find(&("home-star", index).into())
+                .expect("each row has a star")
+                .clone()
+        };
+        // Most recent first: minimal, then hello.
+        assert_eq!(star(0).label, "Star");
+        assert_eq!(star(0).state.toggled, Some(false));
+        assert_eq!(star(1).label, "Unstar");
+        assert_eq!(
+            star(1).activation,
+            Some(Activation::ToggleStar(seed("hello.pdf")))
+        );
+        let starred = described.find(&"home-starred".into()).expect("a section");
+        assert_eq!(starred.children.len(), 1);
+        assert_eq!(starred.children[0].label, "hello.pdf");
+        assert_eq!(
+            starred.children[0].activation,
+            Some(Activation::OpenStarred(0))
+        );
+        assert!(starred.description.is_none());
+    }
+
+    #[test]
+    fn with_nothing_starred_the_section_says_how_to_star() {
+        let described = accessible(
+            &HomeState::default(),
+            &Recents::default(),
+            None,
+            &Rects::default(),
+        );
+        let starred = described.find(&"home-starred".into()).expect("a section");
+        assert!(starred.children.is_empty());
+        assert_eq!(starred.description.as_deref(), Some(NO_STARS));
     }
 }

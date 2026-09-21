@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 168 planned / 25 partial / 80 out-of-scope. 130 implemented.**
+**403 rows: 167 planned / 25 partial / 80 out-of-scope. 131 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 98, M4 4, M5 52, M6 45, post-1.0 57.
@@ -176,7 +176,7 @@ M4 with P15, per the plan's ruling B.
 | Account / profile menu | out-of-scope | - | Requires an Adobe account; Onionskin has no account system. |
 | Acrobat notifications | out-of-scope | - | Cloud-tethered notification feed. |
 | Home view: Recents | implemented | M2 | Local recents list is live. Evidence: M2-HOME. |
-| Home view: Starred | planned | M3 | Local flag in app state. Acrobat stores starred files in Adobe cloud storage; Onionskin keeps the list on disk. (judgment) |
+| Home view: Starred | implemented | M3 | Each recent row has a star; starred documents are listed under Starred on Home, kept in the recents file on this machine where Acrobat keeps them in its cloud, and apart from the recents so the recents limit never unstars one. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Home view: list view / thumbnail view toggle | implemented | M2 | Both local Recents layouts are live. Evidence: M2-HOME. (judgment) |
 | Home view: Adobe cloud storage | out-of-scope | - | Cloud-tethered; Onionskin's counter-pitch is local and private. |
 | Home view: Box / Dropbox / Google Drive / OneDrive / SharePoint connectors | out-of-scope | - | Cloud-tethered third-party storage integrations. |
