@@ -1736,8 +1736,11 @@ mod tests {
             .collect();
 
         assert!(!disabled.is_empty());
+        // Line Weights moved to M4 with the renderer option it needs.
         assert!(
-            disabled.iter().all(|reason| reason.contains("M3")),
+            disabled
+                .iter()
+                .all(|reason| reason.contains("M3") || reason.contains("M4")),
             "{disabled:?}"
         );
     }

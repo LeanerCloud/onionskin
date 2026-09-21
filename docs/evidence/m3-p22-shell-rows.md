@@ -68,3 +68,8 @@ entry is disabled with that reason and the reason names M4. It has no view
 action, no shell action and no native action, and the native menu item
 shows the reason. Only this test exists for the row; the rendered-widths
 test the plan describes for the other branch does not.
+
+**Stale test fixed after the move.** `every_deferred_entry_names_its_own_delivery_stage`
+still required every deferred View entry to name M3, and failed once Line
+Weights named M4. It now accepts M3 or M4, so an entry naming no milestone
+still fails. Fixed in its own commit.
