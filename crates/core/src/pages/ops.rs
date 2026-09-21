@@ -47,7 +47,7 @@ pub(crate) fn page_ref(tx: &Transaction<'_>, index: usize) -> Result<ObjRef> {
         })
 }
 
-fn leaves(tx: &Transaction<'_>) -> Result<Vec<super::inherit::Leaf>> {
+pub(super) fn leaves(tx: &Transaction<'_>) -> Result<Vec<super::inherit::Leaf>> {
     let catalog = catalog_ref(tx)?;
     let mut resolve = resolver(tx);
     leaves_from(catalog, &mut resolve)

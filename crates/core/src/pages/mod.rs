@@ -61,6 +61,7 @@ mod rewrite;
 
 pub(crate) use rewrite::{dict_at, resolve};
 mod threads;
+mod thumbs;
 mod tree;
 
 pub use assemble::{Assembled, Assembly, Tagging, Untagged};
@@ -72,3 +73,4 @@ pub use ops::{
 };
 pub use print_form::import_page_for_print;
 pub use rewrite::{rewrite_page_tree, PageSource, Rewrite};
+pub use thumbs::{embed_thumbnails, remove_thumbnails, THUMBNAIL_SIDE};
