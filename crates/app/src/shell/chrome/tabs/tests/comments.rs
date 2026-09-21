@@ -330,3 +330,63 @@ fn the_context_menu_runs_the_rows_commands_on_the_comment_it_was_opened_on(
         })
         .unwrap();
 }
+
+/// Commenting preferences: the name typed and saved with Enter is written to
+/// the preferences file and handed to the open tab's tools, so the next
+/// comment and the next reply are signed with it.
+#[gpui::test]
+fn the_author_name_saved_in_preferences_signs_the_next_comment(cx: &mut TestAppContext) {
+    let (dir, path) = seed_copy();
+    let model = CanvasModel::new(
+        Document::open_path(&path).expect("opens"),
+        crate::build_registry(),
+        ViewSize {
+            width: 800.0,
+            height: 600.0,
+        },
+    )
+    .expect("the model builds");
+    let config = crate::config::ConfigPaths::in_dir(&dir.path().join("config"));
+    let preferences_file = config.preferences.clone().expect("a preferences path");
+    let (window, _) = bound_window_with_models(vec![(path.clone(), model)], config, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.show_preferences(
+                crate::preferences::PreferenceCategory::Commenting,
+                window,
+                cx,
+            );
+            let tree = frame.accessible(window, cx);
+            assert!(tree
+                .find(&crate::shell::preferences_dialog::AUTHOR_FIELD_ID.into())
+                .is_some());
+            let input = frame.commenting_author_input().clone();
+            window.focus(&input.read(cx).focus_handle(cx));
+            input.update(cx, |input, cx| input.set_query("  Ana Pop ", cx));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "enter");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            assert_eq!(
+                frame.preferences().commenting_author.as_deref(),
+                Some("Ana Pop")
+            );
+            let written = std::fs::read_to_string(&preferences_file).expect("saved");
+            assert!(written.contains("\"Ana Pop\""), "{written}");
+
+            let canvas = frame.tabs.active().unwrap().canvas.clone();
+            assert_eq!(canvas.read(cx).model.author(), Some("Ana Pop"));
+            let note = add_note(frame, "Unsigned by the fixture", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            frame.run_activation(comment(CommentAction::Select(note)), window, cx);
+            frame.run_activation(comment(CommentAction::SetStatus("Completed")), window, cx);
+            let status = annotations(frame, cx)
+                .into_iter()
+                .find(|annotation| annotation.state.is_some())
+                .expect("the status answer");
+            assert_eq!(status.author.as_deref(), Some("Ana Pop"));
+        })
+        .unwrap();
+}

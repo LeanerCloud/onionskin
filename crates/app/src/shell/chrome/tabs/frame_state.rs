@@ -207,6 +207,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) tool_search: ToolSearchState,
     pub(super) find: FindBarState,
     pub(super) find_input: Entity<SearchInput>,
+    /// Commenting preferences' author name, as typed and not yet saved.
+    pub(super) commenting_author: Entity<SearchInput>,
     pub(super) page_entry: PageEntryState,
     pub(super) observed_view_state: Option<CanvasViewState>,
     /// The active document's edit epoch when the frame last looked. An edit
@@ -292,6 +294,17 @@ impl ShellFrame {
             cx.new(|cx| SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx));
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
+        let author = settings.preferences.commenting_author.clone();
+        let commenting_author = cx.new(|cx| {
+            let mut input = SearchInput::with_placeholder(
+                crate::shell::preferences_dialog::AUTHOR_FIELD_ID,
+                "Your name",
+                theme,
+                cx,
+            );
+            input.set_query(author.unwrap_or_default(), cx);
+            input
+        });
         cx.observe(&search_input, |frame, _, cx| {
             frame.tool_search.search_feedback = None;
             cx.notify();
@@ -339,6 +352,7 @@ impl ShellFrame {
             },
             find: FindBarState::with_options(settings.preferences.search),
             find_input,
+            commenting_author,
             page_entry: PageEntryState {
                 page_input,
                 page_entry_error: None,

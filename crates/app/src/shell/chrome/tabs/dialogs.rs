@@ -8,7 +8,7 @@
 //! the item sits.
 
 use gpui::{
-    div, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    div, App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window,
 };
 
@@ -16,6 +16,7 @@ use super::ShellFrame;
 use crate::preferences::{PreferenceCategory, Preferences, ThemePreference};
 use crate::shell::chrome::global_bar::{main_menu_schema, refresh_native_menus};
 use crate::shell::chrome::theme::ShellViewAction;
+use crate::shell::chrome::SearchInput;
 use crate::shell::dialog::ShellDialog;
 use crate::shell::preferences_dialog::PreferenceChange;
 
@@ -26,6 +27,29 @@ impl ShellFrame {
 
     pub(in crate::shell) fn preferences(&self) -> &Preferences {
         &self.settings.preferences
+    }
+
+    /// The Commenting preferences' author field.
+    pub(in crate::shell) fn commenting_author_input(&self) -> &Entity<SearchInput> {
+        &self.commenting_author
+    }
+
+    /// Save the typed author name, and hand it to every open tab's tools so
+    /// the next comment anywhere is signed with it. A blank name is none.
+    pub(in crate::shell) fn save_commenting_author(&mut self, cx: &mut Context<Self>) {
+        let typed = self.commenting_author.read(cx).query().trim().to_owned();
+        self.settings.preferences.commenting_author = (!typed.is_empty()).then_some(typed);
+        let environment = self.settings.tool_environment();
+        for tab in self.tabs.tabs() {
+            tab.canvas
+                .update(cx, |canvas, _| canvas.model.configure_tools(&environment));
+        }
+        if let Some(path) = self.settings.paths.preferences.as_deref() {
+            if let Err(error) = self.settings.preferences.save(path) {
+                self.notices.push(error.to_string());
+            }
+        }
+        cx.notify();
     }
 
     pub(super) fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) {

@@ -114,3 +114,48 @@ stays unsigned; the operating system's account name is never used.
   and an ink stroke are each signed "Ana Pop" when configured with that
   name, and unsigned when configured with none.
 - `cargo test -p onionskin-tools-comment`: every test binary passes.
+
+## Commenting preferences: the author name
+
+Rows:
+
+- Commenting preferences moves from `partial` to `implemented`.
+- The Preferences dialog row (M2, `partial`) now lists Commenting among its
+  live categories.
+- The dynamic stamps row (still `partial`, for local time) now takes its
+  name from here.
+
+**What the user gets.**
+
+- **Where:** Preferences has a Commenting category, first in Acrobat's
+  alphabetical order. It holds an "Author name" field and a Save Name
+  button, and Enter in the field saves too.
+- **What it signs:** the name signs every new comment, reply, status and
+  dynamic stamp, in every open tab at once, with no reopening.
+- **An empty name** signs nothing.
+
+**How it is built.**
+
+- **Saving:** Save writes `commenting_author` to `preferences.json`. It then
+  hands the shell's `ToolEnvironment` to every open canvas, whose tools'
+  `Signer`s take the name, and the canvas keeps it for the Comments pane's
+  replies and statuses.
+- **The field's own key context** binds Enter to save the name, so Enter
+  does not go to the focus ring.
+- **Not offered:** Acrobat's display-only Commenting options (pop-up font,
+  pop-up opacity, printing notes).
+
+**Runs.**
+
+- `the_author_name_saved_in_preferences_signs_the_next_comment`, on a
+  window:
+  - the field is in the tree;
+  - "  Ana Pop " typed and saved with Enter is stored trimmed, and written
+    to the preferences file;
+  - the open canvas signs as Ana Pop;
+  - a status set from the Comments pane is signed Ana Pop.
+- The preferences dialog tests now cover five categories. Commenting's
+  setting is the typed name, not a choice.
+- `cargo test -p onionskin-app --features shell,shell-test-support --lib`:
+  675 pass and 4 fail. The 4 are the environmental set in
+  `known-issues.md`: the snapshot test and the three rollback tests.

@@ -2115,6 +2115,7 @@ mod tests {
             crate::shell::find_bar::install_keybindings(cx);
             crate::shell::inline_text::install_keybindings(cx);
             crate::shell::panes::install_comment_keybindings(cx);
+            crate::shell::preferences_dialog::install_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);

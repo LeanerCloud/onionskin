@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 191 planned / 26 partial / 80 out-of-scope. 106 implemented.**
+**403 rows: 191 planned / 25 partial / 80 out-of-scope. 107 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -184,7 +184,7 @@ M3 here; the plan's ruling B move to M4 is not yet applied.
 | Customize the quick action toolbar | implemented | M2 | Show/hide customization is live; disabled actions remain identifiable. Evidence: M2-SHELL. |
 | Manage Tools / customize the tool rail | planned | M3 | Registry-driven: shows/hides registered plugins. (judgment) |
 | Revert to the classic Acrobat interface | out-of-scope | - | Product-level decision: the unified UI is the parity target; the plan defers classic to a possible later theme, not a shipped toggle. |
-| Preferences dialog | partial | M2 | The live Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
+| Preferences dialog | partial | M2 | The live Commenting, Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
 | Keyboard shortcut remapping | implemented | M2 | Acrobat defaults are remappable through `keymap.json`, and the shortcut reference shows the effective bindings. Evidence: M2-PREFS. |
 | Autosave and crash recovery | implemented | M3 | Every 30 s into an owner-only store; a recovery is offered when its own document next opens, ranked most recent first, and replays as one undoable edit. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | Window menu (New Window, Cascade, Tile, Minimize) | planned | M3 | Shell logic, no document dependency. (judgment) |
@@ -438,7 +438,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Print comments (document and markups, summary only) | planned | M3 | With `crates/print`. |
 | Import / export comments as FDF or XFDF | planned | post-1.0 | XFDF form-data interchange is a named post-1.0 slot; comment interchange rides with it. |
 | Enable commenting for Reader users (Reader-extended PDF) | out-of-scope | - | Adobe-signed Reader extensions; not reproducible outside Adobe. |
-| Commenting preferences | partial | M3 | The author name (`commenting_author` in `preferences.json`) signs comments, replies and statuses; the Preferences dialog has no field for it yet. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
+| Commenting preferences | implemented | M3 | Preferences > Commenting sets the author name that signs every comment, reply, status and dynamic stamp, in every open tab at once. Acrobat's display options (pop-up font and opacity, print notes) are not offered. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 
 ## Toolset: Add stamps
 
@@ -447,7 +447,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Place a stamp | implemented | M3 | Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Standard business stamps (Approved, Draft, Confidential, ...) | implemented | M3 | 12 stamps, artwork generated in-house from one table. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Sign Here stamp category | implemented | M3 | 5 stamps. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
-| Dynamic stamps (name, date, time from identity and clock) | partial | M3 | 5 stamps filled natively from the clock, in UTC. The name waits for the Commenting preferences identity (P20); local time is not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
+| Dynamic stamps (name, date, time from identity and clock) | partial | M3 | 5 stamps filled natively from the clock, in UTC, with the name from Preferences > Commenting; local time is not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Create a custom stamp | implemented | M3 | From a PDF page or an image, stored under the tool's data folder. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Manage stamps (delete stamps and categories) | implemented | M3 | Edit > Stamps…; only custom stamps can be deleted, and an emptied category's folder is removed. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Paste clipboard image as stamp | implemented | M3 | Edit menu and the Stamps dialog; each paste replaces `Pasted/Clipboard Image`. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |

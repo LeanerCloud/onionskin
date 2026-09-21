@@ -115,6 +115,7 @@ pub fn layout_label(mode: PageLayoutMode) -> &'static str {
 /// The dialog's category list, in the order Acrobat lists the ones we have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferenceCategory {
+    Commenting,
     Documents,
     General,
     PageDisplay,
@@ -122,7 +123,9 @@ pub enum PreferenceCategory {
 }
 
 impl PreferenceCategory {
-    pub const ALL: [Self; 4] = [
+    /// Acrobat's order, which is alphabetical.
+    pub const ALL: [Self; 5] = [
+        Self::Commenting,
         Self::Documents,
         Self::General,
         Self::PageDisplay,
@@ -131,6 +134,7 @@ impl PreferenceCategory {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Commenting => "Commenting",
             Self::Documents => "Documents",
             Self::General => "General",
             Self::PageDisplay => "Page Display",
@@ -826,10 +830,16 @@ mod tests {
     /// The parity row is `partial` for that reason, and a category that
     /// arrives with its feature adds a row here at the same time.
     #[test]
-    fn the_dialog_lists_the_four_categories_this_milestone_can_change() {
+    fn the_dialog_lists_the_five_categories_this_milestone_can_change() {
         assert_eq!(
             PreferenceCategory::ALL.map(PreferenceCategory::label),
-            ["Documents", "General", "Page Display", "Search"]
+            [
+                "Commenting",
+                "Documents",
+                "General",
+                "Page Display",
+                "Search"
+            ]
         );
     }
 }

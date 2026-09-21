@@ -67,6 +67,9 @@ pub(in crate::shell) fn category_rows(
         selected,
     };
     match category {
+        // Commenting's one setting is a name, typed rather than chosen; see
+        // `AUTHOR_LABEL`.
+        PreferenceCategory::Commenting => Vec::new(),
         PreferenceCategory::General => vec![PreferenceRow {
             label: "Display theme",
             choices: ThemePreference::ALL
@@ -191,6 +194,14 @@ const MODES: [(&str, MatchMode); 3] = [
     ("All Of The Words", MatchMode::AllWords),
 ];
 
+/// Commenting's setting: the name every comment is signed with. Acrobat
+/// calls it the author name under Commenting and Identity.
+pub(in crate::shell) const AUTHOR_LABEL: &str = "Author name";
+/// The id the author field publishes.
+pub(in crate::shell) const AUTHOR_FIELD_ID: &str = "preference-author-name";
+/// The button that saves the typed name.
+const AUTHOR_SAVE_ID: &str = "preference-author-save";
+
 /// The element id a choice renders with. Built here so the button and the
 /// node describing it cannot be given different identities.
 fn choice_id(row: usize, choice: usize) -> gpui::ElementId {
@@ -204,6 +215,7 @@ fn choice_id(row: usize, choice: usize) -> gpui::ElementId {
 pub(in crate::shell) fn accessible(
     preferences: &Preferences,
     category: PreferenceCategory,
+    author_field: Option<Element>,
 ) -> Element {
     let categories = Element::new("preference-categories", Role::TabList, "Categories")
         .with_children(
@@ -220,6 +232,15 @@ pub(in crate::shell) fn accessible(
 
     let mut described =
         Element::new("preferences", Role::Group, category.label()).child(categories);
+    if category == PreferenceCategory::Commenting {
+        if let Some(field) = author_field {
+            described = described.child(field);
+        }
+        described = described.child(
+            Element::new(AUTHOR_SAVE_ID, Role::Button, "Save Name")
+                .with_activation(Activation::SaveCommentingAuthor),
+        );
+    }
     for (index, row) in category_rows(preferences, category).into_iter().enumerate() {
         described = described.child(
             Element::new(("preference-row", index), Role::RadioGroup, row.label).with_children(
@@ -268,6 +289,9 @@ pub(in crate::shell) fn render_preferences(
     }
 
     let mut settings = div().flex_1().flex().flex_col().gap_3().pl_4();
+    if category == PreferenceCategory::Commenting {
+        settings = settings.child(render_author_field(frame, theme, cx));
+    }
     for (index, row) in category_rows(frame.preferences(), category)
         .into_iter()
         .enumerate()
@@ -308,6 +332,75 @@ pub(in crate::shell) fn render_preferences(
     div().flex().child(categories).child(settings)
 }
 
+/// The author name field and its Save button. Enter in the field saves too.
+fn render_author_field(
+    frame: &ShellFrame,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.secondary_text)
+                .child(AUTHOR_LABEL),
+        )
+        .child(
+            div()
+                .key_context(AUTHOR_KEY_CONTEXT)
+                .on_action(cx.listener(|frame, _: &SaveAuthorName, window, cx| {
+                    frame.run_activation(Activation::SaveCommentingAuthor, window, cx);
+                }))
+                .flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(260.0))
+                        .p_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(theme.selected)
+                        .child(frame.commenting_author_input().clone()),
+                )
+                .child(
+                    div()
+                        .id(AUTHOR_SAVE_ID)
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(move |button| button.bg(theme.subtle_hover))
+                        .on_click(cx.listener(|frame, _event, window, cx| {
+                            frame.run_activation(Activation::SaveCommentingAuthor, window, cx);
+                        }))
+                        .child("Save Name"),
+                ),
+        )
+        .child(
+            div().text_xs().text_color(theme.muted_text).child(
+                "Signs every new comment, reply and status. Leave it empty to sign nothing.",
+            ),
+        )
+}
+
+gpui::actions!(onionskin_preferences, [SaveAuthorName]);
+
+/// The author field's key context, so Enter saves the name instead of
+/// activating the focus ring.
+const AUTHOR_KEY_CONTEXT: &str = "OnionskinAuthorName";
+
+pub(in crate::shell) fn install_keybindings(cx: &mut gpui::App) {
+    cx.bind_keys([gpui::KeyBinding::new(
+        "enter",
+        SaveAuthorName,
+        Some(AUTHOR_KEY_CONTEXT),
+    )]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +414,12 @@ mod tests {
 
         for category in PreferenceCategory::ALL {
             let rows = category_rows(&preferences, category);
+            if category == PreferenceCategory::Commenting {
+                // Its setting is the typed author name, not a choice.
+                let described = accessible(&preferences, category, None);
+                assert!(described.find(&AUTHOR_SAVE_ID.into()).is_some());
+                continue;
+            }
             assert!(!rows.is_empty(), "{} has no rows", category.label());
             for row in rows {
                 assert!(
@@ -391,7 +490,7 @@ mod tests {
             ..Preferences::default()
         };
 
-        let described = accessible(&preferences, PreferenceCategory::General);
+        let described = accessible(&preferences, PreferenceCategory::General, None);
 
         let row = described.find(&("preference-row", 0usize).into()).unwrap();
         assert_eq!(row.role, Role::RadioGroup);
@@ -426,7 +525,7 @@ mod tests {
     fn every_described_choice_is_keyed_as_the_button_it_describes() {
         let preferences = Preferences::default();
 
-        let described = accessible(&preferences, PreferenceCategory::PageDisplay);
+        let described = accessible(&preferences, PreferenceCategory::PageDisplay, None);
 
         for (index, row) in category_rows(&preferences, PreferenceCategory::PageDisplay)
             .into_iter()
@@ -444,7 +543,7 @@ mod tests {
 
     #[test]
     fn the_category_list_says_which_category_is_showing() {
-        let described = accessible(&Preferences::default(), PreferenceCategory::Search);
+        let described = accessible(&Preferences::default(), PreferenceCategory::Search, None);
 
         let categories = described.find(&"preference-categories".into()).unwrap();
         assert_eq!(categories.role, Role::TabList);

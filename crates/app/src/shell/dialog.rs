@@ -128,6 +128,10 @@ pub(in crate::shell) fn accessible(
         ShellDialog::Preferences(category) => vec![super::preferences_dialog::accessible(
             frame.preferences(),
             category,
+            Some(frame.commenting_author_input().read(cx).accessible(
+                super::preferences_dialog::AUTHOR_LABEL,
+                super::chrome::accessible::TextField::CommentingAuthor,
+            )),
         )],
         ShellDialog::About => {
             row_labels(about_lines().into_iter().map(|line| (line, String::new())))

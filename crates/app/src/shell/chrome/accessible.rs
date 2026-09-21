@@ -62,6 +62,8 @@ pub(in crate::shell) enum TextField {
     BookmarkTitle,
     /// The Comments pane's field: a comment's text, or a reply.
     CommentDraft,
+    /// Commenting preferences' author name.
+    CommentingAuthor,
 }
 
 /// What activating an accessible element does.
@@ -98,6 +100,8 @@ pub(in crate::shell) enum Activation {
     OpenFromHome,
     ShowPreferences(PreferenceCategory),
     ChangePreference(PreferenceChange),
+    /// Save the name typed in Commenting preferences.
+    SaveCommentingAuthor,
     CloseDialog,
     SubmitExport,
     CancelExport,

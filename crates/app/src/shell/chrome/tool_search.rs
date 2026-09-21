@@ -510,6 +510,7 @@ fn field_node(
         TextField::CombinePages
         | TextField::BookmarkTitle
         | TextField::CommentDraft
+        | TextField::CommentingAuthor
         | TextField::PropertiesTitle
         | TextField::PropertiesAuthor
         | TextField::PropertiesSubject

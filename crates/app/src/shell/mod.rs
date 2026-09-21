@@ -839,6 +839,7 @@ where
         find_bar::install_keybindings(cx);
         inline_text::install_keybindings(cx);
         panes::install_comment_keybindings(cx);
+        preferences_dialog::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {

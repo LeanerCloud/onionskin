@@ -476,6 +476,7 @@ impl ShellFrame {
             Activation::OpenFromHome => self.open_from_home(window, cx),
             Activation::ShowPreferences(category) => self.show_preferences(category, window, cx),
             Activation::ChangePreference(change) => self.change_preference(change, cx),
+            Activation::SaveCommentingAuthor => self.save_commenting_author(cx),
             Activation::CloseDialog => self.close_dialog(window, cx),
             Activation::SubmitExport => self.submit_export(window, cx),
             Activation::CancelExport => self.cancel_export(cx),
@@ -651,6 +652,7 @@ impl ShellFrame {
                 .and_then(|dialog| dialog.text_field(field)),
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
             TextField::CommentDraft => self.navigation.comment_draft(),
+            TextField::CommentingAuthor => Some(&self.commenting_author),
         }
     }
 
@@ -710,7 +712,7 @@ impl ShellFrame {
             ]
             .into_iter()
             .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
-            .chain([TextField::BookmarkTitle])
+            .chain([TextField::BookmarkTitle, TextField::CommentingAuthor])
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());
