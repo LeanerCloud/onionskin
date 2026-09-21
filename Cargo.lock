@@ -3981,6 +3981,7 @@ dependencies = [
  "onionskin-commands-core",
  "onionskin-core",
  "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
  "onionskin-redact",
  "onionskin-render",
@@ -4069,6 +4070,7 @@ name = "onionskin-plugin-api"
 version = "0.1.0"
 dependencies = [
  "onionskin-core",
+ "onionskin-cos",
 ]
 
 [[package]]
@@ -4119,6 +4121,9 @@ dependencies = [
 name = "onionskin-tools-comment"
 version = "0.1.0"
 dependencies = [
+ "onionskin-core",
+ "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
 ]
 

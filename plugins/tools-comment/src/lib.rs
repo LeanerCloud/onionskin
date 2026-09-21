@@ -5,6 +5,11 @@
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
+mod markup;
+mod quads;
+
+pub use markup::MarkupTool;
+
 pub struct CommentToolsPlugin;
 
 impl PluginManifest for CommentToolsPlugin {
@@ -16,5 +21,13 @@ impl PluginManifest for CommentToolsPlugin {
         "Comment"
     }
 
-    fn register(&self, _registry: &mut PluginRegistry) {}
+    /// Registration order is rail order within the group, and the first is
+    /// the one the shared slot shows before anything has been used.
+    fn register(&self, registry: &mut PluginRegistry) {
+        registry.register_tool(Box::new(MarkupTool::highlight()));
+        registry.register_tool(Box::new(MarkupTool::underline()));
+        registry.register_tool(Box::new(MarkupTool::strikethrough()));
+        registry.register_tool(Box::new(MarkupTool::insert_text()));
+        registry.register_tool(Box::new(MarkupTool::replace_text()));
+    }
 }
