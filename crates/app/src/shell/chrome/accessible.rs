@@ -100,6 +100,8 @@ pub(in crate::shell) enum Activation {
     QuickAction(QuickActionEntry),
     ToggleQuickActionCustomization,
     ToggleQuickActionVisibility(QuickAction),
+    /// Manage Tools: show or hide this tool's rail button.
+    ToggleToolShown(&'static str),
     ToggleSidePanel,
     View(ViewAction),
     SubmitPageEntry,

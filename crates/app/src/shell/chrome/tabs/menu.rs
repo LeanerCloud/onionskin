@@ -134,6 +134,10 @@ impl ShellFrame {
                 self.toggle_rail_expanded(cx);
                 Ok(())
             }
+            MenuCommand::ManageTools => {
+                self.open_manage_tools(window, cx);
+                Ok(())
+            }
             MenuCommand::SelectAll | MenuCommand::DeselectAll => {
                 self.dismiss_menus(cx);
                 if command == MenuCommand::SelectAll {

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 167 planned / 25 partial / 80 out-of-scope. 131 implemented.**
+**403 rows: 166 planned / 25 partial / 80 out-of-scope. 132 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -182,7 +182,7 @@ M4 with P15, per the plan's ruling B.
 | Home view: Box / Dropbox / Google Drive / OneDrive / SharePoint connectors | out-of-scope | - | Cloud-tethered third-party storage integrations. |
 | Display theme (light / dark / system) | implemented | M2 | All three theme choices are live and persisted. Evidence: M2-SHELL. |
 | Customize the quick action toolbar | implemented | M2 | Show/hide customization is live; disabled actions remain identifiable. Evidence: M2-SHELL. |
-| Manage Tools / customize the tool rail | planned | M3 | Registry-driven: shows/hides registered plugins. (judgment) |
+| Manage Tools / customize the tool rail | implemented | M3 | View > Manage Tools lists every registered rail tool as a checkbox; a cleared one leaves the rail and is kept in the preferences file, while its menu entry, shortcut and Tool Search still run it and the selected tool stays on the rail. Acrobat also reorders tools; this does not. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Revert to the classic Acrobat interface | out-of-scope | - | Product-level decision: the unified UI is the parity target; the plan defers classic to a possible later theme, not a shipped toggle. |
 | Preferences dialog | partial | M2 | The live Commenting, Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
 | Keyboard shortcut remapping | implemented | M2 | Acrobat defaults are remappable through `keymap.json`, and the shortcut reference shows the effective bindings. Evidence: M2-PREFS. |

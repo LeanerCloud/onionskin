@@ -428,6 +428,7 @@ impl ShellFrame {
             Activation::OpenRecent(index) => self.open_recent(index, cx),
             Activation::OpenStarred(index) => self.open_starred(index, cx),
             Activation::ToggleStar(path) => self.toggle_star(&path, cx),
+            Activation::ToggleToolShown(id) => self.toggle_tool_shown(id, cx),
             Activation::ChooseSearchResult(result) => {
                 self.choose_search_result(result, window, cx);
             }

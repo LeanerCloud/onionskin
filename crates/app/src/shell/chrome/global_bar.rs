@@ -235,6 +235,7 @@ pub(in crate::shell) enum MenuCommand {
     TwoPageContinuous,
     ToggleCover,
     Tools,
+    ManageTools,
     ToggleNavigationPane,
     ToggleQuickAction(QuickAction),
     TogglePageControls,
@@ -1148,6 +1149,16 @@ fn view_menu_entries(
         false,
     ));
     entries.push(entry(
+        MenuCommand::ManageTools,
+        "Manage Tools…",
+        if any_tool {
+            Enabled
+        } else {
+            Disabled("No tools are installed")
+        },
+        false,
+    ));
+    entries.push(entry(
         MenuCommand::ToggleNavigationPane,
         "Show Navigation Panes",
         Enabled,
@@ -1274,6 +1285,7 @@ impl MenuCommand {
             | Self::TakeSnapshot
             | Self::Page(_)
             | Self::Tools
+            | Self::ManageTools
             | Self::ToggleNavigationPane
             | Self::ToggleQuickAction(_)
             | Self::TogglePageControls
@@ -1335,6 +1347,7 @@ impl MenuCommand {
             | Self::TakeSnapshot
             | Self::Page(_)
             | Self::Tools
+            | Self::ManageTools
             | Self::PreviousView
             | Self::NextView
             | Self::FirstPage
@@ -1476,6 +1489,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Find
         | MenuCommand::Preferences
         | MenuCommand::Tools
+        | MenuCommand::ManageTools
         | MenuCommand::About
         | MenuCommand::KeyboardShortcuts
         | MenuCommand::PreviousView

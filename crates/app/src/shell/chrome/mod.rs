@@ -6,6 +6,7 @@ pub(in crate::shell) mod export_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;
 pub(in crate::shell) mod inspector;
+pub(in crate::shell) mod manage_tools;
 mod page_controls;
 pub(in crate::shell) mod print_dialog;
 pub(in crate::shell) mod properties_dialog;

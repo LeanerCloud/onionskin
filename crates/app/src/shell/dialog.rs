@@ -47,6 +47,8 @@ pub(in crate::shell) enum ShellDialog {
     RollBack,
     /// The thumbnails pane's Page Properties.
     PageProperties,
+    /// View > Manage Tools: which tools the rail shows.
+    ManageTools,
 }
 
 impl ShellDialog {
@@ -66,6 +68,7 @@ impl ShellDialog {
             Self::PageSetup => "Page Setup",
             Self::RollBack => "Roll Back",
             Self::PageProperties => "Page Properties",
+            Self::ManageTools => "Manage Tools",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -178,6 +181,10 @@ pub(in crate::shell) fn accessible(
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
         ShellDialog::PageProperties => row_labels(frame.page_property_rows()),
+        ShellDialog::ManageTools => super::chrome::manage_tools::accessible(
+            frame.managed_tools(),
+            &frame.preferences().hidden_tools,
+        ),
         ShellDialog::UnsavedChanges => super::chrome::file_dialogs::accessible_unsaved(
             frame.unsaved_dialog().expect("unsaved dialog has state"),
         ),
@@ -353,6 +360,13 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::PageProperties => rows(frame.page_property_rows(), rects.clone())
             .text_color(theme.text)
             .into_any_element(),
+        ShellDialog::ManageTools => super::chrome::manage_tools::render(
+            frame.managed_tools(),
+            &frame.preferences().hidden_tools,
+            theme,
+            cx,
+        )
+        .into_any_element(),
         ShellDialog::LayerProperties => rows(frame.layer_property_rows(), rects)
             .text_color(theme.text)
             .into_any_element(),

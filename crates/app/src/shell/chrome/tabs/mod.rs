@@ -6,6 +6,7 @@ mod export;
 mod file;
 mod frame_state;
 mod inspector;
+mod manage_tools;
 mod menu;
 mod organize;
 mod outline;
@@ -965,8 +966,11 @@ impl ShellFrame {
             .active()
             .map(|tab| {
                 let canvas = tab.canvas.read(cx);
-                self.rail_state
-                    .entries(canvas.model.registry(), canvas.model.active_tool())
+                self.rail_state.entries(
+                    canvas.model.registry(),
+                    canvas.model.active_tool(),
+                    &self.settings.preferences.hidden_tools,
+                )
             })
             .unwrap_or_default()
     }
@@ -1678,6 +1682,8 @@ mod tests {
     mod file;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
+    mod manage_tools;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod native_input;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]

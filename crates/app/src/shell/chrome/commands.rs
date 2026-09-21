@@ -93,6 +93,7 @@ impl MenuCommand {
             MenuCommand::TwoPageContinuous,
             MenuCommand::ToggleCover,
             MenuCommand::Tools,
+            MenuCommand::ManageTools,
             MenuCommand::ToggleNavigationPane,
         ]);
         all.extend(QuickAction::ALL.map(MenuCommand::ToggleQuickAction));
@@ -183,6 +184,7 @@ impl MenuCommand {
             Self::TwoPageContinuous => "view.two-page-continuous",
             Self::ToggleCover => "view.show-cover-page",
             Self::Tools => "view.tools",
+            Self::ManageTools => "view.manage-tools",
             Self::ToggleNavigationPane => "view.show-navigation-panes",
             Self::ToggleQuickAction(QuickAction::Select) => "view.show-quick-action-select",
             Self::ToggleQuickAction(QuickAction::Comment) => "view.show-quick-action-comment",
@@ -285,6 +287,7 @@ impl MenuCommand {
             | Self::TwoPageContinuous
             | Self::ToggleCover
             | Self::Tools
+            | Self::ManageTools
             | Self::ToggleQuickAction(_)
             | Self::TogglePageControls
             | Self::LineWeights

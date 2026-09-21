@@ -16,7 +16,7 @@
 //! than stopping the app, and a value outside the set its setting allows is
 //! named rather than rounded to something plausible.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -167,6 +167,10 @@ pub struct Preferences {
     /// Commenting: each kind of comment's default look, set with "Make
     /// Current Properties Default", keyed by `/Subtype`.
     pub comment_defaults: BTreeMap<String, CommentDefault>,
+    /// Manage Tools: the tools the user took out of the rail, by id. A
+    /// hidden tool still runs from its menu entry, its shortcut and Tool
+    /// Search; only its rail button goes.
+    pub hidden_tools: BTreeSet<String>,
 }
 
 impl Default for Preferences {
@@ -181,6 +185,7 @@ impl Default for Preferences {
             search: SearchOptions::default(),
             commenting_author: None,
             comment_defaults: BTreeMap::new(),
+            hidden_tools: BTreeSet::new(),
         }
     }
 }
@@ -369,6 +374,12 @@ impl Preferences {
                 defaults_json(&self.comment_defaults),
             );
         }
+        if !self.hidden_tools.is_empty() {
+            file.insert(
+                "hidden_tools".into(),
+                self.hidden_tools.iter().cloned().collect(),
+            );
+        }
         carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
@@ -401,6 +412,10 @@ fn apply(
         "comment_defaults" => {
             preferences.comment_defaults = comment_defaults(value)
                 .ok_or_else(|| unknown_value(path, setting, value, DEFAULTS))?;
+        }
+        "hidden_tools" => {
+            preferences.hidden_tools =
+                tool_ids(value).ok_or_else(|| unknown_value(path, setting, value, TOOL_IDS))?;
         }
         _ => {
             return Err(PreferencesError::UnknownSetting {
@@ -477,6 +492,20 @@ fn defaults_json(defaults: &BTreeMap<String, CommentDefault>) -> serde_json::Val
         })
         .collect::<serde_json::Map<_, _>>()
         .into()
+}
+
+const TOOL_IDS: &str = "a list of tool ids in quotes";
+
+/// `hidden_tools` as the file writes it: `["tool.highlight"]`. One entry that
+/// is not a string refuses the whole list, like `comment_defaults`. An id no
+/// tool in this build has is kept: it may be a plugin's that is not
+/// installed today.
+fn tool_ids(value: &serde_json::Value) -> Option<BTreeSet<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|id| id.as_str().map(str::to_owned))
+        .collect()
 }
 
 /// A name to sign comments with. An empty or blank one is no name.
@@ -654,6 +683,22 @@ mod tests {
             .is_empty());
     }
 
+    /// A hidden-tools list with anything but ids in it is refused whole and
+    /// says what it takes; an id no tool has survives, as a plugin's may.
+    #[test]
+    fn hidden_tools_are_a_list_of_ids_and_a_bad_list_is_named() {
+        let (preferences, errors) = parse(r#"{"hidden_tools": ["tool.note", "plugin.gone"]}"#);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            preferences.hidden_tools,
+            BTreeSet::from(["plugin.gone".to_owned(), "tool.note".to_owned()])
+        );
+        let (preferences, errors) = parse(r#"{"hidden_tools": ["tool.note", 3]}"#);
+        assert!(preferences.hidden_tools.is_empty());
+        assert!(errors[0].contains(TOOL_IDS), "{errors:?}");
+        assert!(parse(r#"{"hidden_tools": "tool.note"}"#).1.len() == 1);
+    }
+
     /// A blank name is no name: comments are then signed by nobody rather
     /// than by an empty string a reader would show as a blank author.
     #[test]
@@ -705,6 +750,7 @@ mod tests {
                     opacity_percent: 50,
                 },
             )]),
+            hidden_tools: BTreeSet::from(["tool.highlight".to_owned(), "tool.ink".to_owned()]),
         };
 
         written.save(&path).expect("preferences save");

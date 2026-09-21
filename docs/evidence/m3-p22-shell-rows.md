@@ -73,3 +73,69 @@ test the plan describes for the other branch does not.
 still required every deferred View entry to name M3, and failed once Line
 Weights named M4. It now accepts M3 or M4, so an entry naming no milestone
 still fails. Fixed in its own commit.
+
+## Manage Tools (row 6)
+
+**What the user gets.**
+
+- View > Manage Tools… opens a dialog listing every tool that has a rail
+  button, in rail order, each a checkbox that is checked while the rail
+  shows it. With no tools installed the entry is disabled, as Tools is.
+- Clearing a tool takes its button off the rail at once, in the collapsed
+  and the expanded rail. A collapsed group whose chosen member is hidden
+  shows its next member instead.
+- A hidden tool still runs from its menu entry, its shortcut and Tool
+  Search. The tool in use stays on the rail while it is selected, so the
+  rail never hides what is active.
+- The choice is kept in `preferences.json` as `hidden_tools`, a list of
+  tool ids, written only when something is hidden. An id no installed tool
+  has is kept, since it may be a plugin's that is not installed today. A
+  list with anything but strings in it is refused whole and named, like
+  every other preference.
+- Acrobat also lets the user reorder the rail. This does not, and the
+  parity note says so.
+
+**How it is built.**
+
+- `chrome::manage_tools` holds the pure part: the tool list taken from the
+  registry when the dialog opens (so drawing does not build a registry), the
+  toggle, and the dialog's accessible rows and render.
+- `RailState::entries` takes the hidden set and filters before grouping, so
+  grouping and remembering work on what is shown.
+- `ShellDialog::ManageTools`, `MenuCommand::ManageTools`
+  (`view.manage-tools`, unbound) and `Activation::ToggleToolShown(id)`,
+  which saves the preferences through the same `save_preferences` the
+  Preferences dialog uses.
+
+**Runs.**
+
+- `preferences::tests`: the round trip now carries two hidden tools;
+  `hidden_tools_are_a_list_of_ids_and_a_bad_list_is_named` covers a good
+  list with an unknown id, a list with a number in it and a bare string.
+- `rail::tests::hidden_tools_leave_the_rail_unless_selected`.
+- `chrome::manage_tools::tests`, 3: the toggle, the rows as checkboxes with
+  their state and activation, and the listed tools equal the registry's
+  rail tools.
+- Window tests `tabs::tests::manage_tools`, 3:
+  - `a_cleared_tool_leaves_the_rail_and_the_choice_is_kept`: opened from
+    the View menu, one checked row per rail tool; clearing the last one
+    through its accessible activation takes it off the rail, unchecks the
+    row and writes it to the preferences file; checking it again restores
+    it and empties the list.
+  - `the_selected_tool_stays_on_the_rail_when_hidden`.
+  - `a_hidden_tool_in_the_file_is_off_the_rail_at_start`.
+- **Full suites.** `cargo test -p onionskin-app --features
+  shell,shell-test-support --lib`: 749 pass and 7 fail, all in the known
+  environmental set (the canvas raster tests and the three export rollback
+  tests). The integration tests (`guarantees`, `registry`, `contract`,
+  `kernel_emptiness`, `parity_privacy`) pass, including the headline
+  recount at 166 planned / 132 implemented.
+- **Lint.** `cargo clippy -p onionskin-app --all-targets -- -D warnings`
+  with default features, with `--no-default-features`, and with
+  `shell,shell-test-support` (with and without default features, allowing
+  the pre-existing macOS-only dead code): clean. `cargo fmt --all --check`:
+  clean.
+
+**Mutation run.** Dropping the "selected stays" rule (filtering hidden tools
+even when active) fails `hidden_tools_leave_the_rail_unless_selected` and
+`the_selected_tool_stays_on_the_rail_when_hidden`.

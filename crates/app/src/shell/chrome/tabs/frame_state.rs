@@ -239,6 +239,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) print: Option<crate::shell::chrome::print_dialog::PrintDialogState>,
     /// What Page Properties shows, read when it opened.
     pub(super) page_properties: Vec<(String, String)>,
+    /// The rail tools Manage Tools lists, read when it opened.
+    pub(super) managed_tools: Vec<crate::shell::chrome::manage_tools::ManagedTool>,
     /// The Organize Pages grid, while it is open.
     pub(super) page_grid: Option<crate::shell::organize::OrganizeState>,
     /// The skins panel, while it is open.
@@ -410,6 +412,7 @@ impl ShellFrame {
             skins: None,
             page_grid: None,
             page_properties: Vec::new(),
+            managed_tools: Vec::new(),
             page_setup: Default::default(),
             unsaved: None,
             recover: None,

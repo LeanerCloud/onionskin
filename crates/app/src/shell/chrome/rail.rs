@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
@@ -65,16 +65,21 @@ impl RailState {
         self.expanded = !self.expanded;
     }
 
+    /// The rail's buttons: every rail tool the user has not hidden with
+    /// Manage Tools, grouped unless the rail is expanded. The active tool
+    /// stays even when hidden, so the rail never hides what is selected.
     pub(super) fn entries(
         &self,
         registry: &PluginRegistry,
         active_tool: Option<usize>,
+        hidden: &BTreeSet<String>,
     ) -> Vec<RailEntry> {
         let entries = registry
             .tools()
             .enumerate()
             .filter(|(_, tool)| tool.in_rail())
             .map(|(registry_index, tool)| RailEntry::from_tool(registry_index, tool, active_tool))
+            .filter(|entry| entry.active || !hidden.contains(entry.id))
             .collect::<Vec<_>>();
         if self.expanded {
             return entries;
@@ -398,7 +403,7 @@ mod tests {
     #[test]
     fn collapsed_entries_group_tools_in_registry_order() {
         let registry = registry();
-        let entries = RailState::default().entries(&registry, None);
+        let entries = RailState::default().entries(&registry, None, &BTreeSet::new());
 
         assert_eq!(
             entries
@@ -421,6 +426,25 @@ mod tests {
         );
     }
 
+    /// A hidden tool leaves the rail, and a hidden group's next member
+    /// stands in for it; the selected tool stays even when hidden.
+    #[test]
+    fn hidden_tools_leave_the_rail_unless_selected() {
+        let registry = registry();
+        let hidden = BTreeSet::from(["select".to_owned(), "comment".to_owned()]);
+
+        let ids = |active| {
+            RailState::default()
+                .entries(&registry, active, &hidden)
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(ids(None), ["marquee"]);
+        assert_eq!(ids(Some(3)), ["marquee", "comment"]);
+    }
+
     #[test]
     fn view_more_exposes_the_complete_flat_in_rail_list() {
         let registry = registry();
@@ -430,7 +454,7 @@ mod tests {
         assert!(state.expanded());
         assert_eq!(
             state
-                .entries(&registry, None)
+                .entries(&registry, None, &BTreeSet::new())
                 .iter()
                 .map(|entry| {
                     (
@@ -456,12 +480,15 @@ mod tests {
         let registry = registry();
         let mut state = RailState::default();
         state.toggle_expanded();
-        let marquee = state.entries(&registry, None)[1];
+        let marquee = state.entries(&registry, None, &BTreeSet::new())[1];
 
         state.remember(marquee);
         state.toggle_expanded();
 
-        assert_eq!(state.entries(&registry, None)[0].id, "marquee");
+        assert_eq!(
+            state.entries(&registry, None, &BTreeSet::new())[0].id,
+            "marquee"
+        );
     }
 
     #[test]
@@ -469,14 +496,14 @@ mod tests {
         let registry = registry();
         let mut state = RailState::default();
         state.toggle_expanded();
-        state.remember(state.entries(&registry, None)[1]);
+        state.remember(state.entries(&registry, None, &BTreeSet::new())[1]);
         state.toggle_expanded();
 
-        let active_entries = state.entries(&registry, Some(0));
+        let active_entries = state.entries(&registry, Some(0), &BTreeSet::new());
         assert_eq!(active_entries[0].id, "select");
         assert!(active_entries[0].active);
 
-        let remembered_entries = state.entries(&registry, None);
+        let remembered_entries = state.entries(&registry, None, &BTreeSet::new());
         assert_eq!(remembered_entries[0].id, "marquee");
     }
 
@@ -485,10 +512,10 @@ mod tests {
         let registry = registry();
         let mut state = RailState::default();
         state.toggle_expanded();
-        state.remember(state.entries(&registry, None)[1]);
+        state.remember(state.entries(&registry, None, &BTreeSet::new())[1]);
         state.toggle_expanded();
 
-        let entries = state.entries(&registry, Some(2));
+        let entries = state.entries(&registry, Some(2), &BTreeSet::new());
         assert_eq!(entries[0].id, "marquee");
         assert!(entries.iter().all(|entry| entry.id != "hidden"));
         assert!(entries.iter().all(|entry| !entry.active));
@@ -499,14 +526,17 @@ mod tests {
         let first_registry = registry();
         let mut state = RailState::default();
         state.toggle_expanded();
-        state.remember(state.entries(&first_registry, None)[1]);
+        state.remember(state.entries(&first_registry, None, &BTreeSet::new())[1]);
         state.toggle_expanded();
 
         let mut other_registry = PluginRegistry::new();
         other_registry.register_tool(tool("hand", "Hand", "cursor", true, Some("h")));
         other_registry.register_tool(tool("zoom", "Zoom", "cursor", true, Some("z")));
 
-        assert_eq!(state.entries(&other_registry, None)[0].id, "hand");
+        assert_eq!(
+            state.entries(&other_registry, None, &BTreeSet::new())[0].id,
+            "hand"
+        );
     }
 
     #[test]
@@ -514,10 +544,10 @@ mod tests {
         let registry = PluginRegistry::new();
         let mut state = RailState::default();
 
-        assert!(state.entries(&registry, None).is_empty());
+        assert!(state.entries(&registry, None, &BTreeSet::new()).is_empty());
         state.toggle_expanded();
         assert!(state.expanded());
-        assert!(state.entries(&registry, None).is_empty());
+        assert!(state.entries(&registry, None, &BTreeSet::new()).is_empty());
     }
 
     #[test]
@@ -543,7 +573,7 @@ mod tests {
         let mut state = RailState::default();
         state.toggle_expanded();
         let actual = state
-            .entries(&registry, None)
+            .entries(&registry, None, &BTreeSet::new())
             .iter()
             .map(|entry| (entry.registry_index, entry.id))
             .collect::<Vec<_>>();
@@ -571,7 +601,7 @@ mod tests {
         );
 
         let collapsed = RailState::default();
-        let slots = collapsed.entries(&registry, None);
+        let slots = collapsed.entries(&registry, None, &BTreeSet::new());
         assert_eq!(
             slots.iter().filter(|entry| entry.group == "zoom").count(),
             1,
@@ -582,7 +612,7 @@ mod tests {
         expanded.toggle_expanded();
         assert_eq!(
             expanded
-                .entries(&registry, None)
+                .entries(&registry, None, &BTreeSet::new())
                 .iter()
                 .filter(|entry| entry.group == "zoom")
                 .count(),
@@ -612,7 +642,7 @@ mod tests {
         .unwrap();
         let mut state = RailState::default();
         state.toggle_expanded();
-        let marquee = state.entries(model.registry(), model.active_tool())[1];
+        let marquee = state.entries(model.registry(), model.active_tool(), &BTreeSet::new())[1];
 
         assert!(
             apply_rail_selection(&mut state, marquee, |index| { model.activate_tool(index) })
@@ -622,7 +652,7 @@ mod tests {
 
         model.activate_tool(3).unwrap();
         state.toggle_expanded();
-        let collapsed = state.entries(model.registry(), model.active_tool());
+        let collapsed = state.entries(model.registry(), model.active_tool(), &BTreeSet::new());
         assert_eq!(collapsed[0].id, "marquee");
         assert_eq!(collapsed[1].id, "comment");
         assert!(collapsed[1].active);
