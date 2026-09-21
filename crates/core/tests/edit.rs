@@ -607,3 +607,58 @@ fn generated_sequence(count: usize) -> Vec<(u32, i64)> {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// Orphans across transactions
+// ---------------------------------------------------------------------------
+
+/// An object an earlier edit created, orphaned by a later one, comes back
+/// when the later one is undone and goes again on redo. Without the drop
+/// being a recorded change, collapse forgets the object at commit and the
+/// undo restores a reference to nothing.
+#[test]
+fn an_object_orphaned_by_a_later_edit_comes_back_on_undo_and_goes_on_redo() {
+    let (base, mut edit) = session();
+    let catalog = base
+        .trailer()
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("a catalog");
+    let original = base.get(catalog.number).expect("reads").object;
+    let with = |extra: Option<u32>| {
+        let mut dict = original.as_dict().expect("a dictionary").clone();
+        if let Some(number) = extra {
+            dict.set(
+                Name::new("PieceInfo"),
+                Object::Ref(onionskin_cos::ObjRef::new(number, 0)),
+            );
+        }
+        Object::Dict(dict)
+    };
+    let created = edit
+        .transact(&base, "Add", |tx| {
+            let number = tx.reserve();
+            tx.put_object(number, 0, marker(1))?;
+            tx.put_object(catalog.number, 0, with(Some(number)))?;
+            Ok(number)
+        })
+        .expect("adds");
+    edit.transact(&base, "Remove", |tx| {
+        tx.put_object(catalog.number, 0, with(None))
+    })
+    .expect("removes");
+    assert_eq!(
+        overlay_object(&edit, created),
+        None,
+        "orphaned, then dropped"
+    );
+
+    assert!(edit.undo(&base).expect("undoes"));
+    assert_eq!(
+        overlay_object(&edit, created).map(|state| state.object),
+        Some(marker(1)),
+        "the undo restores what the catalog names again"
+    );
+    assert!(edit.redo(&base).expect("redoes"));
+    assert_eq!(overlay_object(&edit, created), None);
+}

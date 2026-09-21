@@ -298,6 +298,15 @@ impl Overlay {
     /// does not, which is what keeps an ordinary editing session from paying
     /// for a reachability walk it cannot need.
     fn drop_unreachable_new_objects(&mut self, base: &CosDocument) -> Result<()> {
+        for number in self.unreachable_new_objects(base)? {
+            self.states.remove(&number);
+        }
+        Ok(())
+    }
+
+    /// The objects rule 2 would drop: created by this session, and named by
+    /// nothing in the merged document.
+    pub fn unreachable_new_objects(&self, base: &CosDocument) -> Result<Vec<u32>> {
         let created: Vec<u32> = self
             .states
             .keys()
@@ -305,16 +314,13 @@ impl Overlay {
             .filter(|number| !base_has(base, *number))
             .collect();
         if created.is_empty() {
-            return Ok(());
+            return Ok(created);
         }
-
         let reached = self.reachable(base)?;
-        for number in created {
-            if !reached.contains(&number) {
-                self.states.remove(&number);
-            }
-        }
-        Ok(())
+        Ok(created
+            .into_iter()
+            .filter(|number| !reached.contains(number))
+            .collect())
     }
 
     /// Every object number reachable from the merged trailer, where "merged"

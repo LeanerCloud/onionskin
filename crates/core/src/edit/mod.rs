@@ -98,7 +98,7 @@ impl EditSession {
             changes: Vec::new(),
             index: BTreeMap::new(),
         };
-        let outcome = body(&mut tx);
+        let outcome = body(&mut tx).and_then(|value| tx.drop_orphans().map(|()| value));
         let changes = tx.finish();
         match outcome {
             Err(error) => {
@@ -259,6 +259,28 @@ impl<'a> Transaction<'a> {
                 self.changes.push(change);
             }
         }
+    }
+
+    /// Record, as changes of this transaction, the objects an earlier edit
+    /// created that nothing names any more.
+    ///
+    /// Collapse drops such objects from the overlay (its rule 2), and a drop
+    /// that is not recorded cannot be undone: delete a bookmark made earlier
+    /// in the session, undo the delete, and the outline names a dictionary
+    /// the overlay no longer holds. Recorded here, the drop is an ordinary
+    /// change with the object as its `before` and nothing as its `after`, so
+    /// undo puts the object back and redo takes it away again. An object
+    /// created and orphaned within this one transaction merges to a no-op.
+    fn drop_orphans(&mut self) -> Result<()> {
+        for number in self.overlay.unreachable_new_objects(self.base)? {
+            let before = self.overlay.capture_object(self.base, number)?;
+            self.record(Change::Object {
+                number,
+                before,
+                after: None,
+            });
+        }
+        Ok(())
     }
 
     fn finish(self) -> Vec<Change> {
