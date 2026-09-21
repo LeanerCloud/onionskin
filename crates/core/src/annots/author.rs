@@ -126,6 +126,25 @@ fn dictionary(
     if let Some(((sx, sy), (ex, ey))) = annotation.line {
         dict.set(Name::new("L"), numbers(&[sx, sy, ex, ey]));
     }
+    // The same `TextStyle` the appearance stream draws with, so the two cannot
+    // disagree about font, size or colour.
+    if let Some(style) = annotation.text_style {
+        dict.set(
+            Name::new("DA"),
+            Object::String(style.default_appearance().into_bytes()),
+        );
+    }
+    if let Some(intent) = annotation.intent {
+        dict.set(Name::new("IT"), Object::name(intent.as_str()));
+    }
+    if !annotation.callout.is_empty() {
+        let flat: Vec<f64> = annotation
+            .callout
+            .iter()
+            .flat_map(|(x, y)| [*x, *y])
+            .collect();
+        dict.set(Name::new("CL"), numbers(&flat));
+    }
     if let Some(contents) = &annotation.contents {
         dict.set(Name::new("Contents"), text_string(contents));
     }

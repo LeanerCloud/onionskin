@@ -292,6 +292,112 @@ pub struct Annotation {
     pub in_reply_to: Option<ObjRef>,
     /// `/State` and `/StateModel`, for a review reply.
     pub state: Option<(String, String)>,
+    /// `/DA`, how a `FreeText`'s text is drawn. `None` for every other
+    /// subtype, and for a `FreeText` that carries no text of its own.
+    pub text_style: Option<TextStyle>,
+    /// `/IT`, what a `FreeText` is being used as.
+    pub intent: Option<Intent>,
+    /// `/CL`, a callout's leader: two or three points, the tail - what the
+    /// callout points at - first, the end at the text box last. Empty for
+    /// everything else.
+    pub callout: Vec<(f64, f64)>,
+}
+
+/// The fonts a `FreeText` may name.
+///
+/// Named, never embedded. Onionskin ships no font files (`PLAN.md` legal
+/// posture rule 6), and it does not need to: every one of these is a standard
+/// Type 1 font every reader substitutes for, and Acrobat itself writes
+/// `/Helv` by name into a `/DA`. A `/FontFile` would be the thing rule 6
+/// forbids, and there is none anywhere in this module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BaseFont {
+    Helvetica,
+    TimesRoman,
+    Courier,
+}
+
+impl BaseFont {
+    /// The key a `/DA` string and the appearance's `/Resources` `/Font` both
+    /// use. Acrobat's own short names, which is what a reader that patches a
+    /// `/DA` expects to find.
+    pub fn resource_name(self) -> &'static str {
+        match self {
+            BaseFont::Helvetica => "Helv",
+            BaseFont::TimesRoman => "TiRo",
+            BaseFont::Courier => "Cour",
+        }
+    }
+
+    /// The `/BaseFont` name, which is the standard font this stands for.
+    pub fn base_font(self) -> &'static str {
+        match self {
+            BaseFont::Helvetica => "Helvetica",
+            BaseFont::TimesRoman => "Times-Roman",
+            BaseFont::Courier => "Courier",
+        }
+    }
+}
+
+/// How a `FreeText`'s text is drawn.
+///
+/// **One source for both places the font appears.** A `/DA` string and the
+/// appearance stream that draws the text can disagree about font, size or
+/// colour, and when they do the annotation renders one way in a reader that
+/// trusts `/AP` and another in one that regenerates from `/DA` - which is what
+/// makes a text box look different in Acrobat. Both come from here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextStyle {
+    pub font: BaseFont,
+    pub size: f64,
+    pub color: Color,
+}
+
+impl TextStyle {
+    pub fn new(font: BaseFont, size: f64, color: Color) -> Self {
+        TextStyle { font, size, color }
+    }
+
+    /// The `/DA` string: select the font at its size, then set the fill colour
+    /// the text is painted with.
+    pub fn default_appearance(&self) -> String {
+        format!(
+            "/{} {} Tf {} {} {} rg",
+            self.font.resource_name(),
+            self.size,
+            self.color.red,
+            self.color.green,
+            self.color.blue
+        )
+    }
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle::new(BaseFont::Helvetica, 12.0, Color::BLACK)
+    }
+}
+
+/// `/IT`: what a `FreeText` is being used as.
+///
+/// A reader uses it to decide which handles to show and how to re-lay-out the
+/// annotation when its text changes, so a typewriter that says it is a plain
+/// text box gains a border it never had.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Intent {
+    /// Text on the page with no box around it.
+    FreeTextTypewriter,
+    /// A box with a leader line to what it points at.
+    FreeTextCallout,
+}
+
+impl Intent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Intent::FreeTextTypewriter => "FreeTextTypewriter",
+            Intent::FreeTextCallout => "FreeTextCallout",
+        }
+    }
 }
 
 impl Annotation {
@@ -315,7 +421,19 @@ impl Annotation {
             border_width: 1.0,
             in_reply_to: None,
             state: None,
+            text_style: None,
+            intent: None,
+            callout: Vec::new(),
         }
+    }
+
+    /// A `FreeText` carrying text, which is the only subtype that needs a
+    /// `/DA`. The intent decides what a reader thinks it is looking at.
+    pub fn free_text(rect: Rect, style: TextStyle, intent: Option<Intent>) -> Self {
+        let mut annotation = Annotation::new(Subtype::FreeText, rect);
+        annotation.text_style = Some(style);
+        annotation.intent = intent;
+        annotation
     }
 
     /// Text markup from a run of quads: the `/Rect` is their union, which is

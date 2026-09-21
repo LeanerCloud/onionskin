@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 
 use onionskin_cos::{Dict, Name, Object, Stream};
 
-use super::model::{Annotation, Color, Quad, Rect, Subtype};
+use super::model::{Annotation, BaseFont, Color, Intent, Quad, Rect, Subtype, TextStyle};
 
 /// The `/AP` `/N` form for this annotation, in the annotation's own space.
 pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
@@ -41,7 +41,13 @@ pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
         Subtype::FreeText => free_text(annotation, rect),
         Subtype::Stamp => stamp(annotation, rect),
     };
-    form(rect, &content, annotation.opacity, blend_mode(annotation))
+    form(
+        rect,
+        &content,
+        annotation.opacity,
+        blend_mode(annotation),
+        annotation.text_style.map(|style| style.font),
+    )
 }
 
 /// The blend mode a subtype's appearance needs, or `None` for the default.
@@ -60,7 +66,13 @@ fn blend_mode(annotation: &Annotation) -> Option<&'static str> {
 }
 
 /// Wrap a content stream as a Form XObject whose box is the rect at the origin.
-fn form(rect: Rect, content: &str, opacity: Option<f64>, blend: Option<&str>) -> Stream {
+fn form(
+    rect: Rect,
+    content: &str,
+    opacity: Option<f64>,
+    blend: Option<&str>,
+    font: Option<BaseFont>,
+) -> Stream {
     let mut dict = Dict::new();
     dict.set(Name::new("Type"), Object::name("XObject"));
     dict.set(Name::new("Subtype"), Object::name("Form"));
@@ -83,6 +95,18 @@ fn form(rect: Rect, content: &str, opacity: Option<f64>, blend: Option<&str>) ->
         let mut states = Dict::new();
         states.set(Name::new("GS0"), Object::Dict(state));
         resources.set(Name::new("ExtGState"), Object::Dict(states));
+    }
+    // A direct dictionary rather than an indirect font object: it is one
+    // standard font named by `/BaseFont` with no `/FontFile` of any kind, so
+    // there is nothing to share between annotations and nothing shipped.
+    if let Some(font) = font {
+        let mut descriptor = Dict::new();
+        descriptor.set(Name::new("Type"), Object::name("Font"));
+        descriptor.set(Name::new("Subtype"), Object::name("Type1"));
+        descriptor.set(Name::new("BaseFont"), Object::name(font.base_font()));
+        let mut fonts = Dict::new();
+        fonts.set(Name::new(font.resource_name()), Object::Dict(descriptor));
+        resources.set(Name::new("Font"), Object::Dict(fonts));
     }
     let selects_state = resources.get(b"ExtGState").is_some();
     dict.set(Name::new("Resources"), Object::Dict(resources));
@@ -334,25 +358,103 @@ fn note_icon(annotation: &Annotation, rect: Rect) -> String {
 /// here: laying out glyphs needs a font resource, which P9a's free-text tool
 /// owns along with the font it chose. This generator produces the frame that
 /// tool draws into, and an empty frame is what an empty free text looks like.
+/// A free text annotation: its box, its leader if it is a callout, and its
+/// text drawn in the same style the `/DA` names.
+///
+/// A typewriter has no box: `/IT /FreeTextTypewriter` is text placed on the
+/// page, and drawing a border around it would be a border the user never
+/// asked for and cannot remove.
 fn free_text(annotation: &Annotation, rect: Rect) -> String {
     let interior = annotation.interior_color;
     let border = annotation.color.unwrap_or(Color::BLACK);
     let width = annotation.border_width;
     let inset = width / 2.0;
     let mut out = String::new();
-    if let Some(fill) = interior {
-        let _ = writeln!(out, "{} {} {} rg", fill.red, fill.green, fill.blue);
+    if annotation.intent != Some(Intent::FreeTextTypewriter) {
+        if let Some(fill) = interior {
+            let _ = writeln!(out, "{} {} {} rg", fill.red, fill.green, fill.blue);
+        }
+        let _ = writeln!(
+            out,
+            "{} {} {} RG {width} w {inset} {inset} {} {} re {}",
+            border.red,
+            border.green,
+            border.blue,
+            rect.width() - width,
+            rect.height() - width,
+            if interior.is_some() { "B" } else { "S" }
+        );
     }
+    // The leader, in the form's own space. `/CL` is in page coordinates, the
+    // same as `/Rect`, so it shifts by the same origin everything else here
+    // does. A reader draws `/CL` itself only when there is no `/AP`; with one,
+    // what is in the stream is what is seen, so leaving it out here is how a
+    // callout loses its leader in every viewer that trusts the appearance.
+    if annotation.callout.len() >= 2 {
+        let _ = writeln!(
+            out,
+            "{} {} {} RG {} w",
+            border.red,
+            border.green,
+            border.blue,
+            width.max(1.0)
+        );
+        for (index, (x, y)) in annotation.callout.iter().enumerate() {
+            let (x, y) = (x - rect.x0, y - rect.y0);
+            let _ = writeln!(out, "{x} {y} {}", if index == 0 { "m" } else { "l" });
+        }
+        let _ = writeln!(out, "S");
+    }
+    if let (Some(style), Some(text)) = (annotation.text_style, annotation.contents.as_deref()) {
+        out.push_str(&text_lines(text, &style, rect, annotation.border_width));
+    }
+    out
+}
+
+/// The annotation's text, laid out as lines from the top of the box down.
+///
+/// The font, size and colour come from the same [`TextStyle`] the `/DA`
+/// string is built from, which is the whole reason that type exists: a stream
+/// that picked its own would render one way in a reader that trusts `/AP` and
+/// another in one that re-lays-out from `/DA`.
+///
+/// Line breaking is on the text's own newlines only. Wrapping to the box needs
+/// the font's widths, and this crate has no font metrics; a wrap computed from
+/// a guessed advance is worse than none, because it looks deliberate.
+fn text_lines(text: &str, style: &TextStyle, rect: Rect, border: f64) -> String {
+    let padding = border + 2.0;
+    let leading = style.size * 1.2;
+    let mut out = String::from("BT\n");
+    let _ = writeln!(out, "{}", style.default_appearance());
+    let _ = writeln!(out, "{leading} TL");
     let _ = writeln!(
         out,
-        "{} {} {} RG {width} w {inset} {inset} {} {} re {}",
-        border.red,
-        border.green,
-        border.blue,
-        rect.width() - width,
-        rect.height() - width,
-        if interior.is_some() { "B" } else { "S" }
+        "{padding} {} Td",
+        (rect.height() - padding - style.size).max(0.0)
     );
+    for (index, line) in text.lines().enumerate() {
+        if index > 0 {
+            out.push_str("T*\n");
+        }
+        let _ = writeln!(out, "({}) Tj", escape(line));
+    }
+    out.push_str("ET\n");
+    out
+}
+
+/// A literal string's escapes, which are the only three characters that end
+/// one early or nest a parenthesis wrongly.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '(' | ')' | '\\' => {
+                out.push('\\');
+                out.push(character);
+            }
+            _ => out.push(character),
+        }
+    }
     out
 }
 

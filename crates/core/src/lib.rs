@@ -30,7 +30,7 @@ mod viewport;
 
 pub use annots::{
     add_annotation, pdf_date, read_annotations, remove_annotation, Annotation, AnnotationFilter,
-    Color, Flags, Quad, ReadAnnotation, Rect, Subtype,
+    BaseFont, Color, Flags, Intent, Quad, ReadAnnotation, Rect, Subtype, TextStyle,
 };
 pub use attachments::Attachment;
 pub use edit::{
