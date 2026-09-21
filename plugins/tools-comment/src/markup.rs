@@ -18,11 +18,12 @@
 
 use onionskin_core::textselect::select_between;
 use onionskin_core::{
-    add_annotation, read_structure, Annotation, Color, Document, ObjRef, PageIndex, PagePoint,
-    PageQuad, Quad, Rect, Subtype, TextSelection, Viewport,
+    add_annotation, read_structure, Annotation, Color, Document, PagePoint, PageQuad, Quad, Rect,
+    Subtype, TextSelection, Viewport,
 };
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
+use crate::place::{now, page_object};
 use crate::quads::merge;
 
 /// Below this, a drag is a click: it selects nothing and writes nothing.
@@ -259,21 +260,6 @@ fn to_quad(quad: &PageQuad) -> Quad {
         lower_left,
         lower_right,
     }
-}
-
-/// The page's own object, which an annotation is written onto.
-fn page_object(document: &mut Document, page: PageIndex) -> Option<ObjRef> {
-    document.structure().ok()?.page(page).ok().map(|p| p.objref)
-}
-
-/// Seconds since the Unix epoch, or zero when the clock is before it. `core`
-/// takes the timestamp rather than reading one, so this is the one place a
-/// markup tool touches a clock.
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 fn is_drag(from: PagePoint, to: PagePoint, viewport: &Viewport) -> bool {

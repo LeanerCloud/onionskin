@@ -5,10 +5,15 @@
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
+mod freetext;
 mod markup;
+mod note;
+mod place;
 mod quads;
 
+pub use freetext::FreeTextTool;
 pub use markup::MarkupTool;
+pub use note::NoteTool;
 
 pub struct CommentToolsPlugin;
 
@@ -29,5 +34,9 @@ impl PluginManifest for CommentToolsPlugin {
         registry.register_tool(Box::new(MarkupTool::strikethrough()));
         registry.register_tool(Box::new(MarkupTool::insert_text()));
         registry.register_tool(Box::new(MarkupTool::replace_text()));
+        registry.register_tool(Box::new(NoteTool::new()));
+        registry.register_tool(Box::new(FreeTextTool::typewriter()));
+        registry.register_tool(Box::new(FreeTextTool::text_box()));
+        registry.register_tool(Box::new(FreeTextTool::callout()));
     }
 }
