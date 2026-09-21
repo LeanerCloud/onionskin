@@ -216,6 +216,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) stamps: Option<crate::shell::chrome::stamps_dialog::StampsDialogState>,
     pub(super) summary: Option<crate::shell::chrome::summary_dialog::SummaryDialogState>,
     pub(super) properties: Option<crate::shell::chrome::properties_dialog::PropertiesDialogState>,
+    pub(super) bookmark_title: Option<crate::shell::chrome::bookmark_dialog::BookmarkTitleState>,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -337,6 +338,7 @@ impl ShellFrame {
             stamps: None,
             summary: None,
             properties: None,
+            bookmark_title: None,
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);

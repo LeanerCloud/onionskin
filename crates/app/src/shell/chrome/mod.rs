@@ -1,4 +1,5 @@
 pub(in crate::shell) mod accessible;
+pub(in crate::shell) mod bookmark_dialog;
 pub(in crate::shell) mod combine_dialog;
 mod commands;
 pub(in crate::shell) mod export_dialog;

@@ -35,7 +35,9 @@ use crate::shell::chrome::{quick_actions, rail, side_panel};
 use crate::shell::dialog::ShellDialog;
 use crate::shell::find_bar::FindSummary;
 use crate::shell::panes;
-use crate::shell::panes::{LayerAction, LayersCommand, PaneAction};
+use crate::shell::panes::{
+    AttachmentAction, BookmarkAction, BookmarksCommand, LayerAction, LayersCommand, PaneAction,
+};
 
 impl ShellFrame {
     /// What the whole window tells a screen reader.
@@ -415,6 +417,12 @@ impl ShellFrame {
                 self.run_pane_action(PaneAction::DismissMenus, cx);
                 self.show_dialog(ShellDialog::LayerProperties, window, cx);
             }
+            Activation::Pane(PaneAction::Bookmark(BookmarkAction::Run(
+                command @ (BookmarksCommand::New | BookmarksCommand::Rename),
+            ))) => self.run_bookmark_dialog_command(command, window, cx),
+            Activation::Pane(PaneAction::Attachment(AttachmentAction::Add)) => {
+                self.prompt_for_attachment(cx);
+            }
             Activation::Pane(action) => self.run_pane_action(action, cx),
             Activation::StepFind(direction) => self.step_find(direction, cx),
             Activation::ApplyFindOption(option) => self.apply_find_option(option, cx),
@@ -431,6 +439,7 @@ impl ShellFrame {
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Properties(action) => self.run_properties_action(action, window, cx),
+            Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));
@@ -594,6 +603,7 @@ impl ShellFrame {
                 .properties
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
         }
     }
 
@@ -633,6 +643,7 @@ impl ShellFrame {
             ]
             .into_iter()
             .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
+            .chain([TextField::BookmarkTitle])
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

@@ -58,6 +58,8 @@ pub(in crate::shell) enum TextField {
     PropertiesCustomValue,
     /// The Initial View tab's page the document opens at.
     PropertiesOpenPage,
+    /// The title New Bookmark and Rename Bookmark ask for.
+    BookmarkTitle,
 }
 
 /// What activating an accessible element does.
@@ -102,6 +104,7 @@ pub(in crate::shell) enum Activation {
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
+    BookmarkTitle(crate::shell::chrome::bookmark_dialog::BookmarkTitleAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.

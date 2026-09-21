@@ -1,4 +1,9 @@
-//! The attachments pane: list an embedded file, and save one out.
+//! The attachments pane: list an embedded file, save one out, add one and
+//! delete one.
+//!
+//! Add asks for a file, which is the frame's; Delete rewrites the
+//! document's attachment tree through `core::embedded`, leaving the file's
+//! bytes in the document unreferenced, as every delete here does.
 //!
 //! Save writes to the path the user chose in a dialog and to nowhere else.
 //! The suggestion offered to that dialog is the attachment's last path
@@ -14,8 +19,8 @@ use std::path::PathBuf;
 
 use accesskit::Role;
 use gpui::{
-    div, px, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
+    div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_core::Attachment;
 
@@ -28,36 +33,61 @@ use crate::a11y::State as A11yState;
 /// Said where the list would be when the document embeds no files.
 const NO_ATTACHMENTS: &str = "This document has no attachments.";
 
-/// The two per-row commands parity row 195 names at M2.
+/// The per-row commands: parity row 195's two at M2, and row 26's Delete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum AttachmentCommand {
     Open,
     Save,
+    Delete,
 }
 
 impl AttachmentCommand {
-    pub(in crate::shell) const ALL: [Self; 2] = [Self::Open, Self::Save];
+    pub(in crate::shell) const ALL: [Self; 3] = [Self::Open, Self::Save, Self::Delete];
 
     pub(in crate::shell) fn label(self) -> &'static str {
         match self {
             Self::Open => "Open",
             Self::Save => "Save",
+            Self::Delete => "Delete",
         }
     }
 
-    pub(in crate::shell) fn availability(self) -> MenuAvailability {
-        match self {
-            Self::Save => MenuAvailability::Enabled,
-            Self::Open => {
+    /// Delete changes the document, so a document that may not be edited
+    /// disables it with its reason.
+    pub(in crate::shell) fn availability(self, refusal: Option<&'static str>) -> MenuAvailability {
+        match (self, refusal) {
+            (Self::Save, _) | (Self::Delete, None) => MenuAvailability::Enabled,
+            (Self::Delete, Some(reason)) => MenuAvailability::Disabled(reason),
+            (Self::Open, _) => {
                 MenuAvailability::Disabled("Available in M5 with the attachment trust list")
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::shell) enum AttachmentAction {
     Save(usize),
+    Delete(usize),
+    /// Ask for a file and attach it to the document. The frame's, because it
+    /// opens a file dialog.
+    Add,
+    /// Open the pane's menu at `at`, on the row at `row`, or on none.
+    OpenMenu {
+        row: Option<usize>,
+        at: gpui::Point<gpui::Pixels>,
+    },
+}
+
+/// What Add is called, in the pane and in its menu.
+pub(in crate::shell) const ADD_LABEL: &str = "Add Attachment…";
+
+/// What Add says when the document may not be edited, or nothing.
+pub(in crate::shell) fn add_availability(refusal: Option<&'static str>) -> MenuAvailability {
+    match refusal {
+        Some(reason) => MenuAvailability::Disabled(reason),
+        None => MenuAvailability::Enabled,
+    }
 }
 
 /// The element id one row's command button renders with, unique across the
@@ -71,17 +101,33 @@ fn command_id(index: usize, command: AttachmentCommand) -> (&'static str, usize)
 
 /// What a row's command button runs. Open is listed and does nothing until
 /// M5 brings the trust list, so it has nothing to run.
-fn command_activation(index: usize, command: AttachmentCommand) -> Option<Activation> {
-    match command {
-        AttachmentCommand::Save => Some(Activation::Pane(PaneAction::Attachment(
-            AttachmentAction::Save(index),
-        ))),
-        AttachmentCommand::Open => None,
+pub(super) fn command_activation(index: usize, command: AttachmentCommand) -> Option<Activation> {
+    let action = match command {
+        AttachmentCommand::Save => AttachmentAction::Save(index),
+        AttachmentCommand::Delete => AttachmentAction::Delete(index),
+        AttachmentCommand::Open => return None,
+    };
+    Some(Activation::Pane(PaneAction::Attachment(action)))
+}
+
+fn add_element(refusal: Option<&'static str>) -> Element {
+    let availability = add_availability(refusal);
+    let add = Element::new("attachment-add", Role::Button, ADD_LABEL)
+        .with_state(A11yState::enabled(availability.is_enabled()))
+        .with_activation(Activation::Pane(PaneAction::Attachment(
+            AttachmentAction::Add,
+        )));
+    match availability.reason() {
+        Some(reason) => add.with_description(reason),
+        None => add,
     }
 }
 
 /// What the attachments pane tells a screen reader.
-pub(super) fn accessible(items: Result<&[Attachment], &String>) -> Vec<Element> {
+pub(super) fn accessible(
+    items: Result<&[Attachment], &String>,
+    refusal: Option<&'static str>,
+) -> Vec<Element> {
     let items = match items {
         Ok(items) => items,
         Err(message) => {
@@ -93,14 +139,14 @@ pub(super) fn accessible(items: Result<&[Attachment], &String>) -> Vec<Element> 
         }
     };
     if items.is_empty() {
-        return vec![Element::new(
-            "attachment-rows-empty",
-            Role::Label,
-            NO_ATTACHMENTS,
-        )];
+        return vec![
+            add_element(refusal),
+            Element::new("attachment-rows-empty", Role::Label, NO_ATTACHMENTS),
+        ];
     }
 
     vec![
+        add_element(refusal),
         Element::new("attachment-rows", Role::List, "Attachments").with_children(
             items
                 .iter()
@@ -116,7 +162,7 @@ pub(super) fn accessible(items: Result<&[Attachment], &String>) -> Vec<Element> 
                         AttachmentCommand::ALL
                             .into_iter()
                             .map(|command| {
-                                let availability = command.availability();
+                                let availability = command.availability(refusal);
                                 let mut button = Element::new(
                                     command_id(index, command),
                                     Role::Button,
@@ -146,7 +192,22 @@ pub(super) fn run(
     action: AttachmentAction,
     cx: &mut Context<ShellFrame>,
 ) {
-    let AttachmentAction::Save(index) = action;
+    if !matches!(action, AttachmentAction::OpenMenu { .. }) {
+        state.attachments_menu = None;
+    }
+    let index = match action {
+        AttachmentAction::Save(index) => index,
+        AttachmentAction::Delete(index) => {
+            delete(state, canvas, index, cx);
+            return;
+        }
+        AttachmentAction::OpenMenu { row, at } => {
+            state.attachments_menu = Some(super::attachment_menu::AttachmentsMenu { row, at });
+            return;
+        }
+        // Run by the frame, which asks for the file.
+        AttachmentAction::Add => return,
+    };
     let Some(canvas) = canvas.cloned() else {
         return;
     };
@@ -201,8 +262,67 @@ fn attachment_destination(
     result.map_err(|error| format!("no destination could be chosen: {error}"))
 }
 
+/// Delete the listed attachment at `index`, by the stream the list read.
+fn delete(
+    state: &mut NavigationPanesState,
+    canvas: Option<&Entity<Canvas>>,
+    index: usize,
+    cx: &mut Context<ShellFrame>,
+) {
+    let Some(canvas) = canvas else {
+        return;
+    };
+    let Some(stream) = state.attachment_stream(index) else {
+        state.feedback = Some(format!("attachment {index} is no longer listed"));
+        return;
+    };
+    super::document_edit(state, canvas, cx, "Delete Attachment", |_, tx| {
+        onionskin_core::embedded::remove_attachment(tx, stream)
+    });
+}
+
+/// The pane's own Add button, above the list and there when it is empty.
+fn add_button(
+    refusal: Option<&'static str>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    let availability = add_availability(refusal);
+    let enabled = availability.is_enabled();
+    let button = div()
+        .id("attachment-add")
+        .mx_2()
+        .my_1()
+        .px_2()
+        .py(px(2.0))
+        .rounded_sm()
+        .text_xs()
+        .bg(theme.surface)
+        .text_color(if enabled {
+            theme.text
+        } else {
+            theme.disabled_text
+        })
+        .child(ADD_LABEL);
+    if enabled {
+        button
+            .cursor_pointer()
+            .hover(move |button| button.bg(theme.hover))
+            .on_click(cx.listener(|frame, _event, window, cx| {
+                frame.run_activation(
+                    Activation::Pane(PaneAction::Attachment(AttachmentAction::Add)),
+                    window,
+                    cx,
+                );
+            }))
+    } else {
+        button
+    }
+}
+
 pub(super) fn render(
     items: Result<&[Attachment], &String>,
+    refusal: Option<&'static str>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> gpui::AnyElement {
@@ -210,14 +330,46 @@ pub(super) fn render(
         Ok(items) => items,
         Err(message) => return error_message(message, theme).into_any_element(),
     };
+    let add = add_button(refusal, theme, cx);
     if items.is_empty() {
-        return empty_message(NO_ATTACHMENTS, theme).into_any_element();
+        return div()
+            .flex()
+            .flex_col()
+            .child(add)
+            .child(empty_message(NO_ATTACHMENTS, theme))
+            .into_any_element();
     }
 
-    let mut body = list("attachment-rows");
+    let mut body = list("attachment-rows")
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|frame, event: &gpui::MouseDownEvent, _window, cx| {
+                frame.run_pane_action(
+                    PaneAction::Attachment(AttachmentAction::OpenMenu {
+                        row: None,
+                        at: event.position,
+                    }),
+                    cx,
+                );
+            }),
+        )
+        .child(add);
     for (index, attachment) in items.iter().enumerate() {
         let mut row = div()
             .id(("attachment-row", index))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |frame, event: &gpui::MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    frame.run_pane_action(
+                        PaneAction::Attachment(AttachmentAction::OpenMenu {
+                            row: Some(index),
+                            at: event.position,
+                        }),
+                        cx,
+                    );
+                }),
+            )
             .flex()
             .flex_col()
             .gap_1()
@@ -234,7 +386,7 @@ pub(super) fn render(
             );
         let mut actions = div().flex().gap_2();
         for command in AttachmentCommand::ALL {
-            let availability = command.availability();
+            let availability = command.availability(refusal);
             let enabled = availability.is_enabled();
             let mut button = div()
                 .id(command_id(index, command))
@@ -334,9 +486,17 @@ mod tests {
     /// hands document content to the operating system.
     #[test]
     fn save_is_live_and_open_is_disabled_naming_the_milestone() {
-        assert!(AttachmentCommand::Save.availability().is_enabled());
+        assert!(AttachmentCommand::Save.availability(None).is_enabled());
+        assert!(AttachmentCommand::Delete.availability(None).is_enabled());
+        assert_eq!(
+            AttachmentCommand::Delete
+                .availability(Some("Encrypted"))
+                .reason(),
+            Some("Encrypted"),
+            "a document that may not be edited cannot lose an attachment"
+        );
 
-        let open = AttachmentCommand::Open.availability();
+        let open = AttachmentCommand::Open.availability(None);
         assert!(!open.is_enabled());
         let reason = open.reason().expect("a disabled command says why");
         assert!(reason.contains("M5"), "said {reason:?}");
@@ -421,11 +581,12 @@ mod tests {
             attachment("notes.bin", None, None),
         ];
 
-        let described = accessible(Ok(&items));
-        let rows = &described[0].children;
+        let described = accessible(Ok(&items), None);
+        assert_eq!(described[0].key, gpui::ElementId::from("attachment-add"));
+        let rows = &described[1].children;
 
-        assert_eq!(described.len(), 1);
-        assert_eq!(described[0].role, Role::List);
+        assert_eq!(described.len(), 2);
+        assert_eq!(described[1].role, Role::List);
         assert_eq!(rows.len(), items.len());
         for (index, (row, item)) in rows.iter().zip(items.iter()).enumerate() {
             assert_eq!(row.key, gpui::ElementId::from(("attachment-row", index)));
@@ -443,8 +604,8 @@ mod tests {
             attachment("b.csv", None, None),
         ];
 
-        let described = accessible(Ok(&items));
-        let rows = &described[0].children;
+        let described = accessible(Ok(&items), None);
+        let rows = &described[1].children;
 
         for (index, row) in rows.iter().enumerate() {
             assert_eq!(row.children.len(), AttachmentCommand::ALL.len());
@@ -455,10 +616,13 @@ mod tests {
                     button.key,
                     gpui::ElementId::from(command_id(index, command))
                 );
-                assert_eq!(button.state.disabled, !command.availability().is_enabled());
+                assert_eq!(
+                    button.state.disabled,
+                    !command.availability(None).is_enabled()
+                );
                 assert_eq!(
                     button.description.as_deref(),
-                    command.availability().reason()
+                    command.availability(None).reason()
                 );
             }
         }
@@ -492,12 +656,16 @@ mod tests {
     /// what went wrong rather than reading as a document with none.
     #[test]
     fn an_empty_list_and_a_failed_read_are_announced_differently() {
-        let empty = accessible(Ok(&[]));
-        assert_eq!(empty[0].role, Role::Label);
-        assert_eq!(empty[0].label, NO_ATTACHMENTS);
+        let empty = accessible(Ok(&[]), None);
+        assert_eq!(
+            empty[0].label, ADD_LABEL,
+            "Add is there with nothing to list"
+        );
+        assert_eq!(empty[1].role, Role::Label);
+        assert_eq!(empty[1].label, NO_ATTACHMENTS);
 
         let failure = "the embedded file tree could not be decoded".to_owned();
-        let broken = accessible(Err(&failure));
+        let broken = accessible(Err(&failure), None);
         assert_eq!(broken[0].role, Role::Alert);
         assert_eq!(broken[0].label, failure);
     }

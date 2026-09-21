@@ -6,6 +6,7 @@ mod export;
 mod frame_state;
 mod menu;
 mod organize;
+mod outline;
 mod properties;
 mod stamps;
 mod summary;
@@ -1487,6 +1488,8 @@ mod tests {
     mod native_input;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod organize_dialogs;
+    #[cfg(feature = "shell-test-support")]
+    mod outline;
     #[cfg(feature = "shell-test-support")]
     mod properties;
     #[cfg(all(

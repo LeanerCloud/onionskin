@@ -14,7 +14,9 @@
 //! a [`PaneAction`], so the frame that owns the tabs needs one method rather
 //! than one per pane, and a pane cannot reach past the canvas it was given.
 
+mod attachment_menu;
 mod attachments;
+mod bookmark_edit;
 mod bookmarks;
 mod layers;
 mod results;
@@ -38,6 +40,9 @@ use super::Canvas;
 use crate::a11y::State as A11yState;
 
 pub(in crate::shell) use self::attachments::AttachmentAction;
+pub(in crate::shell) use self::bookmark_edit::{
+    target as bookmark_target, BookmarkAction, BookmarksCommand,
+};
 pub(in crate::shell) use self::layers::LayersCommand;
 pub(in crate::shell) use self::thumbnails::ThumbnailAction;
 
@@ -136,6 +141,7 @@ pub(in crate::shell) enum PaneAction {
     SelectMatch(PageIndex, usize),
     Attachment(AttachmentAction),
     Layer(LayerAction),
+    Bookmark(BookmarkAction),
     Thumbnail(ThumbnailAction),
     /// Put away whichever pane-local menu is open.
     DismissMenus,
@@ -156,6 +162,11 @@ pub(in crate::shell) struct NavigationPanesState {
     content: Option<PaneContent>,
     thumbnails: thumbnails::ThumbnailsState,
     layers_menu: Option<Point<Pixels>>,
+    bookmarks_menu: Option<bookmark_edit::BookmarksMenu>,
+    attachments_menu: Option<attachment_menu::AttachmentsMenu>,
+    /// Why the document may not be edited, read with the pane's content:
+    /// every authoring entry is disabled with it.
+    edit_refusal: Option<&'static str>,
     /// What the last action could not do, shown in the pane that raised it.
     /// A refused toggle or a failed extraction has nowhere else to be seen:
     /// the canvas status line sits behind the document, not the pane.
@@ -185,6 +196,8 @@ impl NavigationPanesState {
         self.content = None;
         self.thumbnails.clear();
         self.layers_menu = None;
+        self.bookmarks_menu = None;
+        self.attachments_menu = None;
         self.feedback = None;
     }
 
@@ -192,6 +205,12 @@ impl NavigationPanesState {
     /// Returns whether anything arrived, which is a repaint.
     pub(in crate::shell) fn collect_thumbnails(&mut self, canvas: &mut Canvas) -> bool {
         self.thumbnails.collect(canvas)
+    }
+
+    /// What the last action could not do, taken out of the pane: a dialog
+    /// that ran it shows the reason itself.
+    pub(in crate::shell) fn take_feedback(&mut self) -> Option<String> {
+        self.feedback.take()
     }
 
     /// Report what an action could not do, in the pane that raised it.
@@ -202,19 +221,30 @@ impl NavigationPanesState {
     fn open(&mut self, pane: NavigationPane, canvas: Option<&mut Canvas>) {
         self.active = Some(pane);
         self.layers_menu = None;
+        self.bookmarks_menu = None;
+        self.attachments_menu = None;
         self.feedback = None;
+        self.edit_refusal = canvas
+            .as_ref()
+            .and_then(|canvas| canvas.model.edit_refusal());
         self.content = Some(read(pane, canvas));
     }
 
     fn close(&mut self) {
         self.active = None;
         self.layers_menu = None;
+        self.bookmarks_menu = None;
+        self.attachments_menu = None;
         self.feedback = None;
         self.content = None;
     }
 
     /// Re-read the open pane, after something changed what it would say.
-    fn reread(&mut self, canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) {
+    pub(in crate::shell) fn reread(
+        &mut self,
+        canvas: &Entity<Canvas>,
+        cx: &mut Context<ShellFrame>,
+    ) {
         let Some(pane) = self.active else {
             return;
         };
@@ -235,6 +265,14 @@ impl NavigationPanesState {
         }
     }
 
+    /// The stream of one listed attachment, which is what deleting it names.
+    fn attachment_stream(&self, index: usize) -> Option<u32> {
+        match self.content.as_ref()? {
+            PaneContent::Attachments(Ok(items)) => items.get(index).map(|item| item.stream),
+            _ => None,
+        }
+    }
+
     /// The name a save dialog should suggest for one listed attachment.
     fn attachment_file_name(&self, index: usize) -> Option<String> {
         match self.content.as_ref()? {
@@ -245,10 +283,8 @@ impl NavigationPanesState {
         }
     }
 
-    /// What the bookmarks pane read, for a test that drove the button that
-    /// made it read.
-    #[cfg(test)]
-    fn bookmarks(&self) -> Option<&[OutlineItem]> {
+    /// What the bookmarks pane read.
+    pub(in crate::shell) fn bookmarks(&self) -> Option<&[OutlineItem]> {
         match self.content.as_ref()? {
             PaneContent::Bookmarks(Ok(items)) => Some(items),
             _ => None,
@@ -318,6 +354,8 @@ pub(in crate::shell) fn apply(
         }
         PaneAction::DismissMenus => {
             state.layers_menu = None;
+            state.bookmarks_menu = None;
+            state.attachments_menu = None;
             state.thumbnails.dismiss_menu();
         }
         PaneAction::GoToPage(page) => {
@@ -334,9 +372,44 @@ pub(in crate::shell) fn apply(
             attachments::run(state, canvas, directory, action, cx);
         }
         PaneAction::Layer(action) => layers::run(state, canvas, action, cx),
+        PaneAction::Bookmark(action) => bookmark_edit::run(state, canvas, action, cx),
         PaneAction::Thumbnail(action) => thumbnails::run(state, canvas, action, cx),
     }
     cx.notify();
+}
+
+/// One edit a pane makes to the document, as one undo step; then the pane
+/// re-read from the document, or the refusal in the pane's feedback line. `change` is handed
+/// the page the view is on, which is where a new destination points.
+pub(in crate::shell) fn document_edit<T>(
+    state: &mut NavigationPanesState,
+    canvas: &Entity<Canvas>,
+    cx: &mut Context<ShellFrame>,
+    label: &'static str,
+    change: impl FnOnce(usize, &mut onionskin_core::Transaction<'_>) -> onionskin_core::Result<T>,
+) -> Option<T> {
+    let outcome = canvas.update(cx, |canvas, cx| {
+        let page = canvas.model.view_state().current_page;
+        let result = canvas
+            .model
+            .document_mut()
+            .edit_document(label, |tx| change(page, tx));
+        if result.is_ok() {
+            canvas.handle_change(Ok(true), cx);
+        }
+        result
+    });
+    match outcome {
+        Ok(value) => {
+            state.feedback = None;
+            state.reread(canvas, cx);
+            Some(value)
+        }
+        Err(error) => {
+            state.feedback = Some(error.to_string());
+            None
+        }
+    }
 }
 
 /// Move the view, and put whatever it refused into the pane's feedback line.
@@ -415,10 +488,18 @@ fn accessible_body(
         (NavigationPane::Thumbnails, _) => thumbnails::accessible(state, canvas, cx),
         (NavigationPane::SearchResults, _) => results::accessible(canvas, cx),
         (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => {
-            bookmarks::accessible(items.as_deref())
+            let mut described = bookmarks::accessible(items.as_deref());
+            if state.bookmarks_menu.is_some() {
+                described.push(bookmark_edit::accessible_menu(state));
+            }
+            described
         }
         (NavigationPane::Attachments, Some(PaneContent::Attachments(items))) => {
-            attachments::accessible(items.as_deref())
+            let mut described = attachments::accessible(items.as_deref(), state.edit_refusal);
+            if state.attachments_menu.is_some() {
+                described.push(attachment_menu::accessible_menu(state));
+            }
+            described
         }
         (NavigationPane::Layers, Some(PaneContent::Layers(items))) => {
             layers::accessible(items.as_deref(), state.layers_menu.is_some())
@@ -526,6 +607,12 @@ pub(in crate::shell) fn render_navigation_panes(
         if let Some(at) = state.layers_menu {
             body = body.child(layers::render_menu(at, theme, cx));
         }
+        if let Some(menu) = state.bookmarks_menu {
+            body = body.child(bookmark_edit::render_menu(state, menu.at, theme, cx));
+        }
+        if let Some(menu) = state.attachments_menu {
+            body = body.child(attachment_menu::render_menu(state, menu.at, theme, cx));
+        }
         body
     });
 
@@ -556,7 +643,7 @@ fn render_body(
             bookmarks::render(items.as_deref(), theme, cx)
         }
         (NavigationPane::Attachments, Some(PaneContent::Attachments(items))) => {
-            attachments::render(items.as_deref(), theme, cx)
+            attachments::render(items.as_deref(), state.edit_refusal, theme, cx)
         }
         (NavigationPane::Layers, Some(PaneContent::Layers(items))) => {
             layers::render(items.as_deref(), theme, cx)

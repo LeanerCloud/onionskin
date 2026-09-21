@@ -37,6 +37,7 @@ pub(in crate::shell) enum ShellDialog {
     Summary,
     Properties,
     LayerProperties,
+    BookmarkTitle,
 }
 
 impl ShellDialog {
@@ -48,6 +49,7 @@ impl ShellDialog {
             Self::Summary => "Summarize Comments",
             Self::Properties => "Document Properties",
             Self::LayerProperties => "Layer Properties",
+            Self::BookmarkTitle => "Bookmark Title",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -155,6 +157,12 @@ pub(in crate::shell) fn accessible(
             cx,
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
+        ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::accessible(
+            frame
+                .bookmark_title_dialog()
+                .expect("bookmark dialog has state"),
+            cx,
+        ),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -255,6 +263,15 @@ pub(in crate::shell) fn render_dialog(
             frame
                 .properties_dialog()
                 .expect("properties dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::render(
+            frame
+                .bookmark_title_dialog()
+                .expect("bookmark dialog has state"),
             focused,
             theme,
             cx,

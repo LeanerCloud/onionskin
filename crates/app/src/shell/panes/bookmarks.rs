@@ -1,20 +1,20 @@
 //! The bookmarks pane: the document outline, and clicking one to go there.
 //!
-//! Authoring is M3's `commands-core` (parity row 194), so this pane views and
-//! navigates and nothing else. A bookmark the file gave no destination is
-//! still listed, and says it has nowhere to go: dropping it would hide part
-//! of the outline the document has.
+//! Authoring is the context menu's, in `bookmark_edit`. A bookmark the file
+//! gave no destination is still listed, and says it has nowhere to go:
+//! dropping it would hide part of the outline the document has.
 
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    div, px, Context, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_core::{OutlineItem, PageIndex};
 
 use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
+use super::bookmark_edit::BookmarkAction;
 use super::{empty_message, error_message, list, PaneAction, ROW_HEIGHT};
 use crate::a11y::State as A11yState;
 
@@ -32,6 +32,9 @@ pub(in crate::shell) struct BookmarkRow {
     pub(in crate::shell) title: String,
     pub(in crate::shell) page: Option<PageIndex>,
     pub(in crate::shell) depth: usize,
+    /// Its index among its siblings at each level, which is how the outline
+    /// writer addresses it.
+    pub(in crate::shell) path: Vec<usize>,
 }
 
 impl BookmarkRow {
@@ -118,18 +121,21 @@ pub(super) fn accessible(items: Result<&[OutlineItem], &String>) -> Vec<Element>
 /// the pane draws and the order the document lists them in.
 pub(super) fn rows(items: &[OutlineItem]) -> Vec<BookmarkRow> {
     let mut found = Vec::new();
-    flatten(items, 0, &mut found);
+    flatten(items, &mut Vec::new(), &mut found);
     found
 }
 
-fn flatten(items: &[OutlineItem], depth: usize, found: &mut Vec<BookmarkRow>) {
-    for item in items {
+fn flatten(items: &[OutlineItem], path: &mut Vec<usize>, found: &mut Vec<BookmarkRow>) {
+    for (index, item) in items.iter().enumerate() {
+        path.push(index);
         found.push(BookmarkRow {
             title: item.title.clone(),
             page: item.page,
-            depth,
+            depth: path.len() - 1,
+            path: path.clone(),
         });
-        flatten(&item.children, depth + 1, found);
+        flatten(&item.children, path, found);
+        path.pop();
     }
 }
 
@@ -146,7 +152,18 @@ pub(super) fn render(
         return empty_message(NO_BOOKMARKS, theme).into_any_element();
     }
 
-    let mut body = list("bookmark-rows");
+    let mut body = list("bookmark-rows").on_mouse_down(
+        MouseButton::Right,
+        cx.listener(|frame, event: &gpui::MouseDownEvent, _window, cx| {
+            frame.run_pane_action(
+                PaneAction::Bookmark(BookmarkAction::OpenMenu {
+                    row: None,
+                    at: event.position,
+                }),
+                cx,
+            );
+        }),
+    );
     for (index, row) in rows(items).into_iter().enumerate() {
         let availability = row.availability();
         let enabled = availability.is_enabled();
@@ -165,6 +182,21 @@ pub(super) fn render(
             } else {
                 theme.disabled_text
             })
+            // The row's own right-click wins over the list's: the menu then
+            // acts on this bookmark.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |frame, event: &gpui::MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    frame.run_pane_action(
+                        PaneAction::Bookmark(BookmarkAction::OpenMenu {
+                            row: Some(index),
+                            at: event.position,
+                        }),
+                        cx,
+                    );
+                }),
+            )
             .child(row.text());
         if let (true, Some(page)) = (enabled, page) {
             element = element

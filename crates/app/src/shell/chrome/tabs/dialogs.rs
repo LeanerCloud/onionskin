@@ -62,6 +62,7 @@ impl ShellFrame {
         self.stamps = None;
         self.summary = None;
         self.properties = None;
+        self.bookmark_title = None;
         cx.notify();
     }
 

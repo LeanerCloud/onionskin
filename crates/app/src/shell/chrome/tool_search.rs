@@ -508,6 +508,7 @@ fn field_node(
         | TextField::SplitValue
         | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
         TextField::CombinePages
+        | TextField::BookmarkTitle
         | TextField::PropertiesTitle
         | TextField::PropertiesAuthor
         | TextField::PropertiesSubject
