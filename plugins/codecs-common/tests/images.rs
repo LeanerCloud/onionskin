@@ -287,6 +287,12 @@ fn each_format_is_recognised_by_its_signature_and_only_by_it() {
     );
     assert_eq!(importer(b"%PDF-1.7"), None);
     assert_eq!(importer(b"GIF89a"), None);
+    let importing: Vec<_> = registry
+        .codecs()
+        .filter(|codec| codec.imports())
+        .map(|codec| codec.id())
+        .collect();
+    assert_eq!(importing, ["png", "jpeg", "tiff"]);
 }
 
 #[test]
@@ -312,10 +318,15 @@ fn a_file_that_claims_a_format_and_is_not_one_says_so() {
 // ---------------------------------------------------------------------------
 
 fn export(codec: &dyn CodecPlugin, dpi: f32) -> Vec<u8> {
+    export_at(codec, dpi, None)
+}
+
+fn export_at(codec: &dyn CodecPlugin, dpi: f32, quality: Option<u8>) -> Vec<u8> {
     let mut doc = Document::open_path(&seed("hello.pdf")).expect("seed opens");
     let request = ExportRequest {
         pages: PageRange::whole(doc.page_count()).expect("pages"),
         dpi,
+        quality,
     };
     codec
         .export_page(&mut doc, &request, 0, true)
@@ -341,6 +352,11 @@ fn a_jpeg_export_is_the_page_at_its_resolution_and_quality_changes_its_size() {
         "quality 20 is well under quality 95: {} vs {}",
         small.len(),
         large.len()
+    );
+    assert_eq!(
+        export_at(&JpegCodec::new(95), 144.0, Some(20)).len(),
+        small.len(),
+        "the request's quality wins over the codec's"
     );
     let header_dpi = u16::from_be_bytes([large[14], large[15]]);
     assert_eq!(

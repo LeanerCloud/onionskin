@@ -58,6 +58,9 @@ pub struct ExportRequest {
     /// Raster resolution. 72 renders one page point to one pixel; the text
     /// and SVG codecs have no pixels and ignore it.
     pub dpi: f32,
+    /// A lossy codec's quality, 1 (smallest) to 100 (best); `None` is the
+    /// codec's own default. Lossless codecs ignore it.
+    pub quality: Option<u8>,
 }
 
 impl ExportRequest {
@@ -203,6 +206,13 @@ pub trait CodecPlugin: Send + Sync {
         first_in_request: bool,
     ) -> Result<Vec<u8>, ExportError>;
 
+    /// Whether this codec has an import half at all: what makes the shell's
+    /// Create entries live before there are any bytes to ask [`Self::reads`]
+    /// about.
+    fn imports(&self) -> bool {
+        false
+    }
+
     /// Whether `bytes` are a file this codec imports, by its signature rather
     /// than a file name: the clipboard has no file name, and a name can lie.
     fn reads(&self, _bytes: &[u8]) -> bool {
@@ -251,6 +261,7 @@ mod tests {
         let request = |dpi| ExportRequest {
             pages: PageRange::whole(1).expect("one page"),
             dpi,
+            quality: None,
         };
 
         assert_eq!(request(144.0).zoom().unwrap(), 2.0);

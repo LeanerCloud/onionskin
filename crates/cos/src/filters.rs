@@ -662,7 +662,13 @@ mod tests {
         let raw = flate_encode(&data);
         assert!(raw.len() < data.len(), "it compresses");
         assert_eq!(
-            decode(&filter_dict("FlateDecode"), &raw, &identity, Damaged::Refuse).unwrap(),
+            decode(
+                &filter_dict("FlateDecode"),
+                &raw,
+                &identity,
+                Damaged::Refuse
+            )
+            .unwrap(),
             data
         );
     }

@@ -15,6 +15,7 @@ use super::{SearchInput, ShellFrame, ThemeTokens};
 
 pub(in crate::shell) const EXPORT_KEY_CONTEXT: &str = "OnionskinExport";
 pub(in crate::shell) const DEFAULT_EXPORT_DPI: f32 = 150.0;
+pub(in crate::shell) const DEFAULT_EXPORT_QUALITY: u8 = 90;
 
 actions!(onionskin_export, [SubmitExport]);
 
@@ -32,6 +33,7 @@ pub(super) enum Item {
     First,
     Last,
     Dpi,
+    Quality,
     Error,
     Export,
     Cancel,
@@ -39,8 +41,11 @@ pub(super) enum Item {
 
 pub(super) fn items(target: ExportTarget, has_error: bool) -> Vec<Item> {
     let mut items = vec![Item::Target, Item::First, Item::Last];
-    if target == ExportTarget::Png {
+    if target.is_raster() {
         items.push(Item::Dpi);
+    }
+    if target.is_lossy() {
+        items.push(Item::Quality);
     }
     if has_error {
         items.push(Item::Error);
@@ -55,6 +60,7 @@ pub(super) enum ValidationError {
     Last(PageEntryError),
     Range(onionskin_plugin_api::ExportError),
     Dpi(String),
+    Quality(String),
     AlreadyInProgress,
 }
 
@@ -68,6 +74,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "Resolution must be a positive finite number, got {value:?}"
             ),
+            Self::Quality(value) => write!(
+                f,
+                "Quality must be a whole number from 1 to 100, got {value:?}"
+            ),
             Self::AlreadyInProgress => write!(f, "an export is already in progress"),
         }
     }
@@ -80,6 +90,7 @@ pub(in crate::shell) struct ExportDialogState {
     pub(super) first: Entity<SearchInput>,
     pub(super) last: Entity<SearchInput>,
     pub(super) dpi: Entity<SearchInput>,
+    pub(super) quality: Entity<SearchInput>,
     pub(super) error: Option<ValidationError>,
 }
 
@@ -107,6 +118,12 @@ impl ExportDialogState {
             input.set_query(DEFAULT_EXPORT_DPI.to_string(), cx);
             input
         });
+        let quality = cx.new(|cx| {
+            let mut input =
+                SearchInput::with_placeholder("export-quality", "Quality (1-100)", theme, cx);
+            input.set_query(DEFAULT_EXPORT_QUALITY.to_string(), cx);
+            input
+        });
         Self {
             target,
             origin,
@@ -114,6 +131,7 @@ impl ExportDialogState {
             first,
             last,
             dpi,
+            quality,
             error: None,
         }
     }
@@ -124,12 +142,16 @@ impl ExportDialogState {
         let last = parse_page_entry(self.last.read(cx).query(), self.page_count)
             .map_err(ValidationError::Last)?;
         let pages = PageRange::new(first, last, self.page_count).map_err(ValidationError::Range)?;
-        let dpi = if self.target == ExportTarget::Png {
+        let dpi = if self.target.is_raster() {
             let value = self.dpi.read(cx).query().trim();
             let dpi = value
                 .parse::<f32>()
                 .map_err(|_| ValidationError::Dpi(value.to_owned()))?;
-            let request = ExportRequest { pages, dpi };
+            let request = ExportRequest {
+                pages,
+                dpi,
+                quality: None,
+            };
             request
                 .zoom()
                 .map_err(|_| ValidationError::Dpi(value.to_owned()))?;
@@ -137,11 +159,29 @@ impl ExportDialogState {
         } else {
             DEFAULT_EXPORT_DPI
         };
-        Ok(ExportRequest { pages, dpi })
+        let quality = if self.target.is_lossy() {
+            Some(self.quality(cx)?)
+        } else {
+            None
+        };
+        Ok(ExportRequest {
+            pages,
+            dpi,
+            quality,
+        })
+    }
+
+    fn quality(&self, cx: &App) -> Result<u8, ValidationError> {
+        let value = self.quality.read(cx).query().trim();
+        value
+            .parse::<u8>()
+            .ok()
+            .filter(|quality| (1..=100).contains(quality))
+            .ok_or_else(|| ValidationError::Quality(value.to_owned()))
     }
 
     pub(super) fn set_theme(&self, theme: ThemeTokens, cx: &mut Context<ShellFrame>) {
-        for input in [&self.first, &self.last, &self.dpi] {
+        for input in [&self.first, &self.last, &self.dpi, &self.quality] {
             input.update(cx, |input, cx| input.set_theme(theme, cx));
         }
     }
@@ -168,6 +208,10 @@ pub(in crate::shell) fn accessible(
                 .dpi
                 .read(cx)
                 .accessible("Resolution (DPI)", TextField::ExportDpi),
+            Item::Quality => state
+                .quality
+                .read(cx)
+                .accessible("Quality (1-100)", TextField::ExportQuality),
             Item::Error => Element::new(
                 "export-error",
                 Role::Alert,
@@ -216,6 +260,7 @@ pub(in crate::shell) fn render(
             Item::First => field("First page", state.first.clone()).into_any_element(),
             Item::Last => field("Last page", state.last.clone()).into_any_element(),
             Item::Dpi => field("Resolution (DPI)", state.dpi.clone()).into_any_element(),
+            Item::Quality => field("Quality (1-100)", state.quality.clone()).into_any_element(),
             Item::Error => div()
                 .id("export-error")
                 .text_color(theme.error_text)

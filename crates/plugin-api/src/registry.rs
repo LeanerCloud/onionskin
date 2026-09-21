@@ -233,6 +233,9 @@ mod tests {
         ) -> Result<Vec<u8>, ExportError> {
             Ok(Vec::new())
         }
+        fn imports(&self) -> bool {
+            true
+        }
         fn reads(&self, bytes: &[u8]) -> bool {
             bytes.starts_with(b"IMP")
         }
@@ -254,6 +257,8 @@ mod tests {
             Err(crate::ImportError::NotImported)
         ));
         assert!(!TestCodec.reads(b"IMP"));
+        assert!(!TestCodec.imports());
+        assert!(registry.codecs().any(|codec| codec.imports()));
     }
 
     #[test]

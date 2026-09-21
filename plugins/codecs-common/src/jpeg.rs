@@ -17,7 +17,8 @@ use onionskin_plugin_api::{
 use crate::import::{document, dpi_or_default};
 use crate::raster::{rgb_over_white, whole_dpi};
 
-/// One JPEG per page, at the quality the codec was made with.
+/// One JPEG per page, at the quality the request asks for or, when it asks
+/// for none, the one the codec was made with.
 pub struct JpegCodec {
     quality: u8,
 }
@@ -74,7 +75,10 @@ impl CodecPlugin for JpegCodec {
             .map_err(|source| ExportError::Page { page, source })?;
         let raster = &rendered.raster;
         let mut bytes = Vec::new();
-        let mut encoder = JpegEncoder::new_with_quality(Cursor::new(&mut bytes), self.quality);
+        let quality = request
+            .quality
+            .map_or(self.quality, |asked| asked.clamp(1, 100));
+        let mut encoder = JpegEncoder::new_with_quality(Cursor::new(&mut bytes), quality);
         encoder.set_pixel_density(PixelDensity::dpi(whole_dpi(request.dpi)));
         encoder
             .encode(
@@ -88,6 +92,10 @@ impl CodecPlugin for JpegCodec {
                 source: Box::new(source),
             })?;
         Ok(bytes)
+    }
+
+    fn imports(&self) -> bool {
+        true
     }
 
     fn reads(&self, bytes: &[u8]) -> bool {

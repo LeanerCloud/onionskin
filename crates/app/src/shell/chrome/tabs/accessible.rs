@@ -21,6 +21,7 @@ use gpui::{App, Context, Entity, Focusable as _, Window};
 
 use super::context::{tab_context_entries, TabContextMenu};
 use super::export::{export_progress_label, ExportPhaseValue};
+use super::menu::MenuPanel;
 use super::{tab_element_id, ShellFrame};
 use crate::a11y::{Request as A11yRequest, State as A11yState, Step as A11yStep};
 use crate::shell::canvas::ViewAction;
@@ -28,7 +29,6 @@ use crate::shell::chrome::accessible::{
     ActivateFocused, Activation, Element as A11yElement, FocusNext, FocusNextInGroup,
     FocusPrevious, FocusPreviousInGroup, Surface, TextField,
 };
-use crate::shell::chrome::global_bar::main_menu_schema;
 use crate::shell::chrome::page_controls::{self, PageControlsState};
 use crate::shell::chrome::tool_search::SearchInput;
 use crate::shell::chrome::{quick_actions, rail, side_panel};
@@ -185,8 +185,13 @@ impl ShellFrame {
         A11yElement::new("global-bar", Role::Toolbar, "Global Bar")
             .child(
                 A11yElement::new("main-menu-button", Role::Button, "Main Menu")
-                    .with_state(A11yState::toggled(self.menus.main_menu_open))
+                    .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Main)))
                     .with_activation(Activation::ToggleMainMenu),
+            )
+            .child(
+                A11yElement::new("convert-button", Role::Button, "Convert")
+                    .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Convert)))
+                    .with_activation(Activation::ToggleConvertMenu),
             )
             .child(
                 self.tool_search
@@ -223,10 +228,7 @@ impl ShellFrame {
         // it reports line up, and keyed with the entry counter so the node
         // and the row it describes carry one identity.
         let mut entry_index = 0_usize;
-        for (section_index, section) in main_menu_schema(self.menu_state(cx))
-            .into_iter()
-            .enumerate()
-        {
+        for (section_index, section) in self.menu_panel_sections(cx).into_iter().enumerate() {
             rows.push(A11yElement::new(
                 ("main-menu-section", section_index),
                 Role::Label,
@@ -255,8 +257,11 @@ impl ShellFrame {
                 rows.push(node);
             }
         }
-        let mut menu =
-            A11yElement::new("main-menu-panel", Role::Menu, "Main Menu").with_children(rows);
+        let label = match self.menus.panel {
+            MenuPanel::Main => "Main Menu",
+            MenuPanel::Convert => "Convert",
+        };
+        let mut menu = A11yElement::new("main-menu-panel", Role::Menu, label).with_children(rows);
         self.a11y.rects.place(Surface::MainMenu, &mut menu);
         menu
     }
@@ -364,6 +369,7 @@ impl ShellFrame {
     ) {
         match activation {
             Activation::ToggleMainMenu => self.toggle_main_menu(cx),
+            Activation::ToggleConvertMenu => self.toggle_convert_menu(cx),
             Activation::MainMenu(command) => {
                 if let Err(error) = self.run_main_menu_command(command, window, cx) {
                     eprintln!("onionskin: {error}");
@@ -549,10 +555,14 @@ impl ShellFrame {
                 .export
                 .dialog
                 .as_ref()
-                .filter(|dialog| {
-                    dialog.target == crate::shell::chrome::global_bar::ExportTarget::Png
-                })
+                .filter(|dialog| dialog.target.is_raster())
                 .map(|dialog| &dialog.dpi),
+            TextField::ExportQuality => self
+                .export
+                .dialog
+                .as_ref()
+                .filter(|dialog| dialog.target.is_lossy())
+                .map(|dialog| &dialog.quality),
             TextField::CombinePages => self.organize.combine.as_ref().map(|dialog| &dialog.pages),
             TextField::SplitValue => self
                 .organize
@@ -595,6 +605,7 @@ impl ShellFrame {
                 TextField::ExportFirst,
                 TextField::ExportLast,
                 TextField::ExportDpi,
+                TextField::ExportQuality,
                 TextField::CombinePages,
                 TextField::SplitValue,
             ]

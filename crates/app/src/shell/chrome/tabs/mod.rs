@@ -1,5 +1,6 @@
 mod accessible;
 mod context;
+mod create;
 mod dialogs;
 mod export;
 mod frame_state;
@@ -8,6 +9,7 @@ mod organize;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 
+use menu::MenuPanel;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -56,6 +58,9 @@ use super::tool_search::{
 };
 
 const GLOBAL_BAR_HEIGHT: f32 = 40.0;
+/// How far from the window's right edge the Convert panel sits: past the
+/// search field, under the Convert button.
+const CONVERT_PANEL_RIGHT: f32 = 340.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
 
 /// What the chrome says when a tool will not activate. The canvas status line
@@ -721,6 +726,24 @@ impl ShellFrame {
             )
             .child(div().text_sm().child("Onionskin"))
             .child(div().flex_1())
+            .child(
+                div()
+                    .id("convert-button")
+                    .h(px(28.0))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .when(self.menus.showing(MenuPanel::Convert), |button| {
+                        button.bg(theme.selected)
+                    })
+                    .hover(move |button| button.bg(theme.subtle_hover))
+                    .on_click(cx.listener(|frame, _event, _window, cx| {
+                        frame.toggle_convert_menu(cx);
+                    }))
+                    .child("Convert"),
+            )
             .child(
                 div()
                     .w(px(320.0))
@@ -1425,8 +1448,27 @@ fn tab_element_id(path: &Path) -> Arc<Path> {
     Arc::from(path)
 }
 
+/// The encoded image on the clipboard, for any caller that makes something
+/// from one: Create PDF From Clipboard here, and a pasted stamp. GPUI owns the
+/// pasteboard, so this is the one place in the app that reads an image off
+/// it.
+pub(in crate::shell) fn clipboard_image(cx: &App) -> Result<Vec<u8>, String> {
+    let item = cx
+        .read_from_clipboard()
+        .ok_or_else(|| "The clipboard is empty".to_owned())?;
+    item.entries()
+        .iter()
+        .find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => Some(image.bytes.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| "The clipboard holds no image".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
+    mod convert;
     #[cfg(feature = "shell-test-support")]
     mod export_settings;
     #[cfg(feature = "shell-test-support")]
@@ -1567,6 +1609,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(3).unwrap(),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: ExportOutputKind::PerPage,
             page_count: 3,

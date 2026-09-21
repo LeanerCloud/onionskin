@@ -36,9 +36,12 @@ impl MenuCommand {
             MenuCommand::SaveAs,
             MenuCommand::CombineFiles,
             MenuCommand::CreateFromFiles,
+            MenuCommand::CreateFromFile,
+            MenuCommand::CreateFromClipboard,
             MenuCommand::SplitDocument,
         ];
         all.extend(ExportTarget::ALL.map(MenuCommand::Export));
+        all.push(MenuCommand::ExportAllImages);
         all.extend([
             MenuCommand::Quit,
             MenuCommand::Undo,
@@ -103,10 +106,15 @@ impl MenuCommand {
             Self::SaveAs => "file.save-as",
             Self::CombineFiles => "file.combine",
             Self::CreateFromFiles => "file.create-from-files",
+            Self::CreateFromFile => "file.create-from-file",
+            Self::CreateFromClipboard => "file.create-from-clipboard",
+            Self::ExportAllImages => "file.export-all-images",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::Export(ExportTarget::Text) => "file.export-text",
             Self::Export(ExportTarget::Png) => "file.export-png",
             Self::Export(ExportTarget::Svg) => "file.export-svg",
+            Self::Export(ExportTarget::Jpeg) => "file.export-jpeg",
+            Self::Export(ExportTarget::Tiff) => "file.export-tiff",
             Self::Quit => "file.quit",
             Self::Undo => "edit.undo",
             Self::Redo => "edit.redo",
@@ -199,6 +207,9 @@ impl MenuCommand {
             | Self::SaveAs
             | Self::CombineFiles
             | Self::CreateFromFiles
+            | Self::CreateFromFile
+            | Self::CreateFromClipboard
+            | Self::ExportAllImages
             | Self::SplitDocument
             | Self::Export(_)
             | Self::Undo

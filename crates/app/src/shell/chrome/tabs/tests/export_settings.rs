@@ -1,6 +1,8 @@
 use super::*;
 use crate::shell::chrome::accessible::TextField;
-use crate::shell::chrome::export_dialog::{items, Item, DEFAULT_EXPORT_DPI};
+use crate::shell::chrome::export_dialog::{
+    items, Item, DEFAULT_EXPORT_DPI, DEFAULT_EXPORT_QUALITY,
+};
 
 #[gpui::test]
 fn export_settings_published_bounds_follow_fields_buttons_and_error_rows(cx: &mut TestAppContext) {
@@ -56,7 +58,7 @@ fn export_settings_published_bounds_follow_fields_buttons_and_error_rows(cx: &mu
                     assert_eq!(tree.find(&"export-error".into()).is_some(), has_error);
                     assert_eq!(
                         tree.find(&"export-dpi".into()).is_some(),
-                        target == ExportTarget::Png
+                        target.is_raster()
                     );
                 })
                 .unwrap();
@@ -82,7 +84,9 @@ impl CodecPlugin for SettingsCodec {
     fn output_kind(&self) -> ExportOutputKind {
         match self.0 {
             ExportTarget::Text => ExportOutputKind::Single,
-            ExportTarget::Png | ExportTarget::Svg => ExportOutputKind::PerPage,
+            ExportTarget::Png | ExportTarget::Svg | ExportTarget::Jpeg | ExportTarget::Tiff => {
+                ExportOutputKind::PerPage
+            }
         }
     }
 
@@ -102,7 +106,7 @@ pub(super) fn settings_window(cx: &mut TestAppContext) -> gpui::WindowHandle<She
         .into_iter()
         .map(|name| {
             let mut registry = PluginRegistry::new();
-            for target in [ExportTarget::Png, ExportTarget::Text, ExportTarget::Svg] {
+            for target in ExportTarget::ALL {
                 registry.register_codec(Box::new(SettingsCodec(target)));
             }
             let model = CanvasModel::new(
@@ -130,7 +134,7 @@ fn set_field(frame: &ShellFrame, field: TextField, value: &str, cx: &mut Context
 #[gpui::test]
 fn export_settings_defaults_and_visible_items_match_the_accessible_modal(cx: &mut TestAppContext) {
     let window = settings_window(cx);
-    for target in [ExportTarget::Png, ExportTarget::Text, ExportTarget::Svg] {
+    for target in ExportTarget::ALL {
         window
             .update(cx, |frame, window, cx| {
                 frame
@@ -140,6 +144,10 @@ fn export_settings_defaults_and_visible_items_match_the_accessible_modal(cx: &mu
                 let request = dialog.request(cx).unwrap();
                 assert_eq!(request.pages.pages(), 0..=11);
                 assert_eq!(request.dpi, DEFAULT_EXPORT_DPI);
+                assert_eq!(
+                    request.quality,
+                    target.is_lossy().then_some(DEFAULT_EXPORT_QUALITY)
+                );
                 assert!(dialog.first.read(cx).focus_handle(cx).is_focused(window));
                 let tree = frame.accessible(window, cx);
                 assert!(tree.find(&"page-controls".into()).is_none());
@@ -164,6 +172,11 @@ fn export_settings_defaults_and_visible_items_match_the_accessible_modal(cx: &mu
                             Role::NumberInput,
                             Some(Activation::Focus(TextField::ExportDpi)),
                         ),
+                        Item::Quality => (
+                            "export-quality",
+                            Role::NumberInput,
+                            Some(Activation::Focus(TextField::ExportQuality)),
+                        ),
                         Item::Export => (
                             "export-submit",
                             Role::Button,
@@ -184,9 +197,13 @@ fn export_settings_defaults_and_visible_items_match_the_accessible_modal(cx: &mu
                 );
                 assert_eq!(
                     tree.find(&"export-dpi".into()).is_some(),
-                    target == ExportTarget::Png
+                    target.is_raster()
                 );
-                if target != ExportTarget::Png {
+                assert_eq!(
+                    tree.find(&"export-quality".into()).is_some(),
+                    target.is_lossy()
+                );
+                if !target.is_raster() {
                     dialog_hidden_dpi_is_ignored(frame, cx);
                 }
                 frame.close_dialog(window, cx);
@@ -203,6 +220,36 @@ fn dialog_hidden_dpi_is_ignored(frame: &ShellFrame, cx: &mut Context<ShellFrame>
         .update(cx, |input, cx| input.set_query("not a number", cx));
     assert_eq!(dialog.request(cx).unwrap().dpi, DEFAULT_EXPORT_DPI);
     assert!(frame.text_field(TextField::ExportDpi).is_none());
+}
+
+/// JPEG asks for a quality and refuses one the encoder cannot take; the
+/// request carries what the user typed, not the codec's default.
+#[gpui::test]
+fn a_jpeg_export_takes_a_quality_from_1_to_100(cx: &mut TestAppContext) {
+    let window = settings_window(cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.start_export(ExportTarget::Jpeg, window, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    for bad in ["", "0", "101", "high", "-5", "7.5"] {
+        window
+            .update(cx, |frame, _, cx| {
+                set_field(frame, TextField::ExportQuality, bad, cx);
+                let dialog = frame.export.dialog.as_ref().unwrap();
+                let refused = dialog.request(cx).expect_err("refused").to_string();
+                assert!(refused.starts_with("Quality"), "{bad:?}: {refused}");
+            })
+            .unwrap();
+    }
+    window
+        .update(cx, |frame, _, cx| {
+            set_field(frame, TextField::ExportQuality, " 40 ", cx);
+            let request = frame.export.dialog.as_ref().unwrap().request(cx).unwrap();
+            assert_eq!(request.quality, Some(40));
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -286,13 +333,19 @@ fn export_settings_reject_invalid_fields_and_recover_after_editing(cx: &mut Test
 #[gpui::test]
 fn export_settings_enter_submits_each_visible_field(cx: &mut TestAppContext) {
     let window = settings_window(cx);
-    for target in [ExportTarget::Png, ExportTarget::Text, ExportTarget::Svg] {
+    for target in ExportTarget::ALL {
         for field in [
             TextField::ExportFirst,
             TextField::ExportLast,
             TextField::ExportDpi,
+            TextField::ExportQuality,
         ] {
-            if target != ExportTarget::Png && field == TextField::ExportDpi {
+            let visible = match field {
+                TextField::ExportDpi => target.is_raster(),
+                TextField::ExportQuality => target.is_lossy(),
+                _ => true,
+            };
+            if !visible {
                 continue;
             }
             window
@@ -633,6 +686,7 @@ fn export_settings_canvas_boundary_revalidates_live_page_count(cx: &mut TestAppC
             let request = ExportRequest {
                 pages: PageRange::new(10, 15, 20).unwrap(),
                 dpi: 72.0,
+                quality: None,
             };
             assert!(canvas
                 .read(cx)
@@ -642,6 +696,7 @@ fn export_settings_canvas_boundary_revalidates_live_page_count(cx: &mut TestAppC
             let request = ExportRequest {
                 pages: PageRange::new(1, 3, 12).unwrap(),
                 dpi: 96.0,
+                quality: None,
             };
             let prepared = canvas
                 .read(cx)

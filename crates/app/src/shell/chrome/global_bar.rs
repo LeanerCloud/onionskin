@@ -16,6 +16,9 @@ pub(super) enum MenuSectionId {
     View,
     Window,
     Help,
+    /// The global bar's Convert entry point, a panel of its own rather than
+    /// a section of the main menu.
+    Convert,
 }
 
 impl MenuSectionId {
@@ -26,6 +29,7 @@ impl MenuSectionId {
             Self::View => "View",
             Self::Window => "Window",
             Self::Help => "Help",
+            Self::Convert => "Convert",
         }
     }
 }
@@ -39,11 +43,18 @@ pub(in crate::shell) enum ExportTarget {
     Text,
     Png,
     Svg,
+    Jpeg,
+    Tiff,
 }
 
 impl ExportTarget {
-    pub(super) const ALL: [ExportTarget; 3] =
-        [ExportTarget::Text, ExportTarget::Png, ExportTarget::Svg];
+    pub(super) const ALL: [ExportTarget; 5] = [
+        ExportTarget::Text,
+        ExportTarget::Png,
+        ExportTarget::Svg,
+        ExportTarget::Jpeg,
+        ExportTarget::Tiff,
+    ];
 
     /// The codec id this entry runs, as `codecs-common` registers it.
     pub(super) fn codec(self) -> &'static str {
@@ -51,6 +62,8 @@ impl ExportTarget {
             Self::Text => "text",
             Self::Png => "png",
             Self::Svg => "svg",
+            Self::Jpeg => "jpeg",
+            Self::Tiff => "tiff",
         }
     }
 
@@ -59,7 +72,19 @@ impl ExportTarget {
             Self::Text => 0,
             Self::Png => 1,
             Self::Svg => 2,
+            Self::Jpeg => 3,
+            Self::Tiff => 4,
         }
+    }
+
+    /// Whether the export is pixels, which a resolution sizes.
+    pub(in crate::shell) fn is_raster(self) -> bool {
+        matches!(self, Self::Png | Self::Jpeg | Self::Tiff)
+    }
+
+    /// Whether the export trades quality for size, which the user chooses.
+    pub(in crate::shell) fn is_lossy(self) -> bool {
+        self == Self::Jpeg
     }
 
     /// Acrobat words these "Export To ..."; the text entry says what it does
@@ -69,6 +94,8 @@ impl ExportTarget {
             Self::Text => "Export To Plain Text (Document Order)…",
             Self::Png => "Export Pages To PNG…",
             Self::Svg => "Export Pages To SVG…",
+            Self::Jpeg => "Export Pages To JPEG…",
+            Self::Tiff => "Export Pages To TIFF…",
         }
     }
 }
@@ -146,8 +173,11 @@ pub(in crate::shell) enum MenuCommand {
     SaveAs,
     CombineFiles,
     CreateFromFiles,
+    CreateFromFile,
+    CreateFromClipboard,
     SplitDocument,
     Export(ExportTarget),
+    ExportAllImages,
     CloseTab,
     CloseOtherTabs,
     CloseAllTabs,
@@ -259,6 +289,9 @@ pub(in crate::shell) struct RegistryFacts {
     snapshot_tool: bool,
     dynamic_zoom_tool: bool,
     any_tool: bool,
+    /// Whether some codec imports a format into a new document, which is
+    /// what the Create entries run.
+    image_import: bool,
     /// Why the active document may not be edited, from `core`. Carried with
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
@@ -283,6 +316,7 @@ impl RegistryFacts {
             snapshot_tool: tool_with(registry, ToolCapability::Snapshot).is_some(),
             dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
+            image_import: registry.codecs().any(|codec| codec.imports()),
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -426,15 +460,17 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: core_commands(),
                     selected: false,
                 },
-                MenuEntry {
-                    command: MenuCommand::SplitDocument,
-                    label: "Split Document…",
-                    availability: registry_command(state, MenuCommand::SplitDocument),
-                    selected: false,
-                },
             ]
             .into_iter()
+            .chain(create_entries(state))
+            .chain([MenuEntry {
+                command: MenuCommand::SplitDocument,
+                label: "Split Document…",
+                availability: registry_command(state, MenuCommand::SplitDocument),
+                selected: false,
+            }])
             .chain(export_entries(state))
+            .chain([export_all_images_entry(state)])
             .chain([MenuEntry {
                 command: MenuCommand::Quit,
                 label: "Exit",
@@ -576,9 +612,74 @@ fn page_entries(state: MenuState) -> Vec<MenuEntry> {
         .collect()
 }
 
-/// The three export formats M2 owns. The full `File > Export To` menu, with
-/// the image and Office targets behind it, is an M3 row; these three are M2
-/// rows and need a surface to be reachable from.
+/// File > Create's single-source entries. Both run a codec's import half,
+/// so they are live when some codec has one.
+fn create_entries(state: MenuState) -> [MenuEntry; 2] {
+    let availability = if state.registry.image_import {
+        MenuAvailability::Enabled
+    } else {
+        MenuAvailability::Disabled(NO_IMAGE_IMPORT)
+    };
+    [
+        MenuEntry {
+            command: MenuCommand::CreateFromFile,
+            label: "Create PDF From File…",
+            availability,
+            selected: false,
+        },
+        MenuEntry {
+            command: MenuCommand::CreateFromClipboard,
+            label: "Create PDF From Clipboard",
+            availability,
+            selected: false,
+        },
+    ]
+}
+
+/// What the Create entries say in a build with no codec that imports.
+pub(super) const NO_IMAGE_IMPORT: &str = "No installed codec makes a PDF from an image";
+
+/// Export All Images, which is `codecs-common`'s own function rather than a
+/// registered codec: an image comes out in whichever format keeps it.
+fn export_all_images_entry(state: MenuState) -> MenuEntry {
+    use MenuAvailability::{Disabled, Enabled};
+
+    MenuEntry {
+        command: MenuCommand::ExportAllImages,
+        label: "Export All Images…",
+        availability: match (cfg!(feature = "codecs-common"), state.has_active_tab) {
+            (false, _) => Disabled("The common codecs plugin is not installed"),
+            (true, false) => Disabled("No document is open"),
+            (true, true) => Enabled,
+        },
+        selected: false,
+    }
+}
+
+/// The global bar's Convert panel: one surface over creating a PDF from
+/// other formats and exporting one to them. Deliberately the formats this
+/// build has, not Acrobat's list; each entry is the File menu's own, with
+/// the same availability.
+pub(super) fn convert_section(state: MenuState) -> MenuSection {
+    let multiple = MenuEntry {
+        command: MenuCommand::CreateFromFiles,
+        label: "Create PDF From Multiple Files…",
+        availability: core_commands(),
+        selected: false,
+    };
+    MenuSection {
+        id: MenuSectionId::Convert,
+        entries: create_entries(state)
+            .into_iter()
+            .chain([multiple])
+            .chain(export_entries(state))
+            .chain([export_all_images_entry(state)])
+            .collect(),
+    }
+}
+
+/// The page export formats: M2's text, PNG and SVG, and M3's JPEG and TIFF.
+/// JPEG 2000 has no entry; `codecs-common`'s crate doc says why.
 fn export_entries(state: MenuState) -> Vec<MenuEntry> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -871,6 +972,9 @@ impl MenuCommand {
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
+            | Self::CreateFromFile
+            | Self::CreateFromClipboard
+            | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
             | Self::CloseOtherTabs
@@ -914,6 +1018,9 @@ impl MenuCommand {
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
+            | Self::CreateFromFile
+            | Self::CreateFromClipboard
+            | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
             | Self::CloseOtherTabs
@@ -1102,6 +1209,9 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Export(_)
         | MenuCommand::CombineFiles
         | MenuCommand::CreateFromFiles
+        | MenuCommand::CreateFromFile
+        | MenuCommand::CreateFromClipboard
+        | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument => Some(Box::new(RunCommand { command })),
         MenuCommand::SaveAs
         | MenuCommand::Undo
@@ -1148,6 +1258,7 @@ mod tests {
             snapshot_tool: true,
             dynamic_zoom_tool: true,
             any_tool: true,
+            image_import: true,
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -1630,12 +1741,12 @@ mod tests {
             .contains(&"Close Others (No other tabs are open)".to_owned()));
     }
 
-    /// The three formats `codecs-common` registers reach the File menu, and
+    /// The five formats `codecs-common` registers reach the File menu, and
     /// the text entry says in its own label that it does not reorder into
     /// reading order, which is the limitation the parity scoreboard defers to
     /// M6. A user reads the menu, not the codec's doc comment.
     #[test]
-    fn the_file_menu_offers_the_three_export_formats_this_milestone_ships() {
+    fn the_file_menu_offers_every_export_format_the_codecs_register() {
         let file = &main_menu_schema(menu_state(1, Some(view())))[0];
 
         let exports: Vec<_> = file
@@ -1661,6 +1772,16 @@ mod tests {
                 (
                     MenuCommand::Export(ExportTarget::Svg),
                     "Export Pages To SVG…",
+                    MenuAvailability::Enabled,
+                ),
+                (
+                    MenuCommand::Export(ExportTarget::Jpeg),
+                    "Export Pages To JPEG…",
+                    MenuAvailability::Enabled,
+                ),
+                (
+                    MenuCommand::Export(ExportTarget::Tiff),
+                    "Export Pages To TIFF…",
                     MenuAvailability::Enabled,
                 ),
             ]
@@ -1740,7 +1861,7 @@ mod tests {
         );
     }
 
-    /// One codec missing disables its own entry and leaves the other two
+    /// One codec missing disables its own entry and leaves the others
     /// alone, so the state is per format rather than all-or-nothing.
     #[test]
     fn a_missing_codec_disables_only_its_own_entry() {
@@ -1769,6 +1890,8 @@ mod tests {
                 MenuAvailability::Enabled,
                 MenuAvailability::Enabled,
                 MenuAvailability::Disabled("The common codecs plugin is not installed"),
+                MenuAvailability::Enabled,
+                MenuAvailability::Enabled,
             ]
         );
     }

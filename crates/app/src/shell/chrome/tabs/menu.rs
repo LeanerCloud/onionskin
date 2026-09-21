@@ -18,12 +18,13 @@ use gpui::{
 };
 use onionskin_plugin_api::ToolCapability;
 
-use super::{ShellFrame, TabCommand, TabError, GLOBAL_BAR_HEIGHT};
+use super::{ShellFrame, TabCommand, TabError, CONVERT_PANEL_RIGHT, GLOBAL_BAR_HEIGHT};
 use crate::preferences::{PreferenceCategory, ThemePreference};
 use crate::shell::chrome::accessible::{Activation, Surface};
 use crate::shell::chrome::combine_dialog::CombineEntryPoint;
 use crate::shell::chrome::global_bar::{
-    main_menu_schema, MenuCommand, MenuState, RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
+    convert_section, main_menu_schema, MenuCommand, MenuSection, MenuState, RegistryFacts,
+    NO_DYNAMIC_ZOOM_TOOL,
 };
 use crate::shell::chrome::tool_search::SearchSelectAll;
 use crate::shell::dialog::ShellDialog;
@@ -165,6 +166,18 @@ impl ShellFrame {
                     CombineEntryPoint::CreateFromFiles
                 };
                 self.open_combine_dialog(entry_point, window, cx);
+                Ok(())
+            }
+            MenuCommand::CreateFromFile => {
+                self.create_from_file(cx);
+                Ok(())
+            }
+            MenuCommand::CreateFromClipboard => {
+                self.create_from_clipboard(cx);
+                Ok(())
+            }
+            MenuCommand::ExportAllImages => {
+                self.export_all_images(cx);
                 Ok(())
             }
             // The registered command splits at bookmarks with no questions;
@@ -312,7 +325,19 @@ impl ShellFrame {
     }
 
     pub(super) fn toggle_main_menu(&mut self, cx: &mut Context<Self>) {
-        self.menus.main_menu_open = !self.menus.main_menu_open;
+        self.toggle_menu_panel(MenuPanel::Main, cx);
+    }
+
+    /// The global bar's Convert button.
+    pub(super) fn toggle_convert_menu(&mut self, cx: &mut Context<Self>) {
+        self.toggle_menu_panel(MenuPanel::Convert, cx);
+    }
+
+    /// Open `panel`, or close it if it is the one showing.
+    fn toggle_menu_panel(&mut self, panel: MenuPanel, cx: &mut Context<Self>) {
+        self.menus.main_menu_open = !self.menus.showing(panel);
+        self.menus.panel = panel;
+        self.menus.recent_menu_open = false;
         self.context_menus.tab_context_menu = None;
         self.context_menus.canvas_context_menu = None;
         cx.notify();
@@ -375,6 +400,15 @@ impl ShellFrame {
         cx.notify();
     }
 
+    /// The sections the menu panel shows: the whole main menu, or Convert.
+    pub(super) fn menu_panel_sections(&self, cx: &App) -> Vec<MenuSection> {
+        let state = self.menu_state(cx);
+        match self.menus.panel {
+            MenuPanel::Main => main_menu_schema(state),
+            MenuPanel::Convert => vec![convert_section(state)],
+        }
+    }
+
     pub(super) fn render_main_menu(
         &self,
         window: &Window,
@@ -390,7 +424,12 @@ impl ShellFrame {
             .id("main-menu-panel")
             .absolute()
             .top(px(GLOBAL_BAR_HEIGHT))
-            .left(px(8.0))
+            .map(|panel| match self.menus.panel {
+                MenuPanel::Main => panel.left(px(8.0)),
+                // Under the Convert button, which sits beside the search
+                // field at the bar's right.
+                MenuPanel::Convert => panel.right(px(CONVERT_PANEL_RIGHT)),
+            })
             .w(px(420.0))
             .max_h(max_height)
             .overflow_y_scroll()
@@ -400,7 +439,7 @@ impl ShellFrame {
             .text_color(theme.text);
 
         let mut menu_entry_index = 0_usize;
-        for section in main_menu_schema(self.menu_state(cx)) {
+        for section in self.menu_panel_sections(cx) {
             panel = panel.child(
                 div()
                     .mt_2()
@@ -469,8 +508,27 @@ impl ShellFrame {
 /// schema is built from, which is derived rather than stored.
 #[derive(Default)]
 pub(super) struct MenuOpenState {
+    /// Whether the menu panel is showing; `panel` says which.
     pub(super) main_menu_open: bool,
     pub(super) recent_menu_open: bool,
+    pub(super) panel: MenuPanel,
+}
+
+/// What the menu panel shows: the main menu, or the global bar's Convert
+/// entry point. One panel rather than two, so everything that closes the main
+/// menu - Escape, a click elsewhere, running an entry - closes Convert too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum MenuPanel {
+    #[default]
+    Main,
+    Convert,
+}
+
+impl MenuOpenState {
+    /// Whether `panel` is the one showing.
+    pub(super) fn showing(&self, panel: MenuPanel) -> bool {
+        self.main_menu_open && self.panel == panel
+    }
 }
 
 #[cfg(test)]

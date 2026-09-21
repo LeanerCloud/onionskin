@@ -504,6 +504,7 @@ fn field_node(
         | TextField::ExportFirst
         | TextField::ExportLast
         | TextField::ExportDpi
+        | TextField::ExportQuality
         | TextField::SplitValue => accesskit::Role::NumberInput,
         TextField::CombinePages => accesskit::Role::TextInput,
         TextField::Search | TextField::Find => accesskit::Role::SearchInput,

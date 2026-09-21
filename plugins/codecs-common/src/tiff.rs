@@ -60,6 +60,10 @@ impl CodecPlugin for TiffCodec {
         })
     }
 
+    fn imports(&self) -> bool {
+        true
+    }
+
     fn reads(&self, bytes: &[u8]) -> bool {
         bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")
     }

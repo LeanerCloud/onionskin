@@ -108,6 +108,7 @@ fn page_zero_request(page_count: usize) -> ExportRequest {
     ExportRequest {
         pages: PageRange::new(0, 0, page_count).expect("every document here has a first page"),
         dpi: DPI,
+        quality: None,
     }
 }
 

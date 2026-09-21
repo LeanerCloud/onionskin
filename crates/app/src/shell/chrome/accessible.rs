@@ -42,6 +42,8 @@ pub(in crate::shell) enum TextField {
     ExportFirst,
     ExportLast,
     ExportDpi,
+    /// The export dialog's JPEG quality.
+    ExportQuality,
     /// The Combine dialog's page selection for the file selected in its list.
     CombinePages,
     /// The Split dialog's number of pages or size.
@@ -57,6 +59,8 @@ pub(in crate::shell) enum TextField {
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::shell) enum Activation {
     ToggleMainMenu,
+    /// The global bar's Convert button, which opens its own panel.
+    ToggleConvertMenu,
     MainMenu(MenuCommand),
     ActivateTab(usize),
     TabCommand(TabCommand, usize),

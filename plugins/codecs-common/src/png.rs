@@ -52,6 +52,10 @@ impl CodecPlugin for PngCodec {
         encode(&rendered.raster, page)
     }
 
+    fn imports(&self) -> bool {
+        true
+    }
+
     fn reads(&self, bytes: &[u8]) -> bool {
         bytes.starts_with(SIGNATURE)
     }

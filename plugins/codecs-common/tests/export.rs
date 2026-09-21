@@ -49,6 +49,7 @@ fn whole(doc: &Document, dpi: f32) -> ExportRequest {
     ExportRequest {
         pages: PageRange::whole(doc.page_count()).expect("the seed has pages"),
         dpi,
+        quality: None,
     }
 }
 
@@ -158,6 +159,7 @@ fn a_range_starting_after_page_zero_does_not_gain_a_leading_separator() {
     let request = ExportRequest {
         pages: PageRange::new(1, 1, doc.page_count()).expect("the second page is a range"),
         dpi: 72.0,
+        quality: None,
     };
 
     let bytes = TextCodec
@@ -215,6 +217,7 @@ fn a_png_export_decodes_to_the_canvas_paths_own_raster() {
     let request = ExportRequest {
         pages: PageRange::whole(1).expect("one page"),
         dpi: 144.0,
+        quality: None,
     };
 
     let bytes = PngCodec
@@ -279,6 +282,7 @@ fn a_page_that_cannot_be_rendered_fails_by_page_number() {
         pages: PageRange::whole(doc.page_count()).expect("the seed has pages"),
         // Past what hayro can address on one axis, so every page fails.
         dpi: 72.0 * 5_000.0,
+        quality: None,
     };
 
     let failure = PngCodec
@@ -297,6 +301,7 @@ fn a_resolution_that_is_not_a_resolution_is_refused_before_any_page_is_read() {
         let request = ExportRequest {
             pages: PageRange::whole(1).expect("one page"),
             dpi,
+            quality: None,
         };
         assert!(
             matches!(

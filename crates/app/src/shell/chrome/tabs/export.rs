@@ -58,7 +58,7 @@ impl ShellFrame {
             self.shell_view_state.tokens(),
             cx,
         );
-        for input in [&dialog.first, &dialog.last, &dialog.dpi] {
+        for input in [&dialog.first, &dialog.last, &dialog.dpi, &dialog.quality] {
             let mut previous = input.read(cx).query().to_owned();
             cx.observe(input, move |frame, input, cx| {
                 let query = input.read(cx).query();
@@ -932,6 +932,7 @@ mod tests {
                 ExportRequest {
                     pages: PageRange::whole(canvas.model.view_state().page_count).unwrap(),
                     dpi: EXPORT_DPI,
+                    quality: None,
                 },
             )
         });
@@ -1056,6 +1057,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(page_count).expect("the fixture has pages"),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: kind,
             page_count,
@@ -1220,6 +1222,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(1).unwrap(),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: ExportOutputKind::Single,
             page_count: 1,
@@ -1300,6 +1303,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(3).unwrap(),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: ExportOutputKind::PerPage,
             page_count: 3,
@@ -1343,6 +1347,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(3).unwrap(),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: ExportOutputKind::PerPage,
             page_count: 3,
@@ -1385,6 +1390,7 @@ mod tests {
             request: ExportRequest {
                 pages: PageRange::whole(3).unwrap(),
                 dpi: 72.0,
+                quality: None,
             },
             output_kind: ExportOutputKind::PerPage,
             page_count: 3,
