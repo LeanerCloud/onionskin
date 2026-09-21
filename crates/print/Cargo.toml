@@ -4,3 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
+
+[dev-dependencies]
+onionskin-corpus-testing.workspace = true
+onionskin-content.workspace = true

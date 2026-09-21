@@ -471,3 +471,33 @@ fn a_reference_to_an_object_nobody_wrote_is_refused() {
         other => panic!("a trailer naming an object nobody wrote must be refused, got {other:?}"),
     }
 }
+
+/// What a rewrite keeps: everything the trailer reaches, and not an object
+/// nothing refers to.
+#[test]
+fn reachability_follows_references_and_leaves_out_garbage() {
+    let (mut objects, trailer) = two_pages();
+    let mut orphan = Dict::new();
+    orphan.set("Kept", Object::Bool(false));
+    objects.push((ObjRef::new(6, 0), Object::Dict(orphan)));
+    let bytes = Document::write_new(&objects, trailer).expect("writes");
+    let doc = Document::open(Box::new(BytesSource::new(bytes))).expect("opens");
+    assert_eq!(
+        doc.reachable_from_trailer().into_iter().collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5]
+    );
+    assert_eq!(
+        doc.reachable_from(vec![Object::Ref(ObjRef::new(6, 0))])
+            .into_iter()
+            .collect::<Vec<_>>(),
+        [6],
+        "from the orphan, only the orphan"
+    );
+    assert_eq!(
+        doc.reachable_from(vec![Object::Ref(ObjRef::new(3, 0))])
+            .into_iter()
+            .collect::<Vec<_>>(),
+        [2, 3, 4, 5],
+        "a page reaches its parent and so the tree, but not the catalog above it"
+    );
+}

@@ -60,9 +60,9 @@ they say "Onionskin implements N of M rows".
 **403 rows: 185 planned / 24 partial / 80 out-of-scope. 114 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
-deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
-M4 carries only two rows because its deliverables (the CUPS and Windows print
-backends) are mostly not Acrobat surface; the MCP server moved to post-1.0. 42 rows are marked
+deliberate no. By milestone: M2 67, M3 98, M4 4, M5 52, M6 45, post-1.0 57.
+M4 carries only four rows because its deliverables (the CUPS and Windows print
+backends, then booklet and poster/tile per ruling B) are mostly not Acrobat surface; the MCP server moved to post-1.0. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
 should confirm or move them. Recount with:
 
@@ -128,8 +128,8 @@ claimed. A row closed in code but reachable only through a later package's
 dialog or grid stays `planned` (Extract, Replace, Copy or move pages between
 documents: P21). Text-entry comment rows are `partial` until the comments pane
 (P20) edits `/Contents`. `Open an encrypted document` moves from M6 to M3 as
-`partial` per ruling A. P1c and P2-P7 close no rows. Booklet and Poster / tile stay at
-M3 here; the plan's ruling B move to M4 is not yet applied.
+`partial` per ruling A. P1c and P2-P7 close no rows. Booklet and Poster / tile moved to
+M4 with P15, per the plan's ruling B.
 
 | Evidence key | Live path | Automated or manual proof |
 |---|---|---|
@@ -637,18 +637,18 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Print dialog | planned | M3 | Decision 13: `crates/print` is our own pipeline, with Acrobat print-dialog parity. macOS (NSPrintOperation) at M3. |
 | Print on Linux (CUPS) | planned | M4 | |
 | Print on Windows | planned | M4 | |
-| Page range and subset (all, current, custom, odd/even) | planned | M3 | |
-| Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | planned | M3 | Named in the plan's print-parity list. |
-| Multiple pages per sheet (N-up) | planned | M3 | Named in the plan's print-parity list. |
-| Booklet | planned | M3 | Named in the plan's print-parity list. |
-| Poster / tile | planned | M3 | Named in the plan's `crates/print` dialog-parity list, so it ships with the M3 dialog. |
+| Page range and subset (all, current, custom, odd/even) | planned | M3 | Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | planned | M3 | Named in the plan's print-parity list. Fit fits to the paper, not a printer's printable area. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Multiple pages per sheet (N-up) | planned | M3 | Named in the plan's print-parity list. Order and borders included. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Booklet | planned | M4 | Moved from M3 by the M3 plan's ruling B: pure imposition over P15's sheet model, added at M4 without reopening it. |
+| Poster / tile | planned | M4 | Moved from M3 by the M3 plan's ruling B: the only placement that clips, so the clip lands with it at M4 on P15's sheet model. |
 | Print on both sides / duplex | planned | M3 | (judgment) |
-| Orientation (auto, portrait, landscape) | planned | M3 | (judgment) |
-| Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | planned | M3 | (judgment) |
+| Orientation (auto, portrait, landscape) | planned | M3 | (judgment) Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | planned | M3 | (judgment) Printed annotations are each one's normal appearance where `/F` says it prints. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
 | Page Setup dialog (paper size, orientation) | planned | M3 | (judgment) |
 | Summarize comments in the print output | planned | M3 | (judgment) |
-| Print as image | planned | M3 | Named in the plan's print-parity list. |
-| Print to file / print to PDF | planned | M3 | The plan makes the print-to-PDF-file backend the first one, so print output is testable in CI. |
+| Print as image | planned | M3 | Named in the plan's print-parity list. The only way an encrypted document prints, under the encrypted-source rule. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
+| Print to file / print to PDF | planned | M3 | The plan makes the print-to-PDF-file backend the first one, so print output is testable in CI. Engine landed in P15 (imposition and the print-to-file backend, docs/evidence/m3-p15-print-to-file.md); stays `planned` until the P17 print dialog makes it reachable. |
 | Advanced Print Setup dialog | planned | M3 | The future supported subset includes Print as Image and Print to File; Output, Marks and Bleeds, PostScript options, and print colour management remain out of scope. No usable subset has shipped. |
 | Print colour PDFs (separations, colour handling) | out-of-scope | - | Separation printing and colour handling are prepress work, permanently out of scope. |
 | Print a PDF Portfolio | planned | post-1.0 | Rides with portfolios. |

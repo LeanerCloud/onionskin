@@ -915,6 +915,45 @@ impl Document {
         )
     }
 
+    /// Every object reachable from the trailer's `/Root` and `/Info`, by
+    /// number. A reference to an object the file does not have is left out,
+    /// as a reader treats it: as null. What a rewrite keeps; everything else
+    /// in the file is garbage nothing can reach.
+    pub fn reachable_from_trailer(&self) -> BTreeSet<u32> {
+        self.reachable_from(
+            ["Root", "Info"]
+                .iter()
+                .filter_map(|key| self.trailer().get(key.as_bytes()).cloned())
+                .collect(),
+        )
+    }
+
+    /// Every object reachable from `roots`, by number, a missing one left
+    /// out as in `reachable_from_trailer`.
+    pub fn reachable_from(&self, roots: Vec<Object>) -> BTreeSet<u32> {
+        let mut reached = BTreeSet::new();
+        let mut queue = roots;
+        while let Some(object) = queue.pop() {
+            match object {
+                Object::Ref(objref) if reached.insert(objref.number) => {
+                    match self.get(objref.number) {
+                        Ok(parsed) => queue.push(parsed.object),
+                        Err(_) => {
+                            reached.remove(&objref.number);
+                        }
+                    }
+                }
+                Object::Array(items) => queue.extend(items),
+                Object::Dict(dict) => queue.extend(dict.iter().map(|(_, value)| value.clone())),
+                Object::Stream(stream) => {
+                    queue.extend(stream.dict.iter().map(|(_, value)| value.clone()))
+                }
+                _ => {}
+            }
+        }
+        reached
+    }
+
     pub fn catalog(&self) -> Result<Dict> {
         let root = self
             .trailer

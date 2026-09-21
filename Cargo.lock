@@ -4094,6 +4094,12 @@ dependencies = [
 [[package]]
 name = "onionskin-print"
 version = "0.1.0"
+dependencies = [
+ "onionskin-content",
+ "onionskin-core",
+ "onionskin-corpus-testing",
+ "onionskin-cos",
+]
 
 [[package]]
 name = "onionskin-redact"

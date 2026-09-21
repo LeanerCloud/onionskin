@@ -56,6 +56,7 @@ mod labels;
 mod links;
 mod ops;
 mod outline;
+mod print_form;
 mod rewrite;
 
 pub(crate) use rewrite::{dict_at, resolve};
@@ -69,4 +70,5 @@ pub use ops::{
     delete_pages, insert_blank_pages, insert_pages_from, move_pages, page_count,
     replace_pages_from, rotate_pages, set_page_labels, LabelRange, LabelStyle,
 };
+pub use print_form::import_page_for_print;
 pub use rewrite::{rewrite_page_tree, PageSource, Rewrite};

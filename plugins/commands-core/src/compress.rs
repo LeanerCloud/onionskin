@@ -20,8 +20,6 @@
 //! compressing one would either keep `/Encrypt` and write a file no reader
 //! opens, or drop it and write a decrypted copy.
 
-use std::collections::BTreeSet;
-
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage, ImageFormat, RgbImage};
@@ -123,7 +121,7 @@ pub fn compress(
     }
     let before = doc.bytes().len();
     let source = doc.structure()?;
-    let reached = reachable(source)?;
+    let reached = source.reachable_from_trailer();
     let in_use = source
         .xref()
         .iter()
@@ -180,35 +178,6 @@ fn new_trailer(old: &Dict) -> Dict {
         }
     }
     trailer
-}
-
-/// Every object number reachable from the trailer's catalog and
-/// information dictionary.
-fn reachable(doc: &CosDocument) -> Result<BTreeSet<u32>, CompressError> {
-    let mut reached = BTreeSet::new();
-    let mut queue: Vec<Object> = ["Root", "Info"]
-        .iter()
-        .filter_map(|key| doc.trailer().get(key.as_bytes()).cloned())
-        .collect();
-    while let Some(object) = queue.pop() {
-        match object {
-            // A reference to nothing is kept out, as a reader treats it: as
-            // null.
-            Object::Ref(objref) if reached.insert(objref.number) => match doc.get(objref.number) {
-                Ok(parsed) => queue.push(parsed.object),
-                Err(_) => {
-                    reached.remove(&objref.number);
-                }
-            },
-            Object::Array(items) => queue.extend(items),
-            Object::Dict(dict) => queue.extend(dict.iter().map(|(_, value)| value.clone())),
-            Object::Stream(stream) => {
-                queue.extend(stream.dict.iter().map(|(_, value)| value.clone()))
-            }
-            _ => {}
-        }
-    }
-    Ok(reached)
 }
 
 /// The most pixels along its longer side `image` should keep, or `None`
