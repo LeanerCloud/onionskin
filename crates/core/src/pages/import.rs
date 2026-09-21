@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use onionskin_cos::{Dict, Document as CosDocument, Name, ObjRef, Object};
 
-use super::inherit::walk;
+use super::inherit::{walk, Leaf};
 use crate::edit::Transaction;
 use crate::{Error, Result};
 
@@ -67,6 +67,13 @@ impl Sink for Transaction<'_> {
 pub(crate) struct NewDocument {
     pub(crate) objects: Vec<(ObjRef, Object)>,
     next: u32,
+}
+
+impl NewDocument {
+    /// The number the next reservation will get.
+    pub(crate) fn next_number(&self) -> u32 {
+        self.next + 1
+    }
 }
 
 impl Sink for NewDocument {
@@ -104,123 +111,43 @@ pub(crate) fn copy_pages(
     source: &CosDocument,
     pages: &[usize],
 ) -> Result<Vec<ObjRef>> {
-    crate::protection::read_out(source).map_err(Error::Protected)?;
+    let leaves = source_leaves(source)?;
+    let mut copier = Copier::new(source, &leaves, pages, None)?;
+    let placed = copier.pages(sink, &leaves, pages)?;
+    copier.drain(sink)?;
+    Ok(placed)
+}
 
+/// Every page of `source`, in order, refusing an encrypted one first: nothing
+/// is read out of a document the encrypted-source rule protects.
+pub(crate) fn source_leaves(source: &CosDocument) -> Result<Vec<Leaf>> {
+    crate::protection::read_out(source).map_err(Error::Protected)?;
     let root = source
         .catalog()?
         .get(b"Pages")
         .and_then(Object::as_reference)
         .ok_or(Error::NoPageTree)?;
-    let leaves = {
-        let mut resolve = |number: u32| -> Result<Option<Object>> {
-            Ok(source.get(number).ok().map(|parsed| parsed.object))
-        };
-        walk(root, &mut resolve)?
+    let mut resolve = |number: u32| -> Result<Option<Object>> {
+        Ok(source.get(number).ok().map(|parsed| parsed.object))
     };
-    for page in pages {
-        if *page >= leaves.len() {
-            return Err(Error::NoSuchPage {
-                page: *page,
-                count: leaves.len(),
-            });
-        }
-    }
-
-    let mut copier = Copier {
-        source,
-        map: BTreeMap::new(),
-        queue: VecDeque::new(),
-        imported_pages: pages
-            .iter()
-            .map(|index| leaves[*index].objref.number)
-            .collect(),
-        copied: 0,
-    };
-
-    // The pages first, so a reference from one imported page's annotation to
-    // another imported page resolves to the new page rather than to null.
-    let mut placed = Vec::with_capacity(pages.len());
-    for index in pages {
-        let number = leaves[*index].objref.number;
-        placed.push(copier.number_for(sink, number));
-    }
-    for index in pages {
-        let leaf = &leaves[*index];
-        // Materialized now, on the source's tree, so the copy does not depend
-        // on ancestors it will never have.
-        let mut dict = leaf.materialized(leaf.objref);
-        for key in [b"Parent".as_slice(), b"B", b"StructParents"] {
-            dict.remove(key);
-        }
-        let rewritten = copier.rewrite(sink, Object::Dict(dict))?;
-        let target = copier.map[&leaf.objref.number];
-        sink.write(target.number, rewritten)?;
-    }
-
-    // Everything the pages reach, breadth first.
-    while let Some(number) = copier.queue.pop_front() {
-        copier.copied += 1;
-        if copier.copied > MAX_OBJECTS {
-            return Err(Error::PageTreeTooLarge {
-                depth: 0,
-                visits: copier.copied,
-            });
-        }
-        let target = copier.map[&number];
-        let object = match source.get(number) {
-            Ok(parsed) => parsed.object,
-            // A reference the source itself cannot resolve is copied as null,
-            // which is what it already meant there.
-            Err(_) => Object::Null,
-        };
-        let object = strip_structure_keys(object);
-        let rewritten = copier.rewrite(sink, object)?;
-        sink.write(target.number, rewritten)?;
-    }
-    Ok(placed)
+    walk(root, &mut resolve)
 }
 
 /// Extract `pages` of `source` into a new document, returned as its bytes.
 ///
-/// The same transitive copy as [`import_pages`], written into a fresh object
-/// list and serialized by `cos::Document::write_new`. Refuses an encrypted
-/// source: an extracted copy is exactly the silently decrypted file the
-/// encrypted-source rule exists to prevent.
+/// An [`super::Assembly`] of one part, so it is the same transitive copy as
+/// [`import_pages`] and keeps the structure tree when every page comes.
+/// Refuses an encrypted source: an extracted copy is exactly the silently
+/// decrypted file the encrypted-source rule exists to prevent.
 pub fn extract_pages(source: &CosDocument, pages: &[usize]) -> Result<Vec<u8>> {
-    if pages.is_empty() {
-        return Err(Error::WouldLeaveNoPages);
-    }
-    let mut document = NewDocument::default();
-    let placed = copy_pages(&mut document, source, pages)?;
-
-    let tree = ObjRef::new(document.reserve(), 0);
-    let catalog = ObjRef::new(document.reserve(), 0);
-    for (objref, object) in &mut document.objects {
-        if placed.contains(objref) {
-            if let Object::Dict(page) = object {
-                page.set(Name::new("Parent"), Object::Ref(tree));
-            }
-        }
-    }
-    let mut pages_node = Dict::new();
-    pages_node.set(Name::new("Type"), Object::name("Pages"));
-    pages_node.set(Name::new("Count"), Object::Integer(placed.len() as i64));
-    pages_node.set(
-        Name::new("Kids"),
-        Object::Array(placed.iter().map(|objref| Object::Ref(*objref)).collect()),
-    );
-    document.write(tree.number, Object::Dict(pages_node))?;
-    let mut catalog_dict = Dict::new();
-    catalog_dict.set(Name::new("Type"), Object::name("Catalog"));
-    catalog_dict.set(Name::new("Pages"), Object::Ref(tree));
-    document.write(catalog.number, Object::Dict(catalog_dict))?;
-
-    let mut trailer = Dict::new();
-    trailer.set(Name::new("Root"), Object::Ref(catalog));
-    Ok(CosDocument::write_new(&document.objects, trailer)?)
+    let mut assembly = super::Assembly::new();
+    assembly.append(source, pages)?;
+    Ok(assembly.finish()?.bytes)
 }
 
-struct Copier<'s> {
+/// One source document's copy into one destination: the number map, the
+/// objects still to copy, and what to do with structure keys.
+pub(crate) struct Copier<'s> {
     source: &'s CosDocument,
     /// Source object number to its number in the destination.
     map: BTreeMap<u32, ObjRef>,
@@ -229,9 +156,121 @@ struct Copier<'s> {
     /// The pages being imported. Any other page of the source is not followed.
     imported_pages: BTreeSet<u32>,
     copied: usize,
+    /// `None`: `/StructParents` and `/StructParent` index the source's
+    /// `/ParentTree`, which does not come, so they are dropped. `Some(offset)`:
+    /// the source's structure tree is coming too, merged with others, and its
+    /// keys move up by `offset` so they cannot collide.
+    structure_offset: Option<i64>,
 }
 
-impl Copier<'_> {
+impl<'s> Copier<'s> {
+    /// A copier for `pages` of `source`, whose leaves the caller already walked.
+    pub(crate) fn new(
+        source: &'s CosDocument,
+        leaves: &[Leaf],
+        pages: &[usize],
+        structure_offset: Option<i64>,
+    ) -> Result<Self> {
+        for page in pages {
+            if *page >= leaves.len() {
+                return Err(Error::NoSuchPage {
+                    page: *page,
+                    count: leaves.len(),
+                });
+            }
+        }
+        Ok(Self {
+            source,
+            map: BTreeMap::new(),
+            queue: VecDeque::new(),
+            imported_pages: pages
+                .iter()
+                .map(|index| leaves[*index].objref.number)
+                .collect(),
+            copied: 0,
+            structure_offset,
+        })
+    }
+
+    /// Make every reference to the source's object `number` mean `target`
+    /// instead, without copying it: a merged structure tree's root stands in
+    /// for each source's own.
+    pub(crate) fn redirect(&mut self, number: u32, target: ObjRef) {
+        self.map.insert(number, target);
+    }
+
+    /// Copy the page dictionaries of `pages`, returning their new references
+    /// in order. What they reach is queued; [`Copier::drain`] copies it.
+    pub(crate) fn pages(
+        &mut self,
+        sink: &mut dyn Sink,
+        leaves: &[Leaf],
+        pages: &[usize],
+    ) -> Result<Vec<ObjRef>> {
+        // Numbered first, so a reference from one imported page's annotation
+        // to another imported page resolves to the new page, not to null.
+        let placed: Vec<ObjRef> = pages
+            .iter()
+            .map(|index| self.number_for(sink, leaves[*index].objref.number))
+            .collect();
+        for index in pages {
+            let leaf = &leaves[*index];
+            // Materialized now, on the source's tree, so the copy does not depend
+            // on ancestors it will never have.
+            let mut dict = leaf.materialized(leaf.objref);
+            dict.remove(b"Parent");
+            dict.remove(b"B");
+            let dict = self.structure_keys(dict, b"StructParents");
+            let rewritten = self.rewrite(sink, Object::Dict(dict))?;
+            let target = self.map[&leaf.objref.number];
+            sink.write(target.number, rewritten)?;
+        }
+        Ok(placed)
+    }
+
+    /// Copy everything queued, and everything that reaches, breadth first.
+    pub(crate) fn drain(&mut self, sink: &mut dyn Sink) -> Result<()> {
+        while let Some(number) = self.queue.pop_front() {
+            self.copied += 1;
+            if self.copied > MAX_OBJECTS {
+                return Err(Error::PageTreeTooLarge {
+                    depth: 0,
+                    visits: self.copied,
+                });
+            }
+            let target = self.map[&number];
+            let object = match self.source.get(number) {
+                Ok(parsed) => parsed.object,
+                // A reference the source itself cannot resolve is copied as
+                // null, which is what it already meant there.
+                Err(_) => Object::Null,
+            };
+            let object = match object {
+                Object::Dict(dict) => Object::Dict(self.structure_keys(dict, b"StructParent")),
+                other => other,
+            };
+            let rewritten = self.rewrite(sink, object)?;
+            sink.write(target.number, rewritten)?;
+        }
+        Ok(())
+    }
+
+    /// `/StructParents` or `/StructParent`, dropped or moved up by the offset.
+    fn structure_keys(&self, mut dict: Dict, key: &[u8]) -> Dict {
+        match (
+            self.structure_offset,
+            dict.get(key).and_then(Object::as_integer),
+        ) {
+            (Some(offset), Some(value)) => {
+                dict.set(Name(key.to_vec()), Object::Integer(value + offset));
+            }
+            _ => {
+                dict.remove(key);
+            }
+        }
+        dict
+    }
+
     /// The destination number for a source object, reserving one on first
     /// sight. Reserved **before** the object is read, which is what makes a
     /// cycle terminate: the second time round, the number is already there.
@@ -246,7 +285,7 @@ impl Copier<'_> {
 
     /// Every reference inside `object`, rewritten into the destination, and
     /// every newly seen target queued for copying.
-    fn rewrite(&mut self, sink: &mut dyn Sink, object: Object) -> Result<Object> {
+    pub(crate) fn rewrite(&mut self, sink: &mut dyn Sink, object: Object) -> Result<Object> {
         Ok(match object {
             Object::Ref(objref) => {
                 if let Some(existing) = self.map.get(&objref.number) {
@@ -303,17 +342,5 @@ impl Copier<'_> {
                 .map(Name::as_bytes),
             Some(b"Page") | Some(b"Pages")
         )
-    }
-}
-
-/// An annotation's `/StructParent` indexes the source's `/ParentTree`, which
-/// does not come with it.
-fn strip_structure_keys(object: Object) -> Object {
-    match object {
-        Object::Dict(mut dict) => {
-            dict.remove(b"StructParent");
-            Object::Dict(dict)
-        }
-        other => other,
     }
 }

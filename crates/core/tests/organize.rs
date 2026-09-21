@@ -25,7 +25,7 @@ use onionskin_corpus_testing::{encrypted_fixture, organize_fixture};
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, ObjRef, Object};
 
 mod common;
-use common::{pdf, stream};
+use common::{deep, flat, pdf, tagged};
 
 // ---------------------------------------------------------------------------
 // The operations, each on a flat tree and a deep one
@@ -966,92 +966,6 @@ fn reading_order(document: &CosDocument) -> Vec<u32> {
 
 fn shapes() -> [(&'static str, Vec<u8>); 2] {
     [("flat", flat(4)), ("deep", deep())]
-}
-
-fn page_text(index: usize) -> Vec<u8> {
-    stream(&format!("BT /F1 24 Tf 72 700 Td (Page {index}) Tj ET"))
-}
-
-const FONT: &[u8] = b"<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>";
-
-/// `count` pages under one `/Pages` node, sharing one resource dictionary, each
-/// saying "Page n".
-fn flat(count: usize) -> Vec<u8> {
-    let first_page = 3;
-    let resources = first_page + count;
-    let first_content = resources + 1;
-    let kids: Vec<String> = (0..count)
-        .map(|index| format!("{} 0 R", first_page + index))
-        .collect();
-    let mut objects = vec![
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        format!(
-            "<< /Type /Pages /Kids [{}] /Count {count} /MediaBox [0 0 612 792] /Resources {resources} 0 R >>",
-            kids.join(" ")
-        )
-        .into_bytes(),
-    ];
-    for index in 0..count {
-        objects.push(
-            format!(
-                "<< /Type /Page /Parent 2 0 R /Contents {} 0 R >>",
-                first_content + index
-            )
-            .into_bytes(),
-        );
-    }
-    objects.push(FONT.to_vec());
-    for index in 0..count {
-        objects.push(page_text(index + 1));
-    }
-    pdf(&objects)
-}
-
-/// Four pages two levels down: the first two inherit `/Rotate 270` from their
-/// node, the last two a different `/MediaBox` from theirs, and all four their
-/// resources from the root.
-fn deep() -> Vec<u8> {
-    let mut objects = vec![
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 4 /MediaBox [0 0 612 792] /Resources 9 0 R >>"
-            .to_vec(),
-        b"<< /Type /Pages /Parent 2 0 R /Kids [5 0 R 6 0 R] /Count 2 /Rotate 270 >>".to_vec(),
-        b"<< /Type /Pages /Parent 2 0 R /Kids [7 0 R 8 0 R] /Count 2 /MediaBox [0 0 400 600] >>"
-            .to_vec(),
-        b"<< /Type /Page /Parent 3 0 R /Contents 10 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 3 0 R /Contents 11 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 4 0 R /Contents 12 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 4 0 R /Contents 13 0 R >>".to_vec(),
-        FONT.to_vec(),
-    ];
-    objects.extend((1..=4).map(page_text));
-    pdf(&objects)
-}
-
-/// Three tagged pages, each one paragraph with its text marked as MCID 0.
-fn tagged() -> Vec<u8> {
-    let mut objects = vec![
-        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 10 0 R /MarkInfo << /Marked true >> >>".to_vec(),
-        b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 612 792] /Resources 6 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /StructParents 0 /Contents 7 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /StructParents 1 /Contents 8 0 R >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /StructParents 2 /Contents 9 0 R >>".to_vec(),
-        FONT.to_vec(),
-    ];
-    objects.extend((1..=3).map(|index| {
-        stream(&format!(
-            "/P << /MCID 0 >> BDC BT /F1 24 Tf 72 700 Td (Page {index}) Tj ET EMC"
-        ))
-    }));
-    objects.push(
-        b"<< /Type /StructTreeRoot /K [11 0 R 12 0 R 13 0 R] /ParentTree << /Nums [0 [11 0 R] 1 [12 0 R] 2 [13 0 R]] >> /ParentTreeNextKey 3 >>".to_vec(),
-    );
-    for page in 3..=5 {
-        objects.push(
-            format!("<< /Type /StructElem /S /P /P 10 0 R /Pg {page} 0 R /K 0 >>").into_bytes(),
-        );
-    }
-    pdf(&objects)
 }
 
 /// Two pages; the first carries a link whose destination is the second.

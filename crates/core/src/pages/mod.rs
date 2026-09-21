@@ -47,6 +47,7 @@
 //! length of the list.
 
 mod actions;
+mod assemble;
 mod destinations;
 mod fields;
 mod import;
@@ -59,6 +60,7 @@ mod rewrite;
 mod threads;
 mod tree;
 
+pub use assemble::{Assembled, Assembly, Tagging, Untagged};
 pub use import::{extract_pages, import_pages};
 pub(crate) use ops::current_page_count;
 pub use ops::{
