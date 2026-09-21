@@ -10,6 +10,7 @@ upstream, what is generated locally, and what is still to be built.
 |---|---|---|
 | `seeds/` | yes | `make-seeds.py`, committed output |
 | `encrypted/` | yes | `make-encrypted.py` through qpdf, committed output |
+| `organize/` | yes | `make-organize.py` through reportlab and pikepdf, committed output |
 | `malformed/` | no | `make-malformed.sh` from `seeds/` |
 | `bench/` | no | `make-bench.py`, no inputs |
 | `external/` | no | `fetch.sh` from pinned upstream revisions |
@@ -34,6 +35,20 @@ for byte: AES needs a random IV per string and stream, and the `/R` 6 file key
 is random. Re-running `make-encrypted.py` produces equivalent fixtures with
 different bytes, which is why the tests assert decrypted content and never
 compare files.
+
+## `organize/` (1 file)
+
+`embedded-font.pdf`, the source document for P11's importer render
+comparison: page 1 draws text in an embedded, subset TrueType font (DejaVu
+Sans) whose outlines sit in a `/FontFile2` three references below the page,
+beside an image XObject, a form XObject whose resources name the form itself (a
+legal cycle), and a `/Text` annotation with its own appearance stream. Page 2
+carries different text, so a reorder is visible in extracted text.
+
+Committed so the one assertion that catches a one-level-deep importer runs on
+every checkout: a fixture CI never fetches is a comparison CI never makes.
+Deterministic - reportlab's `invariant=1` and pikepdf's deterministic IDs - so
+re-running `make-organize.py` reproduces it byte for byte.
 
 ## Quick start
 

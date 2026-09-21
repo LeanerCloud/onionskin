@@ -198,7 +198,15 @@ pub struct Transaction<'a> {
     index: BTreeMap<ChangeKey, usize>,
 }
 
-impl Transaction<'_> {
+impl<'a> Transaction<'a> {
+    /// The document the transaction edits, as it was opened: what a verb reads
+    /// a structure tree from, and what an importer measures its source against.
+    /// Read-only, like every other way in: the only writes go through
+    /// [`Transaction::put_object`] and [`Transaction::set_trailer`].
+    pub fn base(&self) -> &'a CosDocument {
+        self.base
+    }
+
     /// The current value at a number: the overlay's if it has one, else the
     /// base's, else `None`.
     pub fn object(&self, number: u32) -> Result<Option<ObjectState>> {

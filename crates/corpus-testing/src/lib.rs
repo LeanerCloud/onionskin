@@ -97,12 +97,26 @@ pub fn seed(name: &str) -> PathBuf {
 /// because a suite proving the encrypted-source rule must not be able to pass
 /// over an empty directory.
 pub fn encrypted_fixture(name: &str) -> PathBuf {
+    committed("encrypted", name, "run corpus/make-encrypted.py")
+}
+
+/// One of the committed page-organization fixtures under `corpus/organize`.
+///
+/// Committed for the same reason as the encrypted ones: the importer's render
+/// comparison is the only test that catches a one-level-deep importer, and a
+/// fixture CI never fetches is an assertion CI never runs.
+pub fn organize_fixture(name: &str) -> PathBuf {
+    committed("organize", name, "run corpus/make-organize.py")
+}
+
+/// A committed fixture: never skips, and names the generator when it is absent.
+fn committed(dir: &str, name: &str, remedy: &str) -> PathBuf {
     let root = corpus_root()
         .unwrap_or_else(|| panic!("no corpus found; set ONIONSKIN_CORPUS to the corpus directory"));
-    let path = root.join("encrypted").join(name);
+    let path = root.join(dir).join(name);
     assert!(
         path.is_file(),
-        "{} holds no encrypted fixture {name}; run corpus/make-encrypted.py",
+        "{} holds no {dir} fixture {name}; {remedy}",
         root.display()
     );
     path

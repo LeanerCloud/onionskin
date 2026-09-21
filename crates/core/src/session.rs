@@ -78,6 +78,13 @@ pub enum Error {
     /// Refused by `core::protection`: an edit, or a read-out into another
     /// document, of an encrypted document.
     Protected(crate::protection::Refusal),
+    /// A page-set edit would leave the document with no pages.
+    WouldLeaveNoPages,
+    /// Replace Pages was given a different number of replacements and targets.
+    ReplacementCountMismatch {
+        replacements: usize,
+        targets: usize,
+    },
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -100,6 +107,16 @@ impl fmt::Display for Error {
                 write!(f, "the document has no indirect /Pages to rewrite")
             }
             Error::Protected(refusal) => write!(f, "{refusal}"),
+            Error::WouldLeaveNoPages => {
+                write!(f, "a document has to keep at least one page")
+            }
+            Error::ReplacementCountMismatch {
+                replacements,
+                targets,
+            } => write!(
+                f,
+                "{replacements} replacement pages for {targets} pages to replace"
+            ),
             Error::RepeatedPage { index } => write!(
                 f,
                 "the new page order names page {} twice; copy it through the importer instead",
@@ -157,6 +174,8 @@ impl std::error::Error for Error {
             Error::SearchWorker(e) => Some(e),
             Error::Protected(e) => Some(e),
             Error::EncryptedUnsupported
+            | Error::WouldLeaveNoPages
+            | Error::ReplacementCountMismatch { .. }
             | Error::NoPageTree
             | Error::RepeatedPage { .. }
             | Error::PageTreeTooLarge { .. }
@@ -260,7 +279,14 @@ pub struct Document {
     bytes: Arc<Vec<u8>>,
     cos: onionskin_cos::Document,
     provenance: Provenance,
-    page_count: usize,
+    /// Pages in [`Document::cos`], the file as last opened or saved.
+    opened_page_count: usize,
+    /// Pages with the overlay applied, keyed by the edit epoch it was counted
+    /// at. A page-organization edit changes the count without touching the
+    /// file, and every caller of [`Document::page_count`] - the viewport, the
+    /// render bounds check, a command's current page - means the document the
+    /// user sees.
+    counted: std::cell::Cell<Option<(u64, usize)>>,
     render: WorkerHandle,
     pending_geometry: BTreeSet<PageIndex>,
     geometry: PageCache<PageGeometry>,
@@ -334,7 +360,8 @@ impl Document {
             bytes,
             cos,
             provenance,
-            page_count,
+            opened_page_count: page_count,
+            counted: std::cell::Cell::new(None),
             render,
             pending_geometry: BTreeSet::new(),
             geometry: PageCache::new(PAGE_CACHE_LIMIT),
@@ -369,6 +396,24 @@ impl Document {
     /// against the wrong document.
     pub fn edit_mut(&mut self) -> (&mut crate::EditSession, &onionskin_cos::Document) {
         (&mut self.edit, &self.cos)
+    }
+
+    /// Run a page-organization edit as one undoable step, handing it the
+    /// structure tree as this session currently has it.
+    ///
+    /// The tree is read from the preview rather than from the file, because
+    /// P4's hooks rewrite structure elements from the tree they are given: a
+    /// second page edit handed the file's tree would put back what the first
+    /// one removed. Every page-order operation in [`crate::pages`] takes the
+    /// tree for that reason, and this is where a session gets the right one.
+    pub fn edit_pages<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
+    ) -> Result<T> {
+        let structure = crate::read_structure(self.structure()?)?;
+        self.edit
+            .transact(&self.cos, label, |tx| body(tx, &structure))
     }
 
     /// Whether the document differs from its last save.
@@ -421,12 +466,17 @@ impl Document {
     fn write_to(&mut self, path: &Path, saved_as: bool) -> Result<crate::SaveOutcome> {
         let (bytes, cos, appended) =
             crate::save::write_and_reopen(&self.bytes, &self.cos, &self.edit, path)?;
+        // Counted before anything is replaced: the overlay is about to be
+        // emptied, so the saved file's own count becomes the answer.
+        let opened_page_count = content::page_count(&cos)?;
 
         // Only past the reopen is any of this touched, so a failed reopen
         // leaves the session exactly as it was.
         let previous_path = self.path.replace(path.to_path_buf());
         self.bytes = bytes;
         self.cos = cos;
+        self.opened_page_count = opened_page_count;
+        self.counted.set(None);
         self.edit.rebase(&self.cos);
         self.bump_generation();
 
@@ -534,7 +584,7 @@ impl Document {
             Arc::clone(&self.bytes),
             &self.cos,
             &self.edit,
-            self.page_count,
+            self.page_count(),
             self.byte_generation,
             filter,
         )
@@ -625,7 +675,7 @@ impl Document {
             onionskin_cos::Document::open(Box::new(BytesSource::from_shared(Arc::clone(&bytes))))?;
         self.bytes = bytes;
         self.cos = cos;
-        self.page_count = content::page_count(&self.cos)?;
+        self.opened_page_count = content::page_count(&self.cos)?;
         // The stack described bytes that no longer exist, so it goes with them.
         self.edit.forget(&self.cos);
         Ok(())
@@ -663,8 +713,28 @@ impl Document {
         &self.provenance
     }
 
+    /// How many pages the document has **as edited**: an inserted page counts
+    /// before it is saved, and an undone delete gives its page back.
+    ///
+    /// Walked through the overlay rather than read from a preview, so asking
+    /// costs no copy of the file; cached per edit epoch, so asking twice costs
+    /// nothing. A tree the walk refuses falls back to the count the file opened
+    /// with, which is what every reader saw before the edit.
     pub fn page_count(&self) -> usize {
-        self.page_count
+        let overlay = self.edit.overlay();
+        if overlay.is_empty() {
+            return self.opened_page_count;
+        }
+        let epoch = self.edit.epoch();
+        if let Some((seen, count)) = self.counted.get() {
+            if seen == epoch {
+                return count;
+            }
+        }
+        let count =
+            crate::pages::current_page_count(overlay, &self.cos).unwrap_or(self.opened_page_count);
+        self.counted.set(Some((epoch, count)));
+        count
     }
 
     pub fn page_geometry(&mut self, index: PageIndex) -> Result<&PageGeometry> {
@@ -789,10 +859,10 @@ impl Document {
     }
 
     fn check_page(&self, page: PageIndex) -> Result<()> {
-        if page >= self.page_count {
+        if page >= self.page_count() {
             return Err(Error::NoSuchPage {
                 page,
-                count: self.page_count,
+                count: self.page_count(),
             });
         }
         Ok(())
@@ -802,7 +872,7 @@ impl Document {
     pub fn outline(&mut self) -> Result<&[OutlineItem]> {
         self.sync_epoch();
         if self.outline.is_none() {
-            let page_count = self.page_count;
+            let page_count = self.page_count();
             let items = outline::read(self.structure()?, page_count)?;
             self.outline = Some(items);
         }
@@ -959,10 +1029,10 @@ impl Document {
         options: SearchOptions,
         start_page: PageIndex,
     ) -> Result<bool> {
-        if start_page >= self.page_count {
+        if start_page >= self.page_count() {
             return Err(Error::NoSuchPage {
                 page: start_page,
-                count: self.page_count,
+                count: self.page_count(),
             });
         }
         // A walk that died is worth repeating even when the query has not
@@ -980,7 +1050,15 @@ impl Document {
             Some(worker) => worker,
             slot => slot.insert(DocumentSearch::spawn(Arc::clone(&self.bytes))?),
         };
-        if let Err(error) = worker.start(needle, options, start_page, self.page_count) {
+        // The worker walks the bytes it was spawned over, which are the file as
+        // opened, so it is told that file's page count.
+        let searched = self.opened_page_count;
+        if let Err(error) = worker.start(
+            needle,
+            options,
+            start_page.min(searched.saturating_sub(1)),
+            searched,
+        ) {
             // The worker died since the last poll. Same policy as polling: the
             // find is lost and says so, the handle goes, and the next query
             // starts a fresh one, which a stopped walk allows even unchanged.

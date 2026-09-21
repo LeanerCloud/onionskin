@@ -49,12 +49,20 @@
 mod actions;
 mod destinations;
 mod fields;
+mod import;
 mod inherit;
 mod labels;
 mod links;
+mod ops;
 mod outline;
 mod rewrite;
 mod threads;
 mod tree;
 
+pub use import::{extract_pages, import_pages};
+pub(crate) use ops::current_page_count;
+pub use ops::{
+    delete_pages, insert_blank_pages, insert_pages_from, move_pages, page_count,
+    replace_pages_from, rotate_pages, set_page_labels, LabelRange, LabelStyle,
+};
 pub use rewrite::{rewrite_page_tree, PageSource, Rewrite};
