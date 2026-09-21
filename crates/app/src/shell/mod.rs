@@ -1076,6 +1076,7 @@ fn status_text(status: &CanvasStatus) -> String {
             page: None,
             message,
         } => message.clone(),
+        CanvasStatus::Notice { message } => message.clone(),
     }
 }
 

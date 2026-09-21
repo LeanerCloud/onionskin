@@ -324,6 +324,12 @@ pub enum CanvasStatus {
         page: Option<PageIndex>,
         message: String,
     },
+    /// Something the user should know about the document as a whole, from the
+    /// moment it opens: that an encrypted document is read-only, and why. Not
+    /// an error - nothing failed - and not a page's warning.
+    Notice {
+        message: String,
+    },
 }
 
 pub struct PagePaint {
@@ -470,6 +476,11 @@ impl CanvasModel {
                     viewport: &mut viewport,
                 });
         }
+        // Said at open rather than at the first refused edit, so the user
+        // knows before starting work they cannot keep.
+        let status = document
+            .protection_notice()
+            .map(|message| CanvasStatus::Notice { message });
         Ok(Self {
             document,
             viewport,
@@ -486,7 +497,7 @@ impl CanvasModel {
             signature: None,
             canvas_origin: ViewPoint::default(),
             image_cache: TileImageCache::default(),
-            status: None,
+            status,
             waiting: None,
             responses: 0,
             pending_reveal: None,
@@ -503,6 +514,18 @@ impl CanvasModel {
 
     pub fn registry(&self) -> &PluginRegistry {
         &self.registry
+    }
+
+    /// Why the open document may not be edited, as the short reason a disabled
+    /// entry shows, or `None` when it may. Asked of `core`, which derives it
+    /// from the document; the shell holds no flag of its own.
+    pub fn edit_refusal(&self) -> Option<&'static str> {
+        self.document.edit_refusal().map(|refusal| refusal.reason())
+    }
+
+    /// What to tell the user about this document when it opens, if anything.
+    pub fn protection_notice(&self) -> Option<String> {
+        self.document.protection_notice()
     }
 
     /// True when this build has the codec a menu entry would run.
@@ -2705,6 +2728,35 @@ mod tests {
             VIEWPORT,
         )
         .expect("canvas starts")
+    }
+
+    /// P1b's open-time notice: an encrypted document says it is read-only,
+    /// and why, from the first frame - before the user starts work they could
+    /// not keep - and a plain one says nothing.
+    #[test]
+    fn an_encrypted_document_opens_with_a_notice_and_a_plain_one_without() {
+        let encrypted =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/encrypted/r4-aes-128.pdf");
+        let mut model = CanvasModel::new(
+            Document::open_path(&encrypted).expect("an encrypted document opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        model.update().expect("the first frame runs");
+        let Some(CanvasStatus::Notice { message }) = model.status() else {
+            panic!("no open-time notice: {:?}", model.status());
+        };
+        assert!(message.contains("editing is turned off"), "{message}");
+        assert!(message.contains("M6"), "{message}");
+        assert_eq!(
+            model.edit_refusal(),
+            Some(onionskin_core::protection::Refusal::EncryptedSource.reason())
+        );
+
+        let plain = model_with_registry(PluginRegistry::new());
+        assert!(plain.status().is_none());
+        assert_eq!(plain.edit_refusal(), None);
     }
 
     fn assert_view_change_matches(

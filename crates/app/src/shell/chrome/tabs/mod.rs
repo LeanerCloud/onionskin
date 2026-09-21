@@ -843,8 +843,9 @@ impl ShellFrame {
         self.tabs
             .active()
             .map(|tab| {
+                let model = &tab.canvas.read(cx).model;
                 self.quick_actions_state
-                    .entries(tab.canvas.read(cx).model.registry())
+                    .entries(model.registry(), model.edit_refusal())
             })
             .unwrap_or_default()
     }
@@ -853,8 +854,9 @@ impl ShellFrame {
         self.tabs
             .active()
             .map(|tab| {
+                let model = &tab.canvas.read(cx).model;
                 self.quick_actions_state
-                    .all_entries(tab.canvas.read(cx).model.registry())
+                    .all_entries(model.registry(), model.edit_refusal())
             })
             .unwrap_or_default()
     }

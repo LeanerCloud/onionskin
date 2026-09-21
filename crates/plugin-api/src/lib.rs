@@ -22,10 +22,13 @@ pub use onionskin_core::{
     TextSelection, Viewport,
 };
 pub use registry::{PluginEntry, PluginManifest, PluginRegistry};
+pub use requirement::{tool_with, Availability, Requirement, Session};
 
 pub mod codec;
+pub mod command_ids;
 pub mod contract;
 pub mod registry;
+pub mod requirement;
 
 /// A pointer event, already transformed out of window space into the page
 /// it landed on.
@@ -84,6 +87,27 @@ pub enum ToolCapability {
     /// Zooms continuously while the pointer is dragged. The View menu's
     /// Dynamic Zoom entry selects its tool through this rather than by id.
     DynamicZoom,
+}
+
+impl ToolCapability {
+    /// Whether a tool with this capability changes the document.
+    ///
+    /// Stated per capability rather than per tool, so a new tool inherits the
+    /// answer by declaring what it does - and so a document that may not be
+    /// edited disables every such tool through the requirement query, without
+    /// the shell keeping a list of which tools write.
+    pub fn edits_document(self) -> bool {
+        match self {
+            ToolCapability::Comment
+            | ToolCapability::Highlight
+            | ToolCapability::Draw
+            | ToolCapability::FillTextFields
+            | ToolCapability::AddSignature => true,
+            ToolCapability::Select | ToolCapability::Snapshot | ToolCapability::DynamicZoom => {
+                false
+            }
+        }
+    }
 }
 
 /// Everything a tool may touch while handling input.

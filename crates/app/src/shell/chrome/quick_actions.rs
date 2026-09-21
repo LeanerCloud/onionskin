@@ -121,8 +121,18 @@ impl DeliveryStage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum QuickActionAvailability {
-    Enabled { tool_index: usize },
-    Disabled { stage: DeliveryStage },
+    Enabled {
+        tool_index: usize,
+    },
+    Disabled {
+        stage: DeliveryStage,
+    },
+    /// The tool exists, and the open document may not be edited. Carries the
+    /// document's own reason rather than a delivery stage, because the tool
+    /// has been delivered - it is the document that refuses.
+    Refused {
+        reason: &'static str,
+    },
 }
 
 impl QuickActionAvailability {
@@ -133,7 +143,7 @@ impl QuickActionAvailability {
     pub(super) fn tool_index(self) -> Option<usize> {
         match self {
             Self::Enabled { tool_index } => Some(tool_index),
-            Self::Disabled { .. } => None,
+            Self::Disabled { .. } | Self::Refused { .. } => None,
         }
     }
 
@@ -141,12 +151,13 @@ impl QuickActionAvailability {
         match self {
             Self::Enabled { .. } => None,
             Self::Disabled { stage } => Some(stage.reason()),
+            Self::Refused { reason } => Some(reason),
         }
     }
 
     fn unavailable_stage(self) -> Option<DeliveryStage> {
         match self {
-            Self::Enabled { .. } => None,
+            Self::Enabled { .. } | Self::Refused { .. } => None,
             Self::Disabled { stage } => Some(stage),
         }
     }
@@ -187,17 +198,28 @@ impl Default for QuickActionsState {
 }
 
 impl QuickActionsState {
-    pub(super) fn entries(&self, registry: &PluginRegistry) -> Vec<QuickActionEntry> {
+    /// `edit_refusal` is the open document's reason it may not be edited, from
+    /// `core`'s protection query; `None` for a document that may be. An action
+    /// whose tool edits is refused with that reason.
+    pub(super) fn entries(
+        &self,
+        registry: &PluginRegistry,
+        edit_refusal: Option<&'static str>,
+    ) -> Vec<QuickActionEntry> {
         self.visible_actions()
             .into_iter()
-            .map(|action| quick_action_entry(action, registry))
+            .map(|action| quick_action_entry(action, registry, edit_refusal))
             .collect()
     }
 
-    pub(super) fn all_entries(&self, registry: &PluginRegistry) -> Vec<QuickActionEntry> {
+    pub(super) fn all_entries(
+        &self,
+        registry: &PluginRegistry,
+        edit_refusal: Option<&'static str>,
+    ) -> Vec<QuickActionEntry> {
         QuickAction::ALL
             .into_iter()
-            .map(|action| quick_action_entry(action, registry))
+            .map(|action| quick_action_entry(action, registry, edit_refusal))
             .collect()
     }
 
@@ -308,7 +330,17 @@ fn clamp_axis(value: Pixels, maximum: Pixels) -> Pixels {
     }
 }
 
-fn quick_action_entry(action: QuickAction, registry: &PluginRegistry) -> QuickActionEntry {
+fn quick_action_entry(
+    action: QuickAction,
+    registry: &PluginRegistry,
+    edit_refusal: Option<&'static str>,
+) -> QuickActionEntry {
+    if let (Some(reason), true) = (edit_refusal, action.capability().edits_document()) {
+        return QuickActionEntry {
+            action,
+            availability: QuickActionAvailability::Refused { reason },
+        };
+    }
     let availability = registry
         .tools()
         .enumerate()
@@ -684,7 +716,7 @@ mod tests {
 
     #[test]
     fn default_slots_and_missing_reasons_name_their_delivery_milestones() {
-        let entries = QuickActionsState::default().entries(&PluginRegistry::new());
+        let entries = QuickActionsState::default().entries(&PluginRegistry::new(), None);
 
         assert_eq!(
             entries.iter().map(|entry| entry.action).collect::<Vec<_>>(),
@@ -723,7 +755,7 @@ mod tests {
     #[test]
     fn the_registry_makes_exactly_the_declared_quick_actions_live() {
         let registry = crate::build_registry();
-        let entries = QuickActionsState::default().entries(&registry);
+        let entries = QuickActionsState::default().entries(&registry, None);
 
         let live = entries
             .iter()
@@ -755,6 +787,32 @@ mod tests {
         );
     }
 
+    /// P1b's editing gate on the toolbar: on a document that may not be
+    /// edited, every action whose tool edits is refused with the document's
+    /// reason - not a delivery stage, because the tool was delivered - and the
+    /// ones that do not edit are untouched.
+    #[test]
+    fn a_document_that_may_not_be_edited_refuses_exactly_the_editing_actions() {
+        let registry = crate::build_registry();
+        let reason = "Encrypted document: editing arrives in M6";
+        let open = QuickActionsState::default().all_entries(&registry, None);
+        let locked = QuickActionsState::default().all_entries(&registry, Some(reason));
+
+        for (free, gated) in open.iter().zip(&locked) {
+            if free.action.capability().edits_document() {
+                assert_eq!(
+                    gated.availability,
+                    QuickActionAvailability::Refused { reason },
+                    "{:?} edits and is not refused",
+                    free.action
+                );
+                assert_eq!(gated.availability.reason(), Some(reason));
+            } else {
+                assert_eq!(gated.availability, free.availability, "{:?}", free.action);
+            }
+        }
+    }
+
     #[test]
     fn each_typed_capability_enables_only_its_matching_action() {
         for action in QuickAction::ALL {
@@ -764,7 +822,7 @@ mod tests {
                 capabilities: single_capability(action.capability()),
             }));
 
-            let entries = QuickActionsState::default().entries(&registry);
+            let entries = QuickActionsState::default().entries(&registry, None);
             let enabled = entries
                 .iter()
                 .filter(|entry| entry.availability.is_enabled())
@@ -793,7 +851,7 @@ mod tests {
         }));
 
         let enabled = QuickActionsState::default()
-            .entries(&registry)
+            .entries(&registry, None)
             .into_iter()
             .filter(|entry| entry.availability.is_enabled())
             .collect::<Vec<_>>();
@@ -818,7 +876,7 @@ mod tests {
 
         assert_eq!(registry.plugins().len(), 1);
         assert!(QuickActionsState::default()
-            .entries(&registry)
+            .entries(&registry, None)
             .iter()
             .all(|entry| !entry.availability.is_enabled()));
     }
@@ -901,8 +959,8 @@ mod tests {
 
     fn described(state: &QuickActionsState, registry: &PluginRegistry) -> Element {
         accessible(
-            &state.entries(registry),
-            &state.all_entries(registry),
+            &state.entries(registry, None),
+            &state.all_entries(registry, None),
             state,
         )
     }
@@ -953,8 +1011,8 @@ mod tests {
     fn each_described_quick_action_carries_the_action_its_click_runs() {
         let state = QuickActionsState::default();
         let registry = PluginRegistry::new();
-        let entries = state.entries(&registry);
-        let described = accessible(&entries, &state.all_entries(&registry), &state);
+        let entries = state.entries(&registry, None);
+        let described = accessible(&entries, &state.all_entries(&registry, None), &state);
 
         for entry in &entries {
             let node = described
@@ -1038,7 +1096,7 @@ mod tests {
         state.toggle_visibility(QuickAction::Draw);
 
         let row_only = described(&state, &registry);
-        let visible = state.entries(&registry);
+        let visible = state.entries(&registry, None);
 
         assert_eq!(visible.len(), QuickAction::ALL.len() - 1);
         assert_eq!(row_only.children.len(), visible.len() + 2);

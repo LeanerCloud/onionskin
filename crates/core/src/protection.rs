@@ -43,6 +43,14 @@ impl Refusal {
             Refusal::EncryptedSource => "M6",
         }
     }
+
+    /// The short reason a disabled menu entry or tool shows. Fixed text, so it
+    /// can sit in the same place as every other entry's reason.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Refusal::EncryptedSource => "Encrypted document: editing arrives in M6",
+        }
+    }
 }
 
 impl fmt::Display for Refusal {

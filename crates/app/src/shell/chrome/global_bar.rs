@@ -202,11 +202,10 @@ impl RegistryFacts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::shell) enum MenuAvailability {
-    Enabled,
-    Disabled(&'static str),
-}
+/// Whether a menu entry is live, and why not. The plugin API's type, so the
+/// menus, the toolbar and the context menu answer with one query rather than
+/// three copies of it.
+pub(in crate::shell) use onionskin_plugin_api::Availability as MenuAvailability;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::shell) struct MenuState {
@@ -236,19 +235,6 @@ impl MenuState {
             quick_actions_visible,
             registry,
             recent_count,
-        }
-    }
-}
-
-impl MenuAvailability {
-    pub(in crate::shell) fn is_enabled(self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-
-    pub(in crate::shell) fn reason(self) -> Option<&'static str> {
-        match self {
-            Self::Enabled => None,
-            Self::Disabled(reason) => Some(reason),
         }
     }
 }

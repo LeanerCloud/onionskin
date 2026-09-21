@@ -15,9 +15,12 @@
 //! query while being just as stale. When those plugins contribute commands,
 //! `requirement()` is where the guesses become queries.
 
-use onionskin_plugin_api::{PluginRegistry, ToolCapability};
+use onionskin_plugin_api::command_ids;
+use onionskin_plugin_api::{PluginRegistry, Requirement, Session, ToolCapability};
 
 use super::chrome::MenuAvailability;
+
+pub(in crate::shell) use onionskin_plugin_api::tool_with;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum CanvasContextCommand {
@@ -34,25 +37,6 @@ pub(in crate::shell) enum CanvasContextCommand {
     RotateClockwise,
     Print,
     PageCommands,
-}
-
-/// What has to exist for an entry to be live, and what it says when that
-/// thing is missing. The milestone reasons follow `ACROBAT-PARITY.md`:
-/// rich-text copy and selection export are their own row at M3, and
-/// File > Print is row 139, M3, waiting on `crates/print`.
-///
-/// `Milestone` is the variant to delete from as subsystems land; see the
-/// module docs for why it is a list and not a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Requirement {
-    /// The shell's own, so always live and never needing a reason.
-    Shell,
-    /// The document has to have text selected.
-    TextSelection(&'static str),
-    /// Some registered tool has to carry this capability.
-    Tool(ToolCapability, &'static str),
-    /// Nothing to query: the subsystem behind it is a later milestone.
-    Milestone(&'static str),
 }
 
 impl CanvasContextCommand {
@@ -96,10 +80,7 @@ impl CanvasContextCommand {
     /// plugin that arrives later carrying the capability makes the entry
     /// live with no change here.
     pub(in crate::shell) fn capability(self) -> Option<ToolCapability> {
-        match self.requirement() {
-            Requirement::Tool(capability, _) => Some(capability),
-            Requirement::Shell | Requirement::TextSelection(_) | Requirement::Milestone(_) => None,
-        }
+        self.requirement().capability()
     }
 
     fn requirement(self) -> Requirement {
@@ -111,15 +92,31 @@ impl CanvasContextCommand {
             Self::AddNoteToText => Requirement::Tool(Comment, "Available in M3 tools-comment"),
             Self::TakeASnapshot => Requirement::Tool(Snapshot, "Available in P10 tools-basic"),
             Self::RotateClockwise => Requirement::Shell,
-            Self::CopyWithFormatting | Self::ExportSelectionAs => {
-                Requirement::Milestone("Available in M3 with rich-text export")
-            }
+            // The four that named M3 as a guess are registry queries now: each
+            // goes live when the package that lands its command is compiled in.
+            Self::CopyWithFormatting => Requirement::Command {
+                id: command_ids::COPY_WITH_FORMATTING,
+                reason: "Available with rich-text export",
+            },
+            Self::ExportSelectionAs => Requirement::Command {
+                id: command_ids::EXPORT_SELECTION,
+                reason: "Available with rich-text export",
+            },
+            Self::AddBookmark => Requirement::Command {
+                id: command_ids::ADD_BOOKMARK,
+                reason: "Available with bookmark authoring",
+            },
+            Self::Print => Requirement::Command {
+                id: command_ids::PRINT,
+                reason: "Available with printing",
+            },
+            Self::PageCommands => Requirement::Command {
+                id: command_ids::PAGE_COMMANDS,
+                reason: "Available with page organization",
+            },
             Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
             Self::RedactText => Requirement::Milestone("Available in M5 redact"),
             Self::CreateLink => Requirement::Milestone("Available in M5 commands-core"),
-            Self::AddBookmark => Requirement::Milestone("Available in M3 commands-core"),
-            Self::Print => Requirement::Milestone("Available in M3 with crates/print"),
-            Self::PageCommands => Requirement::Milestone("Available in M3 tools-organize"),
         }
     }
 }
@@ -131,45 +128,24 @@ pub(in crate::shell) struct CanvasContextEntry {
     pub(in crate::shell) availability: MenuAvailability,
 }
 
-/// The first registered tool carrying `capability`. The one lookup rule,
-/// shared by the entry that reports the tool missing and the click that
-/// activates it, so the two cannot disagree.
-pub(in crate::shell) fn tool_with(
-    registry: &PluginRegistry,
-    capability: ToolCapability,
-) -> Option<usize> {
-    registry
-        .tools()
-        .position(|tool| tool.capabilities().contains(&capability))
-}
-
 pub(in crate::shell) fn canvas_context_entries(
     registry: &PluginRegistry,
     has_text_selection: bool,
+    edit_refusal: Option<&'static str>,
 ) -> Vec<CanvasContextEntry> {
+    let session = Session {
+        registry,
+        has_text_selection,
+        edit_refusal,
+    };
     CanvasContextCommand::ALL
         .into_iter()
         .map(|command| CanvasContextEntry {
             command,
             label: command.label(),
-            availability: match command.requirement() {
-                Requirement::Shell => MenuAvailability::Enabled,
-                Requirement::TextSelection(reason) => available(has_text_selection, reason),
-                Requirement::Tool(capability, reason) => {
-                    available(tool_with(registry, capability).is_some(), reason)
-                }
-                Requirement::Milestone(reason) => MenuAvailability::Disabled(reason),
-            },
+            availability: command.requirement().availability(&session),
         })
         .collect()
-}
-
-fn available(live: bool, reason: &'static str) -> MenuAvailability {
-    if live {
-        MenuAvailability::Enabled
-    } else {
-        MenuAvailability::Disabled(reason)
-    }
 }
 
 #[cfg(test)]
@@ -177,7 +153,7 @@ mod tests {
     use super::*;
 
     fn live(registry: &PluginRegistry, has_text_selection: bool) -> Vec<CanvasContextCommand> {
-        canvas_context_entries(registry, has_text_selection)
+        canvas_context_entries(registry, has_text_selection, None)
             .into_iter()
             .filter(|entry| entry.availability.is_enabled())
             .map(|entry| entry.command)
@@ -189,7 +165,7 @@ mod tests {
     /// missing: absence reads as "Onionskin does not have this".
     #[test]
     fn every_named_entry_is_present_and_every_disabled_one_says_why() {
-        let entries = canvas_context_entries(&crate::build_registry(), false);
+        let entries = canvas_context_entries(&crate::build_registry(), false, None);
 
         // Pinned to the count in the row itself, not to `ALL`, which would
         // agree with itself while quietly dropping an entry.
@@ -224,6 +200,9 @@ mod tests {
                 Requirement::Shell => true,
                 Requirement::TextSelection(..) => false,
                 Requirement::Tool(capability, _) => tool_with(&registry, capability).is_some(),
+                Requirement::Command { id, .. } => {
+                    registry.commands().iter().any(|command| command.id == id)
+                }
                 Requirement::Milestone(..) => false,
             })
             .collect();
@@ -246,42 +225,112 @@ mod tests {
         );
     }
 
-    /// Print and Add Bookmark are the two the plan calls out by name. Both
-    /// wait on a milestone rather than on a capability, so both ship
-    /// disabled and say which milestone.
-    ///
-    /// Asserted on the milestone the reason names rather than on the whole
-    /// string: pinning the prose would keep passing once the subsystem
-    /// lands, which is the state this test exists to catch.
+    /// No entry still waits on "M3" by milestone: every one M3 lands is a
+    /// registry query now, and goes live when its package's command is
+    /// compiled in. A reason naming M3 is a guess that outlived its milestone.
     #[test]
-    fn print_and_add_bookmark_are_disabled_with_their_milestone() {
-        let entries = canvas_context_entries(&crate::build_registry(), true);
-        let reason = |command| {
-            entries
-                .iter()
-                .find(|entry| entry.command == command)
-                .expect("the entry is present")
-                .availability
-                .reason()
-                .expect("a disabled entry says why")
-        };
+    fn no_milestone_reason_names_m3() {
+        for command in CanvasContextCommand::ALL {
+            if let Requirement::Milestone(reason) = command.requirement() {
+                assert!(
+                    !reason.contains("M3"),
+                    "{} still waits on M3 by milestone rather than by query: {reason:?}",
+                    command.label()
+                );
+            }
+        }
+    }
 
+    /// Print and Add Bookmark are the two the plan calls out by name. They
+    /// are queries: registering a command under the id makes the entry live,
+    /// with no change here.
+    #[test]
+    fn print_and_add_bookmark_go_live_when_their_command_is_registered() {
+        let mut registry = PluginRegistry::new();
+        let before = canvas_context_entries(&registry, true, None);
         for command in [
             CanvasContextCommand::Print,
             CanvasContextCommand::AddBookmark,
         ] {
+            let entry = before
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("present");
             assert!(
-                reason(command).contains("M3"),
-                "{} should name the milestone it waits on, said {:?}",
-                command.label(),
-                reason(command)
+                !entry.availability.is_enabled(),
+                "{} is live with no command",
+                command.label()
+            );
+        }
+
+        struct Stub;
+        impl onionskin_plugin_api::CommandPlugin for Stub {
+            fn commands(&self) -> Vec<onionskin_plugin_api::Command> {
+                [command_ids::PRINT, command_ids::ADD_BOOKMARK]
+                    .into_iter()
+                    .map(|id| onionskin_plugin_api::Command {
+                        id,
+                        title: id,
+                        keybind: None,
+                        run: Box::new(|_| Ok(())),
+                    })
+                    .collect()
+            }
+        }
+        registry.register_commands(&Stub);
+        let after = canvas_context_entries(&registry, true, None);
+        for command in [
+            CanvasContextCommand::Print,
+            CanvasContextCommand::AddBookmark,
+        ] {
+            let entry = after
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("present");
+            assert!(
+                entry.availability.is_enabled(),
+                "{} did not go live",
+                command.label()
             );
         }
     }
 
+    /// P1b's editing gate, reached through the same query: on a document that
+    /// may not be edited, every entry that edits is disabled with the
+    /// document's reason, and every entry that does not is untouched.
+    #[test]
+    fn a_document_that_may_not_be_edited_disables_exactly_the_entries_that_edit() {
+        let registry = crate::build_registry();
+        let refusal = "Encrypted document: editing arrives in M6";
+        let open = canvas_context_entries(&registry, true, None);
+        let locked = canvas_context_entries(&registry, true, Some(refusal));
+
+        for (free, gated) in open.iter().zip(&locked) {
+            if free.command.requirement().edits() {
+                assert_eq!(
+                    gated.availability.reason(),
+                    Some(refusal),
+                    "{} edits and is not gated",
+                    free.command.label()
+                );
+            } else {
+                assert_eq!(
+                    gated.availability,
+                    free.availability,
+                    "{} does not edit and changed",
+                    free.command.label()
+                );
+            }
+        }
+        assert!(
+            open.iter().any(|entry| entry.command.requirement().edits()),
+            "the menu has to contain an editing entry, or this proves nothing"
+        );
+    }
+
     #[test]
     fn future_editing_entries_name_their_m5_milestone() {
-        let entries = canvas_context_entries(&crate::build_registry(), true);
+        let entries = canvas_context_entries(&crate::build_registry(), true, None);
         let reason = |command| {
             entries
                 .iter()

@@ -146,6 +146,7 @@ impl ShellFrame {
                 canvas_context_entries(
                     model.registry(),
                     model.selection_text().is_some_and(|text| !text.is_empty()),
+                    model.edit_refusal(),
                 )
             })
             .unwrap_or_default()
