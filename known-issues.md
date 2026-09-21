@@ -44,6 +44,19 @@ source IDs, severity, ownership, and required proof.
   is why a fresh clone has not seen it. Not diagnosed further here; it belongs to
   whoever owns the boundary-recovery path.
 
+- **Two `cos` section tests read a `hayro` fixture without checking it is
+  there**, found 2026-09-21 during P1b. `crates/cos/tests/sections.rs`'s
+  `a_linearized_files_first_page_table_is_not_a_generation` and
+  `linearized_header_bias_keeps_one_and_two_generation_classification` read
+  `external/hayro/pdfs/custom/font_standard_2.pdf` with `.expect`, after a
+  `corpus_dir("external")` guard that only proves `external/` exists. A
+  corpus fetched without the `hayro` set - which is what a network that
+  blocks `hayro-assets.dev` gets - has `external/verapdf` and no `hayro`, so
+  the guard passes and the read panics. Independent of any M3 package: it
+  reproduces with `crates/cos` unmodified. The fix is a `corpus_file` lookup
+  that skips, or fails under `ONIONSKIN_CORPUS_REQUIRED`, like every other
+  corpus read.
+
 - **The shell test suite's first Linux run, 2026-09-21 (P9a).** With
   `libxkbcommon-dev` and `libxkbcommon-x11-dev` installed, `cargo test -p
   onionskin-app --features shell --lib` links and runs on Linux for the first

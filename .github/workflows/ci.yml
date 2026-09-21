@@ -111,6 +111,7 @@ jobs:
           cargo test -p onionskin-core --test structure
           cargo test -p onionskin-cos --test boundaries
           cargo test -p onionskin-cos --test delete
+          cargo test -p onionskin-cos --test encrypted
           cargo test -p onionskin-cos --test incremental
           cargo test -p onionskin-cos --test lazy
           cargo test -p onionskin-cos --test overlay

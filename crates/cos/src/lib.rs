@@ -52,6 +52,7 @@
 //! `<workspace>/corpus`) and skip loudly when it is absent. Set
 //! `ONIONSKIN_CORPUS_REQUIRED=1` in CI to turn that skip into a failure.
 
+mod decrypt;
 mod document;
 mod error;
 mod filters;

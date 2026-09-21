@@ -131,7 +131,7 @@ fn content_and_core_share_one_quad_type() {
 }
 
 #[test]
-fn encrypted_error_display_names_encryption_and_m2() {
+fn encrypted_error_display_names_encryption_and_m6() {
     let err = match Document::open_bytes(encrypted_pdf()) {
         Ok(_) => panic!("encrypted file opened"),
         Err(err) => err,
@@ -140,7 +140,12 @@ fn encrypted_error_display_names_encryption_and_m2() {
 
     let message = err.to_string();
     assert!(message.contains("encrypted"));
-    assert!(message.contains("M2"));
+    assert!(
+        message.contains("password"),
+        "the refusal says why: a password, not encryption as such, since M3 \
+         opens the encrypted documents that need none"
+    );
+    assert!(message.contains("M6"));
     assert!(!message.contains("EncryptedUnsupported"));
 }
 

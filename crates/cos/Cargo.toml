@@ -8,6 +8,10 @@ publish.workspace = true
 # Declared here rather than in the workspace root so parallel M1 spikes do not
 # collide on the root manifest.
 [dependencies]
+# The standard security handler. `cos` decrypts at parse time with it; nothing
+# in `cos` encrypts, which is why a section into an encrypted document is
+# refused rather than written in plaintext.
+onionskin-crypto.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # LZW, for the older producers whose content streams and CMaps use it. It moved

@@ -4055,12 +4055,20 @@ name = "onionskin-cos"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "onionskin-crypto",
  "weezl",
 ]
 
 [[package]]
 name = "onionskin-crypto"
 version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+ "md-5",
+ "rc4",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "onionskin-mcp"
@@ -4918,6 +4926,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rc4"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f1256e23efe6097f27aa82d6ca6889361c001586ae0f6917cbad072f05eb275"
+dependencies = [
+ "cipher",
 ]
 
 [[package]]

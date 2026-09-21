@@ -9,6 +9,7 @@ upstream, what is generated locally, and what is still to be built.
 | Path | Tracked in git | Produced by |
 |---|---|---|
 | `seeds/` | yes | `make-seeds.py`, committed output |
+| `encrypted/` | yes | `make-encrypted.py` through qpdf, committed output |
 | `malformed/` | no | `make-malformed.sh` from `seeds/` |
 | `bench/` | no | `make-bench.py`, no inputs |
 | `external/` | no | `fetch.sh` from pinned upstream revisions |
@@ -18,6 +19,21 @@ upstream, what is generated locally, and what is still to be built.
 `external/`, `malformed/` and `bench/` are gitignored. Nothing under them is
 vendored: they are reproducible from `fetch.sh`, `make-malformed.sh` and
 `make-bench.py`.
+
+## `encrypted/` (8 files)
+
+One file per standard-security-handler revision - `/R` 2 through 6, RC4 and
+AES-128 and AES-256, crypt filters, `/EncryptMetadata false`, object streams -
+plus one `/R` 6 file with a user password that an empty password must not open.
+Written by **qpdf** through pikepdf, so `cos`'s decryptor is checked against an
+independent implementation of ISO 32000 7.6 rather than against itself; the
+standard publishes algorithms and no test vectors.
+
+Committed because they are small and because they are not reproducible byte
+for byte: AES needs a random IV per string and stream, and the `/R` 6 file key
+is random. Re-running `make-encrypted.py` produces equivalent fixtures with
+different bytes, which is why the tests assert decrypted content and never
+compare files.
 
 ## Quick start
 

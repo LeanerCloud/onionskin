@@ -144,6 +144,18 @@ pub struct Document {
     edits: BTreeMap<u32, PendingEdit>,
     trailer_edits: Dict,
     next_number: u32,
+    /// The standard security handler, for an encrypted document that opened
+    /// with the empty user password. `None` for every other document.
+    security: Option<Security>,
+}
+
+/// A document's security handler and the one object it must not decrypt.
+#[derive(Clone)]
+struct Security {
+    handler: Rc<onionskin_crypto::SecurityHandler>,
+    /// The `/Encrypt` dictionary's object number when it is indirect. Its
+    /// strings are the handler's inputs and were never encrypted.
+    encrypt_object: Option<u32>,
 }
 
 impl Document {
@@ -196,10 +208,6 @@ impl Document {
             },
         }
 
-        if let Some(l) = &loaded {
-            refuse_encrypted(&l.trailer)?;
-        }
-
         let mut rebuilt_by_scan = false;
         // A cross-reference stream whose own boundary was guessed is recorded
         // before anything is read through the table it produced, and stays
@@ -216,7 +224,6 @@ impl Document {
                     reasons.push(RepairReason::XrefOffsetsWrong { detail });
                     rebuilt_by_scan = true;
                     let scanned = repair::scan(&reader)?;
-                    refuse_encrypted(&scanned.trailer)?;
                     reasons.extend(scanned.reasons);
                     (scanned.xref, scanned.trailer, None, BTreeMap::new())
                 }
@@ -224,7 +231,6 @@ impl Document {
             None => {
                 rebuilt_by_scan = true;
                 let scanned = repair::scan(&reader)?;
-                refuse_encrypted(&scanned.trailer)?;
                 reasons.extend(scanned.reasons);
                 (scanned.xref, scanned.trailer, None, BTreeMap::new())
             }
@@ -264,8 +270,74 @@ impl Document {
             edits: BTreeMap::new(),
             trailer_edits: Dict::new(),
             next_number,
+            security: None,
         };
+        let mut document = document;
+        document.install_security()?;
         Ok((document, provenance))
+    }
+
+    /// Open the standard security handler with the empty user password, or
+    /// refuse the document.
+    ///
+    /// Runs once the document exists, because an indirect `/Encrypt` has to be
+    /// read through the xref - and read **before** there is a handler, so its
+    /// own strings are not "decrypted". Everything parsed before this point is
+    /// thrown away afterwards: the structure check reads objects to validate
+    /// offsets, and what it cached is ciphertext.
+    ///
+    /// A document that needs a password is refused with `Error::Encrypted`,
+    /// exactly as before; that refusal names M6 wherever it is reported.
+    fn install_security(&mut self) -> Result<()> {
+        let Some(entry) = self.trailer.get(b"Encrypt").cloned() else {
+            return Ok(());
+        };
+        let (dict, encrypt_object) = match entry {
+            Object::Dict(dict) => (dict, None),
+            Object::Ref(objref) => match self.get(objref.number)?.object {
+                Object::Dict(dict) => (dict, Some(objref.number)),
+                _ => return Err(Error::Encrypted),
+            },
+            // A null `/Encrypt` is absent, per ISO 32000-1 7.3.7.
+            Object::Null => return Ok(()),
+            _ => return Err(Error::Encrypted),
+        };
+        let file_id = match self.trailer.get(b"ID") {
+            Some(Object::Array(ids)) => match ids.first() {
+                Some(Object::String(first)) => first.clone(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let handler = onionskin_crypto::SecurityHandler::open(
+            &crate::decrypt::read_dict(&dict),
+            &file_id,
+            b"",
+        )
+        .map_err(|_| Error::Encrypted)?;
+
+        self.security = Some(Security {
+            handler: Rc::new(handler),
+            encrypt_object,
+        });
+        self.cache.borrow_mut().clear();
+        self.object_streams.borrow_mut().clear();
+        Ok(())
+    }
+
+    /// Whether this document is encrypted. True for every document that got
+    /// this far with an `/Encrypt` entry, since one that needs a password does
+    /// not open at all.
+    pub fn is_encrypted(&self) -> bool {
+        self.security.is_some()
+    }
+
+    /// The `/P` permission bits of an encrypted document, decoded. `None` for
+    /// a plain one.
+    pub fn permissions(&self) -> Option<onionskin_crypto::Permissions> {
+        self.security
+            .as_ref()
+            .map(|security| security.handler.permissions())
     }
 
     pub fn open_path_repairing(path: &Path) -> Result<(Document, Provenance)> {
@@ -287,6 +359,7 @@ impl Document {
             edits: BTreeMap::new(),
             trailer_edits: Dict::new(),
             next_number: self.next_number,
+            security: self.security.clone(),
         }
     }
 
@@ -672,9 +745,19 @@ impl Document {
                 let offset = self
                     .locate(number)
                     .ok_or(Error::MissingObject(ObjRef::new(number, generation)))?;
-                let indirect = self
+                let mut indirect = self
                     .reader
                     .parse_indirect_at(offset, &|r| self.length_of(r))?;
+                if let Some(security) = &self.security {
+                    if security.encrypt_object != Some(number) {
+                        crate::decrypt::object(
+                            &security.handler,
+                            indirect.objref.number,
+                            indirect.objref.generation,
+                            &mut indirect.object,
+                        )?;
+                    }
+                }
                 Ok(Parsed {
                     objref: indirect.objref,
                     object: indirect.object,
@@ -1080,7 +1163,6 @@ impl Document {
         }
 
         let scanned = repair::scan(&self.reader)?;
-        refuse_encrypted(&scanned.trailer)?;
 
         let mut merged = self.xref.clone();
         let mut entries_corrected = 0usize;
@@ -2060,13 +2142,6 @@ fn as_number(object: &Object) -> Option<f64> {
         Object::Real(r) => Some(*r),
         _ => None,
     }
-}
-
-fn refuse_encrypted(trailer: &Dict) -> Result<()> {
-    if trailer.contains(b"Encrypt") {
-        return Err(Error::Encrypted);
-    }
-    Ok(())
 }
 
 fn validate_catalog(number: u32, object: &Object) -> Result<()> {

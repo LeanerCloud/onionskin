@@ -85,9 +85,11 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(e) => write!(f, "io: {e}"),
-            Error::EncryptedUnsupported => {
-                write!(f, "encrypted PDFs are not viewable in M2")
-            }
+            Error::EncryptedUnsupported => write!(
+                f,
+                "this encrypted PDF needs a password, and opening password-protected \
+                 documents arrives in M6"
+            ),
             Error::NoSuchPage { page, count } => {
                 write!(f, "page {page} is outside a {count}-page document")
             }

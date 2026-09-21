@@ -199,6 +199,13 @@ impl Dict {
         self.0.iter()
     }
 
+    /// Every entry, with its value open for change. The keys are not: a
+    /// dictionary whose keys could be renamed in place could grow a duplicate,
+    /// which `set` exists to prevent.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = (&Name, &mut Object)> {
+        self.0.iter_mut().map(|(key, value)| (&*key, value))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
