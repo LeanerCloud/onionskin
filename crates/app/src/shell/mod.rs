@@ -118,12 +118,12 @@ pub(in crate::shell) struct ShellSettings {
 }
 
 impl ShellSettings {
-    /// What every tab's tools are configured with. The author is `None`
-    /// until the Commenting preferences (P20) let the user choose one: a
-    /// tool never falls back to the operating system's account name.
+    /// What every tab's tools are configured with. The author is the name
+    /// the Commenting preference gives, or `None` until the user chose one:
+    /// a tool never falls back to the operating system's account name.
     pub(in crate::shell) fn tool_environment(&self) -> onionskin_plugin_api::ToolEnvironment {
         onionskin_plugin_api::ToolEnvironment {
-            author: None,
+            author: self.preferences.commenting_author.clone(),
             data_dir: self.paths.data.clone(),
         }
     }
@@ -838,6 +838,7 @@ where
         install_export_keybindings(cx);
         find_bar::install_keybindings(cx);
         inline_text::install_keybindings(cx);
+        panes::install_comment_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
         install_command_keybindings(cx, &settings.bindings);
         cx.on_window_closed(|cx| {

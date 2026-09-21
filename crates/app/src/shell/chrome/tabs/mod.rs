@@ -566,6 +566,7 @@ impl ShellFrame {
         // is the only signal a thumbnail has landed: it answers on its own
         // channel and changes nothing the view state would show.
         self.collect_thumbnails(cx);
+        self.follow_document_edits(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
             // A running walk reports new hits without moving the view, and the
@@ -577,6 +578,23 @@ impl ShellFrame {
         }
         self.observed_view_state = view;
         self.sync_page_entry(cx);
+        refresh_native_menus(cx, self.menu_state(cx));
+        cx.notify();
+    }
+
+    /// After an edit on the canvas, which moves no view: read the open pane
+    /// again, so a comment just placed is in the Comments list, and redraw
+    /// the tab's dirty mark and the Undo entry.
+    fn follow_document_edits(&mut self, cx: &mut Context<Self>) {
+        let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
+            return;
+        };
+        let epoch = Some(canvas.read(cx).model.edit_epoch());
+        if self.observed_edit_epoch == epoch {
+            return;
+        }
+        self.observed_edit_epoch = epoch;
+        self.navigation.reread(&canvas, cx);
         refresh_native_menus(cx, self.menu_state(cx));
         cx.notify();
     }
@@ -1590,6 +1608,8 @@ pub(in crate::shell) fn clipboard_image(cx: &App) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "shell-test-support")]
+    mod comments;
     #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
     mod convert;
     #[cfg(feature = "shell-test-support")]
@@ -2094,6 +2114,7 @@ mod tests {
             crate::shell::chrome::install_search_keybindings(cx);
             crate::shell::find_bar::install_keybindings(cx);
             crate::shell::inline_text::install_keybindings(cx);
+            crate::shell::panes::install_comment_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);
             crate::shell::chrome::accessible::install_keybindings(cx);
             crate::shell::install_command_keybindings(cx, &installed);

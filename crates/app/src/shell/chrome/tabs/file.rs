@@ -35,9 +35,13 @@ impl ShellFrame {
     }
 
     /// After anything that changed the document or its file: the pane, the
-    /// menus and the tab's dirty mark all read it again.
+    /// menus and the tab's dirty mark all read it again. The pane is read
+    /// again rather than emptied, so the comment chosen in the Comments pane
+    /// stays chosen across an Undo.
     fn after_file_change(&mut self, cx: &mut Context<Self>) {
-        self.navigation.document_changed();
+        if let Some(canvas) = self.active_canvas_entity() {
+            self.navigation.reread(&canvas, cx);
+        }
         self.observed_view_state = self.active_view_state(cx);
         self.sync_page_entry(cx);
         refresh_native_menus(cx, self.menu_state(cx));

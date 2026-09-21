@@ -1,0 +1,257 @@
+//! The Comments pane on a real window: reading, replying, setting a status,
+//! checking, editing and deleting, each one undoable step.
+
+use super::*;
+use crate::shell::chrome::accessible::Activation;
+use crate::shell::panes::{CommentAction, NavigationPane, PaneAction};
+use onionskin_core::{Annotation, ObjRef, ReadAnnotation, Rect, Subtype};
+
+const NOW: i64 = 1_790_000_000;
+
+fn seed_copy() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("hello.pdf");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf"),
+        &path,
+    )
+    .expect("copies");
+    (dir, path)
+}
+
+fn window_on(
+    path: &Path,
+    cx: &mut TestAppContext,
+) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
+    let model = CanvasModel::new(
+        Document::open_path(path).expect("opens"),
+        crate::build_registry(),
+        ViewSize {
+            width: 800.0,
+            height: 600.0,
+        },
+    )
+    .expect("the model builds");
+    bound_window_with_models(
+        vec![(path.to_path_buf(), model)],
+        crate::config::ConfigPaths::default(),
+        cx,
+    )
+}
+
+/// Put a note with `text` on the first page, as another reviewer's file
+/// would carry one.
+fn add_note(frame: &mut ShellFrame, text: &str, cx: &mut Context<ShellFrame>) -> ObjRef {
+    let canvas = frame.tabs.active().expect("a tab").canvas.clone();
+    canvas.update(cx, |canvas, cx| {
+        let document = canvas.model.document_mut();
+        let page = document.structure().unwrap().page(0).unwrap().objref;
+        let placed = document
+            .edit_annotations("Sticky Note", |tx, structure| {
+                let mut note = Annotation::new(Subtype::Text, Rect::new(50.0, 50.0, 70.0, 70.0));
+                note.contents = Some(text.to_owned());
+                note.author = Some("Zoe".to_owned());
+                onionskin_core::add_annotation(tx, structure, page, &note, NOW)
+            })
+            .expect("the note is added");
+        canvas.handle_change(Ok(true), cx);
+        placed
+    })
+}
+
+fn annotations(frame: &ShellFrame, cx: &mut Context<ShellFrame>) -> Vec<ReadAnnotation> {
+    let canvas = frame.tabs.active().expect("a tab").canvas.clone();
+    canvas.update(cx, |canvas, _| canvas.model.annotations().expect("reads"))
+}
+
+fn comment(action: CommentAction) -> Activation {
+    Activation::Pane(PaneAction::Comment(action))
+}
+
+fn row_description(
+    frame: &mut ShellFrame,
+    window: &mut Window,
+    cx: &mut Context<ShellFrame>,
+) -> String {
+    let tree = frame.accessible(window, cx);
+    tree.find(&("comment-row", 0usize).into())
+        .expect("the comment is listed")
+        .description
+        .clone()
+        .unwrap_or_default()
+}
+
+#[gpui::test]
+fn a_comment_is_replied_to_given_a_status_checked_edited_and_deleted_from_the_pane(
+    cx: &mut TestAppContext,
+) {
+    let (_dir, path) = seed_copy();
+    let (window, bindings) = window_on(&path, cx);
+    let note = window
+        .update(cx, |frame, window, cx| {
+            let note = add_note(frame, "Is this figure right?", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            let tree = frame.accessible(window, cx);
+            let row = tree
+                .find(&("comment-row", 0usize).into())
+                .expect("the note is listed");
+            assert_eq!(row.label, "Is this figure right?");
+            assert!(
+                row.description
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("Note · Zoe"),
+                "{:?}",
+                row.description
+            );
+            frame.run_activation(comment(CommentAction::Select(note)), window, cx);
+            frame.run_activation(comment(CommentAction::Reply), window, cx);
+            note
+        })
+        .unwrap();
+
+    // Enter in the reply field saves it: the field's own binding, not the
+    // focus ring's.
+    window
+        .update(cx, |frame, _window, cx| {
+            let input = frame
+                .navigation
+                .comment_draft()
+                .expect("the field opened")
+                .clone();
+            input.update(cx, |input, cx| input.set_query("Yes, checked", cx));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "enter");
+    cx.run_until_parked();
+
+    window
+        .update(cx, |frame, window, cx| {
+            assert!(
+                frame.navigation.comment_draft().is_none(),
+                "Enter closed it"
+            );
+            let reply = annotations(frame, cx)
+                .into_iter()
+                .find(|annotation| annotation.in_reply_to == Some(note))
+                .expect("the reply answers the note");
+            assert_eq!(reply.contents.as_deref(), Some("Yes, checked"));
+            let tree = frame.accessible(window, cx);
+            let listed = tree
+                .find(&("comment-reply", 0usize).into())
+                .expect("the reply is listed under it");
+            assert_eq!(listed.label, "Yes, checked");
+
+            frame.run_activation(comment(CommentAction::SetStatus("Accepted")), window, cx);
+            frame.run_activation(comment(CommentAction::ToggleMark), window, cx);
+            let described = row_description(frame, window, cx);
+            assert!(described.contains("Accepted"), "{described}");
+            assert!(described.contains('✓'), "{described}");
+            let note_dict = annotations(frame, cx)
+                .into_iter()
+                .find(|annotation| annotation.objref == note)
+                .unwrap();
+            assert_eq!(note_dict.state, None, "the status is an answer, not a key");
+        })
+        .unwrap();
+
+    // Undo takes the checkmark back, and the list follows the undo without
+    // being reopened.
+    cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "edit.undo"));
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            let described = row_description(frame, window, cx);
+            assert!(!described.contains('✓'), "{described}");
+            assert!(described.contains("Accepted"), "{described}");
+
+            frame.run_activation(comment(CommentAction::Edit), window, cx);
+            let input = frame
+                .navigation
+                .comment_draft()
+                .expect("the field opened")
+                .clone();
+            assert_eq!(
+                input.read(cx).query(),
+                "Is this figure right?",
+                "it starts from the text"
+            );
+            input.update(cx, |input, cx| input.set_query("Is figure 2 right?", cx));
+            frame.run_activation(comment(CommentAction::SaveDraft), window, cx);
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&("comment-row", 0usize).into()).unwrap().label,
+                "Is figure 2 right?"
+            );
+
+            frame.run_activation(comment(CommentAction::Delete), window, cx);
+            assert!(
+                annotations(frame, cx).is_empty(),
+                "the note went with its reply and its status answers"
+            );
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"comment-rows-empty".into()).is_some());
+        })
+        .unwrap();
+}
+
+/// A comment placed on the page while the pane is open is in the list at
+/// once: the pane follows the document's edits, not only its own.
+#[gpui::test]
+fn a_comment_made_while_the_pane_is_open_is_listed(cx: &mut TestAppContext) {
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"comment-rows-empty".into()).is_some());
+            add_note(frame, "Late note", cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            let row = tree
+                .find(&("comment-row", 0usize).into())
+                .expect("listed without reopening the pane");
+            assert_eq!(row.label, "Late note");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn sorting_and_filtering_step_through_their_values(cx: &mut TestAppContext) {
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            add_note(frame, "First", cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Comments), cx);
+            let control = |frame: &mut ShellFrame,
+                           window: &mut Window,
+                           cx: &mut Context<ShellFrame>,
+                           index: usize| {
+                frame
+                    .accessible(window, cx)
+                    .find(&("comment-control", index).into())
+                    .expect("the control is there")
+                    .label
+                    .clone()
+            };
+            assert_eq!(control(frame, window, cx, 0), "Sort: Page");
+            frame.run_activation(comment(CommentAction::CycleSort), window, cx);
+            assert_eq!(control(frame, window, cx, 0), "Sort: Author");
+            assert_eq!(control(frame, window, cx, 2), "Author: All");
+            frame.run_activation(
+                comment(CommentAction::CycleFilter(
+                    crate::shell::panes::FilterField::Author,
+                )),
+                window,
+                cx,
+            );
+            assert_eq!(control(frame, window, cx, 2), "Author: Zoe");
+        })
+        .unwrap();
+}

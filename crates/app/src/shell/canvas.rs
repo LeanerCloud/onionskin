@@ -464,6 +464,8 @@ pub struct CanvasModel {
     click_count: u8,
     /// The comment a text tool just placed, waiting to be written in.
     text_target: Option<TextTarget>,
+    /// The name comments are signed with, from the tool environment.
+    author: Option<String>,
     /// Thumbnails answered and not yet collected. The pane takes them,
     /// because turning a raster into an image the window can paint is the
     /// shell's job and not the model's.
@@ -536,6 +538,7 @@ impl CanvasModel {
             pixels_epoch: 0,
             click_count: 1,
             text_target: None,
+            author: None,
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
         })
@@ -551,7 +554,13 @@ impl CanvasModel {
 
     /// Hand this tab's tools the shell's environment.
     pub(super) fn configure_tools(&mut self, environment: &onionskin_plugin_api::ToolEnvironment) {
+        self.author.clone_from(&environment.author);
         self.registry.configure_tools(environment);
+    }
+
+    /// The name this tab's comments are signed with, as the tools were told.
+    pub fn author(&self) -> Option<&str> {
+        self.author.as_deref()
     }
 
     /// Set what tool `index` places next. `false` when it has no such choice.
@@ -811,6 +820,11 @@ impl CanvasModel {
         Ok(self.document.layers()?.to_vec())
     }
 
+    /// Every annotation the edited document carries, for the Comments pane.
+    pub fn annotations(&mut self) -> Result<Vec<onionskin_core::ReadAnnotation>, CanvasError> {
+        Ok(self.document.document_mut().annotations()?)
+    }
+
     /// Show or hide one optional content group, and drop every pixel that
     /// predates the change.
     ///
@@ -825,6 +839,12 @@ impl CanvasModel {
         }
         self.invalidate_rendered_pixels();
         Ok(true)
+    }
+
+    /// A number that changes with every edit, undo and redo of the
+    /// document, for a view that has to follow them.
+    pub fn edit_epoch(&self) -> u64 {
+        self.document.edit().epoch()
     }
 
     /// Drop the cached pixels when the document has been edited since they

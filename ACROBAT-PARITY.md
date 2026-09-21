@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 195 planned / 25 partial / 80 out-of-scope. 103 implemented.**
+**403 rows: 192 planned / 27 partial / 80 out-of-scope. 104 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -276,7 +276,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | partial | M3 | New, Rename, Set Destination, Nest, Move Out and Delete are live and disabled with the document's reason when it may not be edited. Wrap Long Bookmarks and Properties are not offered; New Bookmarks From Structure follows at M6. Counted once per the context-menu carve-out. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | partial | M3 | Add, Save and Delete are live; Open stays disabled until M5's trust list, and Edit Description and Search Attachments are not offered. Counted once for the whole menu. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
-| Comments pane (list, sort, filter, reply, status) | planned | M3 | Ships with `tools-comment`. |
+| Comments pane (list, sort, filter, reply, status) | implemented | M3 | Lists every comment the edited document holds, with replies, status and checkmark; follows edits made anywhere. Sits in the left column for now. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | planned | M3 | Counted once for the whole menu; ships with `tools-comment`. |
 | Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
 | Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, rendered menu access, and a read-only Layer Properties dialog (visibility and lock per layer) are implemented; renaming, intent changes, merge and flatten remain post-1.0 layer editing. Evidence: M2-PANES, B3.1, and docs/evidence/m3-p13a-properties.md. |
@@ -433,12 +433,12 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Attach a file as a comment | implemented | M3 | Embeds the chosen file with a paperclip appearance; the file is chosen before the click. Listed in the Attachments pane after reopen. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Record an audio comment | out-of-scope | - | A sound annotation is rich media, which the plan's GUI parity bullet rules out because no crate could own a capture and playback stack. |
 | Comment properties (colour, opacity, author, subject, default) | planned | M3 | |
-| Comments list: sort, filter, reply, set status, checkmark, read/unread | planned | M3 | |
+| Comments list: sort, filter, reply, set status, checkmark, read/unread | partial | M3 | Sort, filter, reply, status, checkmark, edit text and delete are live and undoable; read/unread is not yet. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
 | Summarize comments (generate a summary PDF) | implemented | M3 | Two layouts (comments only, page then comments), opened in a tab; refused on encrypted documents. Connector-line and on-page sequence-number layouts are not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Print comments (document and markups, summary only) | planned | M3 | With `crates/print`. |
 | Import / export comments as FDF or XFDF | planned | post-1.0 | XFDF form-data interchange is a named post-1.0 slot; comment interchange rides with it. |
 | Enable commenting for Reader users (Reader-extended PDF) | out-of-scope | - | Adobe-signed Reader extensions; not reproducible outside Adobe. |
-| Commenting preferences | planned | M3 | |
+| Commenting preferences | partial | M3 | The author name (`commenting_author` in `preferences.json`) signs comments, replies and statuses; the Preferences dialog has no field for it yet. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
 
 ## Toolset: Add stamps
 

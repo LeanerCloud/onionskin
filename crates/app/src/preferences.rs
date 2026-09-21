@@ -144,7 +144,7 @@ impl PreferenceCategory {
 /// list of recent work.
 pub const MAX_RECENT_DOCUMENTS: usize = 50;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preferences {
     /// General.
     pub theme: ThemePreference,
@@ -155,6 +155,9 @@ pub struct Preferences {
     pub zoom: ZoomPreference,
     /// Search: what the find bar starts with.
     pub search: SearchOptions,
+    /// Commenting: the name comments are signed with. `None` until the user
+    /// chooses one; the operating system's account name is never used.
+    pub commenting_author: Option<String>,
 }
 
 impl Default for Preferences {
@@ -167,6 +170,7 @@ impl Default for Preferences {
             layout: PageLayoutMode::SinglePageContinuous,
             zoom: ZoomPreference::default(),
             search: SearchOptions::default(),
+            commenting_author: None,
         }
     }
 }
@@ -346,6 +350,9 @@ impl Preferences {
         );
         file.insert("search_whole_word".into(), self.search.whole_word.into());
         file.insert("search_mode".into(), mode_key(self.search.mode).into());
+        if let Some(author) = &self.commenting_author {
+            file.insert("commenting_author".into(), author.clone().into());
+        }
         carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
@@ -374,6 +381,7 @@ fn apply(
         "search_case_sensitive" => preferences.search.case_sensitive = flag(path, setting, value)?,
         "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
         "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
+        "commenting_author" => preferences.commenting_author = author(path, setting, value)?,
         _ => {
             return Err(PreferencesError::UnknownSetting {
                 path: path.to_path_buf(),
@@ -395,6 +403,18 @@ fn named<T>(
         .as_str()
         .and_then(parse)
         .ok_or_else(|| unknown_value(path, setting, value, allowed))
+}
+
+/// A name to sign comments with. An empty or blank one is no name.
+fn author(
+    path: &Path,
+    setting: &str,
+    value: &serde_json::Value,
+) -> Result<Option<String>, PreferencesError> {
+    value
+        .as_str()
+        .map(|name| Some(name.trim().to_owned()).filter(|name| !name.is_empty()))
+        .ok_or_else(|| unknown_value(path, setting, value, "a name in quotes"))
 }
 
 fn flag(path: &Path, setting: &str, value: &serde_json::Value) -> Result<bool, PreferencesError> {
@@ -535,6 +555,26 @@ mod tests {
         )
     }
 
+    /// A blank name is no name: comments are then signed by nobody rather
+    /// than by an empty string a reader would show as a blank author.
+    #[test]
+    fn the_commenting_author_is_trimmed_and_a_blank_one_is_none() {
+        assert_eq!(
+            parse(r#"{"commenting_author": "  Ana  "}"#)
+                .0
+                .commenting_author
+                .as_deref(),
+            Some("Ana")
+        );
+        assert_eq!(
+            parse(r#"{"commenting_author": "   "}"#).0.commenting_author,
+            None
+        );
+        let (preferences, errors) = parse(r#"{"commenting_author": 7}"#);
+        assert_eq!(preferences.commenting_author, None);
+        assert!(errors[0].contains("a name in quotes"), "{errors:?}");
+    }
+
     #[test]
     fn an_empty_file_is_the_defaults() {
         let (preferences, errors) = parse("{}");
@@ -557,6 +597,7 @@ mod tests {
                 whole_word: true,
                 mode: MatchMode::AllWords,
             },
+            commenting_author: Some("Ana Pop".into()),
         };
 
         written.save(&path).expect("preferences save");
@@ -673,7 +714,7 @@ mod tests {
     #[test]
     fn a_setting_this_build_does_not_have_survives_a_save() {
         let path = crate::config::test_dir("preferences-unknown").join("preferences.json");
-        std::fs::write(&path, r#"{"commenting_author": "me", "theme": "dark"}"#)
+        std::fs::write(&path, r#"{"future_setting": "me", "theme": "dark"}"#)
             .expect("the test writes its file");
         let (preferences, errors) = Preferences::load(Some(&path));
         assert_eq!(errors.len(), 1, "{errors:?}");
@@ -688,7 +729,7 @@ mod tests {
 
         let written = std::fs::read_to_string(&path).expect("the file reads back");
         assert!(
-            written.contains("commenting_author"),
+            written.contains("future_setting"),
             "the save dropped a setting this build does not have: {written}"
         );
         assert!(written.contains("\"light\""), "{written}");
@@ -769,10 +810,10 @@ mod tests {
     #[test]
     fn a_setting_this_build_does_not_have_is_reported_and_costs_nothing_else() {
         let (preferences, errors) =
-            parse(r#"{"commenting_author": "me", "theme": "dark", "recent_documents": 3}"#);
+            parse(r#"{"future_setting": "me", "theme": "dark", "recent_documents": 3}"#);
 
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].contains("commenting_author"), "{errors:?}");
+        assert!(errors[0].contains("future_setting"), "{errors:?}");
         assert!(
             errors[0].contains("not a setting this build has"),
             "{errors:?}"

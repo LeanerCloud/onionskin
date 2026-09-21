@@ -1,5 +1,5 @@
 //! The left navigation panes: thumbnails, bookmarks, attachments, layers,
-//! signatures and search results.
+//! signatures, search results and comments.
 //!
 //! One column, one pane at a time, chosen from a strip of buttons that stays
 //! visible while the navigation panes are shown. That is Acrobat's shape and
@@ -18,6 +18,7 @@ mod attachment_menu;
 mod attachments;
 mod bookmark_edit;
 mod bookmarks;
+mod comments;
 mod layers;
 mod results;
 mod signatures;
@@ -31,7 +32,9 @@ use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Pixels, Point, StatefulInteractiveElement as _, Styled as _,
 };
-use onionskin_core::{Attachment, Layer, ObjRef, OutlineItem, PageIndex, SignatureField};
+use onionskin_core::{
+    Attachment, Layer, ObjRef, OutlineItem, PageIndex, ReadAnnotation, SignatureField,
+};
 
 use super::canvas::CanvasError;
 use super::chrome::accessible::{Activation, Element, Rects, Surface};
@@ -42,6 +45,12 @@ use crate::a11y::State as A11yState;
 pub(in crate::shell) use self::attachments::AttachmentAction;
 pub(in crate::shell) use self::bookmark_edit::{
     target as bookmark_target, BookmarkAction, BookmarksCommand,
+};
+#[cfg(test)]
+pub(in crate::shell) use self::comments::FilterField;
+pub(in crate::shell) use self::comments::{
+    install_keybindings as install_comment_keybindings, start_draft as start_comment_draft,
+    CommentAction, DraftMode as CommentDraftMode,
 };
 pub(in crate::shell) use self::layers::LayersCommand;
 pub(in crate::shell) use self::thumbnails::ThumbnailAction;
@@ -65,17 +74,19 @@ pub(in crate::shell) enum NavigationPane {
     Layers,
     Signatures,
     SearchResults,
+    Comments,
 }
 
 impl NavigationPane {
     /// Acrobat's order down the navigation strip.
-    pub(in crate::shell) const ALL: [Self; 6] = [
+    pub(in crate::shell) const ALL: [Self; 7] = [
         Self::Thumbnails,
         Self::Bookmarks,
         Self::Attachments,
         Self::Layers,
         Self::Signatures,
         Self::SearchResults,
+        Self::Comments,
     ];
 
     pub(in crate::shell) fn label(self) -> &'static str {
@@ -86,6 +97,7 @@ impl NavigationPane {
             Self::Layers => "Layers",
             Self::Signatures => "Signatures",
             Self::SearchResults => "Search Results",
+            Self::Comments => "Comments",
         }
     }
 
@@ -97,6 +109,7 @@ impl NavigationPane {
             Self::Layers => "◧",
             Self::Signatures => "✎",
             Self::SearchResults => "⌕",
+            Self::Comments => "❝",
         }
     }
 
@@ -108,6 +121,7 @@ impl NavigationPane {
             Self::Layers => "pane-layers",
             Self::Signatures => "pane-signatures",
             Self::SearchResults => "pane-search-results",
+            Self::Comments => "pane-comments",
         }
     }
 }
@@ -127,6 +141,7 @@ enum PaneContent {
     Attachments(Result<Vec<Attachment>, String>),
     Layers(Result<Vec<Layer>, String>),
     Signatures(Result<Vec<SignatureField>, String>),
+    Comments(Result<Vec<ReadAnnotation>, String>),
 }
 
 /// Everything a pane can ask the shell to do.
@@ -143,6 +158,7 @@ pub(in crate::shell) enum PaneAction {
     Layer(LayerAction),
     Bookmark(BookmarkAction),
     Thumbnail(ThumbnailAction),
+    Comment(CommentAction),
     /// Put away whichever pane-local menu is open.
     DismissMenus,
 }
@@ -164,6 +180,7 @@ pub(in crate::shell) struct NavigationPanesState {
     layers_menu: Option<Point<Pixels>>,
     bookmarks_menu: Option<bookmark_edit::BookmarksMenu>,
     attachments_menu: Option<attachment_menu::AttachmentsMenu>,
+    comments: comments::CommentsState,
     /// Why the document may not be edited, read with the pane's content:
     /// every authoring entry is disabled with it.
     edit_refusal: Option<&'static str>,
@@ -198,6 +215,7 @@ impl NavigationPanesState {
         self.layers_menu = None;
         self.bookmarks_menu = None;
         self.attachments_menu = None;
+        self.comments.document_changed();
         self.feedback = None;
     }
 
@@ -232,6 +250,7 @@ impl NavigationPanesState {
 
     fn close(&mut self) {
         self.active = None;
+        self.comments.draft = None;
         self.layers_menu = None;
         self.bookmarks_menu = None;
         self.attachments_menu = None;
@@ -291,6 +310,20 @@ impl NavigationPanesState {
         }
     }
 
+    /// What the comments pane read.
+    fn comment_snapshot(&self) -> Option<&[ReadAnnotation]> {
+        match self.content.as_ref()? {
+            PaneContent::Comments(Ok(annotations)) => Some(annotations),
+            _ => None,
+        }
+    }
+
+    /// The comments pane's open field, which the frame's focus ring and Tab
+    /// order include.
+    pub(in crate::shell) fn comment_draft(&self) -> Option<&Entity<super::chrome::SearchInput>> {
+        self.comments.draft_input()
+    }
+
     /// Drop every thumbnail picture, keeping the scroll position.
     fn invalidate_thumbnails(&mut self) {
         self.thumbnails.invalidate_images();
@@ -308,6 +341,7 @@ fn read(pane: NavigationPane, canvas: Option<&mut Canvas>) -> PaneContent {
             NavigationPane::Attachments => PaneContent::Attachments(Ok(Vec::new())),
             NavigationPane::Layers => PaneContent::Layers(Ok(Vec::new())),
             NavigationPane::Signatures => PaneContent::Signatures(Ok(Vec::new())),
+            NavigationPane::Comments => PaneContent::Comments(Ok(Vec::new())),
         };
     };
     match pane {
@@ -318,6 +352,7 @@ fn read(pane: NavigationPane, canvas: Option<&mut Canvas>) -> PaneContent {
         }
         NavigationPane::Layers => PaneContent::Layers(message(canvas.model.layers())),
         NavigationPane::Signatures => PaneContent::Signatures(message(canvas.model.signatures())),
+        NavigationPane::Comments => PaneContent::Comments(message(canvas.model.annotations())),
     }
 }
 
@@ -374,6 +409,7 @@ pub(in crate::shell) fn apply(
         PaneAction::Layer(action) => layers::run(state, canvas, action, cx),
         PaneAction::Bookmark(action) => bookmark_edit::run(state, canvas, action, cx),
         PaneAction::Thumbnail(action) => thumbnails::run(state, canvas, action, cx),
+        PaneAction::Comment(action) => comments::run(state, canvas, action, cx),
     }
     cx.notify();
 }
@@ -507,6 +543,9 @@ fn accessible_body(
         }
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::accessible(items.as_deref())
+        }
+        (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
+            comments::accessible(&state.comments, items.as_deref(), state.edit_refusal, cx)
         }
         _ => vec![Element::new(
             "navigation-pane-empty",
@@ -661,6 +700,13 @@ fn render_body(
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::render(items.as_deref(), theme)
         }
+        (NavigationPane::Comments, Some(PaneContent::Comments(items))) => comments::render(
+            &state.comments,
+            items.as_deref(),
+            state.edit_refusal,
+            theme,
+            cx,
+        ),
         // The snapshot is always the open pane's, taken when it opened, so
         // the mismatched arms are unreachable rather than a state to draw.
         _ => empty_message(NOTHING_YET, theme).into_any_element(),
@@ -803,7 +849,7 @@ mod tests {
     /// dropping one.
     #[test]
     fn every_named_pane_has_a_button_a_label_and_its_own_element_id() {
-        assert_eq!(NavigationPane::ALL.len(), 6);
+        assert_eq!(NavigationPane::ALL.len(), 7);
 
         let mut ids: Vec<&str> = NavigationPane::ALL
             .iter()
@@ -811,7 +857,7 @@ mod tests {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 6, "two panes share an element id");
+        assert_eq!(ids.len(), 7, "two panes share an element id");
 
         for pane in NavigationPane::ALL {
             assert!(!pane.label().is_empty());

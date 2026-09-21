@@ -324,7 +324,7 @@ impl SearchInput {
     /// The name comes from the caller, because a text field is drawn with no
     /// label of its own: the placeholder is all a sighted user gets, and it
     /// disappears the moment anything is typed.
-    pub(super) fn accessible(
+    pub(in crate::shell) fn accessible(
         &self,
         label: &'static str,
         field: TextField,
@@ -346,7 +346,7 @@ impl SearchInput {
         self.buffer.selected_range.clone()
     }
 
-    pub(super) fn set_query(&mut self, query: impl Into<String>, cx: &mut Context<Self>) {
+    pub(in crate::shell) fn set_query(&mut self, query: impl Into<String>, cx: &mut Context<Self>) {
         let query = query.into();
         if self.buffer.content == query {
             return;
@@ -509,6 +509,7 @@ fn field_node(
         | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
         TextField::CombinePages
         | TextField::BookmarkTitle
+        | TextField::CommentDraft
         | TextField::PropertiesTitle
         | TextField::PropertiesAuthor
         | TextField::PropertiesSubject

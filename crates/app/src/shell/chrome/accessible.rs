@@ -60,6 +60,8 @@ pub(in crate::shell) enum TextField {
     PropertiesOpenPage,
     /// The title New Bookmark and Rename Bookmark ask for.
     BookmarkTitle,
+    /// The Comments pane's field: a comment's text, or a reply.
+    CommentDraft,
 }
 
 /// What activating an accessible element does.

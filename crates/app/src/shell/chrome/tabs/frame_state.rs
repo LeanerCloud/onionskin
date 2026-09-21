@@ -209,6 +209,10 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) find_input: Entity<SearchInput>,
     pub(super) page_entry: PageEntryState,
     pub(super) observed_view_state: Option<CanvasViewState>,
+    /// The active document's edit epoch when the frame last looked. An edit
+    /// made on the canvas moves no view, so without it the tab's dirty mark,
+    /// the Undo entry and an open pane's list would lag behind the edit.
+    pub(super) observed_edit_epoch: Option<u64>,
     pub(super) shell_view_state: ShellViewState,
     pub(super) rail_state: RailState,
     pub(super) quick_actions_state: QuickActionsState,
@@ -340,6 +344,7 @@ impl ShellFrame {
                 page_entry_error: None,
             },
             observed_view_state,
+            observed_edit_epoch: None,
             shell_view_state,
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),

@@ -36,7 +36,8 @@ use crate::shell::dialog::ShellDialog;
 use crate::shell::find_bar::FindSummary;
 use crate::shell::panes;
 use crate::shell::panes::{
-    AttachmentAction, BookmarkAction, BookmarksCommand, LayerAction, LayersCommand, PaneAction,
+    start_comment_draft, AttachmentAction, BookmarkAction, BookmarksCommand, CommentAction,
+    CommentDraftMode, LayerAction, LayersCommand, PaneAction,
 };
 
 impl ShellFrame {
@@ -447,6 +448,26 @@ impl ShellFrame {
             Activation::Pane(PaneAction::Attachment(AttachmentAction::Add)) => {
                 self.prompt_for_attachment(cx);
             }
+            Activation::Pane(PaneAction::Comment(
+                action @ (CommentAction::Edit | CommentAction::Reply),
+            )) => {
+                let mode = if action == CommentAction::Edit {
+                    CommentDraftMode::Edit
+                } else {
+                    CommentDraftMode::Reply
+                };
+                let theme = self.shell_view_state.tokens();
+                start_comment_draft(&mut self.navigation, mode, theme, window, cx);
+                cx.notify();
+            }
+            Activation::Pane(
+                action @ PaneAction::Comment(CommentAction::SaveDraft | CommentAction::CancelDraft),
+            ) => {
+                // The field is gone, so the keys go back to the shell: Undo
+                // straight after a reply has to reach the frame.
+                self.run_pane_action(action, cx);
+                window.focus(self.a11y.focus_handle());
+            }
             Activation::Pane(action) => self.run_pane_action(action, cx),
             Activation::StepFind(direction) => self.step_find(direction, cx),
             Activation::ApplyFindOption(option) => self.apply_find_option(option, cx),
@@ -629,6 +650,7 @@ impl ShellFrame {
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
+            TextField::CommentDraft => self.navigation.comment_draft(),
         }
     }
 
@@ -699,6 +721,7 @@ impl ShellFrame {
             &self.page_entry.page_input,
         ]
         .into_iter()
+        .chain(self.navigation.comment_draft())
         .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
         .map(|input| input.read(cx).element_id().into())
     }
