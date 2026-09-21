@@ -411,6 +411,26 @@ impl Document {
         label: &'static str,
         body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
     ) -> Result<T> {
+        self.edit_with_current_structure(label, body)
+    }
+
+    /// Run an annotation edit as one undoable step, handing it the structure
+    /// tree as this session currently has it: the tree an annotation's
+    /// structure element is attached to, for the same reason as
+    /// [`Document::edit_pages`].
+    pub fn edit_annotations<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
+    ) -> Result<T> {
+        self.edit_with_current_structure(label, body)
+    }
+
+    fn edit_with_current_structure<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
+    ) -> Result<T> {
         let structure = crate::read_structure(self.structure()?)?;
         self.edit
             .transact(&self.cos, label, |tx| body(tx, &structure))

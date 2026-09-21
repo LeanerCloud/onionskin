@@ -6,7 +6,7 @@
 //! size whatever the `/Rect` says. Treating it as a drag would give the user a
 //! rubber band that changes nothing.
 
-use onionskin_core::{add_annotation, read_structure, Annotation, Color, PagePoint, Rect, Subtype};
+use onionskin_core::{add_annotation, Annotation, Color, PagePoint, Rect, Subtype};
 use onionskin_plugin_api::{PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
 use crate::place::{now, page_object};
@@ -91,16 +91,11 @@ impl ToolPlugin for NoteTool {
         let Some(page) = page_object(ctx.doc, pressed.page) else {
             return;
         };
-        let Ok(structure) = read_structure(ctx.doc.edit_mut().1) else {
-            return;
-        };
         let mut annotation = Annotation::new(Subtype::Text, NoteTool::rect(pressed));
         annotation.icon = Some("Note".into());
         annotation.color = Some(self.color);
-        let (edit, base) = ctx.doc.edit_mut();
-        let _ = edit.transact(base, "Sticky Note", |tx| {
-            add_annotation(tx, &structure, page, &annotation, now())?;
-            Ok(())
+        let _ = ctx.doc.edit_annotations("Sticky Note", |tx, structure| {
+            add_annotation(tx, structure, page, &annotation, now()).map(|_| ())
         });
     }
 

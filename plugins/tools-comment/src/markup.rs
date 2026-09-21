@@ -18,8 +18,8 @@
 
 use onionskin_core::textselect::select_between;
 use onionskin_core::{
-    add_annotation, read_structure, Annotation, Color, Document, PagePoint, PageQuad, Quad, Rect,
-    Subtype, TextSelection, Viewport,
+    add_annotation, Annotation, Color, Document, PagePoint, PageQuad, Quad, Rect, Subtype,
+    TextSelection, Viewport,
 };
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
@@ -189,28 +189,23 @@ impl MarkupTool {
         };
         let quads: Vec<Quad> = merged.iter().map(to_quad).collect();
 
-        let structure = match read_structure(ctx.doc.edit_mut().1) {
-            Ok(structure) => structure,
-            Err(_) => return,
-        };
         let writes = self.writes;
         let color = self.color;
         let label = self.name;
         let text = selection.text.clone();
-        let (edit, base) = ctx.doc.edit_mut();
         self.committed = true;
-        let _ = edit.transact(base, label, |tx| {
+        let _ = ctx.doc.edit_annotations(label, |tx, structure| {
             match writes {
                 Writes::Span(subtype) => {
                     let mut annotation = span(subtype, &quads, color);
                     annotation.contents = None;
-                    add_annotation(tx, &structure, page, &annotation, now())?;
+                    add_annotation(tx, structure, page, &annotation, now())?;
                 }
                 Writes::Caret => {
                     let mut annotation = Annotation::new(Subtype::Text, caret_rect(&quads));
                     annotation.icon = Some("Comment".into());
                     annotation.color = Some(color);
-                    add_annotation(tx, &structure, page, &annotation, now())?;
+                    add_annotation(tx, structure, page, &annotation, now())?;
                 }
                 Writes::Replacement => {
                     // One transaction: the strike-out and the note that
@@ -218,7 +213,7 @@ impl MarkupTool {
                     // replacement is not a state anyone wants.
                     let struck = add_annotation(
                         tx,
-                        &structure,
+                        structure,
                         page,
                         &span(Subtype::StrikeOut, &quads, color),
                         now(),
@@ -229,7 +224,7 @@ impl MarkupTool {
                     reply.in_reply_to = Some(struck);
                     reply.subject = Some("Replacement".into());
                     reply.contents = Some(text);
-                    add_annotation(tx, &structure, page, &reply, now())?;
+                    add_annotation(tx, structure, page, &reply, now())?;
                 }
             }
             Ok(())

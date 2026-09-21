@@ -13,8 +13,7 @@
 //! forbids.
 
 use onionskin_core::{
-    add_annotation, read_structure, Annotation, Color, Intent, PagePoint, PageRect, Rect,
-    TextStyle, Viewport,
+    add_annotation, Annotation, Color, Intent, PagePoint, PageRect, Rect, TextStyle, Viewport,
 };
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
@@ -177,10 +176,6 @@ impl FreeTextTool {
         let Some(page) = page_object(ctx.doc, anchor.page) else {
             return;
         };
-        let Ok(structure) = read_structure(ctx.doc.edit_mut().1) else {
-            return;
-        };
-
         let intent = match self.shape {
             Shape::Typewriter => Some(Intent::FreeTextTypewriter),
             Shape::Box => None,
@@ -198,10 +193,8 @@ impl FreeTextTool {
         }
 
         let label = self.name;
-        let (edit, base) = ctx.doc.edit_mut();
-        let _ = edit.transact(base, label, |tx| {
-            add_annotation(tx, &structure, page, &annotation, now())?;
-            Ok(())
+        let _ = ctx.doc.edit_annotations(label, |tx, structure| {
+            add_annotation(tx, structure, page, &annotation, now()).map(|_| ())
         });
     }
 }

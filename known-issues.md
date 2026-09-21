@@ -103,16 +103,6 @@ source IDs, severity, ownership, and required proof.
   fix is to hand the worker the preview on an epoch change, the way the render
   worker already is; it belongs with P19's find-in-edited-document work.
 
-- **`tools-comment` reads the structure tree from the file, not the session**,
-  found 2026-09-21 during P11. Its tools call `read_structure` on the edit
-  base, so the second annotation added to a tagged document in one session is
-  attached against the tree as the file had it. P11 found the same class in
-  page edits - P4's hooks rewrite `/K` and `/ParentTree` from the tree they are
-  handed, so a stale tree writes back what an earlier edit removed - and fixed
-  it there with `Document::edit_pages`, which reads the preview's tree. The
-  comment tools want the same: a `Document::edit_annotations` or a general
-  `Document::transact` handing the current tree.
-
 - **P4's invariant does not see a `/ParentTree` entry naming an emptied
   element**, found 2026-09-21 by a P11 mutation. Removing two tagged pages one
   at a time from the same tree left page 1's `/ParentTree` slot naming its

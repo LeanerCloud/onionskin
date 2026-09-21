@@ -18,8 +18,8 @@
 //! is what `Overlay`'s `Ellipse` and `closed` exist for.
 
 use onionskin_core::{
-    add_annotation, read_structure, Annotation, BorderEffect, Color, Document, LineEnding,
-    PagePoint, PageRect, Rect, Subtype, Viewport,
+    add_annotation, Annotation, BorderEffect, Color, Document, LineEnding, PagePoint, PageRect,
+    Rect, Subtype, Viewport,
 };
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
@@ -231,14 +231,9 @@ impl ShapeTool {
         let Some(page) = page_object(ctx.doc, page) else {
             return;
         };
-        let Ok(structure) = read_structure(ctx.doc.edit_mut().1) else {
-            return;
-        };
         let label = self.name;
-        let (edit, base) = ctx.doc.edit_mut();
-        let _ = edit.transact(base, label, |tx| {
-            add_annotation(tx, &structure, page, &annotation, now())?;
-            Ok(())
+        let _ = ctx.doc.edit_annotations(label, |tx, structure| {
+            add_annotation(tx, structure, page, &annotation, now()).map(|_| ())
         });
     }
 
