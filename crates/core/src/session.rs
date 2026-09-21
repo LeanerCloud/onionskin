@@ -75,6 +75,9 @@ pub enum Error {
         depth: usize,
         visits: usize,
     },
+    /// Refused by `core::protection`: an edit, or a read-out into another
+    /// document, of an encrypted document.
+    Protected(crate::protection::Refusal),
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -96,6 +99,7 @@ impl fmt::Display for Error {
             Error::NoPageTree => {
                 write!(f, "the document has no indirect /Pages to rewrite")
             }
+            Error::Protected(refusal) => write!(f, "{refusal}"),
             Error::RepeatedPage { index } => write!(
                 f,
                 "the new page order names page {} twice; copy it through the importer instead",
@@ -151,6 +155,7 @@ impl std::error::Error for Error {
             Error::Content(e) => Some(e),
             Error::Worker(e) => Some(e),
             Error::SearchWorker(e) => Some(e),
+            Error::Protected(e) => Some(e),
             Error::EncryptedUnsupported
             | Error::NoPageTree
             | Error::RepeatedPage { .. }
@@ -369,6 +374,25 @@ impl Document {
     /// Whether the document differs from its last save.
     pub fn is_dirty(&self) -> bool {
         self.edit.is_dirty()
+    }
+
+    /// Whether this document may be edited: refused, with the reason, for an
+    /// encrypted one. The same answer `EditSession::transact` enforces, asked
+    /// ahead of time so a tool can show itself disabled instead of failing.
+    pub fn edit_refusal(&self) -> Option<crate::protection::Refusal> {
+        crate::protection::edit(&self.cos).err()
+    }
+
+    /// Whether this document's object graph may be read out into another
+    /// document: the encrypted-source rule, for a command whose input is this
+    /// session.
+    pub fn read_out_refusal(&self) -> Option<crate::protection::Refusal> {
+        crate::protection::read_out(&self.cos).err()
+    }
+
+    /// What to tell the user when this document opens, if anything.
+    pub fn protection_notice(&self) -> Option<String> {
+        crate::protection::notice(&self.cos)
     }
 
     /// Where a save writes, if anywhere.

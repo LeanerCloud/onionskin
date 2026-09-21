@@ -80,10 +80,17 @@ impl EditSession {
     ///
     /// An aborted transaction leaves the overlay untouched, including any
     /// object numbers it reserved: an abort cannot leak a number.
+    ///
+    /// **Refused on an encrypted base**, before the body runs: nothing in this
+    /// codebase can write an encrypted document until M6, and refusing here -
+    /// the one door every tool, command and verb goes through - is what makes
+    /// the editing gate a property of the document rather than a flag someone
+    /// has to remember to check. See `core::protection`.
     pub fn transact<F, T>(&mut self, base: &CosDocument, label: &'static str, body: F) -> Result<T>
     where
         F: FnOnce(&mut Transaction<'_>) -> Result<T>,
     {
+        crate::protection::edit(base).map_err(crate::Error::Protected)?;
         let reserved_before = self.overlay.next_number();
         let mut tx = Transaction {
             base,

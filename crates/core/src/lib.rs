@@ -16,6 +16,7 @@ mod outline;
 mod page;
 pub mod pages;
 mod preview;
+pub mod protection;
 mod recovery;
 mod render;
 mod save;
