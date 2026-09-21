@@ -25,6 +25,7 @@ mod signatures;
 mod structure;
 #[cfg(test)]
 mod testpdf;
+pub mod textselect;
 mod viewport;
 
 pub use annots::{
