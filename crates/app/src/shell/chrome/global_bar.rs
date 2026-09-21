@@ -249,6 +249,12 @@ pub(in crate::shell) enum MenuCommand {
     KeyboardShortcuts,
 }
 
+/// Why Line Weights is off. Acrobat's toggle draws every stroke at one
+/// hairline width, which needs an option in the renderer this build's
+/// renderer does not have; the row moved to M4 with it (M3 P22).
+pub(super) const LINE_WEIGHTS_REASON: &str =
+    "Line Weights arrive in M4 with the renderer's constant-hairline option";
+
 /// What the Take a Snapshot entry says when no installed tool carries the
 /// capability, and what the frame says if one disappears between the menu
 /// being built and the entry being chosen.
@@ -1165,7 +1171,7 @@ fn view_menu_entries(
         entry(
             MenuCommand::LineWeights,
             "Line Weights",
-            Disabled("Line Weights land in M3"),
+            Disabled(LINE_WEIGHTS_REASON),
             false,
         ),
         entry(
@@ -2400,7 +2406,7 @@ mod tests {
     }
 
     #[test]
-    fn line_weights_is_disabled_until_m3_and_has_no_action_route() {
+    fn line_weights_is_disabled_naming_m4_and_has_no_action_route() {
         let entry = view_entries(Some(view()))
             .into_iter()
             .find(|entry| entry.command == MenuCommand::LineWeights)
@@ -2408,14 +2414,18 @@ mod tests {
 
         assert_eq!(
             entry.availability,
-            MenuAvailability::Disabled("Line Weights land in M3")
+            MenuAvailability::Disabled(LINE_WEIGHTS_REASON)
         );
+        assert!(LINE_WEIGHTS_REASON.contains("M4"));
         assert_eq!(entry.command.view_action(view()), None);
         assert_eq!(entry.command.shell_view_action(), None);
         assert!(native_action(entry.command).is_none());
         match native_menu_item(entry) {
             MenuItem::Action { name, action, .. } => {
-                assert_eq!(name.as_ref(), "Line Weights (Line Weights land in M3)");
+                assert_eq!(
+                    name.as_ref(),
+                    format!("Line Weights ({LINE_WEIGHTS_REASON})")
+                );
                 assert!(action.partial_eq(&UnavailableCommand));
             }
             _ => panic!("a deferred entry still emits an action item"),

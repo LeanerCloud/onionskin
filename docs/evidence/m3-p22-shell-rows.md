@@ -47,3 +47,24 @@ landed in its own commit.
   - the star is activated through the accessibility tree;
   - the recents file read back from disk has the star;
   - the Starred row opens the document in a tab.
+
+## View > Show/Hide > Line Weights (row 23): moved to M4
+
+**Decision, carried as one branch.**
+
+- Acrobat's toggle draws every stroke at one constant hairline width when
+  it is off, which needs a constant-hairline option in the renderer.
+- The hayro fork this build pins (`cristim/hayro` at `67763e2`) has no such
+  option, and no fork commit landed in this package.
+- So, as the plan rules, the row moves to M4 and the menu entry stays,
+  disabled, with its reason: "Line Weights arrive in M4 with the renderer's
+  constant-hairline option".
+- The `By milestone` headline becomes M3 97, M4 5.
+  `acrobat_parity_headline_matches_every_inventory_row` passes, and
+  PLAN.md's M3 paragraph says the headline is the count.
+
+**Runs.** `line_weights_is_disabled_naming_m4_and_has_no_action_route`: the
+entry is disabled with that reason and the reason names M4. It has no view
+action, no shell action and no native action, and the native menu item
+shows the reason. Only this test exists for the row; the rendered-widths
+test the plan describes for the other branch does not.

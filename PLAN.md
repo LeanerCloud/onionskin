@@ -552,8 +552,10 @@ what-does-not-transfer section demands:
 - **M3 - First edits, first print.** Authoritative decomposition:
   docs/plans/m3-edits-and-print.md (32 packages, reviewed). This is the
   identity release: the first milestone that writes a byte, and the largest by
-  scoreboard weight: 99 rows assigned, 97 shipped once ruling B moves booklet
-  and poster/tile to M4. Scope, matching those rows. In `core`: the edit
+  scoreboard weight: 99 rows assigned, 97 once ruling B moved booklet and
+  poster/tile to M4, and fewer again where a package moved a row on with its
+  reason (Line Weights to M4 in P22); the headline in ACROBAT-PARITY.md is the
+  count. Scope, matching those rows. In `core`: the edit
   graph, transactions and a session-scoped undo stack; incremental save with
   one section per save, Save As, Revert, generations and the skins panel; a
   preview buffer, so the canvas renders committed edits from the bytes a save
@@ -572,7 +574,8 @@ what-does-not-transfer section demands:
   first and the macOS NSPrintOperation backend and dialog on top; booklet and
   poster/tile move to M4. Shell: undo/redo and save on the global bar, autosave
   and crash recovery, the Comments pane, the Organize Pages grid, Manage Tools,
-  the Window menu, Line Weights, and the Advanced Search extensions. `cos`
+  the Window menu, and the Advanced Search extensions (Line Weights moved to
+  M4 with the renderer option it needs). `cos`
   gains empty-user-password decryption, read-only: those documents open,
   render, print and export but stay uneditable until M6, a stated regression
   against Acrobat for files whose permission bits would allow editing, accepted
