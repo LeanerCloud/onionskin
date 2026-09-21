@@ -1,5 +1,8 @@
 //! Common codecs: page export to text, PNG, SVG, JPEG and TIFF; PDFs made
-//! from PNG, JPEG and TIFF images; and every image out of a document. PDF is
+//! from PNG, JPEG and TIFF images; every image out of a document; and a
+//! text selection as RTF (Export Selection As), which is a writer the shell
+//! calls rather than a registered codec: whole-document RTF export is the
+//! post-1.0 row. PDF is
 //! itself the interchange format, so the codec surface stays this small.
 //!
 //! JPEG 2000 is not here. Its essential patents have expired, so the format
@@ -15,6 +18,7 @@ mod import;
 mod jpeg;
 mod png;
 mod raster;
+pub mod rtf;
 mod svg;
 mod text;
 mod tiff;
