@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use onionskin_cos::{BytesSource, Document as CosDocument};
+use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, Object};
 
 use crate::edit::EditSession;
 use crate::{Error, Result};
@@ -43,7 +43,50 @@ pub struct SaveOutcome {
 /// This is the same call the preview makes, which is what keeps preview and
 /// save from disagreeing: they cannot, because there is one builder.
 pub(crate) fn section(base: &CosDocument, edit: &EditSession) -> Result<Option<Vec<u8>>> {
-    Ok(base.section_for(&edit.pending_edits(), &edit.trailer_edits())?)
+    Ok(base.section_for(&edit.pending_edits(), &stamped(base, edit)?)?)
+}
+
+/// The trailer key that says a section is Onionskin's.
+pub const SECTION_STAMP: &str = "OnionskinSection";
+
+/// The session's trailer edits, plus the stamp that marks the section a save
+/// writes as Onionskin's: where it starts, who wrote it, and when.
+///
+/// The start offset is what makes the stamp evidence rather than a guess.
+/// Trailer keys are carried forward into later sections, by us and by other
+/// writers, so a stamp alone would mark every later section as ours; a
+/// stamp whose `/Start` is the section's own first byte cannot have been
+/// copied from an earlier one.
+///
+/// Only a save stamps, not the preview: the preview is never written, and a
+/// clock in it would make two previews of one state differ.
+fn stamped(
+    base: &CosDocument,
+    edit: &EditSession,
+) -> Result<std::collections::BTreeMap<Name, Option<Object>>> {
+    let mut edits = edit.trailer_edits();
+    let writes_something =
+        !edit.pending_edits().is_empty() || !edits.is_empty() || !base.provenance().is_clean();
+    if writes_something {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64);
+        let mut stamp = Dict::new();
+        stamp.set(
+            Name::new("Start"),
+            Object::Integer(base.next_section_start()? as i64),
+        );
+        stamp.set(
+            Name::new("Producer"),
+            Object::String(format!("Onionskin {}", env!("CARGO_PKG_VERSION")).into_bytes()),
+        );
+        stamp.set(
+            Name::new("Date"),
+            Object::String(crate::annots::pdf_date(now).into_bytes()),
+        );
+        edits.insert(Name::new(SECTION_STAMP), Some(Object::Dict(stamp)));
+    }
+    Ok(edits)
 }
 
 /// A save that has been written to disk but whose reopen failed.
@@ -74,7 +117,7 @@ pub(crate) fn write_and_reopen(
     // cos owns the temp-file-and-rename and the permission carry-over, so a
     // save that fails part way through does not leave a truncated document
     // where the original was.
-    base.save_overlay_to_path(&edit.pending_edits(), &edit.trailer_edits(), path)?;
+    base.save_overlay_to_path(&edit.pending_edits(), &stamped(base, edit)?, path)?;
 
     let written = match std::fs::read(path) {
         Ok(bytes) => bytes,

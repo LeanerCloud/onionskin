@@ -5,7 +5,7 @@
 //! `start`, which is why the range is what this hands out rather than an offset
 //! into a table.
 
-use onionskin_cos::Document as CosDocument;
+use onionskin_cos::{Document as CosDocument, Object};
 
 use crate::Result;
 
@@ -53,6 +53,8 @@ pub enum RevertRefusal {
     NotTrailing,
     /// There is no generation with that index.
     NoSuchGeneration,
+    /// Rolling back to the newest generation discards nothing.
+    AlreadyCurrent,
     /// Reverting to generation 0 from generation 0 is a no-op, and a session
     /// with no appended sections has nothing to revert.
     NothingToRevert,
@@ -72,6 +74,7 @@ impl std::fmt::Display for RevertRefusal {
                 "only the most recent generation can be reverted, because a revert truncates"
             ),
             RevertRefusal::NoSuchGeneration => write!(f, "no generation with that index"),
+            RevertRefusal::AlreadyCurrent => write!(f, "this is already the current version"),
             RevertRefusal::NothingToRevert => write!(f, "this document has one generation"),
         }
     }
@@ -106,4 +109,113 @@ pub(crate) fn truncation_point(
         return Err(RevertRefusal::NotTrailing);
     }
     Ok(generation.start)
+}
+
+/// Where rolling back to `keep` truncates the file: the start of the
+/// generation after it, so `keep` and everything older stays and everything
+/// newer goes. Every newer generation is trailing, so unlike dropping one
+/// generation this is always a truncation; it is refused only with unsaved
+/// edits, or when nothing is newer.
+pub(crate) fn roll_back_point(
+    generations: &[Generation],
+    keep: usize,
+    has_unsaved_edits: bool,
+) -> std::result::Result<u64, RevertRefusal> {
+    if has_unsaved_edits {
+        return Err(RevertRefusal::UnsavedEdits);
+    }
+    if keep >= generations.len() {
+        return Err(RevertRefusal::NoSuchGeneration);
+    }
+    generations
+        .get(keep + 1)
+        .map(|next| next.start)
+        .ok_or(RevertRefusal::AlreadyCurrent)
+}
+
+/// What the skins panel says about one generation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerationDetail {
+    pub generation: Generation,
+    /// Whether Onionskin wrote it: its trailer carries the save stamp, and
+    /// the stamp names this generation's own first byte. A stamp carried
+    /// forward into another writer's section names an earlier start, so it
+    /// does not count.
+    pub ours: bool,
+    /// Who wrote it: the stamp's producer for ours, `/Info /Producer` as of
+    /// this generation otherwise.
+    pub producer: Option<String>,
+    /// When: the stamp's date for ours, `/Info /ModDate` (or, for the
+    /// original, `/CreationDate`) otherwise.
+    pub date: Option<String>,
+}
+
+/// Every generation of `bytes`, described. Each is read by opening the file
+/// as it was when that generation ended, over the same buffer.
+pub(crate) fn details(
+    bytes: &std::sync::Arc<Vec<u8>>,
+    generations: &[Generation],
+) -> Vec<GenerationDetail> {
+    generations
+        .iter()
+        .map(|generation| {
+            let source = onionskin_cos::BytesSource::prefix(
+                std::sync::Arc::clone(bytes),
+                generation.end as usize,
+            );
+            match CosDocument::open(Box::new(source)) {
+                Ok(doc) => describe(&doc, *generation),
+                Err(_) => GenerationDetail {
+                    generation: *generation,
+                    ours: false,
+                    producer: None,
+                    date: None,
+                },
+            }
+        })
+        .collect()
+}
+
+fn describe(doc: &CosDocument, generation: Generation) -> GenerationDetail {
+    let dict = |object: Option<&Object>| {
+        object
+            .and_then(|object| doc.resolve(object).ok())
+            .and_then(|object| object.as_dict().cloned())
+    };
+    let text = |dict: &Option<onionskin_cos::Dict>, key: &str| {
+        dict.as_ref()
+            .and_then(|dict| dict.get(key.as_bytes()))
+            .and_then(|value| doc.resolve(value).ok())
+            .and_then(|value| match value {
+                Object::String(bytes) => Some(onionskin_content::pdf_text_string(&bytes)),
+                _ => None,
+            })
+    };
+    let stamp = dict(doc.trailer().get(crate::save::SECTION_STAMP.as_bytes()));
+    let ours = generation.index > 0
+        && stamp
+            .as_ref()
+            .and_then(|stamp| stamp.get(b"Start"))
+            .and_then(Object::as_integer)
+            == Some(generation.start as i64);
+    if ours {
+        return GenerationDetail {
+            generation,
+            ours,
+            producer: text(&stamp, "Producer"),
+            date: text(&stamp, "Date"),
+        };
+    }
+    let info = dict(doc.trailer().get(b"Info"));
+    let date_key = if generation.index == 0 {
+        "CreationDate"
+    } else {
+        "ModDate"
+    };
+    GenerationDetail {
+        generation,
+        ours,
+        producer: text(&info, "Producer"),
+        date: text(&info, date_key),
+    }
 }

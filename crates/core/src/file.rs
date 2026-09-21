@@ -59,6 +59,12 @@ impl DocumentFile {
         self.document.revert_to(target)
     }
 
+    /// Keep generation `keep` and everything older, and truncate away every
+    /// newer one. The skins panel's Roll Back.
+    pub fn roll_back_to(&mut self, keep: usize) -> Result<()> {
+        self.document.roll_back_to(keep)
+    }
+
     pub fn set_recovery(&mut self, store: RecoveryStore) {
         self.document.set_recovery(store);
     }

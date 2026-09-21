@@ -45,7 +45,7 @@ pub use edit::{
     Transaction, MAX_HISTORY_BYTES,
 };
 pub use file::DocumentFile;
-pub use generations::{Generation, RevertRefusal};
+pub use generations::{Generation, GenerationDetail, RevertRefusal};
 pub use history::{ViewHistory, ViewState};
 pub use layers::Layer;
 pub use layout::{

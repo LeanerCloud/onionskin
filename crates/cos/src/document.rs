@@ -1814,12 +1814,7 @@ impl Document {
         let mut base_view = None;
         self.validate_root(overlay, &trailer, root_changed, &mut base_view)?;
 
-        // The section must start on its own line.
-        let last = self.reader.read(self.original_len.saturating_sub(1), 1)?;
-        let lead: &[u8] = match last.first() {
-            Some(b'\n') | Some(b'\r') | None => b"",
-            Some(_) => b"\n",
-        };
+        let lead = self.section_lead()?;
         let section_start = self.original_len + lead.len() as u64;
 
         let mut objects: Vec<(ObjRef, Object)> = overlay
@@ -1965,6 +1960,26 @@ impl Document {
     /// file. The bytes on disk are the bytes
     /// [`Document::section_for`] returned, so a preview built from them cannot
     /// disagree with what a save wrote.
+    /// Where the next incremental section's first byte will be: after the
+    /// file, and after the newline that puts the section on its own line
+    /// when the file does not end with one.
+    ///
+    /// Consumer: `core`'s save, which stamps each section it writes with
+    /// this offset so a later reader can tell its own sections from ones
+    /// another producer appended.
+    pub fn next_section_start(&self) -> Result<u64> {
+        Ok(self.original_len + self.section_lead()?.len() as u64)
+    }
+
+    /// The bytes that go between the file and a new section.
+    fn section_lead(&self) -> Result<&'static [u8]> {
+        let last = self.reader.read(self.original_len.saturating_sub(1), 1)?;
+        Ok(match last.first() {
+            Some(b'\n') | Some(b'\r') | None => b"",
+            Some(_) => b"\n",
+        })
+    }
+
     pub fn save_overlay_to_path(
         &self,
         overlay: &BTreeMap<u32, PendingEdit>,

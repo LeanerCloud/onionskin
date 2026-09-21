@@ -799,19 +799,43 @@ impl Document {
         crate::generations::generations(&self.cos)
     }
 
-    /// Truncate the file back to the end of `target` and reopen.
+    /// Drop the trailing generation `target` by truncating the file, and
+    /// reopen.
+    pub(crate) fn revert_to(&mut self, target: usize) -> Result<()> {
+        let generations = self.generations()?;
+        let point =
+            crate::generations::truncation_point(&generations, target, self.edit.is_dirty())
+                .map_err(Error::RevertRefused)?;
+        self.truncate_at(point)
+    }
+
+    /// Every generation, with who wrote it and when, for the skins panel.
+    /// Opens the file once per generation, so the panel asks when the file
+    /// changes rather than every frame.
+    pub fn generation_details(&self) -> Result<Vec<crate::GenerationDetail>> {
+        Ok(crate::generations::details(
+            &self.bytes,
+            &self.generations()?,
+        ))
+    }
+
+    /// Truncate the file back to the end of generation `keep`, discarding
+    /// every newer one, and reopen.
+    pub(crate) fn roll_back_to(&mut self, keep: usize) -> Result<()> {
+        let generations = self.generations()?;
+        let point = crate::generations::roll_back_point(&generations, keep, self.edit.is_dirty())
+            .map_err(Error::RevertRefused)?;
+        self.truncate_at(point)
+    }
+
+    /// Truncate the file at `point` and reopen from what is left.
     ///
     /// The generation is bumped **before** the truncation, so anything the
     /// render worker has in flight against the old bytes is already stale by
     /// the time the file changes. The reverse order leaves exactly the window
     /// this ordering exists to close.
-    pub(crate) fn revert_to(&mut self, target: usize) -> Result<()> {
+    fn truncate_at(&mut self, point: u64) -> Result<()> {
         let path = self.path.clone().ok_or(Error::NoPath)?;
-        let generations = self.generations()?;
-        let point =
-            crate::generations::truncation_point(&generations, target, self.edit.is_dirty())
-                .map_err(Error::RevertRefused)?;
-
         self.bump_generation();
 
         let file = std::fs::OpenOptions::new().write(true).open(&path)?;

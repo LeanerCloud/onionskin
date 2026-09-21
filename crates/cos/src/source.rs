@@ -23,11 +23,15 @@ pub trait Source: Send {
     fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>>;
 }
 
-pub struct BytesSource(Arc<Vec<u8>>);
+pub struct BytesSource {
+    bytes: Arc<Vec<u8>>,
+    /// How much of `bytes` the source is: all of it, or a prefix.
+    len: usize,
+}
 
 impl BytesSource {
     pub fn new(bytes: Vec<u8>) -> Self {
-        BytesSource(Arc::new(bytes))
+        BytesSource::from_shared(Arc::new(bytes))
     }
 
     /// Reads from a buffer somebody else also holds.
@@ -36,19 +40,31 @@ impl BytesSource {
     /// bytes to `cos` and to hayro (whose `PdfData` is `From<Arc<T>>`). Without
     /// this the two parsers would each own a copy of the file.
     pub fn from_shared(bytes: Arc<Vec<u8>>) -> Self {
-        BytesSource(bytes)
+        let len = bytes.len();
+        BytesSource { bytes, len }
+    }
+
+    /// The first `len` bytes of a shared buffer, without copying them: the
+    /// file as it was when an earlier generation ended.
+    ///
+    /// Consumer: the skins panel, which opens each generation of a file to
+    /// read its trailer, and would otherwise copy the file once per
+    /// generation.
+    pub fn prefix(bytes: Arc<Vec<u8>>, len: usize) -> Self {
+        let len = len.min(bytes.len());
+        BytesSource { bytes, len }
     }
 }
 
 impl Source for BytesSource {
     fn len(&self) -> u64 {
-        self.0.len() as u64
+        self.len as u64
     }
 
     fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
-        let start = offset.min(self.0.len() as u64) as usize;
-        let end = start.saturating_add(len).min(self.0.len());
-        Ok(self.0[start..end].to_vec())
+        let start = offset.min(self.len as u64) as usize;
+        let end = start.saturating_add(len).min(self.len);
+        Ok(self.bytes[start..end].to_vec())
     }
 }
 
