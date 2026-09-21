@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use onionskin_core::{
     add_annotation, read_structure, Annotation, AnnotationFilter, Document, DocumentEdit,
-    EditSession, Rect, Subtype,
+    DocumentFile, EditSession, Rect, Subtype,
 };
 use onionskin_corpus_testing::seed;
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, Provenance};
@@ -127,7 +127,7 @@ fn one_edit_appends_exactly_one_section_that_truncates_away() {
     let path = copy_seed(&dir, "minimal.pdf");
     let original = std::fs::read(&path).expect("readable");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     set_description(&mut document, "one edit");
     let outcome = document.save().expect("saves");
     assert_eq!(outcome.sections_appended, 1);
@@ -158,7 +158,7 @@ fn ten_edits_and_one_save_are_still_one_section() {
     let dir = temp_dir("ten-edits");
     let path = copy_seed(&dir, "minimal.pdf");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     for index in 0..10 {
         set_description(&mut document, &format!("edit {index}"));
     }
@@ -175,7 +175,7 @@ fn edit_then_undo_then_save_writes_nothing() {
     let path = copy_seed(&dir, "minimal.pdf");
     let original = std::fs::read(&path).expect("readable");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     set_description(&mut document, "a description");
     let (edit, base) = document.edit_mut();
     assert!(edit.undo(base).expect("undo runs"));
@@ -200,7 +200,7 @@ fn adding_an_annotation_and_deleting_it_in_one_session_writes_nothing() {
     let path = copy_seed(&dir, "minimal.pdf");
     let original = std::fs::read(&path).expect("readable");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     let (edit, base) = document.edit_mut();
     let structure = read_structure(base).expect("structure");
     let objref = edit
@@ -245,7 +245,7 @@ fn edit_save_undo_save_restores_the_object_graph_in_all_four_shapes() {
             // A removal needs something to remove. Seeding it in its own save
             // makes the pre-edit state a document that has the key, which is
             // the state the undo has to restore.
-            let mut seeding = Document::open_path(&path).expect("opens");
+            let mut seeding = DocumentFile::open(&path).expect("opens");
             let (edit, base) = seeding.edit_mut();
             edit.apply(
                 base,
@@ -260,7 +260,7 @@ fn edit_save_undo_save_restores_the_object_graph_in_all_four_shapes() {
         let before_bytes = std::fs::read(&path).expect("readable");
         let before_graph = graph(&open_bytes(&before_bytes));
 
-        let mut document = Document::open_path(&path).expect("opens");
+        let mut document = DocumentFile::open(&path).expect("opens");
         apply_shape(&mut document, shape);
         document.save().expect("first save");
 
@@ -344,7 +344,7 @@ fn two_saves_produce_two_sections_and_the_second_points_at_the_first() {
     let dir = temp_dir("two-saves");
     let path = copy_seed(&dir, "minimal.pdf");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     set_description(&mut document, "first");
     document.save().expect("first save");
     set_description(&mut document, "second");
@@ -378,7 +378,7 @@ fn an_edit_against_a_repaired_fixture_appears_exactly_once() {
     let copy = dir.join("repaired.pdf");
     std::fs::copy(&path, &copy).expect("copied");
 
-    let mut document = Document::open_path(&copy).expect("opens");
+    let mut document = DocumentFile::open(&copy).expect("opens");
     let (edit, base) = document.edit_mut();
     let Ok(()) = edit.apply(
         base,
@@ -416,7 +416,7 @@ fn create_save_create_save_puts_the_two_annotations_at_two_numbers() {
     let dir = temp_dir("create-save-twice");
     let path = copy_seed(&dir, "minimal.pdf");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     let first = add_square(&mut document);
     document.save().expect("first save");
     let second = add_square(&mut document);
@@ -456,7 +456,7 @@ fn create_save_create_save_puts_the_two_annotations_at_two_numbers() {
 fn the_preview_cache_key_includes_the_filter() {
     let dir = temp_dir("preview-key");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     add_square(&mut document);
 
     let generation = document.byte_generation();
@@ -492,7 +492,7 @@ fn the_preview_cache_key_includes_the_filter() {
 fn two_hiding_filters_at_one_generation_do_not_share_a_buffer() {
     let dir = temp_dir("preview-two-hiding");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
 
     let (edit, base) = document.edit_mut();
     let structure = read_structure(base).expect("structure");
@@ -526,7 +526,7 @@ fn two_hiding_filters_at_one_generation_do_not_share_a_buffer() {
 fn the_preview_equals_what_the_following_save_writes() {
     let dir = temp_dir("preview-equals-save");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     set_description(&mut document, "a description");
 
     let preview = document
@@ -558,7 +558,7 @@ fn the_preview_equals_what_the_following_save_writes() {
 fn structure_answers_from_the_edits_not_from_the_open_document() {
     let dir = temp_dir("structure-reads");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
 
     let (edit, base) = document.edit_mut();
     edit.apply(
@@ -596,7 +596,7 @@ fn structure_answers_from_the_edits_not_from_the_open_document() {
 fn a_routed_reader_sees_an_unsaved_edit() {
     let dir = temp_dir("routed-reader");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     assert!(
         document.layers().expect("layers").is_empty(),
         "no layers yet"
@@ -643,7 +643,7 @@ fn a_routed_reader_sees_an_unsaved_edit() {
 fn an_unsaved_annotation_is_on_the_canvas_and_an_undone_one_is_not() {
     let dir = temp_dir("canvas");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
 
     assert!(
         drawn(&mut document).is_none(),
@@ -666,7 +666,7 @@ fn an_unsaved_annotation_is_on_the_canvas_and_an_undone_one_is_not() {
 fn a_reverted_annotation_leaves_the_canvas() {
     let dir = temp_dir("canvas-revert");
     let path = copy_seed(&dir, "minimal.pdf");
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
 
     add_square(&mut document);
     document.save().expect("saves");
@@ -698,7 +698,7 @@ fn revert_refuses_unsaved_edits_and_non_trailing_targets_and_truncates_a_trailin
     let path = copy_seed(&dir, "minimal.pdf");
     let original = std::fs::read(&path).expect("readable");
 
-    let mut document = Document::open_path(&path).expect("opens");
+    let mut document = DocumentFile::open(&path).expect("opens");
     set_description(&mut document, "first");
     document.save().expect("first save");
     set_description(&mut document, "second");

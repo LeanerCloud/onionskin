@@ -9,7 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
-use onionskin_core::{Document, DocumentEdit, Recovered, RecoveryError, RecoveryStore};
+use onionskin_core::{
+    Document, DocumentEdit, DocumentFile, Recovered, RecoveryError, RecoveryStore,
+};
 use onionskin_corpus_testing::seed;
 use onionskin_cos::{BytesSource, Document as CosDocument, Name, Object};
 
@@ -91,7 +93,7 @@ fn a_recovery_replays_to_the_edited_document() {
     let original = std::fs::read(&document_path).expect("readable");
     let store = RecoveryStore::open(&root.join("recovery")).expect("opens");
 
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     document.set_recovery(store.clone());
     set_description(&mut document, "recovered text");
     let written = document.autosave().expect("autosave runs");
@@ -132,7 +134,7 @@ fn a_recovery_older_than_a_save_is_stale_rather_than_replayed() {
     let original = std::fs::read(&document_path).expect("readable");
     let store = RecoveryStore::open(&root.join("recovery")).expect("opens");
 
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     set_description(&mut document, "saved text");
     let section = {
         let (edit, base) = document.edit_mut();
@@ -164,7 +166,7 @@ fn the_recovery_file_is_gone_after_a_save() {
     let document_path = copy_seed(&root, "minimal.pdf");
     let store = RecoveryStore::open(&root.join("recovery")).expect("opens");
 
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     document.set_recovery(store.clone());
     set_description(&mut document, "text");
     let written = document.autosave().expect("autosave").expect("written");
@@ -181,7 +183,7 @@ fn the_recovery_file_is_gone_after_a_clean_close() {
     let document_path = copy_seed(&root, "minimal.pdf");
     let store = RecoveryStore::open(&root.join("recovery")).expect("opens");
 
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     document.set_recovery(store.clone());
     set_description(&mut document, "text");
     let written = document.autosave().expect("autosave").expect("written");
@@ -199,7 +201,7 @@ fn autosave_on_a_clean_document_writes_nothing_and_removes_a_stale_file() {
     let document_path = copy_seed(&root, "minimal.pdf");
     let store = RecoveryStore::open(&root.join("recovery")).expect("opens");
 
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     document.set_recovery(store.clone());
     set_description(&mut document, "text");
     let written = document.autosave().expect("autosave").expect("written");
@@ -219,7 +221,7 @@ fn autosave_on_a_clean_document_writes_nothing_and_removes_a_stale_file() {
 fn autosave_is_off_by_default() {
     let root = temp_dir("off");
     let document_path = copy_seed(&root, "minimal.pdf");
-    let mut document = Document::open_path(&document_path).expect("opens");
+    let mut document = DocumentFile::open(&document_path).expect("opens");
     set_description(&mut document, "text");
     assert_eq!(document.autosave().expect("runs"), None);
 }

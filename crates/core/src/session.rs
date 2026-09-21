@@ -348,7 +348,7 @@ impl Document {
     }
 
     /// Write the overlay to the file this session was opened from.
-    pub fn save(&mut self) -> Result<crate::SaveOutcome> {
+    pub(crate) fn save(&mut self) -> Result<crate::SaveOutcome> {
         let path = self.path.clone().ok_or(Error::NoPath)?;
         self.write_to(&path, false)
     }
@@ -356,7 +356,7 @@ impl Document {
     /// The same, to a different file. There is no truncation relationship to
     /// the original: the new file gets the original bytes plus one section, and
     /// the session's generations list from here on describes the new file.
-    pub fn save_as(&mut self, path: &Path) -> Result<crate::SaveOutcome> {
+    pub(crate) fn save_as(&mut self, path: &Path) -> Result<crate::SaveOutcome> {
         self.write_to(path, true)
     }
 
@@ -388,7 +388,7 @@ impl Document {
     }
 
     /// Turn autosave on for this document, writing into `store`.
-    pub fn set_recovery(&mut self, store: crate::recovery::RecoveryStore) {
+    pub(crate) fn set_recovery(&mut self, store: crate::recovery::RecoveryStore) {
         self.recovery = Some(store);
     }
 
@@ -398,7 +398,7 @@ impl Document {
     /// What is written is the incremental section the next save would append,
     /// so a recovery replays by appending bytes rather than by re-running
     /// edits, and cannot drift from what a save would have produced.
-    pub fn autosave(&self) -> Result<Option<PathBuf>> {
+    pub(crate) fn autosave(&self) -> Result<Option<PathBuf>> {
         let (Some(store), Some(path)) = (&self.recovery, &self.path) else {
             return Ok(None);
         };
@@ -417,7 +417,7 @@ impl Document {
 
     /// A clean close: the document is going away with nothing unsaved worth
     /// keeping, so its recovery file goes too.
-    pub fn close(self) -> Result<()> {
+    pub(crate) fn close(self) -> Result<()> {
         if let (Some(store), Some(path)) = (&self.recovery, &self.path) {
             store.discard(path).map_err(Error::Recovery)?;
         }
@@ -548,7 +548,7 @@ impl Document {
     /// render worker has in flight against the old bytes is already stale by
     /// the time the file changes. The reverse order leaves exactly the window
     /// this ordering exists to close.
-    pub fn revert_to(&mut self, target: usize) -> Result<()> {
+    pub(crate) fn revert_to(&mut self, target: usize) -> Result<()> {
         let path = self.path.clone().ok_or(Error::NoPath)?;
         let generations = self.generations()?;
         let point =

@@ -7,6 +7,7 @@
 mod annots;
 mod attachments;
 mod edit;
+mod file;
 mod generations;
 mod history;
 mod layers;
@@ -35,6 +36,7 @@ pub use edit::{
     Change, DocumentEdit, EditSession, Entry, History, ObjectState, Overlay, TrailerState,
     Transaction, MAX_HISTORY_BYTES,
 };
+pub use file::DocumentFile;
 pub use generations::{Generation, RevertRefusal};
 pub use history::{ViewHistory, ViewState};
 pub use layers::Layer;
