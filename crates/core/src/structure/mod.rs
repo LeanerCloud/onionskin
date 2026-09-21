@@ -44,6 +44,16 @@ pub fn remove_page(
     maintain::remove_page(tx, structure, page)
 }
 
+/// Remove several pages' elements in one rewrite. See `maintain::remove_pages`
+/// for why a loop over [`remove_page`] is wrong.
+pub fn remove_pages(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    pages: &[ObjRef],
+) -> Result<Maintenance> {
+    maintain::remove_pages(tx, structure, pages)
+}
+
 /// Reorder the root's `/K` to match a new page order.
 pub fn reorder_pages(
     tx: &mut Transaction<'_>,

@@ -58,11 +58,25 @@ pub(crate) fn remove_page(
     structure: &Structure,
     page: ObjRef,
 ) -> Result<Maintenance> {
+    remove_pages(tx, structure, &[page])
+}
+
+/// [`remove_page`] for several pages at once.
+///
+/// **One call, not one per page.** Each removal rewrites the root's `/K` and
+/// the `/ParentTree` from the tree it was handed; handed the same tree twice,
+/// the second removal writes back the element the first one took out.
+pub(crate) fn remove_pages(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    pages: &[ObjRef],
+) -> Result<Maintenance> {
     let Some(tree) = structure.tree() else {
         return Ok(Maintenance::Untagged);
     };
 
-    let doomed = elements_on_page(tree, page);
+    let pages: BTreeSet<u32> = pages.iter().map(|page| page.number).collect();
+    let doomed = elements_on_pages(tree, &pages);
     if doomed.is_empty() {
         return Ok(Maintenance::NoChange);
     }
@@ -82,20 +96,20 @@ pub(crate) fn remove_page(
         tx.put_object(*number, element.objref.generation, Object::Dict(dict))?;
     }
 
-    rewrite_kids_without(tx, tree, &doomed, page)?;
+    rewrite_kids_without(tx, tree, &doomed, &pages)?;
     rewrite_parent_tree_without(tx, tree, &doomed)?;
     rewrite_id_tree_without(tx, tree, &doomed)?;
     Ok(Maintenance::Changed)
 }
 
-/// Elements whose surviving content is entirely on the removed page.
-fn elements_on_page(tree: &StructureTree, page: ObjRef) -> BTreeSet<u32> {
+/// Elements whose surviving content is entirely on the removed pages.
+fn elements_on_pages(tree: &StructureTree, pages: &BTreeSet<u32>) -> BTreeSet<u32> {
     let mut doomed = BTreeSet::new();
     for (number, element) in &tree.elements {
-        let own_page = element.page.map(|pg| pg.number) == Some(page.number);
+        let own_page = element.page.is_some_and(|pg| pages.contains(&pg.number));
         let kids_elsewhere = element.kids.iter().any(|kid| match kid {
             Kid::MarkedContent { page: Some(pg), .. } | Kid::Object { page: Some(pg), .. } => {
-                pg.number != page.number
+                !pages.contains(&pg.number)
             }
             // A child element is judged on its own account, so a parent is not
             // kept alive by one.
@@ -116,7 +130,7 @@ fn rewrite_kids_without(
     tx: &mut Transaction<'_>,
     tree: &StructureTree,
     doomed: &BTreeSet<u32>,
-    page: ObjRef,
+    pages: &BTreeSet<u32>,
 ) -> Result<()> {
     for (number, element) in &tree.elements {
         if doomed.contains(number) {
@@ -125,7 +139,7 @@ fn rewrite_kids_without(
         let kept: Vec<&Kid> = element
             .kids
             .iter()
-            .filter(|kid| keeps(kid, doomed, page))
+            .filter(|kid| keeps(kid, doomed, pages))
             .collect();
         if kept.len() == element.kids.len() {
             continue;
@@ -144,7 +158,7 @@ fn rewrite_kids_without(
     let kept: Vec<&Kid> = tree
         .roots
         .iter()
-        .filter(|kid| keeps(kid, doomed, page))
+        .filter(|kid| keeps(kid, doomed, pages))
         .collect();
     if kept.len() != tree.roots.len() {
         set_root_kids(tx, tree, &kept)?;
@@ -152,11 +166,11 @@ fn rewrite_kids_without(
     Ok(())
 }
 
-fn keeps(kid: &Kid, doomed: &BTreeSet<u32>, page: ObjRef) -> bool {
+fn keeps(kid: &Kid, doomed: &BTreeSet<u32>, pages: &BTreeSet<u32>) -> bool {
     match kid {
         Kid::Element(number) => !doomed.contains(number),
         Kid::MarkedContent { page: Some(pg), .. } | Kid::Object { page: Some(pg), .. } => {
-            pg.number != page.number
+            !pages.contains(&pg.number)
         }
         Kid::Mcid(_) => false,
         Kid::MarkedContent { page: None, .. } | Kid::Object { page: None, .. } => true,
@@ -322,24 +336,29 @@ pub(crate) fn reorder_pages(
         position.insert(page.number, index);
     }
 
+    // A kid on a page that is not in the order sits on a removed page: its
+    // element was emptied by the removal, and carrying it over from the tree
+    // as it was before would put it back in the reading order.
     let mut keyed: Vec<(usize, usize, &Kid)> = tree
         .roots
         .iter()
         .enumerate()
-        .map(|(original, kid)| {
-            let rank = page_of(kid, tree)
-                .and_then(|page| position.get(&page.number).copied())
-                .unwrap_or(usize::MAX);
-            (rank, original, kid)
+        .filter_map(|(original, kid)| {
+            let rank = match page_of(kid, tree) {
+                Some(page) => *position.get(&page.number)?,
+                None => usize::MAX,
+            };
+            Some((rank, original, kid))
         })
         .collect();
     keyed.sort_by_key(|(rank, original, _)| (*rank, *original));
 
     let reordered: Vec<&Kid> = keyed.iter().map(|(_, _, kid)| *kid).collect();
-    if reordered
-        .iter()
-        .zip(tree.roots.iter())
-        .all(|(left, right)| *left == right)
+    if reordered.len() == tree.roots.len()
+        && reordered
+            .iter()
+            .zip(tree.roots.iter())
+            .all(|(left, right)| *left == right)
     {
         return Ok(Maintenance::NoChange);
     }

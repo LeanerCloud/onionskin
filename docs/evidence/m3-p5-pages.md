@@ -153,6 +153,21 @@ being linear or a page dict starts carrying an inlined resource dictionary.
   `core::pages` having its own, so a rewrite composes with `?` inside a
   transaction like every other edit.
 
+## Fixed after merge: several tagged pages removed at once
+
+Found by P11. The rewrite called P4's `remove_page` once per removed page,
+and each call rewrites the structure root's `/K` and `/ParentTree` from the
+tree it is handed - the same tree every time - so the second removal wrote back
+the element the first one took out. The reorder that follows, working from the
+same tree, then appended every removed element to the end of the reading order.
+`structure::check` passed over both: an emptied element with no page is legal.
+
+Now one `remove_pages` call removes every page's elements in one rewrite, and
+the reorder drops root kids whose page is no longer in the order.
+`deleting_several_tagged_pages_removes_every_one_of_their_elements` reads the
+`/K` and the `/ParentTree` directly; with the per-page loop restored it fails on
+the `/ParentTree`, and with the old reorder it fails on the `/K`.
+
 ## Not done here
 
 - **`PageSource::Imported` is placed but not produced.** The importer that

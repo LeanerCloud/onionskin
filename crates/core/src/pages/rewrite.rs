@@ -7,7 +7,7 @@ use onionskin_cos::{Dict, Name, ObjRef, Object};
 use super::inherit::{walk, Leaf};
 use super::{actions, destinations, fields, labels, links, outline, threads};
 use crate::edit::Transaction;
-use crate::structure::{remove_page, reorder_pages, Structure};
+use crate::structure::{remove_pages, reorder_pages, Structure};
 use crate::{Error, Result};
 
 /// Where a page in the new order comes from.
@@ -160,14 +160,12 @@ pub fn rewrite_page_tree(
     // `/StructParents` needs no renumbering: `/ParentTree` is keyed on those
     // values, not on page indices, so a surviving page's key still resolves
     // wherever the page ends up.
-    for number in &removed {
-        let objref = leaves
-            .iter()
-            .find(|leaf| leaf.objref.number == *number)
-            .map(|leaf| leaf.objref)
-            .expect("a removed page came from the walk");
-        remove_page(tx, structure, objref)?;
-    }
+    let removed_pages: Vec<ObjRef> = leaves
+        .iter()
+        .filter(|leaf| removed.contains(&leaf.objref.number))
+        .map(|leaf| leaf.objref)
+        .collect();
+    remove_pages(tx, structure, &removed_pages)?;
     let new_order: Vec<ObjRef> = order
         .iter()
         .map(|source| match source {

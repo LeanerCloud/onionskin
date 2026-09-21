@@ -71,7 +71,7 @@ pub use selection::{Selection, TextSelection};
 pub use session::{Document, Error, ExportSnapshot, PageGeometryResponse, Result, SnapshotRequest};
 pub use signatures::SignatureField;
 pub use structure::{
-    attach_annotation, check, read_structure, remove_page, reorder_pages, Element, Kid,
-    Maintenance, ParentEntry, Report, Structure, StructureTree, Violation,
+    attach_annotation, check, read_structure, remove_page, remove_pages, reorder_pages, Element,
+    Kid, Maintenance, ParentEntry, Report, Structure, StructureTree, Violation,
 };
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy, MAX_ZOOM, MIN_ZOOM};

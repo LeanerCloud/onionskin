@@ -569,6 +569,46 @@ fn a_tagged_document_keeps_a_valid_structure_tree_through_a_delete_and_a_reorder
     );
 }
 
+/// Two pages removed in one rewrite. Each structure removal rewrites the
+/// root's `/K` and the `/ParentTree` from the tree it is handed, so removing
+/// them one at a time from the same tree writes back the element the first
+/// removal took out - and the invariant check passes over that, because an
+/// emptied element with no page is a legal element. So this reads the two
+/// places it would show.
+#[test]
+fn deleting_several_tagged_pages_removes_every_one_of_their_elements() {
+    let original = tagged();
+    let base = open(&original);
+    let (saved, _) = rewrite(&original, &base, &[keep(2)]);
+    let after = open(&saved);
+
+    let root = catalog(&after)
+        .get(b"StructTreeRoot")
+        .and_then(Object::as_reference)
+        .expect("a structure tree");
+    let root = dict_of(&after, root);
+    assert_eq!(
+        resolved(&after, root.get(b"K")),
+        Some(Object::Array(vec![Object::Ref(ObjRef::new(9, 0))])),
+        "only the surviving page's element is left in the reading order"
+    );
+    let Some(Object::Dict(parent_tree)) = resolved(&after, root.get(b"ParentTree")) else {
+        panic!("a /ParentTree");
+    };
+    assert_eq!(
+        parent_tree.get(b"Nums"),
+        Some(&Object::Array(vec![
+            Object::Integer(0),
+            Object::Array(vec![Object::Null]),
+            Object::Integer(1),
+            Object::Array(vec![Object::Null]),
+            Object::Integer(2),
+            Object::Array(vec![Object::Ref(ObjRef::new(9, 0))]),
+        ])),
+        "both removed pages' /ParentTree entries are cleared, not just the last"
+    );
+}
+
 fn root_kid_pages(document: &CosDocument) -> Vec<u32> {
     let root = catalog(document)
         .get(b"StructTreeRoot")
