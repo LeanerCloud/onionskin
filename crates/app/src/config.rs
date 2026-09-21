@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 pub const KEYMAP_FILE: &str = "keymap.json";
 pub const PREFERENCES_FILE: &str = "preferences.json";
 pub const RECENTS_FILE: &str = "recents.json";
+/// The folder beside the settings files that tools keep their own files in.
+pub const DATA_DIR: &str = "data";
 
 /// The configuration directory, or `None` when the environment names no home
 /// to put it in. A caller that gets `None` runs on defaults and cannot
@@ -63,6 +65,9 @@ pub struct ConfigPaths {
     pub keymap: Option<PathBuf>,
     pub preferences: Option<PathBuf>,
     pub recents: Option<PathBuf>,
+    /// Where tools keep files of their own - the custom stamp library - as
+    /// opposed to the settings files above.
+    pub data: Option<PathBuf>,
     /// The user's home directory, resolved once here so the surfaces that
     /// shorten a path for display do not ask the environment per row per
     /// frame.
@@ -91,6 +96,7 @@ impl ConfigPaths {
             keymap: Some(dir.join(KEYMAP_FILE)),
             preferences: Some(dir.join(PREFERENCES_FILE)),
             recents: Some(dir.join(RECENTS_FILE)),
+            data: Some(dir.join(DATA_DIR)),
             home: home_dir(),
         }
     }

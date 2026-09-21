@@ -116,6 +116,9 @@ fn form(
             descriptor.set(Name::new("Type"), Object::name("Font"));
             descriptor.set(Name::new("Subtype"), Object::name("Type1"));
             descriptor.set(Name::new("BaseFont"), Object::name(font.base_font()));
+            // Named rather than left to the font's built-in encoding, so a
+            // byte above 127 means the same accented letter in every reader.
+            descriptor.set(Name::new("Encoding"), Object::name("WinAnsiEncoding"));
             named.set(Name::new(font.resource_name()), Object::Dict(descriptor));
         }
         resources.set(Name::new("Font"), Object::Dict(named));

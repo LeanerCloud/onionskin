@@ -33,6 +33,7 @@ pub(in crate::shell) enum ShellDialog {
     ZoomTo,
     Combine(super::chrome::combine_dialog::CombineEntryPoint),
     Split,
+    Stamps,
 }
 
 impl ShellDialog {
@@ -40,6 +41,7 @@ impl ShellDialog {
         match self {
             Self::Combine(entry_point) => entry_point.title(),
             Self::Split => "Split Document",
+            Self::Stamps => "Stamps",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -133,6 +135,9 @@ pub(in crate::shell) fn accessible(
             rects,
             cx,
         ),
+        ShellDialog::Stamps => {
+            super::chrome::stamps_dialog::accessible(&frame.stamps_rows(cx), rects)
+        }
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -216,6 +221,11 @@ pub(in crate::shell) fn render_dialog(
             cx,
         )
         .into_any_element(),
+        ShellDialog::Stamps => {
+            let rows = frame.stamps_rows(cx);
+            super::chrome::stamps_dialog::render(&rows, rects, focused, theme, cx)
+                .into_any_element()
+        }
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
             .into_any_element(),

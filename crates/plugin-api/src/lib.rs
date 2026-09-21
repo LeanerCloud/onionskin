@@ -89,6 +89,13 @@ pub enum ToolCapability {
     /// Zooms continuously while the pointer is dragged. The View menu's
     /// Dynamic Zoom entry selects its tool through this rather than by id.
     DynamicZoom,
+    /// Places a file the user picks. A tool cannot open a file dialog, so the
+    /// shell asks for a file when the tool is chosen and hands its path to
+    /// [`ToolPlugin::choose`]. Attach File is the one tool that needs it.
+    ChoosesFile,
+    /// Places stamps. The Stamps dialog lists its choices and the Paste
+    /// Clipboard Image as Stamp entry chooses one for it.
+    Stamp,
 }
 
 impl ToolCapability {
@@ -104,10 +111,12 @@ impl ToolCapability {
             | ToolCapability::Highlight
             | ToolCapability::Draw
             | ToolCapability::FillTextFields
-            | ToolCapability::AddSignature => true,
-            ToolCapability::Select | ToolCapability::Snapshot | ToolCapability::DynamicZoom => {
-                false
-            }
+            | ToolCapability::AddSignature
+            | ToolCapability::Stamp => true,
+            ToolCapability::Select
+            | ToolCapability::Snapshot
+            | ToolCapability::DynamicZoom
+            | ToolCapability::ChoosesFile => false,
         }
     }
 }
@@ -121,6 +130,28 @@ impl ToolCapability {
 pub struct ToolCtx<'a> {
     pub doc: &'a mut Document,
     pub viewport: &'a mut Viewport,
+}
+
+/// One thing a tool can be set to place: a stamp from its library, say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolChoice {
+    /// What [`ToolPlugin::choose`] takes.
+    pub id: String,
+    pub label: String,
+    /// The heading it is listed under, e.g. "Sign Here".
+    pub category: String,
+}
+
+/// What the shell hands every tool before it is used: the user's settings a
+/// tool may need, and a place of its own on disk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolEnvironment {
+    /// The name the user chose to comment as. `None` until they chose one:
+    /// a tool never falls back to the operating system's account name.
+    pub author: Option<String>,
+    /// A directory the tool may keep its own files in - a stamp library - or
+    /// `None` when the shell has nowhere to put one.
+    pub data_dir: Option<std::path::PathBuf>,
 }
 
 /// A canvas tool. One is active at a time; the canvas routes pointer
@@ -171,6 +202,28 @@ pub trait ToolPlugin: Send {
     /// Shapes to draw this frame, over the rendered pages.
     fn overlays(&self, _doc: &Document) -> Vec<Overlay> {
         Vec::new()
+    }
+
+    /// The user's settings and the tool's own directory. Called before the
+    /// tool is used and again whenever they change.
+    fn configure(&mut self, _environment: &ToolEnvironment) {}
+
+    /// What the tool can be set to place, for the shell to list. Empty for a
+    /// tool with nothing to choose between.
+    fn choices(&self) -> Vec<ToolChoice> {
+        Vec::new()
+    }
+
+    /// Set what the tool places next: one of [`Self::choices`], or a file's
+    /// path for a [`ToolCapability::ChoosesFile`] tool. `false` when the tool
+    /// has no such choice, and then nothing changed.
+    fn choose(&mut self, _id: &str) -> bool {
+        false
+    }
+
+    /// The choice in effect, if the tool has one.
+    fn chosen(&self) -> Option<String> {
+        None
     }
 }
 
@@ -345,6 +398,16 @@ mod tests {
         let tool: &dyn ToolPlugin = &LegacyTool;
 
         assert!(tool.capabilities().is_empty());
+    }
+
+    #[test]
+    fn a_tool_with_nothing_to_choose_refuses_every_choice() {
+        let mut tool = LegacyTool;
+        tool.configure(&ToolEnvironment::default());
+        assert!(tool.choices().is_empty());
+        assert!(!tool.choose("anything"));
+        assert_eq!(tool.chosen(), None);
+        assert!(!ToolCapability::ChoosesFile.edits_document());
     }
 
     #[test]

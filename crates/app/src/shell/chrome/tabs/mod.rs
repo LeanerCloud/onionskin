@@ -6,8 +6,10 @@ mod export;
 mod frame_state;
 mod menu;
 mod organize;
+mod stamps;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
+pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
 
 use menu::MenuPanel;
 use std::path::{Path, PathBuf};
@@ -256,6 +258,7 @@ impl ShellFrame {
             },
         )
         .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
+        model.configure_tools(&self.settings.tool_environment());
         let repaired = repair_notice(&source, model.provenance());
         if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
         {
@@ -851,6 +854,10 @@ impl ShellFrame {
                 label: name.to_owned(),
                 reason: TOOL_ACTIVATION_FAILED,
             });
+        }
+        // A tool that places a file cannot ask for one itself.
+        if result.is_ok() && stamps::chooses_file(canvas.read(cx), index) {
+            self.prompt_for_tool_file(index, cx);
         }
         cx.notify();
         result.is_ok()
@@ -1477,6 +1484,12 @@ mod tests {
     mod native_input;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod organize_dialogs;
+    #[cfg(all(
+        feature = "shell-test-support",
+        feature = "tools-comment",
+        feature = "codecs-common"
+    ))]
+    mod stamps;
 
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names

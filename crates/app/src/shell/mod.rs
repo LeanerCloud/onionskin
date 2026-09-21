@@ -116,6 +116,16 @@ pub(in crate::shell) struct ShellSettings {
 }
 
 impl ShellSettings {
+    /// What every tab's tools are configured with. The author is `None`
+    /// until the Commenting preferences (P20) let the user choose one: a
+    /// tool never falls back to the operating system's account name.
+    pub(in crate::shell) fn tool_environment(&self) -> onionskin_plugin_api::ToolEnvironment {
+        onionskin_plugin_api::ToolEnvironment {
+            author: None,
+            data_dir: self.paths.data.clone(),
+        }
+    }
+
     pub(in crate::shell) fn load(paths: ConfigPaths, registry: &PluginRegistry) -> Self {
         let mut notices = Vec::new();
         let (preferences, preference_errors) = Preferences::load(paths.preferences.as_deref());
@@ -780,7 +790,9 @@ where
     // command list is read, to resolve the keymap against.
     let mut settings = ShellSettings::load(ConfigPaths::resolve(), &crate::build_registry());
     let mut prepared = prepared;
+    let environment = settings.tool_environment();
     for (path, model) in &mut prepared {
+        model.configure_tools(&environment);
         settings
             .notices
             .extend(repair_notice(path, model.provenance()));

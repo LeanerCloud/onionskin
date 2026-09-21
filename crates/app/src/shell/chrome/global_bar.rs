@@ -175,6 +175,8 @@ pub(in crate::shell) enum MenuCommand {
     CreateFromFiles,
     CreateFromFile,
     CreateFromClipboard,
+    Stamps,
+    PasteStamp,
     SplitDocument,
     Export(ExportTarget),
     ExportAllImages,
@@ -292,6 +294,8 @@ pub(in crate::shell) struct RegistryFacts {
     /// Whether some codec imports a format into a new document, which is
     /// what the Create entries run.
     image_import: bool,
+    /// Whether a tool places stamps, which the Stamps entries open.
+    stamp_tool: bool,
     /// Why the active document may not be edited, from `core`. Carried with
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
@@ -317,6 +321,7 @@ impl RegistryFacts {
             dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
             image_import: registry.codecs().any(|codec| codec.imports()),
+            stamp_tool: tool_with(registry, ToolCapability::Stamp).is_some(),
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -525,6 +530,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             ]
             .into_iter()
             .chain(page_entries(state))
+            .chain(stamp_entries(state))
             .chain([MenuEntry {
                 command: MenuCommand::Preferences,
                 label: "Preferences…",
@@ -597,6 +603,33 @@ fn core_commands() -> MenuAvailability {
     } else {
         MenuAvailability::Disabled(super::tabs::NO_CORE_COMMANDS)
     }
+}
+
+/// Stamps… and Paste Clipboard Image as Stamp: live when a tool places
+/// stamps, a document is open, and it may be edited - a stamp is an edit.
+fn stamp_entries(state: MenuState) -> [MenuEntry; 2] {
+    let availability = match (state.registry.stamp_tool, state.has_active_tab) {
+        (false, _) => MenuAvailability::Disabled(super::tabs::NO_STAMP_TOOL),
+        (true, false) => MenuAvailability::Disabled("No document is open"),
+        (true, true) => state
+            .registry
+            .edit_refusal
+            .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
+    };
+    [
+        MenuEntry {
+            command: MenuCommand::Stamps,
+            label: "Stamps…",
+            availability,
+            selected: false,
+        },
+        MenuEntry {
+            command: MenuCommand::PasteStamp,
+            label: "Paste Clipboard Image as Stamp",
+            availability,
+            selected: false,
+        },
+    ]
 }
 
 /// The page commands, on the page the viewport is on.
@@ -974,6 +1007,8 @@ impl MenuCommand {
             | Self::CreateFromFiles
             | Self::CreateFromFile
             | Self::CreateFromClipboard
+            | Self::Stamps
+            | Self::PasteStamp
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
@@ -1020,6 +1055,8 @@ impl MenuCommand {
             | Self::CreateFromFiles
             | Self::CreateFromFile
             | Self::CreateFromClipboard
+            | Self::Stamps
+            | Self::PasteStamp
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
@@ -1211,6 +1248,8 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::CreateFromFiles
         | MenuCommand::CreateFromFile
         | MenuCommand::CreateFromClipboard
+        | MenuCommand::Stamps
+        | MenuCommand::PasteStamp
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument => Some(Box::new(RunCommand { command })),
         MenuCommand::SaveAs
@@ -1259,6 +1298,7 @@ mod tests {
             dynamic_zoom_tool: true,
             any_tool: true,
             image_import: true,
+            stamp_tool: true,
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -1580,7 +1620,11 @@ mod tests {
         );
         assert_eq!(facts.snapshot_tool, cfg!(feature = "tools-basic"));
         assert_eq!(facts.dynamic_zoom_tool, cfg!(feature = "tools-basic"));
-        assert_eq!(facts.any_tool, cfg!(feature = "tools-basic"));
+        assert_eq!(
+            facts.any_tool,
+            cfg!(any(feature = "tools-basic", feature = "tools-comment"))
+        );
+        assert_eq!(facts.stamp_tool, cfg!(feature = "tools-comment"));
     }
 
     /// Open Recent is live when there is something to open, and says why
@@ -1692,6 +1736,8 @@ mod tests {
                 "Move Page Later",
                 "Delete Page",
                 "Number Pages From 1",
+                "Stamps…",
+                "Paste Clipboard Image as Stamp",
                 "Preferences…",
             ]
         );
@@ -1858,6 +1904,9 @@ mod tests {
                 .filter(|name| name.contains("(The common codecs plugin is not installed)"))
                 .count()
                 == ExportTarget::ALL.len()
+                    // Export All Images, which is the codecs plugin's too, and
+                    // says so when this build left the plugin out.
+                    + usize::from(!cfg!(feature = "codecs-common"))
         );
     }
 

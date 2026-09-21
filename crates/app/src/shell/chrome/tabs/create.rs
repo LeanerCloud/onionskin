@@ -151,7 +151,7 @@ impl ShellFrame {
 }
 
 /// The registry's codecs, asked for the one that reads `bytes`.
-fn import(bytes: &[u8]) -> Result<Vec<u8>, String> {
+pub(super) fn import(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let registry = crate::build_registry();
     let codec = registry.importer(bytes).ok_or_else(|| {
         if registry.codecs().any(|codec| codec.imports()) {

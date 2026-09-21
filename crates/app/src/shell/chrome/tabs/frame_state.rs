@@ -213,6 +213,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) home: HomeState,
     pub(super) export: ExportState,
     pub(super) organize: OrganizeDialogs,
+    pub(super) stamps: Option<crate::shell::chrome::stamps_dialog::StampsDialogState>,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -331,6 +332,7 @@ impl ShellFrame {
             home: HomeState::default(),
             export: ExportState::default(),
             organize: OrganizeDialogs::default(),
+            stamps: None,
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);

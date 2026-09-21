@@ -516,6 +516,18 @@ impl CanvasModel {
         &self.registry
     }
 
+    /// Hand this tab's tools the shell's environment.
+    pub(super) fn configure_tools(&mut self, environment: &onionskin_plugin_api::ToolEnvironment) {
+        self.registry.configure_tools(environment);
+    }
+
+    /// Set what tool `index` places next. `false` when it has no such choice.
+    pub(super) fn choose_tool(&mut self, index: usize, choice: &str) -> bool {
+        self.registry
+            .tool_mut(index)
+            .is_some_and(|tool| tool.choose(choice))
+    }
+
     /// The document itself, for work that reads it out into new files - a
     /// split - and changes nothing the canvas draws.
     pub(super) fn document_mut(&mut self) -> &mut Document {

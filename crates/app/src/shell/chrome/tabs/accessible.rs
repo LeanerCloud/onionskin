@@ -419,6 +419,7 @@ impl ShellFrame {
             Activation::CancelExport => self.cancel_export(cx),
             Activation::Combine(action) => self.run_combine_action(action, cx),
             Activation::Split(action) => self.run_split_action(action, window, cx),
+            Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));

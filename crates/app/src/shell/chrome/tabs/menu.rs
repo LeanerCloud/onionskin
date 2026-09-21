@@ -176,6 +176,15 @@ impl ShellFrame {
                 self.create_from_clipboard(cx);
                 Ok(())
             }
+            MenuCommand::Stamps => {
+                self.dismiss_menus(cx);
+                self.open_stamps_dialog(window, cx);
+                Ok(())
+            }
+            MenuCommand::PasteStamp => {
+                self.paste_stamp_from_menu(cx);
+                Ok(())
+            }
             MenuCommand::ExportAllImages => {
                 self.export_all_images(cx);
                 Ok(())

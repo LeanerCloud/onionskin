@@ -106,6 +106,13 @@ impl PluginRegistry {
         self.tools.iter().map(|t| t.as_ref())
     }
 
+    /// Hand every tool the shell's environment.
+    pub fn configure_tools(&mut self, environment: &crate::ToolEnvironment) {
+        for tool in &mut self.tools {
+            tool.configure(environment);
+        }
+    }
+
     pub fn tool_mut(&mut self, index: usize) -> Option<&mut (dyn ToolPlugin + '_)> {
         match self.tools.get_mut(index) {
             Some(tool) => Some(tool.as_mut()),

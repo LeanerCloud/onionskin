@@ -7,9 +7,11 @@ publish.workspace = true
 
 [dependencies]
 onionskin-core.workspace = true
+# A custom stamp's source is opened to take its page out.
+onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
 
 # The gesture tests drive the real lifecycle against real documents.
 [dev-dependencies]
 onionskin-corpus-testing.workspace = true
-onionskin-cos.workspace = true
+tempfile.workspace = true

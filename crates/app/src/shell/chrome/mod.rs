@@ -8,6 +8,7 @@ mod quick_actions;
 mod rail;
 mod side_panel;
 pub(in crate::shell) mod split_dialog;
+pub(in crate::shell) mod stamps_dialog;
 mod tabs;
 mod theme;
 mod tool_search;

@@ -5,6 +5,7 @@
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
+mod attach;
 mod freetext;
 mod ink;
 mod markup;
@@ -12,12 +13,16 @@ mod note;
 mod place;
 mod quads;
 mod shapes;
+mod stamp;
+mod text;
 
+pub use attach::AttachFileTool;
 pub use freetext::FreeTextTool;
 pub use ink::{EraseInkTool, InkTool};
 pub use markup::MarkupTool;
 pub use note::NoteTool;
 pub use shapes::ShapeTool;
+pub use stamp::{library_in, Clock, CustomStamp, LibraryError, StampLibrary, StampTool};
 
 pub struct CommentToolsPlugin;
 
@@ -51,5 +56,7 @@ impl PluginManifest for CommentToolsPlugin {
         registry.register_tool(Box::new(ShapeTool::cloud()));
         registry.register_tool(Box::new(InkTool::new()));
         registry.register_tool(Box::new(EraseInkTool::new()));
+        registry.register_tool(Box::new(StampTool::new()));
+        registry.register_tool(Box::new(AttachFileTool::new()));
     }
 }

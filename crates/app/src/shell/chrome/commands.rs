@@ -52,6 +52,7 @@ impl MenuCommand {
             MenuCommand::Find,
         ]);
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
+        all.extend([MenuCommand::Stamps, MenuCommand::PasteStamp]);
         all.extend([
             MenuCommand::Preferences,
             MenuCommand::PreviousView,
@@ -108,6 +109,8 @@ impl MenuCommand {
             Self::CreateFromFiles => "file.create-from-files",
             Self::CreateFromFile => "file.create-from-file",
             Self::CreateFromClipboard => "file.create-from-clipboard",
+            Self::Stamps => "comment.stamps",
+            Self::PasteStamp => "comment.paste-stamp",
             Self::ExportAllImages => "file.export-all-images",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::Export(ExportTarget::Text) => "file.export-text",
@@ -209,6 +212,8 @@ impl MenuCommand {
             | Self::CreateFromFiles
             | Self::CreateFromFile
             | Self::CreateFromClipboard
+            | Self::Stamps
+            | Self::PasteStamp
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::Export(_)

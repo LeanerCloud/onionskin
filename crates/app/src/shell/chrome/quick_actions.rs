@@ -699,6 +699,8 @@ mod tests {
             ToolCapability::AddSignature => &[ToolCapability::AddSignature],
             ToolCapability::Snapshot => &[ToolCapability::Snapshot],
             ToolCapability::DynamicZoom => &[ToolCapability::DynamicZoom],
+            ToolCapability::ChoosesFile => &[ToolCapability::ChoosesFile],
+            ToolCapability::Stamp => &[ToolCapability::Stamp],
         }
     }
 
