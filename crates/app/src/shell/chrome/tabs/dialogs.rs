@@ -60,6 +60,7 @@ impl ShellFrame {
         self.export.dialog = None;
         self.organize = Default::default();
         self.stamps = None;
+        self.summary = None;
         cx.notify();
     }
 

@@ -34,6 +34,7 @@ pub(in crate::shell) enum ShellDialog {
     Combine(super::chrome::combine_dialog::CombineEntryPoint),
     Split,
     Stamps,
+    Summary,
 }
 
 impl ShellDialog {
@@ -42,6 +43,7 @@ impl ShellDialog {
             Self::Combine(entry_point) => entry_point.title(),
             Self::Split => "Split Document",
             Self::Stamps => "Stamps",
+            Self::Summary => "Summarize Comments",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -138,6 +140,10 @@ pub(in crate::shell) fn accessible(
         ShellDialog::Stamps => {
             super::chrome::stamps_dialog::accessible(&frame.stamps_rows(cx), rects)
         }
+        ShellDialog::Summary => super::chrome::summary_dialog::accessible(
+            frame.summary_dialog().expect("summary dialog has state"),
+            rects,
+        ),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -215,6 +221,14 @@ pub(in crate::shell) fn render_dialog(
         .into_any_element(),
         ShellDialog::Split => super::chrome::split_dialog::render(
             frame.split_dialog().expect("split dialog has state"),
+            rects,
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::Summary => super::chrome::summary_dialog::render(
+            frame.summary_dialog().expect("summary dialog has state"),
             rects,
             focused,
             theme,

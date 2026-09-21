@@ -7,6 +7,7 @@ mod frame_state;
 mod menu;
 mod organize;
 mod stamps;
+mod summary;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
@@ -1490,6 +1491,8 @@ mod tests {
         feature = "codecs-common"
     ))]
     mod stamps;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-comment"))]
+    mod summary;
 
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names

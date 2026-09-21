@@ -181,6 +181,14 @@ impl ShellFrame {
                 self.open_stamps_dialog(window, cx);
                 Ok(())
             }
+            // The registered command writes the comments-only summary beside
+            // the document; the entry, live when that command is, opens the
+            // dialog that offers both layouts and asks where.
+            MenuCommand::SummarizeComments => {
+                self.dismiss_menus(cx);
+                self.open_summary_dialog(window, cx);
+                Ok(())
+            }
             MenuCommand::PasteStamp => {
                 self.paste_stamp_from_menu(cx);
                 Ok(())

@@ -420,6 +420,7 @@ impl ShellFrame {
             Activation::Combine(action) => self.run_combine_action(action, cx),
             Activation::Split(action) => self.run_split_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
+            Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));

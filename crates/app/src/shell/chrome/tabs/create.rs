@@ -175,7 +175,7 @@ fn pdf_name_for(source: &Path) -> String {
 /// Write `bytes` to `path`, which the save prompt has already confirmed may
 /// be replaced: into a sibling first and then renamed over it, so a failed
 /// write never leaves half a file where the user's was.
-fn write_replacing(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(super) fn write_replacing(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut staged = tempfile::NamedTempFile::new_in(directory)?;
     staged.write_all(bytes)?;

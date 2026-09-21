@@ -177,6 +177,7 @@ pub(in crate::shell) enum MenuCommand {
     CreateFromClipboard,
     Stamps,
     PasteStamp,
+    SummarizeComments,
     SplitDocument,
     Export(ExportTarget),
     ExportAllImages,
@@ -237,7 +238,7 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 10] = [
+const REGISTRY_BACKED: [MenuCommand; 11] = [
     MenuCommand::SelectAll,
     MenuCommand::DeselectAll,
     MenuCommand::Page(PageCommand::RotateClockwise),
@@ -248,6 +249,7 @@ const REGISTRY_BACKED: [MenuCommand; 10] = [
     MenuCommand::Page(PageCommand::Delete),
     MenuCommand::Page(PageCommand::ResetNumbering),
     MenuCommand::SplitDocument,
+    MenuCommand::SummarizeComments,
 ];
 
 /// Which of those commands this build's plugins registered, and what each
@@ -531,6 +533,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .into_iter()
             .chain(page_entries(state))
             .chain(stamp_entries(state))
+            .chain([MenuEntry {
+                command: MenuCommand::SummarizeComments,
+                label: "Summarize Comments…",
+                availability: registry_command(state, MenuCommand::SummarizeComments),
+                selected: false,
+            }])
             .chain([MenuEntry {
                 command: MenuCommand::Preferences,
                 label: "Preferences…",
@@ -1009,6 +1017,7 @@ impl MenuCommand {
             | Self::CreateFromClipboard
             | Self::Stamps
             | Self::PasteStamp
+            | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
@@ -1057,6 +1066,7 @@ impl MenuCommand {
             | Self::CreateFromClipboard
             | Self::Stamps
             | Self::PasteStamp
+            | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CloseTab
@@ -1250,6 +1260,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::CreateFromClipboard
         | MenuCommand::Stamps
         | MenuCommand::PasteStamp
+        | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument => Some(Box::new(RunCommand { command })),
         MenuCommand::SaveAs
@@ -1288,7 +1299,9 @@ mod tests {
             commands: RegisteredCommands::installed(|id| {
                 Some(if id.starts_with("organize.") {
                     CommandEffect::Edits
-                } else if id == onionskin_plugin_api::command_ids::SPLIT_DOCUMENT {
+                } else if id == onionskin_plugin_api::command_ids::SPLIT_DOCUMENT
+                    || id == onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS
+                {
                     CommandEffect::ReadsOut
                 } else {
                     CommandEffect::Reads
@@ -1408,7 +1421,11 @@ mod tests {
 
         assert_eq!(
             registry.commands().is_empty(),
-            cfg!(not(feature = "commands-core")),
+            cfg!(not(any(
+                feature = "commands-core",
+                feature = "tools-organize",
+                feature = "tools-comment"
+            ))),
             "there is nothing to check"
         );
         for command in registry.commands() {
@@ -1738,6 +1755,7 @@ mod tests {
                 "Number Pages From 1",
                 "Stamps…",
                 "Paste Clipboard Image as Stamp",
+                "Summarize Comments…",
                 "Preferences…",
             ]
         );

@@ -90,6 +90,7 @@ pub(in crate::shell) enum Activation {
     Combine(crate::shell::chrome::combine_dialog::CombineAction),
     Split(crate::shell::chrome::split_dialog::SplitAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
+    Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.
@@ -117,6 +118,7 @@ pub(in crate::shell) enum Surface {
     CombineDialog,
     SplitDialog,
     StampsDialog,
+    SummaryDialog,
     DialogHeader,
 }
 

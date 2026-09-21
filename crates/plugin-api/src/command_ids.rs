@@ -27,3 +27,7 @@ pub const INSERT_BLANK_PAGE: &str = "organize.insert-blank-page";
 pub const MOVE_PAGE_EARLIER: &str = "organize.move-page-earlier";
 pub const MOVE_PAGE_LATER: &str = "organize.move-page-later";
 pub const RESET_PAGE_NUMBERING: &str = "organize.reset-page-numbering";
+/// Summarize the open document's comments into a new file beside it. P10.
+/// The Edit menu's Summarize Comments entry asks for it, and opens the dialog
+/// that offers both layouts.
+pub const SUMMARIZE_COMMENTS: &str = "comment.summarize";

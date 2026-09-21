@@ -9,6 +9,7 @@ mod rail;
 mod side_panel;
 pub(in crate::shell) mod split_dialog;
 pub(in crate::shell) mod stamps_dialog;
+pub(in crate::shell) mod summary_dialog;
 mod tabs;
 mod theme;
 mod tool_search;

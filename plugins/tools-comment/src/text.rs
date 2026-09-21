@@ -89,6 +89,51 @@ const WINANSI_HIGH: [(u8, char); 27] = [
     (0x9F, 'Ÿ'),
 ];
 
+/// `text` broken into lines no wider than `limit` at `size`, at spaces
+/// where it can be and mid-word where one word alone is too wide. The
+/// text's own newlines are kept.
+pub(crate) fn wrap(text: &str, bold: bool, size: f64, limit: f64) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.lines() {
+        let mut line = String::new();
+        for word in paragraph.split(' ') {
+            let candidate = if line.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{line} {word}")
+            };
+            if measure(&candidate, bold, size) <= limit {
+                line = candidate;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            line = break_word(word, bold, size, limit, &mut lines);
+        }
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// A word too wide for a line, cut into lines that fit; returns the last
+/// piece, which the next word may join.
+fn break_word(word: &str, bold: bool, size: f64, limit: f64, lines: &mut Vec<String>) -> String {
+    let mut piece = String::new();
+    for character in word.chars() {
+        piece.push(character);
+        if measure(&piece, bold, size) > limit && piece.chars().count() > 1 {
+            let last = piece.pop().expect("a character was just pushed");
+            lines.push(std::mem::take(&mut piece));
+            piece.push(last);
+        }
+    }
+    piece
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +156,21 @@ mod tests {
         assert_eq!(literal("José"), "(Jos\\351)");
         assert_eq!(literal("€5 — ok"), "(\\2005 \\227 ok)");
         assert_eq!(literal("日本"), "(??)");
+    }
+
+    #[test]
+    fn wrapping_breaks_at_spaces_and_inside_a_word_too_long_for_a_line() {
+        let lines = wrap("the quick brown fox", false, 10.0, 50.0);
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|line| measure(line, false, 10.0) <= 50.0));
+        assert_eq!(lines.join(" "), "the quick brown fox");
+
+        let long = wrap("abcdefghijklmnopqrstuvwxyz", false, 10.0, 30.0);
+        assert!(long.len() > 3);
+        assert_eq!(long.concat(), "abcdefghijklmnopqrstuvwxyz");
+        assert!(long.iter().all(|line| measure(line, false, 10.0) <= 30.0));
+
+        assert_eq!(wrap("one\n\ntwo", false, 10.0, 100.0), ["one", "", "two"]);
+        assert_eq!(wrap("", false, 10.0, 100.0), [""]);
     }
 }

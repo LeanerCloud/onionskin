@@ -52,7 +52,11 @@ impl MenuCommand {
             MenuCommand::Find,
         ]);
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
-        all.extend([MenuCommand::Stamps, MenuCommand::PasteStamp]);
+        all.extend([
+            MenuCommand::Stamps,
+            MenuCommand::PasteStamp,
+            MenuCommand::SummarizeComments,
+        ]);
         all.extend([
             MenuCommand::Preferences,
             MenuCommand::PreviousView,
@@ -111,6 +115,7 @@ impl MenuCommand {
             Self::CreateFromClipboard => "file.create-from-clipboard",
             Self::Stamps => "comment.stamps",
             Self::PasteStamp => "comment.paste-stamp",
+            Self::SummarizeComments => onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS,
             Self::ExportAllImages => "file.export-all-images",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::Export(ExportTarget::Text) => "file.export-text",
@@ -214,6 +219,7 @@ impl MenuCommand {
             | Self::CreateFromClipboard
             | Self::Stamps
             | Self::PasteStamp
+            | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::Export(_)
@@ -252,9 +258,11 @@ impl MenuCommand {
     /// and a build without that plugin says so.
     pub(in crate::shell) fn registry_command_id(self) -> Option<&'static str> {
         match self {
-            Self::SelectAll | Self::DeselectAll | Self::Page(_) | Self::SplitDocument => {
-                Some(self.id())
-            }
+            Self::SelectAll
+            | Self::DeselectAll
+            | Self::Page(_)
+            | Self::SplitDocument
+            | Self::SummarizeComments => Some(self.id()),
             _ => None,
         }
     }
