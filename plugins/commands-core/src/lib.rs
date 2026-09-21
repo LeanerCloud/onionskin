@@ -281,6 +281,12 @@ mod tests {
                     None,
                     CommandEffect::ReadsOut
                 ),
+                (
+                    REDUCE_FILE_SIZE,
+                    "Reduce File Size",
+                    None,
+                    CommandEffect::ReadsOut
+                ),
             ]
         );
     }
@@ -296,7 +302,7 @@ mod tests {
                 .iter()
                 .map(|command| command.id)
                 .collect::<Vec<_>>(),
-            vec![SELECT_ALL, DESELECT_ALL, SPLIT_DOCUMENT]
+            vec![SELECT_ALL, DESELECT_ALL, SPLIT_DOCUMENT, REDUCE_FILE_SIZE]
         );
     }
 }
