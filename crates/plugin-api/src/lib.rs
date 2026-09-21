@@ -48,12 +48,25 @@ pub enum Overlay {
     Rect(PageRect),
     /// Filled translucent quads: a text selection, or a highlight preview.
     Quads(Vec<PageQuad>),
-    /// Open polyline: an ink stroke in progress, a measured path.
-    Polyline(Vec<PagePoint>),
+    /// A polyline: an ink stroke in progress, a measured path, a polygon.
+    ///
+    /// `closed` joins the last point back to the first. Without it the preview
+    /// of a polygon or a cloud is missing its closing edge, which is the one
+    /// edge that tells a user they have closed the shape.
+    Polyline {
+        points: Vec<PagePoint>,
+        closed: bool,
+    },
     /// Straight segment, e.g. the distance tool's live measurement.
     Line { from: PagePoint, to: PagePoint },
-    /// Circle outline, e.g. a search-hit marker. Radius is in page units.
-    Circle { center: PagePoint, radius: f64 },
+    /// Ellipse inscribed in `bounds`.
+    ///
+    /// A rectangle rather than a centre and a radius, because the Oval tool
+    /// inscribes an ellipse in a dragged rectangle and a centre-and-radius
+    /// circle cannot express one: the preview would be a circle and the commit
+    /// an ellipse, which is exactly the preview-does-not-match-the-commit class
+    /// the preview buffer exists to abolish.
+    Ellipse { bounds: PageRect },
 }
 
 /// Features a tool contributes to shared shell surfaces.

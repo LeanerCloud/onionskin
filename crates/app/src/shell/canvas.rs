@@ -346,6 +346,17 @@ pub enum OverlayPaint {
     Quads(Vec<[ViewPoint; 4]>),
     /// Dashed outline: a marquee in progress.
     AntsRect(ViewRect),
+    /// Solid outline: the bounds of a text box or a selected annotation.
+    Rect(ViewRect),
+    /// A stroked path, closed back to its first point when `closed`.
+    Polyline {
+        points: Vec<ViewPoint>,
+        closed: bool,
+    },
+    /// A single stroked segment: a measurement, a callout's leader.
+    Line { from: ViewPoint, to: ViewPoint },
+    /// An ellipse inscribed in its bounds.
+    Ellipse(ViewRect),
 }
 
 /// One search hit's box on a visible page. An overlay in the same sense: it is
@@ -1846,9 +1857,10 @@ impl CanvasModel {
 
     /// What the active tool wants drawn this frame, in canvas coordinates.
     ///
-    /// An overlay this canvas cannot draw yet is reported rather than
-    /// dropped: a tool that asks for one is asking for something the user
-    /// would otherwise never see.
+    /// Every `Overlay` variant has a painter, so there is nothing left to
+    /// report: `map_overlay` returns an `Option` for a placement the viewport
+    /// cannot make this frame, and a variant with no painter is a compile
+    /// error rather than a status the user has to read.
     fn overlay_paints(&mut self) -> Vec<OverlayPaint> {
         let overlays = match self
             .active_tool
@@ -1857,40 +1869,59 @@ impl CanvasModel {
             Some(tool) => tool.overlays(&self.document),
             None => return Vec::new(),
         };
-        let mut paints = Vec::new();
-        let mut unpaintable = None;
-        for overlay in overlays {
-            match self.map_overlay(&overlay) {
-                Ok(Some(paint)) => paints.push(paint),
-                Ok(None) => {}
-                Err(kind) => unpaintable = unpaintable.or(Some(kind)),
-            }
-        }
-        if let Some(kind) = unpaintable {
-            self.record_error(format!("the canvas cannot draw a {kind} overlay yet"));
-        }
-        paints
+        overlays
+            .iter()
+            .filter_map(|overlay| self.map_overlay(overlay))
+            .collect()
     }
 
-    /// `Ok(None)` for an overlay the viewport cannot place; `Err` names an
-    /// overlay shape with no painter yet.
-    fn map_overlay(&self, overlay: &Overlay) -> Result<Option<OverlayPaint>, &'static str> {
+    /// `None` for an overlay the viewport cannot place this frame.
+    ///
+    /// There is no error arm. A variant added to `Overlay` without a painter
+    /// here fails to compile, which is the only form of exhaustiveness that
+    /// survives someone adding a variant in a hurry.
+    fn map_overlay(&self, overlay: &Overlay) -> Option<OverlayPaint> {
         match overlay {
             Overlay::Quads(quads) => {
                 let mapped: Vec<[ViewPoint; 4]> = quads
                     .iter()
                     .filter_map(|quad| self.map_quad(*quad))
                     .collect();
-                Ok((!mapped.is_empty()).then_some(OverlayPaint::Quads(mapped)))
+                (!mapped.is_empty()).then_some(OverlayPaint::Quads(mapped))
             }
-            Overlay::AntsRect(rect) => Ok(self
+            Overlay::AntsRect(rect) => self
                 .map_quad((*rect).into())
-                .map(|corners| OverlayPaint::AntsRect(bounding_rect(corners)))),
-            Overlay::Rect(_) => Err("rectangle"),
-            Overlay::Polyline(_) => Err("polyline"),
-            Overlay::Line { .. } => Err("line"),
-            Overlay::Circle { .. } => Err("circle"),
+                .map(|corners| OverlayPaint::AntsRect(bounding_rect(corners))),
+            Overlay::Rect(rect) => self
+                .map_quad((*rect).into())
+                .map(|corners| OverlayPaint::Rect(bounding_rect(corners))),
+            // An unplaceable point drops the whole path rather than being
+            // skipped: a polyline missing one vertex is a different shape, and
+            // drawing a different shape is worse than drawing none.
+            Overlay::Polyline { points, closed } => {
+                let mapped = points
+                    .iter()
+                    .map(|point| self.map_point(*point))
+                    .collect::<Option<Vec<ViewPoint>>>()?;
+                (mapped.len() >= 2).then_some(OverlayPaint::Polyline {
+                    points: mapped,
+                    closed: *closed,
+                })
+            }
+            Overlay::Line { from, to } => Some(OverlayPaint::Line {
+                from: self.map_point(*from)?,
+                to: self.map_point(*to)?,
+            }),
+            Overlay::Ellipse { bounds } => self
+                .map_quad((*bounds).into())
+                .map(|corners| OverlayPaint::Ellipse(bounding_rect(corners))),
         }
+    }
+
+    /// One page point in canvas coordinates, or `None` when the page is not
+    /// laid out in the current mode or has not been measured yet.
+    fn map_point(&self, at: PagePoint) -> Option<ViewPoint> {
+        self.viewport.view_point_for(at).ok().flatten()
     }
 
     /// `None` when any corner cannot be placed: the page is not laid out in
@@ -3184,27 +3215,92 @@ mod tests {
         assert!(model.status().is_none());
     }
 
-    /// The plugin API has six overlay shapes and this canvas paints two. The
-    /// four with no painter are reported, because a tool asking for one is
-    /// asking for something the user would otherwise never see.
+    /// Every shape the plugin API has, painted, with its view-space geometry
+    /// checked against the viewport's own mapping.
+    ///
+    /// Exhaustive by the compiler rather than by this test remembering the
+    /// list: `map_overlay` has no catch-all arm and no error arm, so a variant
+    /// added to `Overlay` without a painter does not build. What this adds is
+    /// that each painter places its shape where the viewport says, and that
+    /// **no overlay produces a status** - four of the six used to report "the
+    /// canvas cannot draw a {kind} overlay yet", which is what a user saw
+    /// instead of their own ink.
     #[test]
-    fn an_overlay_shape_the_canvas_cannot_paint_is_reported() {
-        let mut model = overlay_model(vec![Overlay::Circle {
-            center: PagePoint {
-                page: 0,
-                x: 100.0,
-                y: 700.0,
+    fn every_overlay_shape_paints_where_the_viewport_puts_it() {
+        let at = |x: f64, y: f64| PagePoint { page: 0, x, y };
+        let region = PageRect {
+            page: 0,
+            x0: 72.0,
+            y0: 700.0,
+            x1: 144.0,
+            y1: 720.0,
+        };
+
+        for overlay in [
+            Overlay::Quads(vec![selection_quad()]),
+            Overlay::AntsRect(region),
+            Overlay::Rect(region),
+            Overlay::Polyline {
+                points: vec![at(72.0, 700.0), at(100.0, 720.0), at(144.0, 700.0)],
+                closed: false,
             },
-            radius: 4.0,
-        }]);
+            Overlay::Polyline {
+                points: vec![at(72.0, 700.0), at(100.0, 720.0), at(144.0, 700.0)],
+                closed: true,
+            },
+            Overlay::Line {
+                from: at(72.0, 700.0),
+                to: at(144.0, 720.0),
+            },
+            Overlay::Ellipse { bounds: region },
+        ] {
+            let mut model = overlay_model(vec![overlay.clone()]);
+            let painted = model.paint_list().expect("the frame paints").overlays;
+            let mapped = |x: f64, y: f64| {
+                model
+                    .viewport
+                    .view_point_for(at(x, y))
+                    .expect("page zero is measured")
+                    .expect("page zero is laid out")
+            };
+            let corners = || bounding_rect(model.map_quad(region.into()).expect("region maps"));
 
-        let overlays = model.paint_list().expect("the frame paints").overlays;
-
-        assert!(overlays.is_empty());
-        assert!(matches!(
-            model.status(),
-            Some(CanvasStatus::Error { message, .. }) if message.contains("circle")
-        ));
+            match (&overlay, painted.as_slice()) {
+                (Overlay::Quads(_), [OverlayPaint::Quads(quads)]) => assert_eq!(quads.len(), 1),
+                (Overlay::AntsRect(_), [OverlayPaint::AntsRect(rect)]) => {
+                    assert_eq!(*rect, corners())
+                }
+                (Overlay::Rect(_), [OverlayPaint::Rect(rect)]) => assert_eq!(*rect, corners()),
+                (
+                    Overlay::Polyline { closed, .. },
+                    [OverlayPaint::Polyline { points, closed: c }],
+                ) => {
+                    assert_eq!(c, closed, "the closing edge survives the mapping");
+                    assert_eq!(
+                        points.as_slice(),
+                        [
+                            mapped(72.0, 700.0),
+                            mapped(100.0, 720.0),
+                            mapped(144.0, 700.0)
+                        ]
+                    );
+                }
+                (Overlay::Line { .. }, [OverlayPaint::Line { from, to }]) => {
+                    assert_eq!((*from, *to), (mapped(72.0, 700.0), mapped(144.0, 720.0)));
+                }
+                (Overlay::Ellipse { .. }, [OverlayPaint::Ellipse(rect)]) => {
+                    assert_eq!(*rect, corners())
+                }
+                (overlay, painted) => {
+                    panic!("{overlay:?} painted as {painted:?}")
+                }
+            }
+            assert!(
+                model.status().is_none(),
+                "{overlay:?} put a status on screen: {:?}",
+                model.status()
+            );
+        }
     }
 
     fn overlay_bounds(model: &mut CanvasModel) -> ViewRect {

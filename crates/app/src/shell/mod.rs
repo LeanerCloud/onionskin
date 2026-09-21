@@ -972,9 +972,87 @@ fn paint_overlays(
                 theme.drag_preview,
                 BorderStyle::Dashed,
             )),
+            OverlayPaint::Rect(rect) => window.paint_quad(outline(
+                window_bounds(origin, *rect),
+                theme.drag_preview,
+                BorderStyle::Solid,
+            )),
+            OverlayPaint::Polyline { points, closed } => {
+                paint_stroke(points, *closed, origin, theme, window);
+            }
+            OverlayPaint::Line { from, to } => {
+                paint_stroke(&[*from, *to], false, origin, theme, window);
+            }
+            // Four cubic Béziers, the standard circle approximation scaled to
+            // the box: gpui's `Path` has no arc, and a polygon of segments
+            // shows its corners at the zooms a user actually draws at.
+            OverlayPaint::Ellipse(rect) => {
+                let bounds = window_bounds(origin, *rect);
+                let (rx, ry) = (bounds.size.width / 2.0, bounds.size.height / 2.0);
+                let centre = point(bounds.origin.x + rx, bounds.origin.y + ry);
+                let (kx, ky) = (rx * ELLIPSE_KAPPA, ry * ELLIPSE_KAPPA);
+                let mut path = gpui::Path::new(point(centre.x + rx, centre.y));
+                path.curve_to(
+                    point(centre.x, centre.y + ry),
+                    point(centre.x + rx, centre.y + ky),
+                );
+                path.curve_to(
+                    point(centre.x - rx, centre.y),
+                    point(centre.x - kx, centre.y + ry),
+                );
+                path.curve_to(
+                    point(centre.x, centre.y - ry),
+                    point(centre.x - rx, centre.y - ky),
+                );
+                path.curve_to(
+                    point(centre.x + rx, centre.y),
+                    point(centre.x + kx, centre.y - ry),
+                );
+                window.paint_path(path, theme.drag_preview);
+            }
         }
     }
 }
+
+/// `4/3 * (sqrt(2) - 1)`: how far a cubic Bézier's control points sit along
+/// the tangent to approximate a quarter circle.
+const ELLIPSE_KAPPA: f32 = 0.552_285;
+
+/// A stroked path. gpui fills rather than strokes, so the path walks out along
+/// one side and back along the other, a hairline apart.
+fn paint_stroke(
+    points: &[ViewPoint],
+    closed: bool,
+    origin: Point<Pixels>,
+    theme: ThemeTokens,
+    window: &mut Window,
+) {
+    let mut walk: Vec<Point<Pixels>> = points
+        .iter()
+        .map(|at| window_point_at(origin, *at))
+        .collect();
+    if closed {
+        if let Some(first) = walk.first().copied() {
+            walk.push(first);
+        }
+    }
+    let Some((first, rest)) = walk.split_first() else {
+        return;
+    };
+    let mut path = gpui::Path::new(*first);
+    for at in rest {
+        path.line_to(*at);
+    }
+    // Back along the other side, offset by the stroke width, so the filled
+    // region is the stroke.
+    for at in walk.iter().rev() {
+        path.line_to(point(at.x, at.y + px(STROKE_WIDTH)));
+    }
+    window.paint_path(path, theme.drag_preview);
+}
+
+/// The overlay stroke width, in window pixels.
+const STROKE_WIDTH: f32 = 1.5;
 
 fn window_point_at(origin: Point<Pixels>, at: ViewPoint) -> Point<Pixels> {
     point(origin.x + px(at.x), origin.y + px(at.y))
