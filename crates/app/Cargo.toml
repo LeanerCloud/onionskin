@@ -58,6 +58,12 @@ onionskin-tools-organize = { workspace = true, optional = true }
 onionskin-tools-protect = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Guarantee 2 is promised "driven by an edit a tool made through core", so
+# the test that proves it has to reach a real tool. Not optional and not behind
+# the feature: the guarantee tripwire rejects a file-level `cfg`, because one
+# can compile a whole suite away while every test in it still reads as live.
+onionskin-tools-comment.workspace = true
+onionskin-cos.workspace = true
 # Corpus discovery for the test targets. `crates/app/tests` had none, so its
 # fixtures could neither be moved with `ONIONSKIN_CORPUS` nor made mandatory
 # with `ONIONSKIN_CORPUS_REQUIRED`.

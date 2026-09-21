@@ -110,6 +110,46 @@ fn an_edit_appends_one_incremental_section_that_truncates_away() {
         "the truncation point is no longer the one the document reports",
     );
     assert_ci_reaches_the_cos_suite();
+
+    // The same sentence, driven by an edit a **tool** made. `incremental.rs`
+    // cannot prove that half: `crates/cos` has no plugin to drive, and neither
+    // does `crates/core`. Without this second suite named here, deleting the
+    // tool-driven test leaves the guarantee green while the clause the
+    // definition of done actually asks for - "driven by an edit a tool made
+    // through `core`" - goes unmeasured.
+    let by_a_tool = enforcing_suite_at(
+        "crates/app/tests",
+        "tool_edit_guarantee.rs",
+        2,
+        &[
+            "a_tool_edit_appends_one_section_that_truncates_away",
+            "ten_tool_edits_and_one_save_are_still_one_section",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "the original bytes must survive an edit made by a tool",
+            "the original prefix is no longer compared after a tool's edit",
+        ),
+        (
+            "a tool's edit must append exactly one incremental section",
+            "the section count after a tool's edit is no longer pinned to one",
+        ),
+        (
+            "truncating the section must undo the tool's edit",
+            "the roll-back half of the sentence is no longer checked for a tool's edit",
+        ),
+    ] {
+        by_a_tool.asserts(marker, missing);
+    }
+    // Counted by parsing the chain rather than by scanning for `%%EOF`, which
+    // an original may legitimately already contain: a scan reports two sections
+    // for a one-section save and would pass a document nothing appended to.
+    by_a_tool.invokes(
+        ".sections",
+        "the section count no longer comes off a reopened document's cross-reference chain, so it is a scan rather than a parse",
+    );
+    assert_ci_reaches("crates/app");
 }
 
 /// Guarantee 3, redaction: after redacting text T, the verifier extracts
@@ -4153,7 +4193,18 @@ fn module_doc(file: &syn::File) -> String {
 
 /// The `crates/cos` test file that enforces guarantee `number`.
 fn enforcing_suite(file: &str, number: u8, tests: &[&str]) -> Suite {
-    let path = workspace_root().join("crates/cos/tests").join(file);
+    enforcing_suite_at("crates/cos/tests", file, number, tests)
+}
+
+/// The same, for a guarantee enforced somewhere other than `crates/cos`.
+///
+/// Guarantee 2 is one: the sentence has to hold for an edit a *tool* made, and
+/// no test under `crates/cos` or `crates/core` can drive a plugin, because
+/// neither crate depends on one. Its second enforcing suite therefore lives in
+/// `crates/app/tests`, and a reader hard-coded to one directory would have left
+/// that half unguarded.
+fn enforcing_suite_at(directory: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
+    let path = workspace_root().join(directory).join(file);
     let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "{} is unreadable ({error}), so guarantee {number} is unchecked",
@@ -4254,13 +4305,19 @@ fn read_suite(source: &str, file: &str, number: u8, tests: &[&str]) -> Suite {
 /// runs that crate's tests. It reaches them through the workspace suite, so
 /// both the command and the membership have to hold.
 fn assert_ci_reaches_the_cos_suite() {
+    assert_ci_reaches("crates/cos");
+}
+
+/// The same check for any crate holding an enforcing suite: CI's workspace
+/// command reaches a crate only while that crate is a member of the workspace.
+fn assert_ci_reaches(directory: &str) {
     let ci = workflow("ci.yml");
     gate_step(&job_steps(&ci, "test"), "cargo test --workspace");
     let manifest = std::fs::read_to_string(workspace_root().join("Cargo.toml"))
         .expect("the workspace manifest is readable");
     assert!(
-        manifest.contains("\"crates/cos\","),
-        "crates/cos is not a workspace member, so `cargo test --workspace` does not reach it"
+        manifest.contains(&format!("\"{directory}\",")),
+        "{directory} is not a workspace member, so `cargo test --workspace` does not reach it"
     );
 }
 
