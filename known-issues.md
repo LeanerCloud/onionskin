@@ -87,7 +87,8 @@ source IDs, severity, ownership, and required proof.
   which of these are stable there; the canvas ones want an expectation that is
   derived or a wait that is deterministic rather than a pinned value, and the
   export ones want a non-root runner or a different way of making the write
-  fail.
+  fail. P11's run adds `...rollback_never_deletes_a_completed_page_replaced_by_a_directory`
+  to the set, which turns on the same refused write.
 
 - **Find searches the file as opened, not as edited**, recorded 2026-09-21
   during P11. The search worker is spawned over the session's original bytes

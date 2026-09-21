@@ -129,6 +129,9 @@ jobs:
       # it catches a plugin whose feature is enabled but whose manifest never
       # reached the registry.
       - run: cargo test -p onionskin-app --no-default-features --features tools-basic,commands-core
+      # P11: the organize plugin alone, so its commands reach the registry
+      # without commands-core carrying the command surface for it.
+      - run: cargo test -p onionskin-app --no-default-features --features tools-organize
 
   supply-chain:
     runs-on: ubuntu-latest

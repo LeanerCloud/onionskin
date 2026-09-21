@@ -20,7 +20,7 @@
 //! window-wide would take them away from every text field in the chrome.
 //! `keymap.json` can bind them today for anyone who wants them.
 
-use super::global_bar::{ExportTarget, MenuCommand};
+use super::global_bar::{ExportTarget, MenuCommand, PageCommand};
 use super::quick_actions::QuickAction;
 use crate::keymap::CommandDefault;
 
@@ -44,6 +44,9 @@ impl MenuCommand {
             MenuCommand::DeselectAll,
             MenuCommand::TakeSnapshot,
             MenuCommand::Find,
+        ]);
+        all.extend(PageCommand::ALL.map(MenuCommand::Page));
+        all.extend([
             MenuCommand::Preferences,
             MenuCommand::PreviousView,
             MenuCommand::NextView,
@@ -105,6 +108,7 @@ impl MenuCommand {
             Self::DeselectAll => onionskin_commands_core_id::DESELECT_ALL,
             Self::TakeSnapshot => "edit.take-snapshot",
             Self::Find => "edit.find",
+            Self::Page(page) => page.id(),
             Self::Preferences => "edit.preferences",
             Self::PreviousView => "view.previous-view",
             Self::NextView => "view.next-view",
@@ -193,6 +197,7 @@ impl MenuCommand {
             | Self::SelectAll
             | Self::DeselectAll
             | Self::TakeSnapshot
+            | Self::Page(_)
             | Self::FirstPage
             | Self::PreviousPage
             | Self::NextPage
@@ -222,7 +227,7 @@ impl MenuCommand {
     /// and a build without that plugin says so.
     pub(in crate::shell) fn registry_command_id(self) -> Option<&'static str> {
         match self {
-            Self::SelectAll | Self::DeselectAll => Some(self.id()),
+            Self::SelectAll | Self::DeselectAll | Self::Page(_) => Some(self.id()),
             _ => None,
         }
     }

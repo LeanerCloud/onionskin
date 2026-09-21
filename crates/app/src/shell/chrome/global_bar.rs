@@ -1,6 +1,6 @@
 use gpui::{Action, App, Menu, MenuItem, WindowHandle};
 use onionskin_core::{FitMode, PageLayoutMode};
-use onionskin_plugin_api::{PluginRegistry, ToolCapability};
+use onionskin_plugin_api::{CommandEffect, PluginRegistry, ToolCapability};
 
 use super::quick_actions::QuickAction;
 use super::theme::{ShellViewAction, ShellViewState};
@@ -87,6 +87,57 @@ impl ExportCodecs {
     }
 }
 
+/// The page-organization commands `tools-organize` registers, each acting on
+/// the page the viewport is on. The menu carries only their ids: the plugin
+/// is optional, and a build without it shows the entries saying so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::shell) enum PageCommand {
+    RotateClockwise,
+    RotateCounterclockwise,
+    InsertBlank,
+    MoveEarlier,
+    MoveLater,
+    Delete,
+    ResetNumbering,
+}
+
+impl PageCommand {
+    pub(in crate::shell) const ALL: [Self; 7] = [
+        Self::RotateClockwise,
+        Self::RotateCounterclockwise,
+        Self::InsertBlank,
+        Self::MoveEarlier,
+        Self::MoveLater,
+        Self::Delete,
+        Self::ResetNumbering,
+    ];
+
+    pub(in crate::shell) fn id(self) -> &'static str {
+        use onionskin_plugin_api::command_ids as ids;
+        match self {
+            Self::RotateClockwise => ids::ROTATE_PAGE_CLOCKWISE,
+            Self::RotateCounterclockwise => ids::ROTATE_PAGE_COUNTERCLOCKWISE,
+            Self::InsertBlank => ids::INSERT_BLANK_PAGE,
+            Self::MoveEarlier => ids::MOVE_PAGE_EARLIER,
+            Self::MoveLater => ids::MOVE_PAGE_LATER,
+            Self::Delete => ids::DELETE_PAGE,
+            Self::ResetNumbering => ids::RESET_PAGE_NUMBERING,
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::RotateClockwise => "Rotate Page Clockwise",
+            Self::RotateCounterclockwise => "Rotate Page Counterclockwise",
+            Self::InsertBlank => "Insert Blank Page",
+            Self::MoveEarlier => "Move Page Earlier",
+            Self::MoveLater => "Move Page Later",
+            Self::Delete => "Delete Page",
+            Self::ResetNumbering => "Number Pages From 1",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum MenuCommand {
     Open,
@@ -103,6 +154,7 @@ pub(in crate::shell) enum MenuCommand {
     DeselectAll,
     TakeSnapshot,
     Find,
+    Page(PageCommand),
     Preferences,
     PreviousView,
     NextView,
@@ -150,26 +202,42 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 2] = [MenuCommand::SelectAll, MenuCommand::DeselectAll];
+const REGISTRY_BACKED: [MenuCommand; 9] = [
+    MenuCommand::SelectAll,
+    MenuCommand::DeselectAll,
+    MenuCommand::Page(PageCommand::RotateClockwise),
+    MenuCommand::Page(PageCommand::RotateCounterclockwise),
+    MenuCommand::Page(PageCommand::InsertBlank),
+    MenuCommand::Page(PageCommand::MoveEarlier),
+    MenuCommand::Page(PageCommand::MoveLater),
+    MenuCommand::Page(PageCommand::Delete),
+    MenuCommand::Page(PageCommand::ResetNumbering),
+];
 
-/// Which of those commands this build's plugins registered.
+/// Which of those commands this build's plugins registered, and what each
+/// declares it does: the effect is what decides whether a document that may
+/// not be edited disables the entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) struct RegisteredCommands([bool; REGISTRY_BACKED.len()]);
+pub(super) struct RegisteredCommands([Option<CommandEffect>; REGISTRY_BACKED.len()]);
 
 impl RegisteredCommands {
-    fn installed(has_command: impl Fn(&str) -> bool) -> Self {
-        // `registry_command_id` answers for exactly these two, but this runs
-        // on every menu refresh, and an entry added to REGISTRY_BACKED by
+    fn installed(effect_of: impl Fn(&str) -> Option<CommandEffect>) -> Self {
+        // `registry_command_id` answers for exactly these, but this runs on
+        // every menu refresh, and an entry added to REGISTRY_BACKED by
         // mistake should read as "no plugin provides it" rather than take
         // the window down.
-        Self(REGISTRY_BACKED.map(|command| command.registry_command_id().is_some_and(&has_command)))
+        Self(REGISTRY_BACKED.map(|command| command.registry_command_id().and_then(&effect_of)))
     }
 
-    fn has(self, command: MenuCommand) -> bool {
+    fn effect(self, command: MenuCommand) -> Option<CommandEffect> {
         REGISTRY_BACKED
             .iter()
             .position(|backed| *backed == command)
-            .is_some_and(|index| self.0[index])
+            .and_then(|index| self.0[index])
+    }
+
+    fn has(self, command: MenuCommand) -> bool {
+        self.effect(command).is_some()
     }
 }
 
@@ -186,6 +254,10 @@ pub(in crate::shell) struct RegistryFacts {
     snapshot_tool: bool,
     dynamic_zoom_tool: bool,
     any_tool: bool,
+    /// Why the active document may not be edited, from `core`. Carried with
+    /// the registry's answers because it is asked the same way: an entry whose
+    /// command declares [`CommandEffect::Edits`] is disabled with it.
+    edit_refusal: Option<&'static str>,
 }
 
 impl RegistryFacts {
@@ -193,11 +265,24 @@ impl RegistryFacts {
         Self {
             codecs: ExportCodecs::installed(|id| registry.codec(id).is_some()),
             commands: RegisteredCommands::installed(|id| {
-                registry.commands().iter().any(|command| command.id == id)
+                registry
+                    .commands()
+                    .iter()
+                    .find(|command| command.id == id)
+                    .map(|command| command.effect)
             }),
             snapshot_tool: tool_with(registry, ToolCapability::Snapshot).is_some(),
             dynamic_zoom_tool: tool_with(registry, ToolCapability::DynamicZoom).is_some(),
             any_tool: registry.tools().next().is_some(),
+            edit_refusal: None,
+        }
+    }
+
+    /// The same facts for a document that refuses editing for `refusal`.
+    pub(in crate::shell) fn refusing_edits(self, refusal: Option<&'static str>) -> Self {
+        Self {
+            edit_refusal: refusal,
+            ..self
         }
     }
 }
@@ -365,13 +450,16 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: document_command,
                     selected: false,
                 },
-                MenuEntry {
-                    command: MenuCommand::Preferences,
-                    label: "Preferences…",
-                    availability: Enabled,
-                    selected: false,
-                },
-            ],
+            ]
+            .into_iter()
+            .chain(page_entries(state))
+            .chain([MenuEntry {
+                command: MenuCommand::Preferences,
+                label: "Preferences…",
+                availability: Enabled,
+                selected: false,
+            }])
+            .collect(),
         },
         MenuSection {
             id: MenuSectionId::View,
@@ -415,11 +503,29 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
 /// An entry a plugin's command runs: live when that plugin registered the
 /// command and there is a document for it to act on.
 fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability {
-    match (state.registry.commands.has(command), state.has_active_tab) {
-        (false, _) => MenuAvailability::Disabled("No installed plugin provides this command"),
-        (true, false) => MenuAvailability::Disabled("No document is open"),
-        (true, true) => MenuAvailability::Enabled,
+    match (
+        state.registry.commands.effect(command),
+        state.has_active_tab,
+        state.registry.edit_refusal,
+    ) {
+        (None, _, _) => MenuAvailability::Disabled("No installed plugin provides this command"),
+        (Some(_), false, _) => MenuAvailability::Disabled("No document is open"),
+        (Some(CommandEffect::Edits), true, Some(refusal)) => MenuAvailability::Disabled(refusal),
+        (Some(_), true, _) => MenuAvailability::Enabled,
     }
+}
+
+/// The page commands, on the page the viewport is on.
+fn page_entries(state: MenuState) -> Vec<MenuEntry> {
+    PageCommand::ALL
+        .into_iter()
+        .map(|page| MenuEntry {
+            command: MenuCommand::Page(page),
+            label: page.label(),
+            availability: registry_command(state, MenuCommand::Page(page)),
+            selected: false,
+        })
+        .collect()
 }
 
 /// The three export formats M2 owns. The full `File > Export To` menu, with
@@ -725,6 +831,7 @@ impl MenuCommand {
             | Self::SelectAll
             | Self::DeselectAll
             | Self::TakeSnapshot
+            | Self::Page(_)
             | Self::Tools
             | Self::ToggleNavigationPane
             | Self::ToggleQuickAction(_)
@@ -764,6 +871,7 @@ impl MenuCommand {
             | Self::SelectAll
             | Self::DeselectAll
             | Self::TakeSnapshot
+            | Self::Page(_)
             | Self::Tools
             | Self::PreviousView
             | Self::NextView
@@ -901,6 +1009,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::CloseAllTabs
         | MenuCommand::SelectAll
         | MenuCommand::DeselectAll
+        | MenuCommand::Page(_)
         | MenuCommand::TakeSnapshot
         | MenuCommand::Find
         | MenuCommand::Preferences
@@ -970,10 +1079,17 @@ mod tests {
     fn everything_installed() -> RegistryFacts {
         RegistryFacts {
             codecs: ExportCodecs::installed(|_| true),
-            commands: RegisteredCommands([true; REGISTRY_BACKED.len()]),
+            commands: RegisteredCommands::installed(|id| {
+                Some(if id.starts_with("organize.") {
+                    CommandEffect::Edits
+                } else {
+                    CommandEffect::Reads
+                })
+            }),
             snapshot_tool: true,
             dynamic_zoom_tool: true,
             any_tool: true,
+            edit_refusal: None,
         }
     }
 
@@ -1032,6 +1148,40 @@ mod tests {
         }
         assert_eq!(entries.len(), MenuCommand::all().len());
         assert!(entries.iter().all(|entry| !entry.label.is_empty()));
+    }
+
+    /// The page commands are Edit-menu entries that run `tools-organize`'s
+    /// commands. A document that may not be edited disables exactly them,
+    /// with its own reason, because they declare themselves edits; Select All
+    /// reads, and stays live.
+    #[test]
+    fn page_entries_are_disabled_exactly_where_editing_is_refused() {
+        let refusal = "Encrypted document: editing arrives in M6";
+        let open = menu_state(1, Some(view()));
+        let locked = MenuState::new(
+            1,
+            Some(view()),
+            ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
+            [true; QuickAction::ALL.len()],
+            everything_installed().refusing_edits(Some(refusal)),
+            2,
+        );
+        for page in PageCommand::ALL {
+            let command = MenuCommand::Page(page);
+            assert_eq!(entry(open, command).availability, MenuAvailability::Enabled);
+            assert_eq!(
+                entry(locked, command).availability,
+                MenuAvailability::Disabled(refusal),
+                "{}",
+                page.label()
+            );
+            assert_eq!(command.registry_command_id(), Some(page.id()));
+        }
+        assert_eq!(
+            entry(locked, MenuCommand::SelectAll).availability,
+            MenuAvailability::Enabled,
+            "a command that only reads is not an edit"
+        );
     }
 
     /// Nothing the registry holds can be unreachable, and a keystroke alone
@@ -1148,7 +1298,7 @@ mod tests {
             ShellViewState::new(WindowAppearance::Dark, ThemePreference::System),
             [true; QuickAction::ALL.len()],
             RegistryFacts {
-                commands: RegisteredCommands::installed(|_| false),
+                commands: RegisteredCommands::installed(|_| None),
                 ..everything_installed()
             },
             0,
@@ -1364,6 +1514,13 @@ mod tests {
                 "Deselect All",
                 "Take a Snapshot",
                 "Find…",
+                "Rotate Page Clockwise",
+                "Rotate Page Counterclockwise",
+                "Insert Blank Page",
+                "Move Page Earlier",
+                "Move Page Later",
+                "Delete Page",
+                "Number Pages From 1",
                 "Preferences…",
             ]
         );

@@ -586,11 +586,53 @@ impl CanvasModel {
             .iter()
             .find(|command| command.id == id)
             .ok_or(CanvasError::UnknownCommand(id))?;
+        let before = self.document.edit().epoch();
         (command.run)(&mut CommandCtx {
             doc: &mut self.document,
             page: self.viewport.current_page(),
         })
-        .map_err(CanvasError::Command)
+        .map_err(CanvasError::Command)?;
+        if self.document.edit().epoch() != before {
+            self.relayout_after_edit()?;
+        }
+        Ok(())
+    }
+
+    /// A command changed the document, and a page command can change what
+    /// the layout was built from: how many pages there are, their order, and
+    /// their size once turned. So the layout is rebuilt from the document as
+    /// edited, keeping what the user chose about the view - mode, cover,
+    /// rotation, zoom - and staying on the same page number, or the last page
+    /// when that one is gone. Every raster goes, because a page index may now
+    /// name a different page.
+    fn relayout_after_edit(&mut self) -> Result<(), CanvasError> {
+        let count = self.document.page_count();
+        if count == 0 {
+            return Err(CanvasError::EmptyDocument);
+        }
+        let view = self.viewport.snapshot();
+        let mut viewport = Viewport::new(count, self.viewport.size(), PAGE_GAP)?;
+        // Measured first: every layout call below needs an estimate to work
+        // from, which is what the first page's geometry gives it.
+        viewport.measure_page(self.document.page_geometry(0)?.clone())?;
+        viewport.set_mode(view.mode)?;
+        viewport.set_show_cover(view.show_cover)?;
+        viewport.set_rotation(view.rotation)?;
+        match view.zoom_policy {
+            onionskin_core::ZoomPolicy::Fit(mode) if !matches!(mode, FitMode::Visible(_)) => {
+                viewport.fit(mode)?
+            }
+            _ => viewport.zoom_to(view.zoom, ViewPoint::default())?,
+        }
+        viewport.go_to_page(view.current_page.min(count - 1), PageAlignment::Start)?;
+        self.viewport = viewport;
+        // The history's states name page indices of the old pagination.
+        self.view_history = ViewHistory::new(VIEW_HISTORY_CAPACITY);
+        self.geometry_requests.clear();
+        self.failed_geometry.clear();
+        self.page_words.clear();
+        self.invalidate_rendered_pixels();
+        Ok(())
     }
 
     /// The text the current selection covers, which is what the context
@@ -2727,6 +2769,72 @@ mod tests {
             },
             "the view did not follow the origin, so the grabbed content slid \
              out from under the pointer"
+        );
+    }
+
+    /// A page command changes what the layout was built from. Run through the
+    /// registry, the way the menus run it, the canvas follows: one page fewer
+    /// in the viewport, the view kept, and every raster dropped because page
+    /// index 0 now names a different page.
+    #[cfg(feature = "tools-organize")]
+    #[test]
+    fn a_page_command_rebuilds_the_layout_from_the_edited_document() {
+        use onionskin_plugin_api::command_ids::{DELETE_PAGE, ROTATE_PAGE_CLOCKWISE};
+
+        let mut model = model_with_registry(crate::build_registry());
+        model.update().expect("the first frame runs");
+        assert_eq!(model.viewport().page_count(), 2);
+        let mode = model.viewport().mode();
+
+        model.run_command(DELETE_PAGE).expect("deletes");
+        assert_eq!(model.viewport().page_count(), 1, "the layout lost the page");
+        assert_eq!(model.viewport().mode(), mode, "and kept the view's mode");
+        assert!(
+            model.tiles.is_empty(),
+            "no raster of the old page 0 survives"
+        );
+        model
+            .update()
+            .expect("the next frame runs over the new layout");
+
+        let before = model
+            .viewport()
+            .page_geometry(0)
+            .expect("measured")
+            .render_size;
+        model.run_command(ROTATE_PAGE_CLOCKWISE).expect("rotates");
+        let after = model
+            .viewport()
+            .page_geometry(0)
+            .expect("measured")
+            .render_size;
+        assert_eq!(
+            (after.0, after.1),
+            (before.1, before.0),
+            "a quarter turn swaps the page's width and height in the layout"
+        );
+    }
+
+    /// A command that changes nothing leaves the layout alone.
+    #[cfg(feature = "tools-organize")]
+    #[test]
+    fn a_page_command_that_changes_nothing_keeps_the_layout() {
+        use onionskin_plugin_api::command_ids::MOVE_PAGE_EARLIER;
+
+        let mut model = model_with_registry(crate::build_registry());
+        model.update().expect("the first frame runs");
+        model.go_to_page(1).expect("navigates");
+        model.go_to_page(0).expect("navigates");
+        assert!(
+            model.view_history.can_previous(),
+            "there is history to lose"
+        );
+        model
+            .run_command(MOVE_PAGE_EARLIER)
+            .expect("a no-op on page 1");
+        assert!(
+            model.view_history.can_previous(),
+            "no relayout, so the view history survives"
         );
     }
 

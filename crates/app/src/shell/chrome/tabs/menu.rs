@@ -157,6 +157,11 @@ impl ShellFrame {
                 self.take_a_snapshot(cx);
                 Ok(())
             }
+            MenuCommand::Page(page) => {
+                self.dismiss_menus(cx);
+                self.run_registry_command(page.id(), cx);
+                Ok(())
+            }
             MenuCommand::CloseTab => {
                 let active = self.active_index()?;
                 self.run_tab_command(TabCommand::Close, active, cx)
@@ -277,7 +282,10 @@ impl ShellFrame {
     /// instead of offering entries that would fail.
     pub(super) fn registry_facts(&self, cx: &App) -> RegistryFacts {
         match self.tabs.active() {
-            Some(tab) => RegistryFacts::of(tab.canvas.read(cx).model.registry()),
+            Some(tab) => {
+                let model = &tab.canvas.read(cx).model;
+                RegistryFacts::of(model.registry()).refusing_edits(model.edit_refusal())
+            }
             // With no document there is no tab registry to ask, and the
             // entries still have to say whether their plugin is installed.
             None => self.settings.registry,
