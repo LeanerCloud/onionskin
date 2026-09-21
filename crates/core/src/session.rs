@@ -600,6 +600,68 @@ impl Document {
         }
     }
 
+    /// Replay a recovery file's bytes onto this document as one undoable
+    /// step, "Recover Unsaved Changes".
+    ///
+    /// `recovered` is what [`crate::recovery::RecoveryStore::recover`]
+    /// answered: this document's bytes with the autosaved section appended.
+    /// Every object that section defines becomes a change of this session,
+    /// and so does every trailer key it changed, so the document is dirty
+    /// afterwards, the next save appends the same section, and Undo takes the
+    /// recovery back. Returns how many objects were replayed.
+    pub fn replay_recovery(&mut self, recovered: &[u8]) -> Result<usize> {
+        let original = self.bytes.len() as u64;
+        if recovered.len() as u64 <= original || !recovered.starts_with(&self.bytes) {
+            return Err(Error::Cos(onionskin_cos::Error::Unrecoverable {
+                detail: "the recovery does not extend this document".into(),
+            }));
+        }
+        let replayed =
+            onionskin_cos::Document::open(Box::new(BytesSource::new(recovered.to_vec())))?;
+        let in_section = |entry: onionskin_cos::XrefEntry| match entry {
+            onionskin_cos::XrefEntry::InFile { offset, .. } => offset >= original,
+            _ => false,
+        };
+        let mut numbers = Vec::new();
+        for (number, entry) in replayed.xref().iter() {
+            let from_section = match entry {
+                onionskin_cos::XrefEntry::InObjectStream { container, .. } => {
+                    replayed.xref().get(container).is_some_and(in_section)
+                }
+                other => in_section(other),
+            };
+            if from_section && number != 0 {
+                numbers.push(number);
+            }
+        }
+        let trailer = replayed.trailer().clone();
+        self.edit
+            .transact(&self.cos, "Recover Unsaved Changes", |tx| {
+                for &number in &numbers {
+                    let parsed = replayed.get(number)?;
+                    tx.put_object(number, parsed.objref.generation, parsed.object)?;
+                }
+                for (key, value) in trailer.iter() {
+                    let skip = matches!(key.as_bytes(), b"Size" | b"Prev" | b"XRefStm" | b"ID");
+                    if !skip && tx.trailer_value(key.as_bytes()).as_ref() != Some(value) {
+                        tx.set_trailer(key.clone(), Some(value.clone()))?;
+                    }
+                }
+                Ok(())
+            })?;
+        Ok(numbers.len())
+    }
+
+    /// Undo the last edit. Whether there was one.
+    pub fn undo(&mut self) -> Result<bool> {
+        self.edit.undo(&self.cos)
+    }
+
+    /// Redo the last undone edit. Whether there was one.
+    pub fn redo(&mut self) -> Result<bool> {
+        self.edit.redo(&self.cos)
+    }
+
     /// A clean close: the document is going away with nothing unsaved worth
     /// keeping, so its recovery file goes too.
     pub(crate) fn close(self) -> Result<()> {

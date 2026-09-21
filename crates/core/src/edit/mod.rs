@@ -227,6 +227,14 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn put_object(&mut self, number: u32, generation: u16, object: Object) -> Result<()> {
+        // A number written directly, rather than handed out by `reserve`, is
+        // still taken: the next `reserve` must not hand it out again. Replaying
+        // a recovery file writes numbers the reopened document never had,
+        // and the first edit after it would otherwise land on one of them
+        // (T3).
+        if number >= self.overlay.next_number() {
+            self.overlay.set_next_number(number + 1);
+        }
         let before = self.overlay.capture_object(self.base, number)?;
         let after = Some(ObjectState::new(generation, object));
         self.record(Change::Object {

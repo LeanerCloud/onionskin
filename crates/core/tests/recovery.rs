@@ -251,3 +251,94 @@ fn copy_seed(dir: &Path, name: &str) -> PathBuf {
     std::fs::copy(seed(name), &destination).expect("seed copied");
     destination
 }
+
+/// P18: a recovery replayed onto the reopened document is an ordinary
+/// undoable edit, the document is dirty, and the next edit's objects land
+/// above every number the recovery wrote (T3). Seeding the next number from
+/// the reopened file alone collides on the first edit after recovery.
+#[test]
+fn a_replayed_recovery_is_one_undoable_edit_and_the_next_edit_does_not_collide() {
+    let root = temp_dir("replay");
+    let store = RecoveryStore::open(&root.join("recovery")).expect("the store opens");
+    let path = copy_seed(&root, "minimal.pdf");
+
+    let mut file = DocumentFile::open(&path).expect("opens");
+    file.set_recovery(store.clone());
+    let highest_written = file
+        .document_mut()
+        .edit_document("Make Objects", |tx| {
+            let mut highest = 0;
+            for n in 0..5 {
+                let number = tx.reserve();
+                let mut dict = onionskin_cos::Dict::new();
+                dict.set(Name::new("N"), Object::Integer(n));
+                tx.put_object(number, 0, Object::Dict(dict))?;
+                highest = number;
+            }
+            // Named from the trailer so the objects are reachable and
+            // survive collapse.
+            let root = tx.trailer_value(b"Root").expect("a root");
+            let catalog = root.as_reference().expect("a reference");
+            let mut dict = tx
+                .object(catalog.number)?
+                .expect("the catalog")
+                .object
+                .as_dict()
+                .cloned()
+                .expect("a dictionary");
+            let refs = (highest - 4..=highest)
+                .map(|n| Object::Ref(onionskin_cos::ObjRef::new(n, 0)))
+                .collect();
+            dict.set(Name::new("PieceInfo"), Object::Array(refs));
+            tx.put_object(catalog.number, 0, Object::Dict(dict))?;
+            Ok(highest)
+        })
+        .expect("edits");
+    file.autosave()
+        .expect("autosaves")
+        .expect("a recovery file");
+    drop(file);
+
+    let original = std::fs::read(&path).expect("the file is unchanged");
+    let Recovered::Bytes(recovered) = store.recover(&path, &original).expect("reads") else {
+        panic!("the recovery applies to the unchanged file");
+    };
+    let mut document = Document::open_path(&path).expect("reopens");
+    assert!(!document.is_dirty());
+    let replayed = document.replay_recovery(&recovered).expect("replays");
+    assert!(
+        replayed >= 6,
+        "five new objects and the catalog: {replayed}"
+    );
+    assert!(document.is_dirty(), "recovered edits are unsaved edits");
+    let catalog = document
+        .structure()
+        .expect("doc")
+        .catalog()
+        .expect("catalog");
+    assert!(
+        catalog.get(b"PieceInfo").is_some(),
+        "the recovered edit is there"
+    );
+
+    let next = document
+        .edit_document("One More", |tx| Ok(tx.reserve()))
+        .expect("edits");
+    assert!(
+        next > highest_written,
+        "the next object ({next}) lands above the recovered ones ({highest_written})"
+    );
+
+    // "One More" wrote nothing, so it is not a step; the one step is the
+    // recovery.
+    assert!(document.undo().expect("undoes the recovery"));
+    assert!(!document.is_dirty(), "undo takes the recovery back");
+}
+
+#[test]
+fn bytes_that_do_not_extend_the_document_are_refused() {
+    let mut document = Document::open_path(&seed("minimal.pdf")).expect("opens");
+    let other = std::fs::read(seed("hello.pdf")).expect("reads");
+    assert!(document.replay_recovery(&other).is_err());
+    assert!(!document.is_dirty());
+}
