@@ -326,3 +326,78 @@ frames is GPUI's behaviour on macOS, read from its source, not a test here.
   would pause the window while it is read.
 - One criterion line, where Acrobat allows several. Stemming, and searching
   across folders or indexes (the post-1.0 row), are not offered.
+
+## Copy with formatting / Export Selection As (row 31, `partial`)
+
+**What the user gets.**
+
+- **Export Selection As**, in the page's context menu, is live whenever text
+  is selected.
+  - It asks where to save and suggests `Selection.rtf`.
+  - A `.rtf` name gets Rich Text. Each stretch of one face and size is a
+    group with that family, its size, and bold or italic when the face's
+    name says so.
+  - Any other name gets the selected text as plain UTF-8.
+  - It says "Exported the selection to …" on the notice bar.
+  - On an encrypted document it refuses before asking where, with the
+    document's reason. Writing the selection to a file is reading the
+    document out, as every export is.
+- **Copy With Formatting** stays disabled, with the reason "After 1.0: the
+  clipboard has no rich-text format yet; use Export Selection As".
+  `gpui::ClipboardEntry` has only text and image variants. This is the plan's
+  section 8 item 12, and the row is `partial` for it.
+
+**How it is built.**
+
+- `core::TextSelection` gains `spans: Vec<TextSpan>` (text, font, size).
+  `core::textselect::styled_text` cuts a page's flattened text where the face
+  or size changes. A separator the join added belongs to the span before it,
+  so the spans joined are exactly the selection's text. `content::Flattened`
+  exposes its `pieces()` for this. Both the drag selection and
+  `commands-core`'s Select All fill the spans.
+- `codecs-common::rtf::selection_rtf` writes RTF 1.x:
+  - a font table of families (`Helvetica-Bold` and `Arial,Bold` are
+    Helvetica and Arial);
+  - `\fs` in half points, with 12 points for a size the text did not state;
+  - the control characters escaped, line breaks as `\par`, tabs as `\tab`;
+  - anything outside ASCII as `\uN?`, surrogate pairs for characters outside
+    the Basic Multilingual Plane.
+
+  It is a writer the shell calls, not a registered codec. Whole-document RTF
+  export is the post-1.0 row, so `kernel_emptiness`'s codec count does not
+  change. The plan expected a registered codec; this is the recorded
+  deviation.
+- The shell's `export_selection` (`tabs/export_selection.rs`) chooses RTF
+  or text by the name. In a build without `codecs-common` it suggests
+  `Selection.txt` and refuses a `.rtf` name, saying the plugin is missing.
+  `DocumentFile::document()` lets the shell ask the read-out refusal without
+  a mutable borrow.
+
+**Runs.**
+
+- `cargo test -p onionskin-codecs-common --lib rtf`, 3 tests: each span's
+  family, size and style; escaping of controls, breaks and Unicode including
+  a surrogate pair; defaults for names, sizes and an empty selection.
+- `cargo test -p onionskin-core --test selection_spans`, 2 tests: "Plain" in
+  12-point Helvetica, "Bold" in 18-point Times-Bold, then "Next" on the line
+  below, give three spans whose text joins to "Plain Bold\nNext". A dragged
+  selection carries spans that join to its text.
+- `tabs::export_selection::tests`, 2: a non-RTF name gets the plain text and
+  a `.rtf` name gets the faces.
+- Window tests `tabs::tests::export_selection`, 3:
+  - a `.txt` name writes the selection's text and says so;
+  - a `.rtf` name writes RTF containing the text and a size;
+  - an encrypted document refuses with the document's reason and asks for
+    no path.
+- The context-menu test now derives the live set with a selection from
+  every `TextSelection` requirement, so Copy and Export Selection As both go
+  live with a selection.
+- **Full suites.** App `--lib` with and without default features: all pass
+  but the known environmental set. The app's integration tests pass, the
+  headline recount at 162 planned / 26 partial / 135 implemented included.
+  `cargo test` for core, content, codecs-common and commands-core: passes.
+- **Lint.** `cargo clippy` for those crates and the app in four feature
+  sets: clean. `cargo fmt --all --check`: clean.
+
+**Not claimed.** Colour, position and paragraph layout are not carried; the
+file is the selected text with its type.

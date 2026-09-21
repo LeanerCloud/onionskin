@@ -22,6 +22,10 @@ use super::chrome::MenuAvailability;
 
 pub(in crate::shell) use onionskin_plugin_api::tool_with;
 
+/// Why Copy With Formatting stays greyed out.
+pub(in crate::shell) const COPY_WITH_FORMATTING_REASON: &str =
+    "After 1.0: the clipboard has no rich-text format yet; use Export Selection As";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum CanvasContextCommand {
     Copy,
@@ -101,14 +105,12 @@ impl CanvasContextCommand {
             Self::RotateClockwise => Requirement::Shell,
             // The four that named M3 as a guess are registry queries now: each
             // goes live when the package that lands its command is compiled in.
-            Self::CopyWithFormatting => Requirement::Command {
-                id: command_ids::COPY_WITH_FORMATTING,
-                reason: "Available with rich-text export",
-            },
-            Self::ExportSelectionAs => Requirement::Command {
-                id: command_ids::EXPORT_SELECTION,
-                reason: "Available with rich-text export",
-            },
+            // The clipboard half of row 31: GPUI's clipboard carries text
+            // and images only, so there is no rich-text flavour to put this
+            // on until a fork adds one. Export Selection As writes the RTF.
+            Self::CopyWithFormatting => Requirement::Milestone(COPY_WITH_FORMATTING_REASON),
+            // The shell's own save prompt and writer, like Print.
+            Self::ExportSelectionAs => Requirement::TextSelection("Select text first"),
             Self::AddBookmark => Requirement::Command {
                 id: command_ids::ADD_BOOKMARK,
                 reason: "Available with bookmark authoring",
@@ -224,8 +226,15 @@ mod tests {
             .collect();
         assert_eq!(live(&registry, false), expected);
 
-        let mut with_selection = expected.clone();
-        with_selection.insert(0, CanvasContextCommand::Copy);
+        let with_selection: Vec<CanvasContextCommand> = CanvasContextCommand::ALL
+            .into_iter()
+            .filter(|command| {
+                expected.contains(command)
+                    || matches!(command.requirement(), Requirement::TextSelection(..))
+            })
+            .collect();
+        assert!(with_selection.contains(&CanvasContextCommand::Copy));
+        assert!(with_selection.contains(&CanvasContextCommand::ExportSelectionAs));
         assert_eq!(live(&registry, true), with_selection);
 
         // The rule is only worth anything if it separates the two cases, so

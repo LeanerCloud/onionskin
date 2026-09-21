@@ -114,12 +114,12 @@ impl ShellFrame {
             }
             // The print dialog, as File > Print opens it.
             CanvasContextCommand::Print => self.open_print_dialog(window, cx),
+            CanvasContextCommand::ExportSelectionAs => self.export_selection(cx),
             // Spelled out rather than left to a wildcard: every remaining
             // entry runs its registered command or activates a tool, and an entry added without a decision
             // here has to be a compile error rather than a silent tool
             // lookup that finds nothing and returns.
             other @ (CanvasContextCommand::CopyWithFormatting
-            | CanvasContextCommand::ExportSelectionAs
             | CanvasContextCommand::HighlightText
             | CanvasContextCommand::AddNoteToText
             | CanvasContextCommand::EditText

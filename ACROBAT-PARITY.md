@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 163 planned / 25 partial / 80 out-of-scope. 135 implemented.**
+**403 rows: 162 planned / 26 partial / 80 out-of-scope. 135 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -301,8 +301,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
 | Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
 | Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live, with stale async completion guards. Evidence: M2-BASIC. |
-| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); future editing commands remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
-| Copy with formatting / Export selected text | planned | M3 | (judgment) |
+| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); Export Selection As writes RTF or text (P22); Copy With Formatting and future editing commands remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
+| Copy with formatting / Export selected text | partial | M3 | Export Selection As, from the text context menu, writes the selection to a file: RTF with each span's family, size, bold and italic for a `.rtf` name, plain text otherwise, refused on an encrypted document. Copy With Formatting stays disabled: GPUI's clipboard carries only text and images, so a rich-text flavour needs a fork addition. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
 | Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
 | Embedded search index (Manage Embedded Index) | planned | post-1.0 | Embedded search indexes are a named post-1.0 slot. |

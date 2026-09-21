@@ -590,6 +590,11 @@ impl CanvasModel {
         self.document.document_mut()
     }
 
+    /// Why the document may not be read out into a new file, or `None`.
+    pub(super) fn read_out_refusal(&self) -> Option<onionskin_core::protection::Refusal> {
+        self.document.document().read_out_refusal()
+    }
+
     /// Why the open document may not be edited, as the short reason a disabled
     /// entry shows, or `None` when it may. Asked of `core`, which derives it
     /// from the document; the shell holds no flag of its own.
@@ -726,6 +731,11 @@ impl CanvasModel {
 
     /// The text the current selection covers, which is what the context
     /// menu's Copy puts on the clipboard.
+    /// The selected text with its faces, for Export Selection As.
+    pub fn text_selection(&self) -> Option<&onionskin_core::TextSelection> {
+        self.document.selection().text()
+    }
+
     pub fn selection_text(&self) -> Option<&str> {
         self.document
             .selection()

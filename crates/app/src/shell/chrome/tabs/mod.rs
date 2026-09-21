@@ -5,6 +5,7 @@ mod context;
 mod create;
 mod dialogs;
 mod export;
+mod export_selection;
 mod file;
 mod frame_state;
 mod inspector;
@@ -1689,6 +1690,8 @@ mod tests {
     mod convert;
     #[cfg(feature = "shell-test-support")]
     mod edit_menu;
+    #[cfg(feature = "shell-test-support")]
+    mod export_selection;
     #[cfg(feature = "shell-test-support")]
     mod export_settings;
     #[cfg(feature = "shell-test-support")]
