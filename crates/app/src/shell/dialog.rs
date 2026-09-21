@@ -40,6 +40,7 @@ pub(in crate::shell) enum ShellDialog {
     BookmarkTitle,
     UnsavedChanges,
     Recover,
+    ReduceFileSize,
 }
 
 impl ShellDialog {
@@ -54,6 +55,7 @@ impl ShellDialog {
             Self::BookmarkTitle => "Bookmark Title",
             Self::UnsavedChanges => "Unsaved Changes",
             Self::Recover => "Recover Unsaved Changes",
+            Self::ReduceFileSize => "Reduce File Size",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -171,6 +173,7 @@ pub(in crate::shell) fn accessible(
         ShellDialog::Recover => super::chrome::file_dialogs::accessible_recover(
             frame.recover_dialog().expect("recover dialog has state"),
         ),
+        ShellDialog::ReduceFileSize => super::chrome::file_dialogs::accessible_reduce(),
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::accessible(
             frame
                 .bookmark_title_dialog()
@@ -296,6 +299,9 @@ pub(in crate::shell) fn render_dialog(
             cx,
         )
         .into_any_element(),
+        ShellDialog::ReduceFileSize => {
+            super::chrome::file_dialogs::render_reduce(focused, theme, cx).into_any_element()
+        }
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::render(
             frame
                 .bookmark_title_dialog()

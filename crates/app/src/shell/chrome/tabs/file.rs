@@ -55,6 +55,54 @@ impl ShellFrame {
         self.after_file_change(cx);
     }
 
+    /// Reduce File Size: ask where the copy goes, then compress into it.
+    fn reduce_active_file_size(&mut self, cx: &mut Context<Self>) {
+        let Some(canvas) = self.active_canvas_entity() else {
+            return;
+        };
+        let origin = canvas.entity_id();
+        let current = canvas
+            .read(cx)
+            .model
+            .path()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("Untitled.pdf"));
+        let directory = current
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let suggested = reduced_name(&current);
+        let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
+        cx.spawn(async move |frame, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            frame
+                .update(cx, |frame, cx| frame.reduce_into(origin, &path, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// The second half of Reduce File Size, for the document the dialog was
+    /// opened on.
+    pub(in crate::shell) fn reduce_into(
+        &mut self,
+        origin: EntityId,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, canvas)) = self.canvas_by_id(origin) else {
+            return;
+        };
+        let message = canvas.update(cx, |canvas, _| {
+            reduce_document(canvas.model.document_mut(), path)
+        });
+        self.notices.push(match message {
+            Ok(message) | Err(message) => message,
+        });
+        cx.notify();
+    }
+
     /// File > Attach to Email: the saved file, handed to the mail client.
     pub(super) fn attach_active_to_email(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.active_saved_path(cx) else {
@@ -262,7 +310,11 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         match action {
-            FileAction::CancelClose => self.close_dialog(window, cx),
+            FileAction::CancelClose | FileAction::CancelReduce => self.close_dialog(window, cx),
+            FileAction::ReduceFileSize => {
+                self.close_dialog(window, cx);
+                self.reduce_active_file_size(cx);
+            }
             FileAction::SaveAndClose | FileAction::DiscardAndClose => {
                 let Some(state) = self.unsaved.take() else {
                     return;
@@ -487,4 +539,40 @@ fn save(canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) -> Result<(), Str
             format!("{name} was not saved: {error}")
         })
     })
+}
+
+/// The name Reduce File Size suggests for the copy.
+fn reduced_name(current: &Path) -> String {
+    let stem = current
+        .file_stem()
+        .map_or_else(|| "Document".into(), |stem| stem.to_string_lossy());
+    format!("{stem} (reduced).pdf")
+}
+
+/// Compress `document` into a new file at `path`, and say what happened.
+#[cfg(feature = "commands-core")]
+fn reduce_document(document: &mut onionskin_core::Document, path: &Path) -> Result<String, String> {
+    use onionskin_commands_core::compress::{
+        compress, CompressOptions, Compressed, NOTHING_TO_COMPRESS,
+    };
+
+    match compress(document, &CompressOptions::default()).map_err(|error| error.to_string())? {
+        Compressed::Nothing => Err(NOTHING_TO_COMPRESS.to_owned()),
+        Compressed::Smaller { bytes, before, .. } => {
+            let after = bytes.len();
+            onionskin_commands_core::publish::publish(&[(path.to_path_buf(), bytes)])
+                .map_err(|error| error.to_string())?;
+            Ok(format!(
+                "Saved a reduced copy as {}: {} KB, from {} KB. It keeps no editing history.",
+                path.display(),
+                after.div_ceil(1024),
+                before.div_ceil(1024)
+            ))
+        }
+    }
+}
+
+#[cfg(not(feature = "commands-core"))]
+fn reduce_document(_: &mut onionskin_core::Document, _: &Path) -> Result<String, String> {
+    Err(super::NO_CORE_COMMANDS.to_owned())
 }

@@ -12,13 +12,14 @@
 //! menu asks for these ids by name, and a build without this plugin says the
 //! plugin is missing instead of showing an entry that would do nothing.
 
-use onionskin_plugin_api::command_ids::SPLIT_DOCUMENT;
+use onionskin_plugin_api::command_ids::{REDUCE_FILE_SIZE, SPLIT_DOCUMENT};
 use onionskin_plugin_api::{
     Command, CommandCtx, CommandEffect, CommandError, CommandPlugin, PluginManifest,
     PluginRegistry, TextSelection,
 };
 
 pub mod combine;
+pub mod compress;
 pub mod publish;
 pub mod split;
 
@@ -66,6 +67,15 @@ impl CommandPlugin for CoreCommandsPlugin {
                 // extract, on a document the encrypted-source rule protects.
                 effect: CommandEffect::ReadsOut,
                 run: Box::new(split_at_bookmarks),
+            },
+            Command {
+                id: REDUCE_FILE_SIZE,
+                title: "Reduce File Size",
+                keybind: None,
+                // Rewrites the document's objects into a new file: refused on
+                // a document the encrypted-source rule protects.
+                effect: CommandEffect::ReadsOut,
+                run: Box::new(reduce_beside),
             },
         ]
     }
@@ -124,6 +134,29 @@ fn split_at_bookmarks(ctx: &mut CommandCtx) -> Result<(), CommandError> {
     split::split(ctx.doc, split::SplitBy::TopLevelBookmarks, folder, &stem)
         .map(|_| ())
         .map_err(|error| failed(error.to_string()))
+}
+
+/// Reduce File Size with no dialog: a smaller copy beside the document,
+/// named after it. The dialog asks where instead.
+fn reduce_beside(ctx: &mut CommandCtx) -> Result<(), CommandError> {
+    const LABEL: &str = "Reduce File Size";
+    let failed = |reason: String| CommandError::Failed {
+        label: LABEL,
+        reason,
+    };
+    let path = ctx
+        .doc
+        .path()
+        .ok_or_else(|| failed("the document has not been saved to a file yet".to_owned()))?;
+    let destination = compress::reduced_path(path);
+    match compress::compress(ctx.doc, &compress::CompressOptions::default())
+        .map_err(|error| failed(error.to_string()))?
+    {
+        compress::Compressed::Nothing => Err(failed(compress::NOTHING_TO_COMPRESS.to_owned())),
+        compress::Compressed::Smaller { bytes, .. } => {
+            publish::publish(&[(destination, bytes)]).map_err(|error| failed(error.to_string()))
+        }
+    }
 }
 
 #[cfg(test)]

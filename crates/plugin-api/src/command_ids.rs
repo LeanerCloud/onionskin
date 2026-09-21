@@ -13,6 +13,10 @@ pub const COPY_WITH_FORMATTING: &str = "edit.copy-with-formatting";
 pub const EXPORT_SELECTION: &str = "file.export-selection";
 /// Add a bookmark at the current view. P13b.
 pub const ADD_BOOKMARK: &str = "document.add-bookmark";
+/// File > Reduce File Size: a smaller copy, rewritten, with its history
+/// discarded. P14b. The menu entry opens a dialog that says so and asks
+/// where; the command writes the copy beside the document.
+pub const REDUCE_FILE_SIZE: &str = "file.reduce-size";
 /// File > Print. P15 to P17.
 pub const PRINT: &str = "file.print";
 /// Split the open document at its top-level bookmarks, beside it. P12. The

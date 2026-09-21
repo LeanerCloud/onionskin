@@ -25,6 +25,10 @@ pub(in crate::shell) enum FileAction {
     Recover,
     /// Throw the recovery away.
     DiscardRecovery,
+    /// Choose where the reduced copy goes, and write it.
+    ReduceFileSize,
+    /// Put Reduce File Size away.
+    CancelReduce,
 }
 
 /// Which close the user asked for, remembered while the dialog asks.
@@ -77,6 +81,41 @@ const RECOVER_BUTTONS: [(&str, &str, FileAction); 2] = [
     ("recover-accept", "Recover", FileAction::Recover),
     ("recover-discard", "Discard", FileAction::DiscardRecovery),
 ];
+
+/// What Reduce File Size says before it does anything. The one M3 path
+/// that rewrites a file, so it says in words that history is discarded.
+pub(in crate::shell) const REDUCE_TEXT: &str = "Reduce File Size writes a smaller copy as a new \
+file: images above 150 pixels per inch are downsampled and saved as JPEG, and anything nothing \
+refers to is left out. The copy keeps no editing history: every earlier version of the document \
+is discarded from it and cannot be restored. This document is not changed.";
+
+const REDUCE_BUTTONS: [(&str, &str, FileAction); 2] = [
+    (
+        "reduce-save",
+        "Save a Reduced Copy…",
+        FileAction::ReduceFileSize,
+    ),
+    ("reduce-cancel", "Cancel", FileAction::CancelReduce),
+];
+
+pub(in crate::shell) fn accessible_reduce() -> Vec<Element> {
+    described(REDUCE_TEXT.to_owned(), None, &REDUCE_BUTTONS)
+}
+
+pub(in crate::shell) fn render_reduce(
+    focused: Option<&gpui::ElementId>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    drawn(
+        REDUCE_TEXT.to_owned(),
+        None,
+        &REDUCE_BUTTONS,
+        focused,
+        theme,
+        cx,
+    )
+}
 
 fn described(
     text: String,

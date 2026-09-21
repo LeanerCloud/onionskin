@@ -195,6 +195,7 @@ pub(in crate::shell) enum MenuCommand {
     SplitDocument,
     Properties,
     SaveAsOther,
+    ReduceFileSize,
     Export(ExportTarget),
     ExportAllImages,
     CloseTab,
@@ -254,7 +255,7 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 11] = [
+const REGISTRY_BACKED: [MenuCommand; 12] = [
     MenuCommand::SelectAll,
     MenuCommand::DeselectAll,
     MenuCommand::Page(PageCommand::RotateClockwise),
@@ -266,6 +267,7 @@ const REGISTRY_BACKED: [MenuCommand; 11] = [
     MenuCommand::Page(PageCommand::ResetNumbering),
     MenuCommand::SplitDocument,
     MenuCommand::SummarizeComments,
+    MenuCommand::ReduceFileSize,
 ];
 
 /// Which of those commands this build's plugins registered, and what each
@@ -602,6 +604,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain([export_all_images_entry(state)])
             .chain([
                 save_as_other_entry(state),
+                MenuEntry {
+                    command: MenuCommand::ReduceFileSize,
+                    label: "Reduce File Size…",
+                    availability: registry_command(state, MenuCommand::ReduceFileSize),
+                    selected: false,
+                },
                 MenuEntry {
                     command: MenuCommand::Properties,
                     label: "Properties…",
@@ -1190,6 +1198,7 @@ impl MenuCommand {
             | Self::SaveAs
             | Self::Revert
             | Self::AttachToEmail
+            | Self::ReduceFileSize
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1246,6 +1255,7 @@ impl MenuCommand {
             | Self::SaveAs
             | Self::Revert
             | Self::AttachToEmail
+            | Self::ReduceFileSize
             | Self::CopyFileToClipboard
             | Self::Edit(_)
             | Self::Export(_)
@@ -1460,6 +1470,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::SaveAs
         | MenuCommand::Revert
         | MenuCommand::AttachToEmail
+        | MenuCommand::ReduceFileSize
         | MenuCommand::CopyFileToClipboard
         | MenuCommand::Edit(_)
         | MenuCommand::Undo

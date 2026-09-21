@@ -1632,6 +1632,8 @@ mod tests {
     mod outline;
     #[cfg(feature = "shell-test-support")]
     mod properties;
+    #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
+    mod reduce;
     #[cfg(all(
         feature = "shell-test-support",
         feature = "tools-comment",

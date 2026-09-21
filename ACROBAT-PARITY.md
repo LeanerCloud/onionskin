@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 187 planned / 24 partial / 80 out-of-scope. 112 implemented.**
+**403 rows: 185 planned / 24 partial / 80 out-of-scope. 114 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -383,8 +383,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Compress a PDF (one-click, size level) | planned | M3 | `commands-core`: "compress/flatten export". This is a flattening rewrite, not an incremental save, and says so in the UI. |
-| Reduce File Size (compatibility target) | planned | M3 | |
+| Compress a PDF (one-click, size level) | implemented | M3 | A rewrite, not an incremental save, and the dialog says the copy keeps no history. Downsamples images above 150 ppi to JPEG and drops unreferenced objects; writes no object streams or cross-reference stream, so a document already object-streamed shrinks by little. Refused on encrypted documents. Evidence: docs/evidence/m3-p14b-reduce-file-size.md. |
+| Reduce File Size (compatibility target) | implemented | M3 | File > Reduce File Size writes a smaller copy where the user chooses, leaving the open document as it is; a document with nothing to compress says so and writes nothing. The copy is PDF 1.7 with a classic cross-reference table; no compatibility target is offered. Refused on encrypted documents. Evidence: docs/evidence/m3-p14b-reduce-file-size.md. |
 | PDF Optimizer (advanced dialog: images, fonts, transparency, discard objects, discard user data, clean up) | planned | post-1.0 | The full dialog is a large surface; the one-click path covers the common case first. |
 | Audit space usage | planned | post-1.0 | Cheap given byte-span fidelity, but no consumer before the Optimizer dialog exists. |
 

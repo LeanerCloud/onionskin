@@ -48,6 +48,7 @@ impl MenuCommand {
         all.extend([
             MenuCommand::ExportAllImages,
             MenuCommand::SaveAsOther,
+            MenuCommand::ReduceFileSize,
             MenuCommand::Properties,
         ]);
         all.extend([MenuCommand::Quit, MenuCommand::Undo, MenuCommand::Redo]);
@@ -137,6 +138,7 @@ impl MenuCommand {
             Self::SaveAsOther => "file.save-as-other",
             Self::Properties => "file.properties",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
+            Self::ReduceFileSize => onionskin_plugin_api::command_ids::REDUCE_FILE_SIZE,
             Self::Export(ExportTarget::Text) => "file.export-text",
             Self::Export(ExportTarget::Png) => "file.export-png",
             Self::Export(ExportTarget::Svg) => "file.export-svg",
@@ -243,6 +245,7 @@ impl MenuCommand {
             | Self::Revert
             | Self::AttachToEmail
             | Self::CopyFileToClipboard
+            | Self::ReduceFileSize
             | Self::CombineFiles
             | Self::CreateFromFiles
             | Self::CreateFromFile
@@ -291,7 +294,8 @@ impl MenuCommand {
             | Self::DeselectAll
             | Self::Page(_)
             | Self::SplitDocument
-            | Self::SummarizeComments => Some(self.id()),
+            | Self::SummarizeComments
+            | Self::ReduceFileSize => Some(self.id()),
             _ => None,
         }
     }

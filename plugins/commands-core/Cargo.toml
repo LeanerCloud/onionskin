@@ -10,6 +10,8 @@ onionskin-core.workspace = true
 onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
 tempfile.workspace = true
+# Compress re-encodes downsampled images as JPEG.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 # Combine and split are asserted on documents written and parsed back.
 [dev-dependencies]

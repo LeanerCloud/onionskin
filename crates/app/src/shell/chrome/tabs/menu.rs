@@ -208,6 +208,11 @@ impl ShellFrame {
             // The registered command splits at bookmarks with no questions;
             // the menu entry, live when that command is, opens the dialog that
             // offers every way to split.
+            MenuCommand::ReduceFileSize => {
+                self.dismiss_menus(cx);
+                self.show_dialog(ShellDialog::ReduceFileSize, window, cx);
+                Ok(())
+            }
             MenuCommand::SplitDocument => {
                 self.open_split_dialog(window, cx);
                 Ok(())
