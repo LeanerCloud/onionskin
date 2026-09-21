@@ -14,6 +14,7 @@ mod history;
 pub mod images;
 mod layers;
 mod layout;
+pub mod metadata;
 mod outline;
 mod page;
 pub mod pages;

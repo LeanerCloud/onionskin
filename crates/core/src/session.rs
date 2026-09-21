@@ -90,6 +90,9 @@ pub enum Error {
     InvalidImage(String),
     /// An attachment's name is empty, or is a path rather than a file name.
     InvalidAttachmentName(String),
+    /// A custom document property's key is empty, has spaces, or is one of
+    /// the keys `/Info` defines itself.
+    InvalidMetadataKey(String),
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -169,6 +172,10 @@ impl fmt::Display for Error {
                 f,
                 "{name:?} is not a file name an attachment can have: it is empty or names a directory"
             ),
+            Error::InvalidMetadataKey(key) => write!(
+                f,
+                "{key:?} cannot be a custom property's name: it is empty, has spaces, or is a standard property"
+            ),
             Error::InvalidImage(detail) => {
                 write!(f, "not an image a page can be made from: {detail}")
             }
@@ -201,7 +208,8 @@ impl std::error::Error for Error {
             | Error::RevertRefused(_)
             | Error::NotADictionary { .. }
             | Error::InvalidImage(_)
-            | Error::InvalidAttachmentName(_) => None,
+            | Error::InvalidAttachmentName(_)
+            | Error::InvalidMetadataKey(_) => None,
             Error::WrittenButNotReloaded(written) => Some(&*written.cause),
             Error::Recovery(error) => Some(error),
         }
@@ -410,6 +418,31 @@ impl Document {
     /// against the wrong document.
     pub fn edit_mut(&mut self) -> (&mut crate::EditSession, &onionskin_cos::Document) {
         (&mut self.edit, &self.cos)
+    }
+
+    /// Run an edit that touches neither pages nor annotations - the document's
+    /// metadata, its initial view - as one undoable step.
+    pub fn edit_document<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.edit.transact(&self.cos, label, body)
+    }
+
+    /// What `/Info` says, as this session has it.
+    pub fn info(&mut self) -> Result<crate::metadata::Info> {
+        Ok(crate::metadata::read_info(self.structure()?))
+    }
+
+    /// What the XMP packet says, as this session has it.
+    pub fn xmp(&mut self) -> Result<Option<crate::metadata::XmpFields>> {
+        crate::metadata::read_xmp(self.structure()?)
+    }
+
+    /// How the document asks to be opened, as this session has it.
+    pub fn initial_view(&mut self) -> Result<crate::metadata::InitialView> {
+        crate::metadata::read_initial_view(self.structure()?)
     }
 
     /// Run a page-organization edit as one undoable step, handing it the

@@ -9,6 +9,7 @@ publish.workspace = true
 onionskin-content.workspace = true
 onionskin-cos.workspace = true
 onionskin-render.workspace = true
+roxmltree.workspace = true
 
 # Corpus discovery for the test targets. `tests/session.rs` had a copy of its
 # own that neither honoured `ONIONSKIN_CORPUS` nor could be made mandatory.

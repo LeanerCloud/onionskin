@@ -4049,6 +4049,7 @@ dependencies = [
  "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-render",
+ "roxmltree",
  "syn 2.0.119",
  "tempfile",
 ]
