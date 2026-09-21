@@ -83,6 +83,10 @@ pub struct SearchState {
     stopped: Option<String>,
     cursor: Option<(PageIndex, usize)>,
     running: bool,
+    /// Comments whose text matches, by page, found when the walk began and
+    /// added to each page's hits as the walk reports it. Empty unless the
+    /// query includes comments.
+    comment_hits: BTreeMap<PageIndex, Vec<SearchMatch>>,
 }
 
 impl SearchState {
@@ -176,8 +180,11 @@ impl SearchState {
 
     /// Records one page's hits. Returns whether this call placed the cursor,
     /// which is how the viewer knows to scroll to the first hit.
-    pub(crate) fn insert_page(&mut self, page: PageIndex, matches: Vec<SearchMatch>) -> bool {
+    pub(crate) fn insert_page(&mut self, page: PageIndex, mut matches: Vec<SearchMatch>) -> bool {
         self.searched += 1;
+        if let Some(comments) = self.comment_hits.remove(&page) {
+            matches.extend(comments);
+        }
         if matches.is_empty() {
             return false;
         }
@@ -251,7 +258,14 @@ impl SearchState {
         self.current()
     }
 
+    /// The comments that match this query, placed on their pages as the walk
+    /// reaches them.
+    pub(crate) fn set_comment_hits(&mut self, hits: BTreeMap<PageIndex, Vec<SearchMatch>>) {
+        self.comment_hits = hits;
+    }
+
     fn clear_results(&mut self) {
+        self.comment_hits.clear();
         self.pages.clear();
         self.failures.clear();
         self.stopped = None;

@@ -452,3 +452,49 @@ fn stream(data: &[u8]) -> Vec<u8> {
     out.extend_from_slice(b"\nendstream");
     out
 }
+
+/// Include Comments: text that exists only in a comment's `/Contents` is
+/// found, on the comment's page and over its rectangle; a reply is found at
+/// the comment it answers. Without the option, nothing.
+#[test]
+fn include_comments_finds_text_that_is_only_in_a_comment() {
+    use onionskin_core::review::add_reply;
+    use onionskin_core::{add_annotation, Annotation, Rect, Subtype};
+
+    let mut doc = Document::open_path(&onionskin_corpus_testing::seed("hello.pdf")).expect("opens");
+    let page = doc.structure().expect("doc").page(0).expect("page").objref;
+    doc.edit_annotations("Sticky Note", |tx, structure| {
+        let mut note = Annotation::new(Subtype::Text, Rect::new(40.0, 40.0, 60.0, 60.0));
+        note.contents = Some("check the zebracorn".into());
+        let placed = add_annotation(tx, structure, page, &note, 0)?;
+        add_reply(tx, structure, page, placed, "the okapi agrees", None, 0)?;
+        Ok(())
+    })
+    .expect("places");
+
+    let plain = SearchOptions::default();
+    drain(&mut doc, "zebracorn", plain, 0);
+    assert_eq!(doc.search().len(), 0, "page text only");
+
+    let with_comments = SearchOptions {
+        include_comments: true,
+        ..SearchOptions::default()
+    };
+    drain(&mut doc, "Zebracorn", with_comments, 0);
+    assert_eq!(doc.search().len(), 1);
+    let hit = doc.search().current().expect("the cursor lands on it");
+    assert_eq!(hit.page, 0);
+    assert_eq!(
+        hit.quads[0].corners[0],
+        (40.0, 60.0),
+        "upper-left of the note"
+    );
+
+    drain(&mut doc, "okapi", with_comments, 0);
+    let hit = doc.search().current().expect("the reply is found");
+    assert_eq!(
+        hit.quads[0].corners[3],
+        (60.0, 40.0),
+        "at the note it answers"
+    );
+}

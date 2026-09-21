@@ -33,7 +33,6 @@ pub(in crate::shell) const FIND_INPUT_ID: &str = "find-input";
 pub(in crate::shell) const FIND_PLACEHOLDER: &str = "Find in document";
 
 const BOOKMARKS_DEFERRED: &str = "Bookmarks arrive with the navigation panes in M2 P8";
-const COMMENTS_DEFERRED: &str = "Comments arrive with the comment tools in M3";
 
 /// The bar's own keys. Opening it is `edit.find` in the keymap, like every
 /// other command, so a user who rebinds Ctrl+F rebinds it everywhere.
@@ -59,6 +58,8 @@ pub(in crate::shell) enum FindDirection {
 pub(in crate::shell) enum FindOption {
     CaseSensitive,
     WholeWord,
+    /// Also look in the comments' text.
+    IncludeComments,
     Mode(MatchMode),
 }
 
@@ -132,10 +133,15 @@ impl Item {
     ];
 }
 
-/// Acrobat's two find-toolbar checkboxes: each is on or off on its own.
-const CHECKBOXES: [(&str, &str, FindOption); 2] = [
+/// Acrobat's find-toolbar checkboxes: each is on or off on its own.
+const CHECKBOXES: [(&str, &str, FindOption); 3] = [
     ("find-match-case", "Match Case", FindOption::CaseSensitive),
     ("find-whole-word", "Whole Word", FindOption::WholeWord),
+    (
+        "find-include-comments",
+        "Include Comments",
+        FindOption::IncludeComments,
+    ),
 ];
 
 /// Acrobat's Return Results Containing: one of three, not three switches.
@@ -157,20 +163,13 @@ const MODES: [(&str, &str, FindOption); 3] = [
     ),
 ];
 
-/// Row 149's two checkboxes. They ship disabled with the reason they are, not
-/// absent: a user looking for them learns when they arrive.
-const DEFERRED: [(&str, &str, &str); 2] = [
-    (
-        "find-include-bookmarks",
-        "Include Bookmarks",
-        BOOKMARKS_DEFERRED,
-    ),
-    (
-        "find-include-comments",
-        "Include Comments",
-        COMMENTS_DEFERRED,
-    ),
-];
+/// Row 149's checkbox still to come. It ships disabled with the reason it
+/// is, not absent: a user looking for it learns when it arrives.
+const DEFERRED: [(&str, &str, &str); 1] = [(
+    "find-include-bookmarks",
+    "Include Bookmarks",
+    BOOKMARKS_DEFERRED,
+)];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::shell) struct FindBarState {
@@ -213,6 +212,9 @@ impl FindBarState {
                 self.options.case_sensitive = !self.options.case_sensitive;
             }
             FindOption::WholeWord => self.options.whole_word = !self.options.whole_word,
+            FindOption::IncludeComments => {
+                self.options.include_comments = !self.options.include_comments;
+            }
             FindOption::Mode(mode) => self.options.mode = mode,
         }
         self.options != before
@@ -222,6 +224,7 @@ impl FindBarState {
         match option {
             FindOption::CaseSensitive => self.options.case_sensitive,
             FindOption::WholeWord => self.options.whole_word,
+            FindOption::IncludeComments => self.options.include_comments,
             FindOption::Mode(mode) => self.options.mode == mode,
         }
     }
@@ -766,13 +769,34 @@ mod tests {
         assert!(bookmarks.state.disabled);
         assert_eq!(bookmarks.state.toggled, Some(false));
         assert_eq!(bookmarks.description.as_deref(), Some(BOOKMARKS_DEFERRED));
+    }
+
+    /// Include Comments arrived with the Comments pane: a live checkbox that
+    /// toggles the option the walk is started with.
+    #[test]
+    fn include_comments_is_a_live_checkbox_that_changes_the_search() {
+        let mut state = FindBarState::default();
+        let described = accessible(state, &summary(0, None, false), "", &Rects::default());
+        let comments = described.find(&"find-include-comments".into()).unwrap();
+        assert!(!comments.state.disabled);
+        assert_eq!(comments.state.toggled, Some(false));
+        assert_eq!(
+            comments.activation,
+            Some(Activation::ApplyFindOption(FindOption::IncludeComments))
+        );
+        assert!(
+            state.apply(FindOption::IncludeComments),
+            "it changes the query"
+        );
+        assert!(state.options().include_comments);
+        let described = accessible(state, &summary(0, None, false), "", &Rects::default());
         assert_eq!(
             described
                 .find(&"find-include-comments".into())
                 .unwrap()
-                .description
-                .as_deref(),
-            Some(COMMENTS_DEFERRED)
+                .state
+                .toggled,
+            Some(true)
         );
     }
 

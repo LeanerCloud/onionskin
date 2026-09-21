@@ -225,7 +225,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Edit > Select All / Deselect All | implemented | M2 | Both registry commands operate on the active document and page. Evidence: M2-SHELL. |
 | Edit > Copy File to Clipboard | planned | M3 | (judgment) |
 | Edit > Take a Snapshot | implemented | M2 | The menu activates `tools-basic` Snapshot and copies the selected raster region. Evidence: M2-BASIC. |
-| Edit > Find (Ctrl+F) | implemented | M2 | Case, whole-word, highlight-all, next, and previous are live; bookmark/comment inclusion is not part of this row. Evidence: M2-SEARCH. |
+| Edit > Find (Ctrl+F) | implemented | M2 | Case, whole-word, highlight-all, next, and previous are live; Include Comments finds text in comments (M3); Include Bookmarks is not yet offered. Evidence: M2-SEARCH, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Find toolbar > Replace text | planned | M5 | Find-and-replace is named in the plan's M5 list. It writes text, so it belongs to `tools-edit` rather than to viewer search. |
 | Edit > Advanced Search, current document | partial | M2 | Current-document case, whole-word, phrase, any-word, all-word, and result paths are live; the dedicated Advanced Search surface and stemming remain missing. Evidence: M2-SEARCH. |
 | Advanced Search > include attachments | planned | M3 | Acrobat searches attached files two levels deep. (judgment) |

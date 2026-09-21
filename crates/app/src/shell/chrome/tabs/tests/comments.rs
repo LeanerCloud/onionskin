@@ -527,3 +527,44 @@ fn the_next_sticky_note_takes_the_default_the_inspector_made(cx: &mut TestAppCon
         })
         .unwrap();
 }
+
+/// Find with Include Comments on finds text that is only in a comment, and
+/// with it off does not.
+#[gpui::test]
+fn find_with_include_comments_finds_a_comments_text(cx: &mut TestAppContext) {
+    use crate::shell::find_bar::FindOption;
+
+    let (_dir, path) = seed_copy();
+    let (window, _) = window_on(&path, cx);
+    let found = |cx: &mut TestAppContext| {
+        window
+            .update(cx, |frame, _window, cx| {
+                let canvas = frame.tabs.active().unwrap().canvas.clone();
+                canvas.update(cx, |canvas, _| {
+                    let document = canvas.model.document_mut();
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    while document.search().is_running() {
+                        assert!(std::time::Instant::now() < deadline, "the walk never ended");
+                        document.poll_search();
+                    }
+                    document.search().len()
+                })
+            })
+            .unwrap()
+    };
+    window
+        .update(cx, |frame, window, cx| {
+            add_note(frame, "mind the zebracorn", cx);
+            frame.open_find_bar(Some("zebracorn".to_owned()), window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(found(cx), 0, "the page text has no zebracorn");
+    window
+        .update(cx, |frame, _window, cx| {
+            frame.apply_find_option(FindOption::IncludeComments, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(found(cx), 1, "the note's text is found");
+}

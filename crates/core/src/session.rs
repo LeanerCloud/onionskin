@@ -1220,7 +1220,55 @@ impl Document {
             return Ok(false);
         }
         self.search.begin();
+        if options.include_comments {
+            let hits = self.comment_hits(needle, options)?;
+            self.search.set_comment_hits(hits);
+        }
         Ok(true)
+    }
+
+    /// Every comment whose text answers `needle`, by page, as a hit covering
+    /// the comment's rectangle. Read from the edited document, so a comment
+    /// typed a moment ago is found; replies and statuses are found under the
+    /// comment they answer, since the page shows only that.
+    fn comment_hits(
+        &mut self,
+        needle: &str,
+        options: SearchOptions,
+    ) -> Result<std::collections::BTreeMap<PageIndex, Vec<crate::search::SearchMatch>>> {
+        let mut hits: std::collections::BTreeMap<PageIndex, Vec<_>> = Default::default();
+        let annotations = self.annotations()?;
+        for annotation in &annotations {
+            let Some(text) = annotation.contents.as_deref() else {
+                continue;
+            };
+            if annotation.state.is_some() || !onionskin_content::text_matches(text, needle, options)
+            {
+                continue;
+            }
+            // A reply is drawn nowhere; its hit is its comment's place.
+            let shown = annotation
+                .in_reply_to
+                .and_then(|parent| annotations.iter().find(|a| a.objref == parent))
+                .unwrap_or(annotation);
+            let rect = shown.rect;
+            hits.entry(shown.page)
+                .or_default()
+                .push(crate::search::SearchMatch {
+                    page: shown.page,
+                    text: text.to_owned(),
+                    quads: vec![crate::PageQuad {
+                        page: shown.page,
+                        corners: [
+                            (rect.x0, rect.y1),
+                            (rect.x1, rect.y1),
+                            (rect.x0, rect.y0),
+                            (rect.x1, rect.y0),
+                        ],
+                    }],
+                });
+        }
+        Ok(hits)
     }
 
     /// Applies whatever the search worker has produced since the last call.

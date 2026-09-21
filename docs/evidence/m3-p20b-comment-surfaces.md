@@ -237,3 +237,46 @@ Rows:
     listed in `known-issues.md`) and
     `snapshot_tool_drag_copies_a_background_encoded_png`, pass when run on
     their own. They are timing-sensitive under a loaded two-core machine.
+
+## Find: Include Comments
+
+Row: Edit > Find stays `implemented`. Its note now says Include Comments is
+live and Include Bookmarks is not.
+
+**What the user gets.** The find bar's Include Comments checkbox, which was
+disabled with "Comments arrive with the comment tools in M3", is live.
+
+- **On:** Find also looks in every comment's text and every reply's text.
+- **A comment hit** is counted and highlighted over the comment's rectangle
+  on its page.
+- **A reply's hit** is at the comment it answers, because a reply is drawn
+  nowhere.
+- **Status answers** are not searched.
+
+**How it is built.**
+
+- **The option:** `SearchOptions::include_comments`. The page-text walk
+  ignores it.
+- **Finding comment hits:** when a walk begins with it on, the session
+  reads the edited document's comments, so a comment typed a moment ago is
+  found. It matches their text with `content::text_matches`, which uses the
+  page search's own case folding, whole-word rule and Phrase, Any and All
+  modes.
+- **Placing them:** the hits are held in `SearchState` and joined to each
+  page's hits as the walk reports that page. So they are in document order,
+  and the cursor lands on the first hit on either kind.
+- **Not done:** `SearchResult::Unavailable::reason` stays `&'static str`.
+  Nothing in this package needed it widened, because the checkbox went live
+  instead of carrying a dynamic reason.
+
+**Runs.**
+
+- `core/tests/search.rs::include_comments_finds_text_that_is_only_in_a_comment`:
+  - text only in a note is not found without the option;
+  - with the option it is found, case-insensitively, over the note's
+    rectangle;
+  - a reply's text is found at the note it answers.
+- `find_bar::tests::include_comments_is_a_live_checkbox_that_changes_the_search`.
+- `find_with_include_comments_finds_a_comments_text`, on a window: 0 hits,
+  then 1 after the checkbox.
+

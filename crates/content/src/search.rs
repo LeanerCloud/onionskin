@@ -39,6 +39,9 @@ pub struct SearchOptions {
     /// The match must not be flanked by an alphanumeric character.
     pub whole_word: bool,
     pub mode: MatchMode,
+    /// Also look in the comments' text. The page walk here reads page text
+    /// only; the session adds the comment hits, from the edited document.
+    pub include_comments: bool,
 }
 
 /// One hit, with everything a caller needs to draw it and to change it.
@@ -164,6 +167,30 @@ fn separator(previous: &TextRun, next: &TextRun) -> &'static str {
         return " ";
     }
     ""
+}
+
+/// Whether `text` answers `needle` under `options`, the way a page would:
+/// the same case folding, whole-word rule and Phrase / Any / All modes. For a
+/// comment's text, which has no glyphs to highlight, so a yes is all there is.
+pub fn text_matches(text: &str, needle: &str, options: SearchOptions) -> bool {
+    let (folded, _) = fold(text, options.case_sensitive);
+    let found = |word: &str| {
+        let (word, _) = fold(word, options.case_sensitive);
+        if word.is_empty() {
+            return false;
+        }
+        folded.match_indices(word.as_str()).any(|(start, hit)| {
+            !options.whole_word || is_whole_word(&folded, &(start..start + hit.len()))
+        })
+    };
+    match options.mode {
+        MatchMode::Phrase => found(needle),
+        MatchMode::AnyWord => needle.split_whitespace().any(found),
+        MatchMode::AllWords => {
+            let mut words = needle.split_whitespace().peekable();
+            words.peek().is_some() && words.all(found)
+        }
+    }
 }
 
 /// Finds every occurrence of `needle` on the page.
@@ -599,6 +626,7 @@ mod tests {
             case_sensitive: false,
             whole_word: true,
             mode: MatchMode::AnyWord,
+            include_comments: false,
         };
 
         let hits = search(&p, "the", options);

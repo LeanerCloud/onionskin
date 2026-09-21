@@ -695,6 +695,7 @@ mod tests {
                 case_sensitive: true,
                 whole_word: true,
                 mode: MatchMode::AllWords,
+                include_comments: false,
             },
             commenting_author: Some("Ana Pop".into()),
             comment_defaults: BTreeMap::from([(
