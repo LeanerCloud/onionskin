@@ -325,6 +325,7 @@ mod tests {
             size,
             mime: mime.map(str::to_owned),
             stream: 7,
+            page: None,
         }
     }
 

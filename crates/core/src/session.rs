@@ -88,6 +88,8 @@ pub enum Error {
     /// The image a page was to be made from is not one: its size, colour
     /// or samples do not agree.
     InvalidImage(String),
+    /// An attachment's name is empty, or is a path rather than a file name.
+    InvalidAttachmentName(String),
     Cos(onionskin_cos::Error),
     Content(content::Error),
     Worker(crate::WorkerError),
@@ -163,6 +165,10 @@ impl fmt::Display for Error {
                 write!(f, "object {number} is not a dictionary")
             }
             Error::SearchWorker(e) => write!(f, "{e}"),
+            Error::InvalidAttachmentName(name) => write!(
+                f,
+                "{name:?} is not a file name an attachment can have: it is empty or names a directory"
+            ),
             Error::InvalidImage(detail) => {
                 write!(f, "not an image a page can be made from: {detail}")
             }
@@ -194,7 +200,8 @@ impl std::error::Error for Error {
             | Error::NoPath
             | Error::RevertRefused(_)
             | Error::NotADictionary { .. }
-            | Error::InvalidImage(_) => None,
+            | Error::InvalidImage(_)
+            | Error::InvalidAttachmentName(_) => None,
             Error::WrittenButNotReloaded(written) => Some(&*written.cause),
             Error::Recovery(error) => Some(error),
         }

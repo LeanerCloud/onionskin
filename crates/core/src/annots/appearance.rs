@@ -41,16 +41,22 @@ pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
         Subtype::Polygon => polygon(annotation, rect),
         Subtype::PolyLine => polyline(annotation, rect),
         Subtype::Ink => ink(annotation, rect),
-        Subtype::Text | Subtype::FileAttachment => note_icon(annotation, rect),
+        Subtype::Text => note_icon(annotation, rect),
+        Subtype::FileAttachment => paperclip_icon(annotation, rect),
         Subtype::FreeText => free_text(annotation, rect),
         Subtype::Stamp => stamp(annotation, rect),
     };
+    let fonts: Vec<BaseFont> = annotation
+        .text_style
+        .map(|style| style.font)
+        .into_iter()
+        .collect();
     form(
         rect,
         &content,
         annotation.opacity,
         blend_mode(annotation),
-        annotation.text_style.map(|style| style.font),
+        &fonts,
     )
 }
 
@@ -75,7 +81,7 @@ fn form(
     content: &str,
     opacity: Option<f64>,
     blend: Option<&str>,
-    font: Option<BaseFont>,
+    fonts: &[BaseFont],
 ) -> Stream {
     let mut dict = Dict::new();
     dict.set(Name::new("Type"), Object::name("XObject"));
@@ -103,14 +109,16 @@ fn form(
     // A direct dictionary rather than an indirect font object: it is one
     // standard font named by `/BaseFont` with no `/FontFile` of any kind, so
     // there is nothing to share between annotations and nothing shipped.
-    if let Some(font) = font {
-        let mut descriptor = Dict::new();
-        descriptor.set(Name::new("Type"), Object::name("Font"));
-        descriptor.set(Name::new("Subtype"), Object::name("Type1"));
-        descriptor.set(Name::new("BaseFont"), Object::name(font.base_font()));
-        let mut fonts = Dict::new();
-        fonts.set(Name::new(font.resource_name()), Object::Dict(descriptor));
-        resources.set(Name::new("Font"), Object::Dict(fonts));
+    if !fonts.is_empty() {
+        let mut named = Dict::new();
+        for font in fonts {
+            let mut descriptor = Dict::new();
+            descriptor.set(Name::new("Type"), Object::name("Font"));
+            descriptor.set(Name::new("Subtype"), Object::name("Type1"));
+            descriptor.set(Name::new("BaseFont"), Object::name(font.base_font()));
+            named.set(Name::new(font.resource_name()), Object::Dict(descriptor));
+        }
+        resources.set(Name::new("Font"), Object::Dict(named));
     }
     let selects_state = resources.get(b"ExtGState").is_some();
     dict.set(Name::new("Resources"), Object::Dict(resources));
@@ -571,6 +579,45 @@ fn note_icon(annotation: &Annotation, rect: Rect) -> String {
     )
 }
 
+/// A paperclip, drawn here rather than left to the reader: with no `/AP` a
+/// reader draws its own icon, and every reader's is different.
+fn paperclip_icon(annotation: &Annotation, rect: Rect) -> String {
+    let color = annotation.color.unwrap_or(Color::new(0.2, 0.3, 0.6));
+    let (w, h) = (rect.width(), rect.height());
+    let x = |fraction: f64| w * fraction;
+    let y = |fraction: f64| h * fraction;
+    format!(
+        "{} {} {} RG {} w 1 J 1 j\n\
+         {} {} m {} {} l {} {} {} {} {} {} c {} {} l {} {} {} {} {} {} c {} {} l S\n",
+        color.red,
+        color.green,
+        color.blue,
+        (w.min(h) * 0.08).max(0.75),
+        // Up the inner wire, over the top, down the outer wire, round the
+        // bottom and back up: a clip seen from the front.
+        x(0.45),
+        y(0.35),
+        x(0.45),
+        y(0.8),
+        x(0.45),
+        y(0.95),
+        x(0.7),
+        y(0.95),
+        x(0.7),
+        y(0.8),
+        x(0.7),
+        y(0.2),
+        x(0.7),
+        y(0.02),
+        x(0.3),
+        y(0.02),
+        x(0.3),
+        y(0.2),
+        x(0.3),
+        y(0.7),
+    )
+}
+
 /// The box and border of a free-text annotation. The text itself is not drawn
 /// here: laying out glyphs needs a font resource, which P9a's free-text tool
 /// owns along with the font it chose. This generator produces the frame that
@@ -675,8 +722,63 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// A stamp's frame. The stamp artwork itself comes from P10, which owns the
-/// stamp library and the images in it.
+/// A stamp's appearance from its artwork: the art scaled to fill the rect,
+/// in the form's own `[0 0 w h]` box like every other appearance here.
+///
+/// A drawing is inlined with the fonts it names. A page is imported as a
+/// Form XObject of its own - resources and all - and drawn through the
+/// appearance, so the stamp is self-contained in the document it lands in.
+pub(crate) fn stamp_appearance(
+    tx: &mut crate::edit::Transaction<'_>,
+    annotation: &Annotation,
+    art: &super::model::StampArt,
+) -> crate::Result<Stream> {
+    use super::model::StampArt;
+
+    let rect = annotation.rect;
+    let (content, fonts, art_form) = match art {
+        StampArt::Drawing {
+            size,
+            content,
+            fonts,
+        } => {
+            let (sx, sy) = (rect.width() / size.0, rect.height() / size.1);
+            (
+                format!("{sx} 0 0 {sy} 0 0 cm\n{content}\n"),
+                fonts.clone(),
+                None,
+            )
+        }
+        StampArt::Page(pdf) => {
+            let source = onionskin_cos::Document::open(Box::new(
+                onionskin_cos::BytesSource::from_shared(pdf.clone()),
+            ))?;
+            let (form, [x0, y0, x1, y1]) = crate::pages::import_page_as_form(tx, &source, 0)?;
+            let (sx, sy) = (rect.width() / (x1 - x0), rect.height() / (y1 - y0));
+            (
+                format!("{sx} 0 0 {sy} {} {} cm\n/Art Do\n", -x0 * sx, -y0 * sy),
+                Vec::new(),
+                Some(form),
+            )
+        }
+    };
+    let mut stream = form(rect, &content, annotation.opacity, None, &fonts);
+    if let Some(art_form) = art_form {
+        let Some(Object::Dict(resources)) = stream.dict.get(b"Resources").cloned() else {
+            unreachable!("every appearance has resources");
+        };
+        let mut resources = resources;
+        let mut xobjects = Dict::new();
+        xobjects.set(Name::new("Art"), Object::Ref(art_form));
+        resources.set(Name::new("XObject"), Object::Dict(xobjects));
+        stream
+            .dict
+            .set(Name::new("Resources"), Object::Dict(resources));
+    }
+    Ok(stream)
+}
+
+/// A stamp's frame, for a stamp with no artwork.
 fn stamp(annotation: &Annotation, rect: Rect) -> String {
     let color = annotation.color.unwrap_or(Color::new(0.8, 0.1, 0.1));
     let width = annotation.border_width.max(1.5);

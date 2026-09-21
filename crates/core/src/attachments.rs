@@ -1,4 +1,5 @@
-//! Embedded files, as the attachments pane lists them.
+//! Embedded files, as the attachments pane lists them: the document's own,
+//! from `/Names /EmbeddedFiles`, then each page's file attachment comments.
 //!
 //! Listing and reading only. Nothing here writes: extraction hands the
 //! decoded bytes back and the caller decides where they go, so a reader
@@ -32,6 +33,9 @@ pub struct Attachment {
     /// object in this workspace keeps its provenance: a caller that has to
     /// say which object a file came from should not have to guess.
     pub stream: u32,
+    /// The page a file attachment comment carrying it is on, counted from
+    /// zero; `None` for an attachment of the document itself.
+    pub page: Option<usize>,
 }
 
 impl Attachment {
@@ -57,12 +61,64 @@ impl Attachment {
     }
 }
 
-/// Read `/Names /EmbeddedFiles` in name-tree order.
+/// Read `/Names /EmbeddedFiles` in name-tree order, then every page's file
+/// attachment comments in page order, each file once.
 ///
-/// An absent tree is no attachments. A present one that is not a dictionary
-/// is an error: the file claims attachments the reader cannot produce.
+/// An absent tree is no document-level attachments. A present one that is
+/// not a dictionary is an error: the file claims attachments the reader
+/// cannot produce.
 pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Attachment>> {
     let catalog = doc.catalog()?;
+    let mut found = document_level(doc, &catalog)?;
+    let mut seen: BTreeSet<u32> = found.iter().map(|attachment| attachment.stream).collect();
+    comments(doc, &mut seen, &mut found)?;
+    Ok(found)
+}
+
+/// Every `/FileAttachment` annotation's file, page by page, skipping a stream
+/// the list already has.
+fn comments(
+    doc: &CosDocument,
+    seen: &mut BTreeSet<u32>,
+    found: &mut Vec<Attachment>,
+) -> Result<()> {
+    let count = usize::try_from(doc.page_count()?).unwrap_or(0);
+    for index in 0..count {
+        let page = doc.page(index)?;
+        let Some(annots) = page.dict.get(b"Annots") else {
+            continue;
+        };
+        let annots = doc.resolve(annots)?;
+        for annotation in annots.as_array().into_iter().flatten() {
+            if found.len() >= MAX_ATTACHMENTS {
+                return Ok(());
+            }
+            let annotation = doc.resolve(annotation)?;
+            let Some(annotation) = annotation.as_dict() else {
+                continue;
+            };
+            let is_attachment = annotation
+                .get(b"Subtype")
+                .and_then(Object::as_name)
+                .is_some_and(|name| name.as_bytes() == b"FileAttachment");
+            let Some(spec) = annotation.get(b"FS").filter(|_| is_attachment) else {
+                continue;
+            };
+            let spec = doc.resolve(spec)?;
+            let fallback = format!("attachment on page {}", index + 1);
+            if let Some(mut attachment) = file_spec(doc, fallback, spec.as_dict())? {
+                if seen.insert(attachment.stream) {
+                    attachment.page = Some(index);
+                    found.push(attachment);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The document's own attachments, in name-tree order.
+fn document_level(doc: &CosDocument, catalog: &Dict) -> Result<Vec<Attachment>> {
     let Some(names) = catalog.get(b"Names") else {
         return Ok(Vec::new());
     };
@@ -214,6 +270,7 @@ fn file_spec(doc: &CosDocument, key: String, spec: Option<&Dict>) -> Result<Opti
         size,
         mime,
         stream: stream.number,
+        page: None,
     }))
 }
 
@@ -349,6 +406,7 @@ mod tests {
             size: None,
             mime: None,
             stream: 1,
+            page: None,
         };
         let dotted = Attachment {
             name: "..".to_owned(),

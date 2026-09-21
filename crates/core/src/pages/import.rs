@@ -145,6 +145,98 @@ pub fn extract_pages(source: &CosDocument, pages: &[usize]) -> Result<Vec<u8>> {
     Ok(assembly.finish()?.bytes)
 }
 
+/// Page `index` of `source` as a Form XObject in the transaction's document,
+/// returning it and its `/BBox`: the page's content streams joined in order,
+/// its resources copied transitively, its box the crop box. What a stamp
+/// made from a page draws.
+///
+/// The page's own annotations are not part of it - a form has content, not
+/// annotations - and neither is its `/Rotate`: the form is the page as
+/// drawn, before a viewer turns it. Refuses an encrypted source, like every
+/// other read-out.
+pub fn import_page_as_form(
+    tx: &mut Transaction<'_>,
+    source: &CosDocument,
+    index: usize,
+) -> Result<(ObjRef, [f64; 4])> {
+    let leaves = source_leaves(source)?;
+    let leaf = leaves.get(index).ok_or(Error::NoSuchPage {
+        page: index,
+        count: leaves.len(),
+    })?;
+    let page = leaf.materialized(leaf.objref);
+    let bbox = page_box(source, &page);
+    let content = joined_content(source, page.get(b"Contents"))?;
+
+    let mut copier = Copier::new(source, &leaves, &[], None)?;
+    let resources = match page.get(b"Resources") {
+        Some(resources) => copier.rewrite(tx, resources.clone())?,
+        None => Object::Dict(Dict::new()),
+    };
+    copier.drain(tx)?;
+
+    let raw = onionskin_cos::flate_encode(&content);
+    let mut dict = Dict::new();
+    dict.set(Name::new("Type"), Object::name("XObject"));
+    dict.set(Name::new("Subtype"), Object::name("Form"));
+    dict.set(
+        Name::new("BBox"),
+        Object::Array(bbox.iter().copied().map(Object::Real).collect()),
+    );
+    dict.set(Name::new("Resources"), resources);
+    dict.set(Name::new("Filter"), Object::name("FlateDecode"));
+    dict.set(Name::new("Length"), Object::Integer(raw.len() as i64));
+    let number = Sink::reserve(tx);
+    tx.put_object(
+        number,
+        0,
+        Object::Stream(onionskin_cos::Stream { dict, raw }),
+    )?;
+    Ok((ObjRef::new(number, 0), bbox))
+}
+
+/// The crop box, else the media box, else Letter, normalized low corner first.
+fn page_box(source: &CosDocument, page: &Dict) -> [f64; 4] {
+    let read = |key: &[u8]| -> Option<[f64; 4]> {
+        let value = source.resolve(page.get(key)?).ok()?;
+        let items = value.as_array()?;
+        let numbers: Vec<f64> = items
+            .iter()
+            .filter_map(|item| match source.resolve(item).ok()? {
+                Object::Integer(value) => Some(value as f64),
+                Object::Real(value) => Some(value),
+                _ => None,
+            })
+            .collect();
+        let [x0, y0, x1, y1] = numbers.as_slice().try_into().ok()?;
+        Some([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])
+    };
+    read(b"CropBox")
+        .or_else(|| read(b"MediaBox"))
+        .unwrap_or([0.0, 0.0, 612.0, 792.0])
+}
+
+/// A page's `/Contents`, one stream or an array of them, decoded and joined
+/// with a newline between, which is how a reader concatenates them.
+fn joined_content(source: &CosDocument, contents: Option<&Object>) -> Result<Vec<u8>> {
+    let streams = match contents
+        .map(|contents| source.resolve(contents))
+        .transpose()?
+    {
+        Some(Object::Array(items)) => items,
+        Some(Object::Stream(_)) => vec![contents.cloned().expect("present")],
+        _ => Vec::new(),
+    };
+    let mut joined = Vec::new();
+    for stream in streams {
+        if let Object::Stream(stream) = source.resolve(&stream)? {
+            joined.extend(source.decode_stream(&stream)?);
+            joined.push(b'\n');
+        }
+    }
+    Ok(joined)
+}
+
 /// One source document's copy into one destination: the number map, the
 /// objects still to copy, and what to do with structure keys.
 pub(crate) struct Copier<'s> {

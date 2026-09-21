@@ -327,6 +327,25 @@ pub struct Annotation {
     pub endings: Option<(LineEnding, LineEnding)>,
     /// `/BE`, the border effect. `Cloudy` is what makes a polygon a cloud.
     pub border_effect: Option<BorderEffect>,
+    /// `/FS`, the file specification a `FileAttachment` carries, written
+    /// beforehand with `core::embedded::embed_file`.
+    pub file: Option<ObjRef>,
+    /// What a `Stamp` draws. `None` draws only a frame.
+    pub stamp_art: Option<StampArt>,
+}
+
+/// A stamp's artwork, scaled to fill the annotation's `/Rect`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StampArt {
+    /// A content stream drawn in a box of `size` points, with its lower-left
+    /// corner at the origin, in the standard fonts it names.
+    Drawing {
+        size: (f64, f64),
+        content: String,
+        fonts: Vec<BaseFont>,
+    },
+    /// The first page of a PDF - a custom stamp - drawn as a form.
+    Page(std::sync::Arc<Vec<u8>>),
 }
 
 /// `/LE` entries. Only the three M3 draws; a reader that meets a name it does
@@ -366,6 +385,8 @@ pub enum BorderEffect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseFont {
     Helvetica,
+    /// What stamp lettering is set in.
+    HelveticaBold,
     TimesRoman,
     Courier,
 }
@@ -377,6 +398,7 @@ impl BaseFont {
     pub fn resource_name(self) -> &'static str {
         match self {
             BaseFont::Helvetica => "Helv",
+            BaseFont::HelveticaBold => "HeBo",
             BaseFont::TimesRoman => "TiRo",
             BaseFont::Courier => "Cour",
         }
@@ -386,6 +408,7 @@ impl BaseFont {
     pub fn base_font(self) -> &'static str {
         match self {
             BaseFont::Helvetica => "Helvetica",
+            BaseFont::HelveticaBold => "Helvetica-Bold",
             BaseFont::TimesRoman => "Times-Roman",
             BaseFont::Courier => "Courier",
         }
@@ -481,6 +504,8 @@ impl Annotation {
             vertices: Vec::new(),
             endings: None,
             border_effect: None,
+            file: None,
+            stamp_art: None,
         }
     }
 

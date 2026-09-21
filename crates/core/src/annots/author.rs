@@ -8,8 +8,8 @@
 
 use onionskin_cos::{Dict, Name, ObjRef, Object};
 
-use super::appearance::{normal_appearance, numbers};
-use super::model::{Annotation, BorderEffect, Color, Flags};
+use super::appearance::{normal_appearance, numbers, stamp_appearance};
+use super::model::{Annotation, BorderEffect, Color, Flags, Subtype};
 use crate::edit::Transaction;
 use crate::structure::{attach_annotation, Structure};
 use crate::{Error, Result};
@@ -26,11 +26,11 @@ pub(crate) fn add(
     let annotation_number = tx.reserve();
     let annotation_ref = ObjRef::new(annotation_number, 0);
 
-    tx.put_object(
-        appearance_number,
-        0,
-        Object::Stream(normal_appearance(annotation)),
-    )?;
+    let appearance = match &annotation.stamp_art {
+        Some(art) if annotation.subtype == Subtype::Stamp => stamp_appearance(tx, annotation, art)?,
+        _ => normal_appearance(annotation),
+    };
+    tx.put_object(appearance_number, 0, Object::Stream(appearance))?;
 
     let (maintenance, parent_key) = attach_annotation(tx, structure, page, annotation_ref)?;
     let _ = maintenance;
@@ -249,6 +249,9 @@ fn dictionary(
     if let Some(key) = parent_key {
         dict.set(Name::new("StructParent"), Object::Integer(key));
     }
+    if let Some(file) = annotation.file {
+        dict.set(Name::new("FS"), Object::Ref(file));
+    }
 
     let mut border = Dict::new();
     border.set(Name::new("W"), Object::Real(annotation.border_width));
@@ -264,7 +267,7 @@ fn color_array(color: Color) -> Object {
 /// text is not pure ASCII, because PDFDocEncoding cannot carry most of what a
 /// comment contains and a reader has no other way to tell which encoding it is
 /// looking at.
-fn text_string(text: &str) -> Object {
+pub(crate) fn text_string(text: &str) -> Object {
     if text.is_ascii() {
         return Object::String(text.as_bytes().to_vec());
     }

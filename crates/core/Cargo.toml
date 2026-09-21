@@ -22,6 +22,8 @@ onionskin-cos.workspace = true
 # module's own doc comment, so a substring scan finds the prose that promises it
 # and reports the promise as a violation. A comment is not a token.
 syn = { version = "2", features = ["full", "visit", "parsing"] }
+# `tests/embedded.rs` saves and reopens a copy of a seed.
+tempfile.workspace = true
 
 # The decision-11 budgets, as benches that assert rather than print. Each one
 # owns its own `main` (`harness = false`) because libtest's harness measures

@@ -7,6 +7,7 @@
 mod annots;
 mod attachments;
 mod edit;
+pub mod embedded;
 mod file;
 mod generations;
 mod history;
@@ -34,7 +35,7 @@ mod viewport;
 pub use annots::{
     add_annotation, pdf_date, read_annotations, remove_annotation, set_ink_strokes, Annotation,
     AnnotationFilter, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad,
-    ReadAnnotation, Rect, Subtype, TextStyle,
+    ReadAnnotation, Rect, StampArt, Subtype, TextStyle,
 };
 pub use attachments::Attachment;
 pub use edit::{

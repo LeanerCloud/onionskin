@@ -14,10 +14,12 @@ mod read;
 
 pub use filter::AnnotationFilter;
 pub use model::{
-    Annotation, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad, Rect, Subtype,
-    TextStyle,
+    Annotation, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad, Rect, StampArt,
+    Subtype, TextStyle,
 };
 pub use read::ReadAnnotation;
+
+pub(crate) use author::text_string;
 
 use std::collections::BTreeMap;
 
