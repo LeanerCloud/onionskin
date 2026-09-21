@@ -215,6 +215,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) organize: OrganizeDialogs,
     pub(super) stamps: Option<crate::shell::chrome::stamps_dialog::StampsDialogState>,
     pub(super) summary: Option<crate::shell::chrome::summary_dialog::SummaryDialogState>,
+    pub(super) properties: Option<crate::shell::chrome::properties_dialog::PropertiesDialogState>,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -307,7 +308,7 @@ impl ShellFrame {
             .active()
             .map(|tab| tab.canvas.read(cx).model.view_state());
         let notices = std::mem::take(&mut settings.notices);
-        let frame = Self {
+        let mut frame = Self {
             tabs,
             menus: MenuOpenState::default(),
             context_menus: ContextMenuState::default(),
@@ -335,9 +336,11 @@ impl ShellFrame {
             organize: OrganizeDialogs::default(),
             stamps: None,
             summary: None,
+            properties: None,
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);
+        frame.open_initial_pane(cx);
         // The chrome takes keyboard focus at launch. Without it GPUI has no
         // focus path to dispatch along, so the shell's own keys, Escape
         // included, would reach nothing until the user clicked a text field.

@@ -35,6 +35,8 @@ pub(in crate::shell) enum ShellDialog {
     Split,
     Stamps,
     Summary,
+    Properties,
+    LayerProperties,
 }
 
 impl ShellDialog {
@@ -44,6 +46,8 @@ impl ShellDialog {
             Self::Split => "Split Document",
             Self::Stamps => "Stamps",
             Self::Summary => "Summarize Comments",
+            Self::Properties => "Document Properties",
+            Self::LayerProperties => "Layer Properties",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -144,6 +148,13 @@ pub(in crate::shell) fn accessible(
             frame.summary_dialog().expect("summary dialog has state"),
             rects,
         ),
+        ShellDialog::Properties => super::chrome::properties_dialog::accessible(
+            frame
+                .properties_dialog()
+                .expect("properties dialog has state"),
+            cx,
+        ),
+        ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
         ShellDialog::ZoomTo => magnification_rows()
             .enumerate()
@@ -240,6 +251,18 @@ pub(in crate::shell) fn render_dialog(
             super::chrome::stamps_dialog::render(&rows, rects, focused, theme, cx)
                 .into_any_element()
         }
+        ShellDialog::Properties => super::chrome::properties_dialog::render(
+            frame
+                .properties_dialog()
+                .expect("properties dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::LayerProperties => rows(frame.layer_property_rows(), rects)
+            .text_color(theme.text)
+            .into_any_element(),
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
             .into_any_element(),

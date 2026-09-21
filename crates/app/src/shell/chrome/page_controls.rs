@@ -328,6 +328,7 @@ fn describe(item: Item, state: PageControlsState, page_entry: &str) -> Element {
                     toggled: control.toggled(state),
                     selected: None,
                     disabled: !control.enabled(state),
+                    read_only: false,
                 });
             if let Some(reason) = control.unavailable(state) {
                 element = element.with_description(reason);

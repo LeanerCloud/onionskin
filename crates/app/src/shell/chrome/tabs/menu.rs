@@ -23,8 +23,8 @@ use crate::preferences::{PreferenceCategory, ThemePreference};
 use crate::shell::chrome::accessible::{Activation, Surface};
 use crate::shell::chrome::combine_dialog::CombineEntryPoint;
 use crate::shell::chrome::global_bar::{
-    convert_section, main_menu_schema, MenuCommand, MenuSection, MenuState, RegistryFacts,
-    NO_DYNAMIC_ZOOM_TOOL,
+    convert_section, main_menu_schema, save_as_other_section, MenuCommand, MenuSection, MenuState,
+    RegistryFacts, NO_DYNAMIC_ZOOM_TOOL,
 };
 use crate::shell::chrome::tool_search::SearchSelectAll;
 use crate::shell::dialog::ShellDialog;
@@ -191,6 +191,14 @@ impl ShellFrame {
             }
             MenuCommand::PasteStamp => {
                 self.paste_stamp_from_menu(cx);
+                Ok(())
+            }
+            MenuCommand::Properties => {
+                self.open_properties_dialog(window, cx);
+                Ok(())
+            }
+            MenuCommand::SaveAsOther => {
+                self.toggle_menu_panel(MenuPanel::SaveAsOther, cx);
                 Ok(())
             }
             MenuCommand::ExportAllImages => {
@@ -423,6 +431,7 @@ impl ShellFrame {
         match self.menus.panel {
             MenuPanel::Main => main_menu_schema(state),
             MenuPanel::Convert => vec![convert_section(state)],
+            MenuPanel::SaveAsOther => vec![save_as_other_section(state)],
         }
     }
 
@@ -442,7 +451,7 @@ impl ShellFrame {
             .absolute()
             .top(px(GLOBAL_BAR_HEIGHT))
             .map(|panel| match self.menus.panel {
-                MenuPanel::Main => panel.left(px(8.0)),
+                MenuPanel::Main | MenuPanel::SaveAsOther => panel.left(px(8.0)),
                 // Under the Convert button, which sits beside the search
                 // field at the bar's right.
                 MenuPanel::Convert => panel.right(px(CONVERT_PANEL_RIGHT)),
@@ -539,6 +548,8 @@ pub(super) enum MenuPanel {
     #[default]
     Main,
     Convert,
+    /// File > Save as Other's formats, in place of the main menu.
+    SaveAsOther,
 }
 
 impl MenuOpenState {

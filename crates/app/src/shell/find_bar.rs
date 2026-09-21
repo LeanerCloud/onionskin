@@ -333,6 +333,7 @@ pub(in crate::shell) fn accessible(
                     toggled: Some(false),
                     selected: None,
                     disabled: true,
+                    read_only: false,
                 })
                 .with_description(reason),
         );

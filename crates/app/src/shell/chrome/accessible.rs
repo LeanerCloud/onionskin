@@ -48,6 +48,16 @@ pub(in crate::shell) enum TextField {
     CombinePages,
     /// The Split dialog's number of pages or size.
     SplitValue,
+    /// The Properties dialog's Description fields.
+    PropertiesTitle,
+    PropertiesAuthor,
+    PropertiesSubject,
+    PropertiesKeywords,
+    /// The Properties dialog's new custom property.
+    PropertiesCustomKey,
+    PropertiesCustomValue,
+    /// The Initial View tab's page the document opens at.
+    PropertiesOpenPage,
 }
 
 /// What activating an accessible element does.
@@ -91,6 +101,7 @@ pub(in crate::shell) enum Activation {
     Split(crate::shell::chrome::split_dialog::SplitAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
+    Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.

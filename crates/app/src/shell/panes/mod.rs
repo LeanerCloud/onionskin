@@ -223,7 +223,12 @@ impl NavigationPanesState {
 
     /// The layers the pane is showing, or nothing when another pane is open
     /// or the reader failed.
-    fn layers(&self) -> Option<&[Layer]> {
+    /// Which pane is showing, if one is.
+    pub(in crate::shell) fn active(&self) -> Option<NavigationPane> {
+        self.active
+    }
+
+    pub(in crate::shell) fn layers(&self) -> Option<&[Layer]> {
         match self.content.as_ref()? {
             PaneContent::Layers(Ok(layers)) => Some(layers),
             _ => None,

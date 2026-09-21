@@ -6,6 +6,7 @@ mod export;
 mod frame_state;
 mod menu;
 mod organize;
+mod properties;
 mod stamps;
 mod summary;
 
@@ -277,6 +278,7 @@ impl ShellFrame {
         .detach();
         self.tabs.push(DocumentTab::new(source.clone(), canvas));
         self.tool_search.search_feedback = None;
+        self.open_initial_pane(cx);
         Ok(source)
     }
 
@@ -1485,6 +1487,8 @@ mod tests {
     mod native_input;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod organize_dialogs;
+    #[cfg(feature = "shell-test-support")]
+    mod properties;
     #[cfg(all(
         feature = "shell-test-support",
         feature = "tools-comment",

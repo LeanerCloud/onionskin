@@ -505,8 +505,15 @@ fn field_node(
         | TextField::ExportLast
         | TextField::ExportDpi
         | TextField::ExportQuality
-        | TextField::SplitValue => accesskit::Role::NumberInput,
-        TextField::CombinePages => accesskit::Role::TextInput,
+        | TextField::SplitValue
+        | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
+        TextField::CombinePages
+        | TextField::PropertiesTitle
+        | TextField::PropertiesAuthor
+        | TextField::PropertiesSubject
+        | TextField::PropertiesKeywords
+        | TextField::PropertiesCustomKey
+        | TextField::PropertiesCustomValue => accesskit::Role::TextInput,
         TextField::Search | TextField::Find => accesskit::Role::SearchInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)

@@ -42,6 +42,7 @@ mod find_bar;
 #[cfg(test)]
 mod fixtures;
 mod home;
+mod initial_view;
 pub mod input;
 mod panes;
 mod preferences_dialog;
@@ -213,7 +214,8 @@ pub(in crate::shell) fn install_command_keybindings(cx: &mut App, bindings: &[Bi
     }));
 }
 
-/// Open a document the way the Page Display preferences say to.
+/// Open a document the way the Page Display preferences say to, and then
+/// the way the document itself says to, which wins where it says anything.
 ///
 /// Applied here rather than inside `CanvasModel::new` so the model keeps one
 /// opening behaviour and the preference stays the shell's: the same call
@@ -227,7 +229,7 @@ pub(in crate::shell) fn apply_page_display(
         Some(fit) => model.fit(fit)?,
         None => model.actual_size()?,
     };
-    Ok(())
+    initial_view::apply_initial_view(model)
 }
 
 /// What a repaired open owes the user: that the file was broken, and what

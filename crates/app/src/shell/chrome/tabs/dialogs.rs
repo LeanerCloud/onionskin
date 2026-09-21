@@ -61,6 +61,7 @@ impl ShellFrame {
         self.organize = Default::default();
         self.stamps = None;
         self.summary = None;
+        self.properties = None;
         cx.notify();
     }
 

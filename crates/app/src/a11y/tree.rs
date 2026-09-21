@@ -27,6 +27,9 @@ pub(crate) struct State {
     pub(crate) selected: Option<bool>,
     /// The control is on screen but cannot be used now.
     pub(crate) disabled: bool,
+    /// The control shows a value the user can read and not change: a
+    /// document's security settings, which this build cannot write.
+    pub(crate) read_only: bool,
 }
 
 impl State {
@@ -40,6 +43,13 @@ impl State {
     pub(crate) fn selected(selected: bool) -> Self {
         Self {
             selected: Some(selected),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn read_only() -> Self {
+        Self {
+            read_only: true,
             ..Self::default()
         }
     }
@@ -332,6 +342,9 @@ fn push<A>(element: &Element<A>, ids: &mut Ids, nodes: &mut Vec<(NodeId, Node)>)
     }
     if element.state.disabled {
         node.set_disabled();
+    }
+    if element.state.read_only {
+        node.set_read_only();
     }
     // A screen reader only announces an alert on its own if the node says it
     // is a live region; without this every error the shell raises waits

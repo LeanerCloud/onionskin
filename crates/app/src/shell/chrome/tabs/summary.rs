@@ -115,13 +115,7 @@ fn summarize(
     };
     onionskin_tools_comment::summarize(document, layout)
         .map(|summary| summary.bytes)
-        .map_err(|error| {
-            let reason = error.to_string();
-            let mut chars = reason.chars();
-            chars.next().map_or(reason.clone(), |first| {
-                first.to_uppercase().chain(chars).collect()
-            })
-        })
+        .map_err(|error| super::properties::sentence(&error.to_string()))
 }
 
 #[cfg(not(feature = "tools-comment"))]

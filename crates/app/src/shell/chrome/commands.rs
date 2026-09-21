@@ -41,7 +41,11 @@ impl MenuCommand {
             MenuCommand::SplitDocument,
         ];
         all.extend(ExportTarget::ALL.map(MenuCommand::Export));
-        all.push(MenuCommand::ExportAllImages);
+        all.extend([
+            MenuCommand::ExportAllImages,
+            MenuCommand::SaveAsOther,
+            MenuCommand::Properties,
+        ]);
         all.extend([
             MenuCommand::Quit,
             MenuCommand::Undo,
@@ -117,6 +121,8 @@ impl MenuCommand {
             Self::PasteStamp => "comment.paste-stamp",
             Self::SummarizeComments => onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS,
             Self::ExportAllImages => "file.export-all-images",
+            Self::SaveAsOther => "file.save-as-other",
+            Self::Properties => "file.properties",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::Export(ExportTarget::Text) => "file.export-text",
             Self::Export(ExportTarget::Png) => "file.export-png",
@@ -188,6 +194,7 @@ impl MenuCommand {
             Self::Quit => "cmd-q",
             Self::Find => "cmd-f",
             Self::Preferences => "cmd-k",
+            Self::Properties => "cmd-d",
             Self::PreviousView => "alt-left",
             Self::NextView => "alt-right",
             // Acrobat's Shift+Ctrl+Plus, which is this key with shift held.
@@ -221,6 +228,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::SummarizeComments
             | Self::ExportAllImages
+            | Self::SaveAsOther
             | Self::SplitDocument
             | Self::Export(_)
             | Self::Undo

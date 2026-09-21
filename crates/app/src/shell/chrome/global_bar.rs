@@ -19,6 +19,9 @@ pub(super) enum MenuSectionId {
     /// The global bar's Convert entry point, a panel of its own rather than
     /// a section of the main menu.
     Convert,
+    /// File > Save as Other, a panel of its own listing the formats this
+    /// build exports to.
+    SaveAsOther,
 }
 
 impl MenuSectionId {
@@ -30,6 +33,7 @@ impl MenuSectionId {
             Self::Window => "Window",
             Self::Help => "Help",
             Self::Convert => "Convert",
+            Self::SaveAsOther => "Save as Other",
         }
     }
 }
@@ -112,6 +116,10 @@ impl ExportCodecs {
     fn has(self, target: ExportTarget) -> bool {
         self.0[target.index()]
     }
+
+    fn any(self) -> bool {
+        self.0.contains(&true)
+    }
 }
 
 /// The page-organization commands `tools-organize` registers, each acting on
@@ -179,6 +187,8 @@ pub(in crate::shell) enum MenuCommand {
     PasteStamp,
     SummarizeComments,
     SplitDocument,
+    Properties,
+    SaveAsOther,
     Export(ExportTarget),
     ExportAllImages,
     CloseTab,
@@ -478,6 +488,15 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             }])
             .chain(export_entries(state))
             .chain([export_all_images_entry(state)])
+            .chain([
+                save_as_other_entry(state),
+                MenuEntry {
+                    command: MenuCommand::Properties,
+                    label: "Properties…",
+                    availability: document_command,
+                    selected: false,
+                },
+            ])
             .chain([MenuEntry {
                 command: MenuCommand::Quit,
                 label: "Exit",
@@ -715,6 +734,39 @@ pub(super) fn convert_section(state: MenuState) -> MenuSection {
             .chain([multiple])
             .chain(export_entries(state))
             .chain([export_all_images_entry(state)])
+            .collect(),
+    }
+}
+
+/// File > Save as Other: the entry, live when some codec exports.
+fn save_as_other_entry(state: MenuState) -> MenuEntry {
+    use MenuAvailability::{Disabled, Enabled};
+
+    MenuEntry {
+        command: MenuCommand::SaveAsOther,
+        label: "Save as Other…",
+        availability: match (state.registry.codecs.any(), state.has_active_tab) {
+            (false, _) => Disabled("No installed codec exports"),
+            (true, false) => Disabled("No document is open"),
+            (true, true) => Enabled,
+        },
+        selected: false,
+    }
+}
+
+/// What Save as Other lists: exactly the export formats the registry has a
+/// codec for. An absent codec is an absent entry, not a disabled one, and
+/// formats Onionskin does not write (PDF/X, Reader Extended PDF) are not
+/// listed at all: Acrobat's list is not a promise this build makes.
+pub(super) fn save_as_other_section(state: MenuState) -> MenuSection {
+    MenuSection {
+        id: MenuSectionId::SaveAsOther,
+        entries: export_entries(state)
+            .into_iter()
+            .filter(|entry| match entry.command {
+                MenuCommand::Export(target) => state.registry.codecs.has(target),
+                _ => false,
+            })
             .collect(),
     }
 }
@@ -1020,6 +1072,8 @@ impl MenuCommand {
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
+            | Self::Properties
+            | Self::SaveAsOther
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -1069,6 +1123,8 @@ impl MenuCommand {
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
+            | Self::Properties
+            | Self::SaveAsOther
             | Self::CloseTab
             | Self::CloseOtherTabs
             | Self::CloseAllTabs
@@ -1262,7 +1318,9 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::PasteStamp
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
-        | MenuCommand::SplitDocument => Some(Box::new(RunCommand { command })),
+        | MenuCommand::SplitDocument
+        | MenuCommand::Properties
+        | MenuCommand::SaveAsOther => Some(Box::new(RunCommand { command })),
         MenuCommand::SaveAs
         | MenuCommand::Undo
         | MenuCommand::Redo

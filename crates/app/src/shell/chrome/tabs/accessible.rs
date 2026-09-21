@@ -32,8 +32,10 @@ use crate::shell::chrome::accessible::{
 use crate::shell::chrome::page_controls::{self, PageControlsState};
 use crate::shell::chrome::tool_search::SearchInput;
 use crate::shell::chrome::{quick_actions, rail, side_panel};
+use crate::shell::dialog::ShellDialog;
 use crate::shell::find_bar::FindSummary;
 use crate::shell::panes;
+use crate::shell::panes::{LayerAction, LayersCommand, PaneAction};
 
 impl ShellFrame {
     /// What the whole window tells a screen reader.
@@ -248,6 +250,7 @@ impl ShellFrame {
                     toggled: Some(entry.selected),
                     selected: None,
                     disabled: !entry.availability.is_enabled(),
+                    read_only: false,
                 })
                 .with_activation(Activation::MainMenu(entry.command));
                 entry_index += 1;
@@ -260,6 +263,7 @@ impl ShellFrame {
         let label = match self.menus.panel {
             MenuPanel::Main => "Main Menu",
             MenuPanel::Convert => "Convert",
+            MenuPanel::SaveAsOther => "Save as Other",
         };
         let mut menu = A11yElement::new("main-menu-panel", Role::Menu, label).with_children(rows);
         self.a11y.rects.place(Surface::MainMenu, &mut menu);
@@ -406,6 +410,11 @@ impl ShellFrame {
             }
             Activation::View(action) => self.run_view_action(action, cx),
             Activation::SubmitPageEntry => self.submit_page_entry(cx),
+            // The one pane entry that opens a dialog, which is the frame's.
+            Activation::Pane(PaneAction::Layer(LayerAction::Run(LayersCommand::Properties))) => {
+                self.run_pane_action(PaneAction::DismissMenus, cx);
+                self.show_dialog(ShellDialog::LayerProperties, window, cx);
+            }
             Activation::Pane(action) => self.run_pane_action(action, cx),
             Activation::StepFind(direction) => self.step_find(direction, cx),
             Activation::ApplyFindOption(option) => self.apply_find_option(option, cx),
@@ -421,6 +430,7 @@ impl ShellFrame {
             Activation::Split(action) => self.run_split_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
+            Activation::Properties(action) => self.run_properties_action(action, window, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));
@@ -574,6 +584,16 @@ impl ShellFrame {
                     dialog.mode != crate::shell::chrome::split_dialog::SplitMode::TopLevelBookmarks
                 })
                 .map(|dialog| &dialog.value),
+            TextField::PropertiesTitle
+            | TextField::PropertiesAuthor
+            | TextField::PropertiesSubject
+            | TextField::PropertiesKeywords
+            | TextField::PropertiesCustomKey
+            | TextField::PropertiesCustomValue
+            | TextField::PropertiesOpenPage => self
+                .properties
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
         }
     }
 
@@ -612,6 +632,7 @@ impl ShellFrame {
                 TextField::SplitValue,
             ]
             .into_iter()
+            .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

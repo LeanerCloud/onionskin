@@ -34,9 +34,9 @@ const MAX_INDENT: usize = 8;
 const INDENT: f32 = 12.0;
 
 /// Parity row 203's menu, counted once for the whole menu. Visibility and the
-/// default-state command are the pane's own and live; properties needs a
-/// dialog that arrives with M3, and merge and flatten are layer editing,
-/// which row 204 puts after 1.0.
+/// default-state command are the pane's own and live; properties opens the
+/// frame's read-only Layer Properties dialog; merge and flatten are layer
+/// editing, which row 204 puts after 1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum LayersCommand {
     Properties,
@@ -70,9 +70,8 @@ impl LayersCommand {
 
     pub(in crate::shell) fn availability(self) -> MenuAvailability {
         match self {
-            Self::ShowAll | Self::HideAll | Self::ResetVisibility => MenuAvailability::Enabled,
-            Self::Properties => {
-                MenuAvailability::Disabled("Available in M3 with the properties dialog")
+            Self::Properties | Self::ShowAll | Self::HideAll | Self::ResetVisibility => {
+                MenuAvailability::Enabled
             }
             Self::Merge | Self::Flatten => {
                 MenuAvailability::Disabled("Available after 1.0 with layer editing")
@@ -149,6 +148,7 @@ pub(super) fn accessible(items: Result<&[Layer], &String>, menu_open: bool) -> V
                         toggled: Some(layer.visible),
                         selected: None,
                         disabled: !availability.is_enabled(),
+                        read_only: false,
                     })
                     .with_activation(toggle(layer));
                 match availability.reason() {
@@ -211,7 +211,8 @@ pub(super) fn run(
                         canvas.model.reset_layer_visibility()
                     });
                 }
-                // Every other entry is disabled, so nothing can raise it.
+                // Properties opens a dialog, which the frame does before the
+                // action reaches the pane; merge and flatten are disabled.
                 LayersCommand::Properties | LayersCommand::Merge | LayersCommand::Flatten => {}
             }
         }
@@ -387,19 +388,19 @@ mod tests {
         assert_eq!(LayersCommand::ALL.len(), 6);
 
         for command in [
+            LayersCommand::Properties,
             LayersCommand::ShowAll,
             LayersCommand::HideAll,
             LayersCommand::ResetVisibility,
         ] {
             assert!(
                 command.availability().is_enabled(),
-                "{} needs only the renderer",
+                "{} needs only the reader and the renderer",
                 command.label()
             );
         }
 
         for (command, milestone) in [
-            (LayersCommand::Properties, "M3"),
             (LayersCommand::Merge, "1.0"),
             (LayersCommand::Flatten, "1.0"),
         ] {
@@ -551,11 +552,11 @@ mod tests {
             );
         }
         let properties = &menu.children[0];
-        assert!(properties.state.disabled);
-        assert_eq!(
-            properties.description.as_deref(),
-            Some("Available in M3 with the properties dialog")
+        assert!(
+            !properties.state.disabled,
+            "live with the properties dialog"
         );
+        assert_eq!(properties.description, None);
     }
 
     /// A closed menu is not described, so a reader is not offered a menu that
