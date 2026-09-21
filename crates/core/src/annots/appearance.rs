@@ -41,11 +41,26 @@ pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
         Subtype::FreeText => free_text(annotation, rect),
         Subtype::Stamp => stamp(annotation, rect),
     };
-    form(rect, &content, annotation.opacity)
+    form(rect, &content, annotation.opacity, blend_mode(annotation))
+}
+
+/// The blend mode a subtype's appearance needs, or `None` for the default.
+///
+/// Only Highlight has one. A highlighter lays ink over the text rather than
+/// replacing it, and an opaque fill hides every glyph it covers: the mark is in
+/// the right place and the words under it are gone. `/BM /Multiply` is how
+/// Acrobat gets the ink to darken what is beneath instead of painting it out,
+/// and it has to be in the appearance's own graphics state, because a reader
+/// composites the form as the form asks.
+fn blend_mode(annotation: &Annotation) -> Option<&'static str> {
+    match annotation.subtype {
+        Subtype::Highlight => Some("Multiply"),
+        _ => None,
+    }
 }
 
 /// Wrap a content stream as a Form XObject whose box is the rect at the origin.
-fn form(rect: Rect, content: &str, opacity: Option<f64>) -> Stream {
+fn form(rect: Rect, content: &str, opacity: Option<f64>, blend: Option<&str>) -> Stream {
     let mut dict = Dict::new();
     dict.set(Name::new("Type"), Object::name("XObject"));
     dict.set(Name::new("Subtype"), Object::name("Form"));
@@ -62,26 +77,41 @@ fn form(rect: Rect, content: &str, opacity: Option<f64>) -> Stream {
         numbers(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
     );
 
+    let state = graphics_state(opacity, blend);
     let mut resources = Dict::new();
-    if let Some(opacity) = opacity {
-        let mut state = Dict::new();
-        state.set(Name::new("Type"), Object::name("ExtGState"));
-        state.set(Name::new("ca"), Object::Real(opacity));
-        state.set(Name::new("CA"), Object::Real(opacity));
+    if let Some(state) = state {
         let mut states = Dict::new();
         states.set(Name::new("GS0"), Object::Dict(state));
         resources.set(Name::new("ExtGState"), Object::Dict(states));
     }
+    let selects_state = resources.get(b"ExtGState").is_some();
     dict.set(Name::new("Resources"), Object::Dict(resources));
 
-    let body = match opacity {
-        Some(_) => format!("q\n/GS0 gs\n{content}Q\n"),
-        None => format!("q\n{content}Q\n"),
+    let body = match selects_state {
+        true => format!("q\n/GS0 gs\n{content}Q\n"),
+        false => format!("q\n{content}Q\n"),
     };
     Stream {
         dict,
         raw: body.into_bytes(),
     }
+}
+
+/// The `/GS0` state the form selects, or `None` when it needs none.
+fn graphics_state(opacity: Option<f64>, blend: Option<&str>) -> Option<Dict> {
+    if opacity.is_none() && blend.is_none() {
+        return None;
+    }
+    let mut state = Dict::new();
+    state.set(Name::new("Type"), Object::name("ExtGState"));
+    if let Some(opacity) = opacity {
+        state.set(Name::new("ca"), Object::Real(opacity));
+        state.set(Name::new("CA"), Object::Real(opacity));
+    }
+    if let Some(blend) = blend {
+        state.set(Name::new("BM"), Object::name(blend));
+    }
+    Some(state)
 }
 
 /// Quad coordinates moved into the form's space, whose origin is the rect's

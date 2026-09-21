@@ -213,6 +213,40 @@ fn an_annotation_renders_and_its_hidden_twin_does_not() {
     );
 }
 
+/// A highlighter lays ink over words; it does not erase them.
+///
+/// An opaque fill puts the mark in exactly the right place and takes the text
+/// with it, and every structural assertion in this file stays green while it
+/// does: the `/QuadPoints` are right, the `/AP` is present, the rect is right,
+/// and the page now reads as a blank yellow band. What makes the difference is
+/// `/BM /Multiply` in the appearance's own graphics state, so the claim is made
+/// here, in pixels, where an absent blend mode is visible.
+#[test]
+fn a_highlight_lets_the_text_beneath_it_show_through() {
+    let original = text_page();
+    let ink = dark_pixels(&original);
+    assert!(
+        ink > 100,
+        "the fixture has to carry real text for this to measure anything, got {ink} dark pixels"
+    );
+
+    let mut highlight = Annotation::new(Subtype::Highlight, TEXT_BAND);
+    highlight.quads = vec![Quad::from_rect(TEXT_BAND)];
+    highlight.color = Some(Color::new(1.0, 0.92, 0.23));
+    let base = open(&original);
+    let (highlighted, _) = author(&original, &base, &highlight);
+
+    assert!(
+        yellow_pixels(&highlighted) > 100,
+        "the highlight has to have drawn, or the survival of the text below proves nothing"
+    );
+    let surviving = dark_pixels(&highlighted);
+    assert!(
+        surviving * 5 >= ink * 4,
+        "the text under the highlight was painted out: {ink} dark pixels became {surviving}"
+    );
+}
+
 /// The review risk this package names: a `/BBox` and `/Matrix` that do not map
 /// onto the `/Rect` produce an annotation that is right at one zoom and drifts
 /// at another, which a single-zoom test cannot catch.
@@ -503,6 +537,34 @@ fn content_bounds(bytes: &[u8], zoom: f32) -> Option<(u32, u32, u32, u32)> {
         .map(|b| (b.x, b.y, b.width, b.height))
 }
 
+/// Every pixel of a page at 72 dpi, as premultiplied RGBA.
+fn raster(bytes: &[u8]) -> Vec<[u8; 4]> {
+    let mut document = Document::open_bytes(bytes.to_vec()).expect("the document opens");
+    let render = document.render_page_now(0, 1.0).expect("the page renders");
+    render
+        .raster
+        .rgba()
+        .chunks_exact(4)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2], pixel[3]])
+        .collect()
+}
+
+/// Pixels dark enough to be glyph ink rather than page or highlight.
+fn dark_pixels(bytes: &[u8]) -> usize {
+    raster(bytes)
+        .into_iter()
+        .filter(|[r, g, b, _]| *r < 128 && *g < 128 && *b < 128)
+        .count()
+}
+
+/// Pixels carrying the highlight's own colour: bright, warm, and short of blue.
+fn yellow_pixels(bytes: &[u8]) -> usize {
+    raster(bytes)
+        .into_iter()
+        .filter(|[r, g, b, _]| *r > 180 && *g > 150 && *b < 140)
+        .count()
+}
+
 fn annots(doc: &CosDocument) -> Vec<Object> {
     let page = doc.page(0).expect("page 0");
     match page.dict.get(b"Annots") {
@@ -579,6 +641,33 @@ fn blank_page() -> Vec<u8> {
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>".to_vec(),
+    ])
+}
+
+/// The band `text_page`'s line of text occupies, which is also the highlight's
+/// rect: stated once so the fixture and the annotation cannot drift apart.
+const TEXT_BAND: Rect = Rect {
+    x0: 18.0,
+    y0: 96.0,
+    x1: 182.0,
+    y1: 114.0,
+};
+
+/// A page carrying one dense line of black text, so a highlight drawn over it
+/// has something to obscure.
+fn text_page() -> Vec<u8> {
+    let content = "BT /F1 16 Tf 0 0 0 rg 20 100 Td (HHHHHHHHHHHHHHHH) Tj ET";
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_vec(),
+        {
+            let mut out = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+            out.extend_from_slice(content.as_bytes());
+            out.extend_from_slice(b"\nendstream");
+            out
+        },
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
     ])
 }
 
