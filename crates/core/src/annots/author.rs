@@ -9,7 +9,7 @@
 use onionskin_cos::{Dict, Name, ObjRef, Object};
 
 use super::appearance::{normal_appearance, numbers};
-use super::model::{Annotation, Color, Flags};
+use super::model::{Annotation, BorderEffect, Color, Flags};
 use crate::edit::Transaction;
 use crate::structure::{attach_annotation, Structure};
 use crate::{Error, Result};
@@ -136,6 +136,31 @@ fn dictionary(
     }
     if let Some(intent) = annotation.intent {
         dict.set(Name::new("IT"), Object::name(intent.as_str()));
+    }
+    if !annotation.vertices.is_empty() {
+        let flat: Vec<f64> = annotation
+            .vertices
+            .iter()
+            .flat_map(|(x, y)| [*x, *y])
+            .collect();
+        dict.set(Name::new("Vertices"), numbers(&flat));
+    }
+    // An arrow is a `/Line` with `/LE`, never a subtype of its own: a
+    // `/Polygon` drawn as one renders in Acrobat as a line with no head.
+    if let Some((first, last)) = annotation.endings {
+        dict.set(
+            Name::new("LE"),
+            Object::Array(vec![
+                Object::name(first.as_str()),
+                Object::name(last.as_str()),
+            ]),
+        );
+    }
+    if let Some(BorderEffect::Cloudy { intensity }) = annotation.border_effect {
+        let mut effect = Dict::new();
+        effect.set(Name::new("S"), Object::name("C"));
+        effect.set(Name::new("I"), Object::Real(intensity));
+        dict.set(Name::new("BE"), Object::Dict(effect));
     }
     if !annotation.callout.is_empty() {
         let flat: Vec<f64> = annotation

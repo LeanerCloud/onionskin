@@ -23,7 +23,9 @@ use std::fmt::Write as _;
 
 use onionskin_cos::{Dict, Name, Object, Stream};
 
-use super::model::{Annotation, BaseFont, Color, Intent, Quad, Rect, Subtype, TextStyle};
+use super::model::{
+    Annotation, BaseFont, BorderEffect, Color, Intent, LineEnding, Quad, Rect, Subtype, TextStyle,
+};
 
 /// The `/AP` `/N` form for this annotation, in the annotation's own space.
 pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
@@ -36,6 +38,8 @@ pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
         Subtype::Square => square(annotation, rect),
         Subtype::Circle => circle(annotation, rect),
         Subtype::Line => line(annotation, rect),
+        Subtype::Polygon => polygon(annotation, rect),
+        Subtype::PolyLine => polyline(annotation, rect),
         Subtype::Ink => ink(annotation, rect),
         Subtype::Text | Subtype::FileAttachment => note_icon(annotation, rect),
         Subtype::FreeText => free_text(annotation, rect),
@@ -287,17 +291,197 @@ fn line(annotation: &Annotation, rect: Rect) -> String {
     let Some(((sx, sy), (ex, ey))) = annotation.line else {
         return String::new();
     };
-    format!(
-        "{} {} {} RG {} w {} {} m {} {} l S\n",
+    let (start, end) = ((sx - rect.x0, sy - rect.y0), (ex - rect.x0, ey - rect.y0));
+    let mut out = format!(
+        "{} {} {} RG {} {} {} rg {} w {} {} m {} {} l S\n",
+        color.red,
+        color.green,
+        color.blue,
         color.red,
         color.green,
         color.blue,
         annotation.border_width,
-        sx - rect.x0,
-        sy - rect.y0,
-        ex - rect.x0,
-        ey - rect.y0,
-    )
+        start.0,
+        start.1,
+        end.0,
+        end.1,
+    );
+    // `/LE` is what a reader draws the endings from when it synthesizes an
+    // appearance; with an `/AP` present it draws the stream, so an arrow whose
+    // head lives only in `/LE` is a line.
+    if let Some((first, last)) = annotation.endings {
+        out.push_str(&arrow_head(first, end, start, annotation.border_width));
+        out.push_str(&arrow_head(last, start, end, annotation.border_width));
+    }
+    out
+}
+
+/// One arrow head at `tip`, pointing away from `from`.
+///
+/// Sized from the border width the way Acrobat does, so a thicker line gets a
+/// proportionally larger head rather than a pin-prick on a fat stroke.
+fn arrow_head(ending: LineEnding, from: (f64, f64), tip: (f64, f64), width: f64) -> String {
+    if ending == LineEnding::None {
+        return String::new();
+    }
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return String::new();
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let size = (width * 4.0).max(6.0);
+    // Half the head's width, which sets the angle: about 22 degrees a side.
+    let spread = size * 0.4;
+    let base = (tip.0 - ux * size, tip.1 - uy * size);
+    let (px, py) = (-uy * spread, ux * spread);
+    let wings = ((base.0 + px, base.1 + py), (base.0 - px, base.1 - py));
+    match ending {
+        LineEnding::ClosedArrow => format!(
+            "{} {} m {} {} l {} {} l h f\n",
+            tip.0, tip.1, wings.0 .0, wings.0 .1, wings.1 .0, wings.1 .1
+        ),
+        LineEnding::OpenArrow => format!(
+            "{} {} m {} {} l {} {} l S\n",
+            wings.0 .0, wings.0 .1, tip.0, tip.1, wings.1 .0, wings.1 .1
+        ),
+        LineEnding::None => String::new(),
+    }
+}
+
+/// A closed shape through its vertices, cloudy when `/BE` says so.
+fn polygon(annotation: &Annotation, rect: Rect) -> String {
+    vertex_path(annotation, rect, true)
+}
+
+/// The same path left open.
+fn polyline(annotation: &Annotation, rect: Rect) -> String {
+    vertex_path(annotation, rect, false)
+}
+
+fn vertex_path(annotation: &Annotation, rect: Rect, closed: bool) -> String {
+    if annotation.vertices.len() < 2 {
+        return String::new();
+    }
+    let local: Vec<(f64, f64)> = annotation
+        .vertices
+        .iter()
+        .map(|(x, y)| (x - rect.x0, y - rect.y0))
+        .collect();
+    let mut out = stroke_and_fill(annotation);
+    let _ = writeln!(out, "{} w 1 J 1 j", annotation.border_width);
+
+    if let (true, Some(BorderEffect::Cloudy { intensity })) = (closed, annotation.border_effect) {
+        out.push_str(&cloudy(&local, intensity, annotation.border_width));
+    } else {
+        let _ = writeln!(out, "{} {} m", local[0].0, local[0].1);
+        for (x, y) in &local[1..] {
+            let _ = writeln!(out, "{x} {y} l");
+        }
+        if closed {
+            out.push_str("h\n");
+        }
+    }
+    out.push_str(paint_operator(annotation, closed));
+    out
+}
+
+/// A scalloped edge: arcs bulging outward along each side.
+///
+/// Drawn rather than left to `/BE`, for the reason the arrow head is: a reader
+/// with an `/AP` draws the stream, so a cloud whose scallops live only in the
+/// border-effect dictionary renders as a plain polygon.
+fn cloudy(points: &[(f64, f64)], intensity: f64, width: f64) -> String {
+    // Acrobat's intensity is 0, 1 or 2; 0 means a flat edge.
+    let bulge = intensity.max(0.0) * (width.max(1.0) * 3.0);
+    if bulge == 0.0 {
+        let mut out = format!("{} {} m\n", points[0].0, points[0].1);
+        for (x, y) in &points[1..] {
+            let _ = writeln!(out, "{x} {y} l");
+        }
+        out.push_str("h\n");
+        return out;
+    }
+    // Which side is outward depends on the winding, and the user decides that
+    // by the order they click. Taken from the signed area rather than assumed,
+    // because a polygon clicked the other way round would otherwise scallop
+    // inward and look like a gear.
+    //
+    // The sign: `scallops` lifts along the *left* of travel, and in PDF user
+    // space - where y increases upward - the left of travel is the **inside**
+    // of a counterclockwise polygon. So a positive signed area wants the lift
+    // turned around.
+    let outward = if signed_area(points) >= 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut out = format!("{} {} m\n", points[0].0, points[0].1);
+    for index in 0..points.len() {
+        let from = points[index];
+        let to = points[(index + 1) % points.len()];
+        out.push_str(&scallops(from, to, bulge, outward));
+    }
+    out.push_str("h\n");
+    out
+}
+
+/// Twice the signed area of a closed polygon: positive counterclockwise.
+fn signed_area(points: &[(f64, f64)]) -> f64 {
+    let mut total = 0.0;
+    for index in 0..points.len() {
+        let (x0, y0) = points[index];
+        let (x1, y1) = points[(index + 1) % points.len()];
+        total += x0 * y1 - x1 * y0;
+    }
+    total
+}
+
+/// One side of a cloud, as a run of outward arcs approximated by cubics.
+fn scallops(from: (f64, f64), to: (f64, f64), bulge: f64, outward: f64) -> String {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return String::new();
+    }
+    let count = ((length / (bulge * 2.0)).round() as usize).max(1);
+    let (ux, uy) = (dx / length, dy / length);
+    // To the left of travel, turned around by `outward` when the caller found
+    // the winding to be clockwise.
+    let (nx, ny) = (-uy * outward, ux * outward);
+    let step = length / count as f64;
+    let mut out = String::new();
+    for index in 0..count {
+        let start = (
+            from.0 + ux * step * index as f64,
+            from.1 + uy * step * index as f64,
+        );
+        let end = (
+            from.0 + ux * step * (index + 1) as f64,
+            from.1 + uy * step * (index + 1) as f64,
+        );
+        let lift = bulge * 1.33;
+        let _ = writeln!(
+            out,
+            "{} {} {} {} {} {} c",
+            start.0 + ux * step * 0.25 + nx * lift,
+            start.1 + uy * step * 0.25 + ny * lift,
+            end.0 - ux * step * 0.25 + nx * lift,
+            end.1 - uy * step * 0.25 + ny * lift,
+            end.0,
+            end.1
+        );
+    }
+    out
+}
+
+/// Stroke, fill, or both, which is the one place that decision is made.
+fn paint_operator(annotation: &Annotation, closed: bool) -> &'static str {
+    match (annotation.interior_color.is_some(), closed) {
+        (true, true) => "B\n",
+        (false, true) => "s\n",
+        (_, false) => "S\n",
+    }
 }
 
 fn ink(annotation: &Annotation, rect: Rect) -> String {

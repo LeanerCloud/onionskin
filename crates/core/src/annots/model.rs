@@ -25,6 +25,11 @@ pub enum Subtype {
     Square,
     Circle,
     Line,
+    /// A closed shape of three or more vertices. A cloud is one of these with
+    /// a `/BE` border effect, not a subtype of its own.
+    Polygon,
+    /// The open form of the same: connected lines.
+    PolyLine,
     Stamp,
     FileAttachment,
 }
@@ -44,6 +49,8 @@ impl Subtype {
         Subtype::Square,
         Subtype::Circle,
         Subtype::Line,
+        Subtype::Polygon,
+        Subtype::PolyLine,
         Subtype::Stamp,
         Subtype::FileAttachment,
     ];
@@ -64,6 +71,8 @@ impl Subtype {
             Subtype::Square => "Square",
             Subtype::Circle => "Circle",
             Subtype::Line => "Line",
+            Subtype::Polygon => "Polygon",
+            Subtype::PolyLine => "PolyLine",
             Subtype::Stamp => "Stamp",
             Subtype::FileAttachment => "FileAttachment",
         }
@@ -81,6 +90,8 @@ impl Subtype {
             b"Square" => Subtype::Square,
             b"Circle" => Subtype::Circle,
             b"Line" => Subtype::Line,
+            b"Polygon" => Subtype::Polygon,
+            b"PolyLine" => Subtype::PolyLine,
             b"Stamp" => Subtype::Stamp,
             b"FileAttachment" => Subtype::FileAttachment,
             _ => return None,
@@ -301,6 +312,43 @@ pub struct Annotation {
     /// callout points at - first, the end at the text box last. Empty for
     /// everything else.
     pub callout: Vec<(f64, f64)>,
+    /// `/Vertices`, for `Polygon` and `PolyLine`. A polygon's closing edge is
+    /// implied rather than written, which is what the subtype means.
+    pub vertices: Vec<(f64, f64)>,
+    /// `/LE`, the endings a `Line` is drawn with, first then last. `None` for
+    /// a plain line; an arrow is this and nothing else, because Acrobat has
+    /// no arrow subtype and a `/Polygon` drawn as one renders in Acrobat as a
+    /// line with no head.
+    pub endings: Option<(LineEnding, LineEnding)>,
+    /// `/BE`, the border effect. `Cloudy` is what makes a polygon a cloud.
+    pub border_effect: Option<BorderEffect>,
+}
+
+/// `/LE` entries. Only the three M3 draws; a reader that meets a name it does
+/// not know draws nothing, so writing one we cannot draw would be worse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineEnding {
+    None,
+    OpenArrow,
+    ClosedArrow,
+}
+
+impl LineEnding {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LineEnding::None => "None",
+            LineEnding::OpenArrow => "OpenArrow",
+            LineEnding::ClosedArrow => "ClosedArrow",
+        }
+    }
+}
+
+/// `/BE`, a border effect: `/S` and, for a cloud, `/I` its intensity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderEffect {
+    /// A scalloped edge. The intensity is 0, 1 or 2 in Acrobat's UI; a
+    /// `/BE` with `/S /C` and no `/I` is a cloud a reader draws flat.
+    Cloudy { intensity: f64 },
 }
 
 /// The fonts a `FreeText` may name.
@@ -424,7 +472,32 @@ impl Annotation {
             text_style: None,
             intent: None,
             callout: Vec::new(),
+            vertices: Vec::new(),
+            endings: None,
+            border_effect: None,
         }
+    }
+
+    /// A polygon or polyline from its vertices, with the `/Rect` their bounds.
+    ///
+    /// `None` for fewer than two vertices, and for fewer than three when the
+    /// shape is closed: a polygon of two points is a line drawn twice.
+    pub fn vertices(subtype: Subtype, vertices: Vec<(f64, f64)>) -> Option<Self> {
+        let least = match subtype {
+            Subtype::Polygon => 3,
+            Subtype::PolyLine => 2,
+            _ => return None,
+        };
+        if vertices.len() < least {
+            return None;
+        }
+        let mut bounds = Rect::new(vertices[0].0, vertices[0].1, vertices[0].0, vertices[0].1);
+        for (x, y) in &vertices[1..] {
+            bounds = bounds.union(Rect::new(*x, *y, *x, *y));
+        }
+        let mut annotation = Annotation::new(subtype, bounds);
+        annotation.vertices = vertices;
+        Some(annotation)
     }
 
     /// A `FreeText` carrying text, which is the only subtype that needs a

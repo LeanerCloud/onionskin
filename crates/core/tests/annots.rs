@@ -32,6 +32,8 @@ const SUBTYPES: &[Subtype] = &[
     Subtype::Square,
     Subtype::Circle,
     Subtype::Line,
+    Subtype::Polygon,
+    Subtype::PolyLine,
     Subtype::Stamp,
     Subtype::FileAttachment,
 ];
@@ -493,6 +495,9 @@ fn sample(subtype: Subtype) -> Annotation {
         }
         Subtype::Square | Subtype::Circle => {
             annotation.interior_color = Some(Color::new(0.9, 0.9, 0.2));
+        }
+        Subtype::Polygon | Subtype::PolyLine => {
+            annotation.vertices = vec![(60.0, 60.0), (140.0, 60.0), (100.0, 140.0)];
         }
         _ => {}
     }

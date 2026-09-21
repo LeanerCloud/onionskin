@@ -13,7 +13,10 @@ mod model;
 mod read;
 
 pub use filter::AnnotationFilter;
-pub use model::{Annotation, BaseFont, Color, Flags, Intent, Quad, Rect, Subtype, TextStyle};
+pub use model::{
+    Annotation, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad, Rect, Subtype,
+    TextStyle,
+};
 pub use read::ReadAnnotation;
 
 use std::collections::BTreeMap;
