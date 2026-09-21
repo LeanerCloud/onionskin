@@ -600,6 +600,16 @@ impl Document {
         }
     }
 
+    /// Every annotation the document carries, as this session has it: the
+    /// edited document, so a comment made a moment ago is in the list and
+    /// one deleted a moment ago is not, alongside every comment the file
+    /// arrived with.
+    pub fn annotations(&mut self) -> Result<Vec<crate::ReadAnnotation>> {
+        let page_count = self.page_count();
+        let structure = self.structure()?;
+        crate::annots::read_annotations(structure, page_count, &std::collections::BTreeMap::new())
+    }
+
     /// Replay a recovery file's bytes onto this document as one undoable
     /// step, "Recover Unsaved Changes".
     ///

@@ -11,6 +11,7 @@ mod author;
 mod filter;
 mod model;
 mod read;
+pub mod review;
 
 pub use filter::AnnotationFilter;
 pub use model::{

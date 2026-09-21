@@ -41,6 +41,11 @@ pub struct ReadAnnotation {
     pub ink: Vec<Vec<(f64, f64)>>,
     /// `/BS /W`, or 1 when the dictionary has none.
     pub border_width: f64,
+    /// `/Subj`, the comment's kind as its author named it.
+    pub subject: Option<String>,
+    /// `/State` and `/StateModel` on a status annotation: what it sets and in
+    /// which model. `None` for every other annotation.
+    pub state: Option<(String, String)>,
 }
 
 /// Every annotation on every page, in page order and then in `/Annots` order.
@@ -145,6 +150,13 @@ fn one(objref: ObjRef, page: usize, dict: &Dict) -> ReadAnnotation {
             .and_then(|border| border.get(b"W"))
             .and_then(as_number)
             .unwrap_or(1.0),
+        subject: text(dict.get(b"Subj")),
+        state: text(dict.get(b"State")).map(|state| {
+            (
+                state,
+                text(dict.get(b"StateModel")).unwrap_or_else(|| "Marked".to_owned()),
+            )
+        }),
     }
 }
 
