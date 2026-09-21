@@ -83,6 +83,16 @@ pub(super) struct TabState<T> {
     active: Option<usize>,
 }
 
+impl TabState<DocumentTab> {
+    /// Point a tab at the file its document now belongs to, after a Save As.
+    pub(super) fn retitle(&mut self, index: usize, source: PathBuf) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.title = tab_title(&source);
+            tab.source = source;
+        }
+    }
+}
+
 impl<T> TabState<T> {
     pub fn new(tabs: Vec<T>) -> Self {
         let active = (!tabs.is_empty()).then_some(0);
@@ -217,6 +227,12 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) summary: Option<crate::shell::chrome::summary_dialog::SummaryDialogState>,
     pub(super) properties: Option<crate::shell::chrome::properties_dialog::PropertiesDialogState>,
     pub(super) bookmark_title: Option<crate::shell::chrome::bookmark_dialog::BookmarkTitleState>,
+    /// The question before closing unsaved documents, while it is asked.
+    pub(super) unsaved: Option<crate::shell::chrome::file_dialogs::UnsavedState>,
+    /// The recovery being offered, and the ones waiting their turn.
+    pub(super) recover: Option<crate::shell::chrome::file_dialogs::RecoverState>,
+    pub(super) pending_recoveries:
+        std::collections::VecDeque<crate::shell::chrome::file_dialogs::RecoverState>,
     /// The accessibility tree the window publishes, its tab order, and the
     /// rectangles the last frame measured.
     pub(super) a11y: ShellAccessibility,
@@ -339,10 +355,20 @@ impl ShellFrame {
             summary: None,
             properties: None,
             bookmark_title: None,
+            unsaved: None,
+            recover: None,
+            pending_recoveries: std::collections::VecDeque::new(),
             a11y: ShellAccessibility::new(cx),
         };
         frame.sync_page_entry(cx);
         frame.open_initial_pane(cx);
+        let initial: Vec<_> = frame
+            .canvases()
+            .into_iter()
+            .map(|canvas| canvas.entity_id())
+            .collect();
+        frame.attach_recovery(&initial, cx);
+        frame.start_autosave(cx);
         // The chrome takes keyboard focus at launch. Without it GPUI has no
         // focus path to dispatch along, so the shell's own keys, Escape
         // included, would reach nothing until the user clicked a text field.

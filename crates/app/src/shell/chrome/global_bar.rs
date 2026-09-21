@@ -178,7 +178,9 @@ pub(in crate::shell) enum MenuCommand {
     Open,
     OpenRecent,
     Quit,
+    Save,
     SaveAs,
+    Revert,
     CombineFiles,
     CreateFromFiles,
     CreateFromFile,
@@ -370,9 +372,19 @@ pub(in crate::shell) struct MenuState {
     quick_actions_visible: [bool; QuickAction::ALL.len()],
     registry: RegistryFacts,
     recent_count: usize,
+    /// The active document's history and file, when one is open.
+    history: Option<crate::shell::canvas::HistoryFacts>,
 }
 
 impl MenuState {
+    /// The same state, knowing what the active document can undo and save.
+    pub(in crate::shell) fn with_history(
+        self,
+        history: Option<crate::shell::canvas::HistoryFacts>,
+    ) -> Self {
+        Self { history, ..self }
+    }
+
     pub(in crate::shell) fn new(
         tab_count: usize,
         view: Option<CanvasViewState>,
@@ -389,7 +401,41 @@ impl MenuState {
             quick_actions_visible,
             registry,
             recent_count,
+            history: None,
         }
+    }
+}
+
+/// Save: live with unsaved edits, and for a document with no file yet,
+/// where it asks where to write, as Save As does.
+fn save_availability(state: MenuState) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if facts.dirty || !facts.has_path => MenuAvailability::Enabled,
+        Some(_) => MenuAvailability::Disabled("No unsaved changes"),
+    }
+}
+
+fn revert_availability(state: MenuState) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if !facts.has_path => {
+            MenuAvailability::Disabled("This document has never been saved")
+        }
+        Some(facts) if facts.dirty => MenuAvailability::Enabled,
+        Some(_) => MenuAvailability::Disabled("No unsaved changes"),
+    }
+}
+
+/// Undo and Redo: live when the history has a step that way, and saying so
+/// when it has none, rather than being absent.
+fn history_availability(state: MenuState, redo: bool) -> MenuAvailability {
+    match state.history {
+        None => MenuAvailability::Disabled("No document is open"),
+        Some(facts) if !redo && facts.undo.is_some() => MenuAvailability::Enabled,
+        Some(facts) if redo && facts.redo.is_some() => MenuAvailability::Enabled,
+        Some(_) if redo => MenuAvailability::Disabled("Nothing to redo"),
+        Some(_) => MenuAvailability::Disabled("Nothing to undo"),
     }
 }
 
@@ -460,9 +506,21 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
                 MenuEntry {
+                    command: MenuCommand::Save,
+                    label: "Save",
+                    availability: save_availability(state),
+                    selected: false,
+                },
+                MenuEntry {
                     command: MenuCommand::SaveAs,
                     label: "Save As…",
-                    availability: Disabled("Saving lands in M3"),
+                    availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::Revert,
+                    label: "Revert",
+                    availability: revert_availability(state),
                     selected: false,
                 },
                 MenuEntry {
@@ -511,13 +569,13 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 MenuEntry {
                     command: MenuCommand::Undo,
                     label: "Undo",
-                    availability: Disabled("Document editing lands in M3"),
+                    availability: history_availability(state, false),
                     selected: false,
                 },
                 MenuEntry {
                     command: MenuCommand::Redo,
                     label: "Redo",
-                    availability: Disabled("Document editing lands in M3"),
+                    availability: history_availability(state, true),
                     selected: false,
                 },
                 MenuEntry {
@@ -1061,7 +1119,9 @@ impl MenuCommand {
             | Self::Open
             | Self::OpenRecent
             | Self::Quit
+            | Self::Save
             | Self::SaveAs
+            | Self::Revert
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
@@ -1112,7 +1172,9 @@ impl MenuCommand {
             Self::Open
             | Self::OpenRecent
             | Self::Quit
+            | Self::Save
             | Self::SaveAs
+            | Self::Revert
             | Self::Export(_)
             | Self::CombineFiles
             | Self::CreateFromFiles
@@ -1320,12 +1382,13 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument
         | MenuCommand::Properties
-        | MenuCommand::SaveAsOther => Some(Box::new(RunCommand { command })),
-        MenuCommand::SaveAs
+        | MenuCommand::SaveAsOther
+        | MenuCommand::Save
+        | MenuCommand::SaveAs
+        | MenuCommand::Revert
         | MenuCommand::Undo
-        | MenuCommand::Redo
-        | MenuCommand::LineWeights
-        | MenuCommand::NewWindow => None,
+        | MenuCommand::Redo => Some(Box::new(RunCommand { command })),
+        MenuCommand::LineWeights | MenuCommand::NewWindow => None,
     }
 }
 
@@ -1522,11 +1585,7 @@ mod tests {
             .filter(|entry| {
                 matches!(
                     entry.command,
-                    MenuCommand::SaveAs
-                        | MenuCommand::Undo
-                        | MenuCommand::Redo
-                        | MenuCommand::LineWeights
-                        | MenuCommand::NewWindow
+                    MenuCommand::LineWeights | MenuCommand::NewWindow
                 )
             })
             .filter_map(|entry| entry.availability.reason())
@@ -1797,8 +1856,9 @@ mod tests {
         assert_eq!(
             item_names(&menus[1]),
             vec![
-                "Undo (Document editing lands in M3)",
-                "Redo (Document editing lands in M3)",
+                // No history in this state: nothing to undo, said as such.
+                "Undo (No document is open)",
+                "Redo (No document is open)",
                 // Two tabs are open in this state, so the rest are live.
                 "Select All",
                 "Deselect All",

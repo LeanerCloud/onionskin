@@ -21,6 +21,10 @@ use onionskin_render::PageRender;
 use onionskin_render::{BaseRaster, RasterBounds, Tile, TileCache, TileStore, TILE_SIZE};
 use smallvec::smallvec;
 
+mod file_ops;
+
+pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
+
 use super::input::{
     pointer_input, pointer_input_near, validate_pressure, DragKind, DragUpdate, InputError,
     InputState,
@@ -399,6 +403,9 @@ pub struct CanvasModel {
     /// The document with its file: what Save, Save As, Revert and autosave
     /// act through. Tools and commands are handed only the `Document` inside.
     document: onionskin_core::DocumentFile,
+    /// Where autosave writes, kept so a Revert can hand it to the document
+    /// it reopens.
+    recovery: Option<onionskin_core::RecoveryStore>,
     viewport: Viewport,
     view_history: ViewHistory,
     registry: PluginRegistry,
@@ -491,6 +498,7 @@ impl CanvasModel {
             .map(|message| CanvasStatus::Notice { message });
         Ok(Self {
             document: onionskin_core::DocumentFile::from_document(document),
+            recovery: None,
             viewport,
             view_history: ViewHistory::new(VIEW_HISTORY_CAPACITY),
             registry,

@@ -3,6 +3,7 @@ pub(in crate::shell) mod bookmark_dialog;
 pub(in crate::shell) mod combine_dialog;
 mod commands;
 pub(in crate::shell) mod export_dialog;
+pub(in crate::shell) mod file_dialogs;
 mod global_bar;
 mod page_controls;
 pub(in crate::shell) mod properties_dialog;

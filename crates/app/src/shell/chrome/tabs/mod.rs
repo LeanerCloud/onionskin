@@ -3,6 +3,7 @@ mod context;
 mod create;
 mod dialogs;
 mod export;
+mod file;
 mod frame_state;
 mod menu;
 mod organize;
@@ -50,7 +51,9 @@ use super::super::{record_opened, repair_notice};
 use self::export::{export_progress_label, ExportPhaseValue};
 use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab};
 use super::accessible::{Activation, SHELL_KEY_CONTEXT};
-use super::global_bar::{refresh_native_menus, MenuCommand, NO_SNAPSHOT_TOOL};
+use super::global_bar::{
+    main_menu_schema, refresh_native_menus, MenuAvailability, MenuCommand, NO_SNAPSHOT_TOOL,
+};
 use super::page_controls::{
     parse_page_entry, render_page_controls, PageControlsState, PAGE_CONTROLS_HEIGHT,
 };
@@ -231,6 +234,11 @@ impl ShellFrame {
     /// still open: choosing five files and losing all of them because one is
     /// corrupt would be the wrong trade.
     pub(super) fn open_documents(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let before: Vec<_> = self
+            .canvases()
+            .into_iter()
+            .map(|canvas| canvas.entity_id())
+            .collect();
         let mut opened: Vec<PathBuf> = Vec::new();
         for path in paths {
             match self.open_document(path, cx) {
@@ -238,6 +246,13 @@ impl ShellFrame {
                 Err(failure) => self.notices.push(failure),
             }
         }
+        let new: Vec<_> = self
+            .canvases()
+            .into_iter()
+            .map(|canvas| canvas.entity_id())
+            .filter(|id| !before.contains(id))
+            .collect();
+        self.attach_recovery(&new, cx);
         let notices = record_opened(
             &mut self.settings.recents,
             opened.iter().map(PathBuf::as_path),
@@ -720,6 +735,34 @@ impl ShellFrame {
             .collect()
     }
 
+    /// The global bar's Save, Undo and Redo, each with the menu entry's own
+    /// availability, so the bar and the menu cannot disagree about whether
+    /// a command runs. The glyph is what is drawn; the menu label is what a
+    /// screen reader hears.
+    pub(super) fn global_file_buttons(
+        &self,
+        cx: &App,
+    ) -> Vec<(&'static str, &'static str, MenuCommand, MenuAvailability)> {
+        let entries: Vec<_> = main_menu_schema(self.menu_state(cx))
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .collect();
+        [
+            ("global-save", "💾", MenuCommand::Save),
+            ("global-save-as", "Save As", MenuCommand::SaveAs),
+            ("global-undo", "↶", MenuCommand::Undo),
+            ("global-redo", "↷", MenuCommand::Redo),
+        ]
+        .into_iter()
+        .filter_map(|(id, glyph, command)| {
+            entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .map(|entry| (id, glyph, command, entry.availability))
+        })
+        .collect()
+    }
+
     /// The active tool's name and how it is used, for the side panel.
     pub(super) fn active_tool_help(&self, cx: &App) -> super::side_panel::ToolHelp {
         self.tabs
@@ -754,6 +797,34 @@ impl ShellFrame {
                     .child("☰"),
             )
             .child(div().text_sm().child("Onionskin"))
+            .children(self.global_file_buttons(cx).into_iter().map(
+                |(id, glyph, command, availability)| {
+                    let enabled = availability.is_enabled();
+                    let button = div()
+                        .id(id)
+                        .h(px(28.0))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_md()
+                        .text_color(if enabled {
+                            theme.text
+                        } else {
+                            theme.disabled_text
+                        })
+                        .child(glyph);
+                    if enabled {
+                        button
+                            .cursor_pointer()
+                            .hover(move |button| button.bg(theme.subtle_hover))
+                            .on_click(cx.listener(move |frame, _event, window, cx| {
+                                frame.run_activation(Activation::MainMenu(command), window, cx);
+                            }))
+                    } else {
+                        button
+                    }
+                },
+            ))
             .child(div().flex_1())
             .child(
                 div()
@@ -1112,6 +1183,11 @@ impl ShellFrame {
 
 impl Render for ShellFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A recovery found as documents opened is asked about here, the first
+        // place after the open with a window to show a dialog in.
+        if self.dialog.is_none() && !self.pending_recoveries.is_empty() {
+            self.offer_next_recovery(window, cx);
+        }
         let theme = self.shell_view_state.tokens();
         let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
@@ -1149,7 +1225,7 @@ impl Render for ShellFrame {
                             frame.open_tab_context_menu(index, event, cx);
                         }),
                     )
-                    .child(tab.title().to_owned()),
+                    .child(tab_label(tab, cx)),
             );
         }
 
@@ -1476,6 +1552,15 @@ fn header_height(visibility: SurfaceVisibility) -> Pixels {
     px(global_bar + tab_bar)
 }
 
+/// A tab's text: its title, marked while the document has unsaved changes.
+fn tab_label(tab: &DocumentTab, cx: &App) -> String {
+    if ShellFrame::is_dirty(&tab.canvas, cx) {
+        format!("● {}", tab.title())
+    } else {
+        tab.title().to_owned()
+    }
+}
+
 fn tab_title(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -1509,6 +1594,8 @@ mod tests {
     mod convert;
     #[cfg(feature = "shell-test-support")]
     mod export_settings;
+    #[cfg(feature = "shell-test-support")]
+    mod file;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]

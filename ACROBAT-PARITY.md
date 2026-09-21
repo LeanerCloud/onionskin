@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 202 planned / 31 partial / 80 out-of-scope. 90 implemented.**
+**403 rows: 195 planned / 31 partial / 80 out-of-scope. 97 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 100, M4 2, M5 52, M6 45, post-1.0 57.
@@ -168,8 +168,8 @@ M3 here; the plan's ruling B move to M4 is not yet applied.
 | Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
 | Convert (global bar entry point) | implemented | M3 | A global-bar panel holds Create PDF From File, From Clipboard and From Multiple Files, the page exports, and Export All Images; the target list stays deliberately smaller than Acrobat's. Evidence: docs/evidence/m3-p14a-images.md. |
 | Get a link to the document | out-of-scope | - | Cloud-tethered link sharing. |
-| Undo / Redo icons on the global bar | planned | M3 | Same commands as the Edit menu; Acrobat surfaces both. |
-| Save / Save As in the global bar | planned | M3 | Save appends an incremental section (core invariant). |
+| Undo / Redo icons on the global bar | implemented | M3 | Global bar buttons carrying the Edit menu entries' own availability; disabled with "Nothing to undo" rather than absent. Evidence: docs/evidence/m3-p18-save-undo.md. |
+| Save / Save As in the global bar | implemented | M3 | Both are global bar buttons carrying the File menu entries' availability; Save appends an incremental section. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | Print button | planned | M3 | `crates/print`, macOS backend at M3. |
 | Share button | out-of-scope | - | Cloud-tethered: Adobe cloud link sharing. Plan states all cloud-tethered surface is out of scope. |
 | AI Assistant button | out-of-scope | - | Cloud-tethered generative service. Plan names AI Assistant explicitly as out of scope. |
@@ -186,7 +186,7 @@ M3 here; the plan's ruling B move to M4 is not yet applied.
 | Revert to the classic Acrobat interface | out-of-scope | - | Product-level decision: the unified UI is the parity target; the plan defers classic to a possible later theme, not a shipped toggle. |
 | Preferences dialog | partial | M2 | The live Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
 | Keyboard shortcut remapping | implemented | M2 | Acrobat defaults are remappable through `keymap.json`, and the shortcut reference shows the effective bindings. Evidence: M2-PREFS. |
-| Autosave and crash recovery | planned | M3 | Plan pins crash-recovery snapshot ranking as a unit test. |
+| Autosave and crash recovery | implemented | M3 | Every 30 s into an owner-only store; a recovery is offered when its own document next opens, ranked most recent first, and replays as one undoable edit. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | Window menu (New Window, Cascade, Tile, Minimize) | planned | M3 | Shell logic, no document dependency. (judgment) |
 | Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
@@ -208,11 +208,11 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Open | implemented | M2 | File picker, path open, and repaired-document notice are live. Evidence: M2-SHELL and M2-REPAIR. |
 | File > Open Recent | implemented | M2 | The persisted local list is live. Evidence: M2-HOME. |
 | File > Create | implemented | M3 | Create PDF From File, From Clipboard and From Multiple Files; the new document is saved to a chosen path before it opens. Sources limited: see "Create a PDF". Evidence: docs/evidence/m3-p14a-images.md. |
-| File > Save | planned | M3 | Appends an incremental update section; a no-op save writes nothing. |
-| File > Save As | planned | M3 | Copy plus the same incremental discipline. |
+| File > Save | implemented | M3 | cmd-s; appends an incremental section; disabled with "No unsaved changes" on a clean document. Evidence: docs/evidence/m3-p18-save-undo.md. |
+| File > Save As | implemented | M3 | cmd-shift-s; the tab follows the document to the new file and the original is untouched. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | File > Save as Other | implemented | M3 | A panel lists one entry per installed export codec; with none installed the entry is disabled with a reason. PDF/X and Reader-Extended variants remain out of scope. Evidence: docs/evidence/m3-p13a-properties.md. |
 | File > Export To | partial | M2 | Text, PNG, and SVG exports have First/Last settings, plus PNG resolution; stale successful prompt writes are refused and derived destinations cannot overwrite existing files. Office and HTML targets remain a deliberately reduced post-1.0 subset. Evidence: M2-EXPORT, M2-EXPORT-SETTINGS, and B4.2-B4.4. |
-| File > Revert | planned | M3 | Cheap here: truncate to the previous generation. |
+| File > Revert | implemented | M3 | Discards unsaved edits by reopening the file; the history goes with them. Evidence: docs/evidence/m3-p18-save-undo.md. |
 | File > Close / Close All | implemented | M2 | Both commands are live for the current tab set. Evidence: M2-SHELL. |
 | File > Properties (Document Properties) | partial | M3 | `cmd-d` dialog with Description, Security (read-only), Fonts, Initial View and Custom tabs; one Apply is one undo step. The five-tab list is unconfirmed: the screenshot corpus has no capture of this dialog. Description omits PDF version, page size, tagged and fast web view. Evidence: docs/evidence/m3-p13a-properties.md. |
 | File > Print | planned | M3 | `crates/print`. |
@@ -220,7 +220,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | File > Share / Send for comments | out-of-scope | - | Cloud-tethered web review flow. |
 | File > Get Documents Signed | out-of-scope | - | Adobe Acrobat Sign, a cloud service. |
 | File > Exit / Quit | implemented | M2 | The menu command exits through the shell action. Evidence: M2-SHELL. |
-| Edit > Undo / Redo | planned | M3 | Undo is dropping edit-graph overlay nodes, not restoring snapshots. |
+| Edit > Undo / Redo | implemented | M3 | cmd-z / cmd-shift-z; undo past a save makes the document dirty again (T1). Evidence: docs/evidence/m3-p18-save-undo.md. |
 | Edit > Cut / Copy / Paste / Delete | planned | M3 | Scope is per active tool. |
 | Edit > Select All / Deselect All | implemented | M2 | Both registry commands operate on the active document and page. Evidence: M2-SHELL. |
 | Edit > Copy File to Clipboard | planned | M3 | (judgment) |

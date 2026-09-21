@@ -19,6 +19,8 @@ pub const PREFERENCES_FILE: &str = "preferences.json";
 pub const RECENTS_FILE: &str = "recents.json";
 /// The folder beside the settings files that tools keep their own files in.
 pub const DATA_DIR: &str = "data";
+/// Autosave's recovery files, one per open document with unsaved edits.
+pub const RECOVERY_DIR: &str = "recovery";
 
 /// The configuration directory, or `None` when the environment names no home
 /// to put it in. A caller that gets `None` runs on defaults and cannot
@@ -68,6 +70,9 @@ pub struct ConfigPaths {
     /// Where tools keep files of their own - the custom stamp library - as
     /// opposed to the settings files above.
     pub data: Option<PathBuf>,
+    /// Where autosave keeps each open document's unsaved edits. Owner-only;
+    /// `core::recovery` refuses a directory that is not.
+    pub recovery: Option<PathBuf>,
     /// The user's home directory, resolved once here so the surfaces that
     /// shorten a path for display do not ask the environment per row per
     /// frame.
@@ -97,6 +102,7 @@ impl ConfigPaths {
             preferences: Some(dir.join(PREFERENCES_FILE)),
             recents: Some(dir.join(RECENTS_FILE)),
             data: Some(dir.join(DATA_DIR)),
+            recovery: Some(dir.join(RECOVERY_DIR)),
             home: home_dir(),
         }
     }

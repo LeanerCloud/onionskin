@@ -219,15 +219,15 @@ impl ShellFrame {
             }
             MenuCommand::CloseTab => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::Close, active, cx)
+                self.request_tab_command(TabCommand::Close, active, window, cx)
             }
             MenuCommand::CloseOtherTabs => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::CloseOthers, active, cx)
+                self.request_tab_command(TabCommand::CloseOthers, active, window, cx)
             }
             MenuCommand::CloseAllTabs => {
                 let active = self.active_index()?;
-                self.run_tab_command(TabCommand::CloseAll, active, cx)
+                self.request_tab_command(TabCommand::CloseAll, active, window, cx)
             }
             MenuCommand::PreviousView
             | MenuCommand::NextView
@@ -311,11 +311,32 @@ impl ShellFrame {
             // state, so the check at the top of this function returns first.
             // Kept as a loud answer in case an entry is ever enabled before
             // the thing behind it exists.
-            MenuCommand::SaveAs
-            | MenuCommand::Undo
-            | MenuCommand::Redo
-            | MenuCommand::LineWeights
-            | MenuCommand::NewWindow => Err(TabError::CommandUnavailable),
+            MenuCommand::Save => {
+                self.dismiss_menus(cx);
+                self.save_active(cx);
+                Ok(())
+            }
+            MenuCommand::SaveAs => {
+                self.dismiss_menus(cx);
+                self.save_active_as(cx);
+                Ok(())
+            }
+            MenuCommand::Revert => {
+                self.dismiss_menus(cx);
+                self.revert_active(cx);
+                Ok(())
+            }
+            MenuCommand::Undo => {
+                self.dismiss_menus(cx);
+                self.undo_active(cx);
+                Ok(())
+            }
+            MenuCommand::Redo => {
+                self.dismiss_menus(cx);
+                self.redo_active(cx);
+                Ok(())
+            }
+            MenuCommand::LineWeights | MenuCommand::NewWindow => Err(TabError::CommandUnavailable),
         }
     }
 
@@ -327,6 +348,11 @@ impl ShellFrame {
             self.quick_actions_state.visibility(),
             self.registry_facts(cx),
             self.settings.recents.documents().len(),
+        )
+        .with_history(
+            self.tabs
+                .active()
+                .map(|tab| tab.canvas.read(cx).model.history_facts()),
         )
     }
 
@@ -720,7 +746,7 @@ mod tests {
         let dir = crate::config::test_dir("dynamic-zoom-keymap");
         std::fs::write(
             dir.join(crate::config::KEYMAP_FILE),
-            "{\"view.dynamic-zoom\": \"cmd-shift-z\"}",
+            "{\"view.dynamic-zoom\": \"cmd-shift-y\"}",
         )
         .expect("the test writes its keymap");
         let (window, bindings) =

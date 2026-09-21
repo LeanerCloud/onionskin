@@ -7,7 +7,7 @@
 //!
 //! Two rules about what carries a default keystroke:
 //!
-//! - A command that this milestone cannot run (Save As, Undo, New Window)
+//! - A command that this milestone cannot run (New Window, Line Weights)
 //!   carries none. A keystroke that reports "lands in M3" is worse than no
 //!   keystroke.
 //! - A command the registry runs (Select All, Deselect All) carries none
@@ -33,7 +33,9 @@ impl MenuCommand {
             MenuCommand::CloseTab,
             MenuCommand::CloseOtherTabs,
             MenuCommand::CloseAllTabs,
+            MenuCommand::Save,
             MenuCommand::SaveAs,
+            MenuCommand::Revert,
             MenuCommand::CombineFiles,
             MenuCommand::CreateFromFiles,
             MenuCommand::CreateFromFile,
@@ -112,7 +114,9 @@ impl MenuCommand {
             Self::CloseTab => "file.close",
             Self::CloseOtherTabs => "file.close-others",
             Self::CloseAllTabs => "file.close-all",
+            Self::Save => "file.save",
             Self::SaveAs => "file.save-as",
+            Self::Revert => "file.revert",
             Self::CombineFiles => "file.combine",
             Self::CreateFromFiles => "file.create-from-files",
             Self::CreateFromFile => "file.create-from-file",
@@ -195,6 +199,10 @@ impl MenuCommand {
             Self::Find => "cmd-f",
             Self::Preferences => "cmd-k",
             Self::Properties => "cmd-d",
+            Self::Save => "cmd-s",
+            Self::SaveAs => "cmd-shift-s",
+            Self::Undo => "cmd-z",
+            Self::Redo => "cmd-shift-z",
             Self::PreviousView => "alt-left",
             Self::NextView => "alt-right",
             // Acrobat's Shift+Ctrl+Plus, which is this key with shift held.
@@ -219,7 +227,7 @@ impl MenuCommand {
             | Self::ReadMode
             | Self::OpenRecent
             | Self::CloseOtherTabs
-            | Self::SaveAs
+            | Self::Revert
             | Self::CombineFiles
             | Self::CreateFromFiles
             | Self::CreateFromFile
@@ -231,8 +239,6 @@ impl MenuCommand {
             | Self::SaveAsOther
             | Self::SplitDocument
             | Self::Export(_)
-            | Self::Undo
-            | Self::Redo
             | Self::SelectAll
             | Self::DeselectAll
             | Self::TakeSnapshot
@@ -403,13 +409,7 @@ mod tests {
     /// it would report a milestone rather than do anything.
     #[test]
     fn commands_that_wait_for_a_later_milestone_ship_unbound() {
-        for command in [
-            MenuCommand::SaveAs,
-            MenuCommand::Undo,
-            MenuCommand::Redo,
-            MenuCommand::NewWindow,
-            MenuCommand::LineWeights,
-        ] {
+        for command in [MenuCommand::NewWindow, MenuCommand::LineWeights] {
             assert_eq!(command.default_keystroke(), None, "{}", command.id());
         }
     }

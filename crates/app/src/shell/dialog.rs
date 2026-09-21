@@ -38,6 +38,8 @@ pub(in crate::shell) enum ShellDialog {
     Properties,
     LayerProperties,
     BookmarkTitle,
+    UnsavedChanges,
+    Recover,
 }
 
 impl ShellDialog {
@@ -50,6 +52,8 @@ impl ShellDialog {
             Self::Properties => "Document Properties",
             Self::LayerProperties => "Layer Properties",
             Self::BookmarkTitle => "Bookmark Title",
+            Self::UnsavedChanges => "Unsaved Changes",
+            Self::Recover => "Recover Unsaved Changes",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -157,6 +161,12 @@ pub(in crate::shell) fn accessible(
             cx,
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
+        ShellDialog::UnsavedChanges => super::chrome::file_dialogs::accessible_unsaved(
+            frame.unsaved_dialog().expect("unsaved dialog has state"),
+        ),
+        ShellDialog::Recover => super::chrome::file_dialogs::accessible_recover(
+            frame.recover_dialog().expect("recover dialog has state"),
+        ),
         ShellDialog::BookmarkTitle => super::chrome::bookmark_dialog::accessible(
             frame
                 .bookmark_title_dialog()
@@ -263,6 +273,20 @@ pub(in crate::shell) fn render_dialog(
             frame
                 .properties_dialog()
                 .expect("properties dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::UnsavedChanges => super::chrome::file_dialogs::render_unsaved(
+            frame.unsaved_dialog().expect("unsaved dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::Recover => super::chrome::file_dialogs::render_recover(
+            frame.recover_dialog().expect("recover dialog has state"),
             focused,
             theme,
             cx,

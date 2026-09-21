@@ -87,7 +87,7 @@ impl ShellFrame {
             );
         }
         if visibility.tab_bar {
-            root = root.child(self.accessible_tabs());
+            root = root.child(self.accessible_tabs(cx));
         }
         if let Some(job) = &self.export.export_job {
             let can_cancel = job.phase.load() == ExportPhaseValue::Running;
@@ -189,39 +189,60 @@ impl ShellFrame {
     }
 
     pub(super) fn accessible_global_bar(&self, cx: &App) -> A11yElement {
-        A11yElement::new("global-bar", Role::Toolbar, "Global Bar")
-            .child(
-                A11yElement::new("main-menu-button", Role::Button, "Main Menu")
-                    .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Main)))
-                    .with_activation(Activation::ToggleMainMenu),
-            )
-            .child(
-                A11yElement::new("convert-button", Role::Button, "Convert")
-                    .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Convert)))
-                    .with_activation(Activation::ToggleConvertMenu),
-            )
-            .child(
-                self.tool_search
-                    .search_input
-                    .read(cx)
-                    .accessible("Search Tools Or Document", TextField::Search),
-            )
+        let mut bar = A11yElement::new("global-bar", Role::Toolbar, "Global Bar").child(
+            A11yElement::new("main-menu-button", Role::Button, "Main Menu")
+                .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Main)))
+                .with_activation(Activation::ToggleMainMenu),
+        );
+        for (id, _glyph, command, availability) in self.global_file_buttons(cx) {
+            let name = match command {
+                super::MenuCommand::Save => "Save",
+                super::MenuCommand::SaveAs => "Save As",
+                super::MenuCommand::Undo => "Undo",
+                _ => "Redo",
+            };
+            let button = A11yElement::new(id, Role::Button, name)
+                .with_state(A11yState::enabled(availability.is_enabled()))
+                .with_activation(Activation::MainMenu(command));
+            bar = bar.child(match availability.reason() {
+                Some(reason) => button.with_description(reason),
+                None => button,
+            });
+        }
+        bar.child(
+            A11yElement::new("convert-button", Role::Button, "Convert")
+                .with_state(A11yState::toggled(self.menus.showing(MenuPanel::Convert)))
+                .with_activation(Activation::ToggleConvertMenu),
+        )
+        .child(
+            self.tool_search
+                .search_input
+                .read(cx)
+                .accessible("Search Tools Or Document", TextField::Search),
+        )
     }
 
-    pub(super) fn accessible_tabs(&self) -> A11yElement {
+    pub(super) fn accessible_tabs(&self, cx: &App) -> A11yElement {
         A11yElement::new("tab-bar", Role::TabList, "Open Documents").with_children(
             self.tabs
                 .tabs()
                 .iter()
                 .enumerate()
                 .map(|(index, tab)| {
-                    A11yElement::new(
+                    let element = A11yElement::new(
                         tab_element_id(&tab.source),
                         Role::Tab,
                         tab.title().to_owned(),
                     )
                     .with_state(A11yState::selected(self.tabs.active_index() == Some(index)))
-                    .with_activation(Activation::ActivateTab(index))
+                    .with_activation(Activation::ActivateTab(index));
+                    // The dot the tab draws is punctuation to a screen
+                    // reader; the state is said in words.
+                    if Self::is_dirty(&tab.canvas, cx) {
+                        element.with_description("Unsaved changes")
+                    } else {
+                        element
+                    }
                 })
                 .collect(),
         )
@@ -386,7 +407,7 @@ impl ShellFrame {
             }
             Activation::ActivateTab(index) => self.activate(index, cx),
             Activation::TabCommand(command, index) => {
-                if let Err(error) = self.run_tab_command(command, index, cx) {
+                if let Err(error) = self.request_tab_command(command, index, window, cx) {
                     eprintln!("onionskin: {error}");
                 }
             }
@@ -443,6 +464,7 @@ impl ShellFrame {
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Properties(action) => self.run_properties_action(action, window, cx),
             Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
+            Activation::File(action) => self.run_file_action(action, window, cx),
             Activation::Focus(field) => {
                 if let Some(input) = self.text_field(field) {
                     window.focus(&input.read(cx).focus_handle(cx));

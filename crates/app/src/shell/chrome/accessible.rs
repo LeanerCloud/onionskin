@@ -105,6 +105,7 @@ pub(in crate::shell) enum Activation {
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
     BookmarkTitle(crate::shell::chrome::bookmark_dialog::BookmarkTitleAction),
+    File(crate::shell::chrome::file_dialogs::FileAction),
     Focus(TextField),
     /// Put the shell's focus back on the chrome, which is where the
     /// window-wide page keys are dispatched from.
