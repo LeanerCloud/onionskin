@@ -585,6 +585,9 @@ what-does-not-transfer section demands:
   guarantee M3 switches on carries the two CI steps the guarantee section
   requires. M3 also owes the tagged structure tree its reader, its maintenance
   hook and its invariant (decision 12), three milestones before guarantee 8.
+  Status (2026-09-22): landed. No M3 row is left planned; the partial ones
+  name their gaps, and P16's manual Mac print run is the one acceptance item
+  outstanding (docs/evidence/m3-closeout.md).
 - **M4 - Print everywhere.** `print` gains the CUPS and Windows backends,
   plus booklet and poster/tile imposition over M3's sheet model. The MCP
   server that M4 used to carry moved to post-1.0 (decided 2026-09-21): it is

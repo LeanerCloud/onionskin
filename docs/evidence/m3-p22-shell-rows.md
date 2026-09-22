@@ -518,3 +518,90 @@ or mirroring one canvas. That meant splitting the session out of the canvas.
 - The platform behaviour of Minimize, Zoom and Bring All to Front is
   GPUI's; the tests run on its test platform, where those calls do not
   change anything visible.
+
+## Copy or move pages between open documents (P21's row, closed here)
+
+**What the user gets.**
+
+- The Organize Pages grid has **Copy To Document…** and **Move To
+  Document…**. Each asks which open document, listing every other tab that
+  is not a window on the same session.
+- Choosing a document puts the chosen pages at its end. A copy is one undo
+  step in the target. A move is one step in the target and one in the
+  source, so the source's Undo puts its pages back whatever the target
+  does.
+- The notice bar says "Copied 1 page to hello.pdf" or "Moved 3 pages to
+  report.pdf".
+- **Refused, with the reason on the notice bar:**
+  - copying out of an encrypted document (reading it out);
+  - moving out of one that may not be edited;
+  - sending into one that may not be edited;
+  - moving every page out, which `tools-organize` checks before anything
+    changes.
+- With one document open, the dialog says there is nowhere to send the
+  pages.
+- Acrobat drags thumbnails between documents' panes; this asks which
+  document instead, which a keyboard and a screen reader reach too. Where
+  in the target the pages go (its end) is stated in the row.
+
+**How it is built.** `chrome::send_pages` (the chooser's state, rows and
+render) and `tabs/send_pages.rs`. The frame's half borrows the two sessions
+(two different `SharedFile`s, so both can be borrowed at once) and calls
+`tools-organize`'s `copy_pages_between` or `move_pages_between` through the
+grid's feature-gated `organize_edits::send_pages`. `handle_change` on both
+canvases then follows the new page counts.
+
+**Runs.** `chrome::send_pages::tests`, 2 tests: the dialog's words, and the
+rows and done messages. Window tests `tabs::tests::send_pages`, 3:
+
+- Copy To from `two-page.pdf`'s grid to `hello.pdf` leaves them at 2 and 2
+  pages, with one "Insert Pages" undo in the target and none in the source.
+- Move To leaves them at 1 and 2.
+- With one document open, the dialog says there is nowhere to send.
+
+## Summarize comments in the print output (P17's row, closed here)
+
+**What the user gets.**
+
+- The Print dialog's Advanced group has **Summarize Comments**. With it on,
+  the comment summary prints after the document.
+  - **Save as PDF** writes one PDF: the document's sheets, then the
+    summary's, imposed with the job's paper, sizing and pages per sheet.
+    Every summary page prints in order: the page range, odd/even and
+    reverse are about the document, not its summary.
+  - **A macOS printer** gets the summary as a second job with those
+    settings.
+- A document with no comments has nothing to summarize: the dialog says "The
+  comments cannot be summarized: …" and nothing is printed.
+- In a build without the comment tools the checkbox is locked with that
+  reason.
+
+**How it is built.**
+
+- `print::appendix`: `print_with_appendix(doc, job, appendix_bytes)` prints
+  both, and `appendix_job(job)` is the same job with every page and nothing
+  filtered.
+- `concatenate(first, second)` joins two PDFs with
+  `core::pages::insert_pages_from` in one edit. The joined bytes are the
+  session's preview: the first file plus one section.
+- The summary is `tools-comment`'s Comments Only layout, made through the
+  frame's existing `summarize`.
+
+**Runs.**
+
+- `cargo test -p onionskin-print --test file_backend`, 3 new tests:
+  - `an_appendix_prints_every_page_after_the_documents_sheets`: pages 1–3,
+    odd, reversed, is 2 sheets, and a 2-page summary adds 2 more, all on
+    Letter.
+  - `an_appendix_is_imposed_with_the_jobs_layout`: 3 pages 2-up plus 2 pages
+    2-up is 3 sheets.
+  - `concatenating_keeps_both_documents_pages_in_order`: sizes 100, 200 and
+    300 in order; bytes that are not a PDF are refused.
+- Window tests in `tabs::tests::print`:
+  - `summarize_comments_prints_the_summary_after_the_document`: two pages
+    and a sticky note print to more than 2 sheets;
+  - `summarize_comments_with_nothing_to_summarize_says_so`: the dialog's
+    error, and no file.
+
+**Not claimed.** The macOS second job is compiled only on macOS; its run is
+part of P16's pending manual acceptance.

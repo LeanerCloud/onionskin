@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 160 planned / 27 partial / 80 out-of-scope. 136 implemented.**
+**403 rows: 158 planned / 27 partial / 80 out-of-scope. 138 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -374,7 +374,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Extract pages | implemented | M3 | Named in the plan's `tools-organize` list. The Organize grid's Extract… and the thumbnails menu's Extract Pages write the chosen pages to a new file and open it. Evidence: docs/evidence/m3-p11-organize.md, docs/evidence/m3-p21-organize-grid.md. |
 | Split (by page count, file size, or top-level bookmarks) | implemented | M3 | File > Split Document… offers all three; output is all-or-nothing and refused on encrypted documents. Split runs on the UI thread. Evidence: docs/evidence/m3-p12-combine-split.md. |
 | Replace pages | implemented | M3 | Named in the plan's `tools-organize` list. Replace… takes the chosen pages' places from the first pages of a chosen file, as one undo step. Evidence: docs/evidence/m3-p11-organize.md, docs/evidence/m3-p21-organize-grid.md. |
-| Copy or move pages between open documents | planned | M3 | The copy and move functions exist in `tools-organize`, and the Organize grid (P21) reorders within a document; dragging between two documents' grids is not built. Evidence: docs/evidence/m3-p11-organize.md. (judgment) |
+| Copy or move pages between open documents | implemented | M3 | Organize Pages' Copy To Document and Move To Document send the chosen pages to the end of another open document, each change one undo step in its own document; a move out of every page, an encrypted source or a target that may not be edited is refused. Acrobat drags between documents' panes; this asks which document instead, which the keyboard reaches too. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Renumber pages / page labels | partial | M3 | A "number pages from 1" command is live; label styles, prefixes and ranges wait for P21's dialogs. Evidence: docs/evidence/m3-p11-organize.md. |
 | Crop pages (from Organize) | planned | M5 | Same command as Edit a PDF > Crop; delivered with `tools-edit`. |
 | Page thumbnail zoom and multi-select in the Organize grid | implemented | M3 | (judgment) Edit > Organize Pages: click, Shift-click, Cmd/Ctrl-click and marquee selection, drag to reorder as one undo step, Smaller and Larger thumbnails shared with the pane. Evidence: docs/evidence/m3-p21-organize-grid.md. |
@@ -646,7 +646,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Orientation (auto, portrait, landscape) | implemented | M3 | (judgment) Auto turns the sheet to suit the first page and the pages per sheet. Shared with Page Setup. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | implemented | M3 | (judgment) Printed annotations are each one's normal appearance where `/F` says it prints. Form Fields Only prints no markups, since M3 authors no fields. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Page Setup dialog (paper size, orientation) | implemented | M3 | (judgment) File > Page Setup (Cmd/Ctrl+Shift+P): Letter, Legal or A4 and the orientation, held in one place the Print dialog reads too, so the two cannot disagree. Evidence: docs/evidence/m3-p17-print-dialog.md. |
-| Summarize comments in the print output | planned | M3 | (judgment) Not in the P17 dialog: Summarize Comments writes the summary as its own PDF, which prints like any document. Appending it to a print job as extra sheets needs the job to span two documents, which `crates/print` does not do yet. |
+| Summarize comments in the print output | implemented | M3 | The Print dialog's Summarize Comments prints the comment summary after the document: to a file as one PDF, the summary on sheets of its own with the job's paper and layout and every summary page in order; to a macOS printer as a second job. A document with no comments says so and prints nothing. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Print as image | implemented | M3 | Named in the plan's print-parity list. The only way an encrypted document prints, under the encrypted-source rule: the dialog locks it on and says why. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Print to file / print to PDF | implemented | M3 | The Printer list's Save as PDF writes the composed sheets to a file. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Advanced Print Setup dialog | implemented | M3 | The supported subset only: Print as Image in the dialog's Advanced group, and Print to File as the Save as PDF destination. Output, Marks and Bleeds, PostScript options and print colour management are absent, not disabled, and stay out of scope. Evidence: docs/evidence/m3-p17-print-dialog.md. |
