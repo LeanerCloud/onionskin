@@ -4,12 +4,14 @@
 //! backend (P16) and the CUPS and Windows ones (M4) sit behind the same
 //! trait. GPUI-free; `app` supplies only the dialog.
 
+pub mod appendix;
 pub mod backend;
 pub mod impose;
 pub mod job;
 pub mod ranges;
 pub mod sheet;
 
+pub use appendix::{appendix_job, concatenate, print_with_appendix};
 pub use backend::file::{print_to_file, FileBackend};
 #[cfg(target_os = "macos")]
 pub use backend::macos::{printers, MacBackend};

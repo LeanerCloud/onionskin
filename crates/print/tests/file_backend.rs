@@ -10,7 +10,8 @@ use onionskin_core::{
 use onionskin_corpus_testing::{encrypted_fixture, seed};
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
 use onionskin_print::{
-    print_to_file, Duplex, NUp, Orientation, PaperSize, PrintError, PrintJob, Sizing,
+    print_to_file, Duplex, NUp, Orientation, PageSelection, PaperSize, PrintError, PrintJob,
+    Sizing, Subset,
 };
 
 const NOW: i64 = 1_758_000_000;
@@ -760,4 +761,69 @@ fn the_refusal_tells_the_reader_how_to_print_anyway() {
         message.contains("M6") && message.contains("Print as Image"),
         "{message}"
     );
+}
+
+// ----- Summarize Comments: an appendix printed after the document -----
+
+/// A three-page document printing only page 2 as odd pages in reverse, and
+/// a two-page summary: the summary's pages all print, in order, after the
+/// document's one sheet, on the job's paper.
+#[test]
+fn an_appendix_prints_every_page_after_the_documents_sheets() {
+    let mut document = marked(&[(612.0, 792.0, 0); 3]);
+    let summary = marked(&[(300.0, 400.0, 0), (400.0, 300.0, 0)]);
+    let job = PrintJob {
+        selection: PageSelection {
+            ranges: vec![(0, 2)],
+            subset: Subset::Odd,
+            reverse: true,
+        },
+        ..letter()
+    };
+    let printed =
+        onionskin_print::print_with_appendix(&mut document, &job, summary.bytes().as_ref())
+            .expect("prints");
+    let sheets = read_sheets(&printed);
+    // Pages 3 and 1 of the document, then both summary pages.
+    assert_eq!(sheets.len(), 4);
+    assert!(sheets.iter().all(|sheet| sheet.size == (612.0, 792.0)));
+    let appendix_job = onionskin_print::appendix_job(&job);
+    assert_eq!(appendix_job.selection, PageSelection::all());
+    assert_eq!(appendix_job.paper, job.paper);
+}
+
+/// Pages per sheet apply to the appendix too: three document pages two up
+/// are two sheets, and a two-page summary two up is one more.
+#[test]
+fn an_appendix_is_imposed_with_the_jobs_layout() {
+    let mut document = marked(&[(612.0, 792.0, 0); 3]);
+    let summary = marked(&[(612.0, 792.0, 0); 2]);
+    let job = PrintJob {
+        n_up: NUp {
+            per_sheet: 2,
+            ..NUp::default()
+        },
+        ..letter()
+    };
+    let printed =
+        onionskin_print::print_with_appendix(&mut document, &job, summary.bytes().as_ref())
+            .expect("prints");
+    assert_eq!(read_sheets(&printed).len(), 3);
+}
+
+#[test]
+fn concatenating_keeps_both_documents_pages_in_order() {
+    let first = marked(&[(100.0, 100.0, 0)]);
+    let second = marked(&[(200.0, 200.0, 0), (300.0, 300.0, 0)]);
+    let joined = onionskin_print::concatenate(
+        first.bytes().as_ref().clone(),
+        second.bytes().as_ref().clone(),
+    )
+    .expect("joins");
+    let sizes: Vec<_> = read_sheets(&joined)
+        .iter()
+        .map(|sheet| sheet.size)
+        .collect();
+    assert_eq!(sizes, [(100.0, 100.0), (200.0, 200.0), (300.0, 300.0)]);
+    assert!(onionskin_print::concatenate(b"not a pdf".to_vec(), Vec::new()).is_err());
 }
