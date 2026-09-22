@@ -97,6 +97,8 @@ pub(in crate::shell) enum PrintAction {
     Comments(AnnotationFilter),
     Duplex(Duplex),
     PrintAsImage,
+    /// Summarize Comments: the comment summary prints after the document.
+    SummarizeComments,
     PreviewPrevious,
     PreviewNext,
     Print,
@@ -116,6 +118,7 @@ pub(in crate::shell) struct PrintSettings {
     pub(in crate::shell) comments: AnnotationFilter,
     pub(in crate::shell) duplex: Duplex,
     pub(in crate::shell) print_as_image: bool,
+    pub(in crate::shell) summarize_comments: bool,
 }
 
 impl Default for PrintSettings {
@@ -131,6 +134,7 @@ impl Default for PrintSettings {
             comments: AnnotationFilter::DocumentAndMarkups,
             duplex: Duplex::Off,
             print_as_image: false,
+            summarize_comments: false,
         }
     }
 }
@@ -168,6 +172,9 @@ pub(in crate::shell) fn apply(settings: &mut PrintSettings, action: PrintAction)
         PrintAction::Comments(comments) => settings.comments = comments,
         PrintAction::Duplex(duplex) => settings.duplex = duplex,
         PrintAction::PrintAsImage => settings.print_as_image = !settings.print_as_image,
+        PrintAction::SummarizeComments => {
+            settings.summarize_comments = !settings.summarize_comments;
+        }
         PrintAction::Orientation(_)
         | PrintAction::Paper(_)
         | PrintAction::PreviewPrevious

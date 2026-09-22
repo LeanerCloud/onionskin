@@ -16,6 +16,7 @@ mod outline;
 mod page_grid;
 mod print;
 mod properties;
+mod send_pages;
 mod skins;
 mod stamps;
 mod summary;
@@ -1729,6 +1730,8 @@ mod tests {
     mod properties;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod reduce;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-organize"))]
+    mod send_pages;
     #[cfg(feature = "shell-test-support")]
     mod skins;
     #[cfg(all(

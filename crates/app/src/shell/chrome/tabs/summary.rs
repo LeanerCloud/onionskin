@@ -103,7 +103,7 @@ fn summary_name(source: &Path) -> String {
 }
 
 #[cfg(feature = "tools-comment")]
-fn summarize(
+pub(super) fn summarize(
     document: &mut onionskin_core::Document,
     choice: SummaryChoice,
 ) -> Result<Vec<u8>, String> {
@@ -119,6 +119,9 @@ fn summarize(
 }
 
 #[cfg(not(feature = "tools-comment"))]
-fn summarize(_: &mut onionskin_core::Document, _: SummaryChoice) -> Result<Vec<u8>, String> {
+pub(super) fn summarize(
+    _: &mut onionskin_core::Document,
+    _: SummaryChoice,
+) -> Result<Vec<u8>, String> {
     Err("The comment tools plugin is not installed".to_owned())
 }

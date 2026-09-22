@@ -329,3 +329,84 @@ fn an_encrypted_document_prints_as_images_and_the_box_says_why(cx: &mut TestAppC
     let printed = onionskin_cos::Document::open_path(&output).expect("printed as images");
     assert!(!printed.is_encrypted());
 }
+
+/// Print one page of `window`'s document to a file with Summarize Comments
+/// on, and read back how many sheets came out, or the dialog's error.
+#[cfg(feature = "tools-comment")]
+fn print_summarized(
+    dir: &tempfile::TempDir,
+    window: gpui::WindowHandle<ShellFrame>,
+    cx: &mut TestAppContext,
+) -> Result<usize, String> {
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::SummarizeComments, cx);
+    act(window, PrintAction::Print, cx);
+    let output = dir.path().join("summarized.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let error = window
+        .update(cx, |frame, _, _| {
+            frame.print_dialog().and_then(|state| state.error.clone())
+        })
+        .unwrap();
+    match error {
+        Some(error) => Err(error),
+        None => Ok(onionskin_cos::Document::open_path(&output)
+            .expect("printed")
+            .page_count()
+            .expect("pages") as usize),
+    }
+}
+
+/// Summarize Comments puts the comment summary's pages after the
+/// document's: two document sheets and at least one of the summary.
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn summarize_comments_prints_the_summary_after_the_document(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_over("two-page.pdf", cx);
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().unwrap().clone();
+            canvas.update(cx, |canvas, cx| {
+                {
+                    let mut document = canvas.model.document_mut();
+                    let page = document.structure().unwrap().page(0).unwrap().objref;
+                    document
+                        .edit_annotations("Sticky Note", |tx, structure| {
+                            let mut note = onionskin_core::Annotation::new(
+                                onionskin_core::Subtype::Text,
+                                onionskin_core::Rect::new(50.0, 50.0, 70.0, 70.0),
+                            );
+                            note.contents = Some("Check the totals".to_owned());
+                            onionskin_core::add_annotation(tx, structure, page, &note, 0)
+                        })
+                        .expect("adds a note");
+                }
+                canvas.handle_change(Ok(true), cx);
+            });
+        })
+        .unwrap();
+    let sheets = print_summarized(&dir, window, cx).expect("prints");
+    assert!(sheets > 2, "the summary follows the two pages: {sheets}");
+}
+
+/// A document with no comments has no summary to print: the dialog says so
+/// and prints nothing, rather than printing without what was asked for.
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn summarize_comments_with_nothing_to_summarize_says_so(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_over("two-page.pdf", cx);
+    let error = print_summarized(&dir, window, cx).expect_err("refused");
+    assert!(
+        error.starts_with("The comments cannot be summarized"),
+        "{error}"
+    );
+    assert!(!dir.path().join("summarized.pdf").exists());
+}

@@ -185,15 +185,29 @@ fn groups(state: &PrintDialogState, setup: PageSetup) -> Vec<Group> {
     groups.push(Group {
         id: "print-advanced",
         label: "Advanced",
-        controls: vec![Control::Check {
-            label: "Print as Image",
-            checked: settings.print_as_image || state.printed.image_only.is_some(),
-            action: PrintAction::PrintAsImage,
-            locked: state.printed.image_only,
-        }],
+        controls: vec![
+            Control::Check {
+                label: "Print as Image",
+                checked: settings.print_as_image || state.printed.image_only.is_some(),
+                action: PrintAction::PrintAsImage,
+                locked: state.printed.image_only,
+            },
+            Control::Check {
+                label: "Summarize Comments",
+                checked: settings.summarize_comments,
+                action: PrintAction::SummarizeComments,
+                locked: SUMMARY_LOCK,
+            },
+        ],
     });
     groups
 }
+
+/// Why Summarize Comments cannot be chosen in this build, if it cannot.
+#[cfg(feature = "tools-comment")]
+const SUMMARY_LOCK: Option<&str> = None;
+#[cfg(not(feature = "tools-comment"))]
+const SUMMARY_LOCK: Option<&str> = Some("The comment tools plugin is not installed");
 
 fn choices<T: Copy + PartialEq>(
     id: &'static str,

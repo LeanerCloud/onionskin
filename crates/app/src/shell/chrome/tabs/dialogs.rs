@@ -100,6 +100,7 @@ impl ShellFrame {
         self.bookmark_title = None;
         self.print = None;
         self.advanced_search = None;
+        self.send_pages = None;
         self.unsaved = None;
         self.recover = None;
         cx.notify();

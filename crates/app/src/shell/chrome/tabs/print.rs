@@ -15,6 +15,7 @@ use super::ShellFrame;
 use crate::shell::chrome::print_dialog::{
     apply, apply_setup, Destination, PageSetup, PrintAction, PrintDialogState, Printed,
 };
+use crate::shell::chrome::summary_dialog::SummaryChoice;
 use crate::shell::dialog::ShellDialog;
 
 /// What an encrypted document's Print as Image box says, locked on.
@@ -158,15 +159,25 @@ impl ShellFrame {
         let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
             return;
         };
+        let summarize = self
+            .print
+            .as_ref()
+            .is_some_and(|state| state.settings.summarize_comments);
         let printed = canvas.update(cx, |canvas, _| {
-            onionskin_print::print_to_file(&mut canvas.model.document_mut(), job)
+            let mut document = canvas.model.document_mut();
+            if !summarize {
+                return onionskin_print::print_to_file(&mut document, job)
+                    .map_err(|error| error.to_string());
+            }
+            let summary = super::summary::summarize(&mut document, SummaryChoice::CommentsOnly)
+                .map_err(|reason| format!("The comments cannot be summarized: {reason}"))?;
+            onionskin_print::print_with_appendix(&mut document, job, &summary)
+                .map_err(|error| error.to_string())
         });
-        let written = printed
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| {
-                super::create::write_replacing(output, &bytes)
-                    .map_err(|error| format!("{} was not written: {error}", output.display()))
-            });
+        let written = printed.and_then(|bytes| {
+            super::create::write_replacing(output, &bytes)
+                .map_err(|error| format!("{} was not written: {error}", output.display()))
+        });
         self.finish_print(
             written.map(|()| format!("Printed to {}", output.display())),
             cx,
@@ -175,23 +186,40 @@ impl ShellFrame {
 
     #[cfg(target_os = "macos")]
     fn print_to_printer(&mut self, job: PrintJob, cx: &mut Context<Self>) {
-        use onionskin_print::{impose, MacBackend, PrintBackend};
-
         let Some(tab) = self.tabs.active() else {
             return;
         };
         let (canvas, title) = (tab.canvas.clone(), tab.title().to_owned());
+        let summarize = self
+            .print
+            .as_ref()
+            .is_some_and(|state| state.settings.summarize_comments);
         let sent = canvas.update(cx, |canvas, _| {
-            let bytes = canvas
-                .model
-                .document_mut()
+            let mut document = canvas.model.document_mut();
+            // The summary is made first, so a document it refuses prints
+            // nothing rather than half of what was asked.
+            let summary = if summarize {
+                Some(
+                    super::summary::summarize(&mut document, SummaryChoice::CommentsOnly)
+                        .map_err(|reason| format!("The comments cannot be summarized: {reason}"))?,
+                )
+            } else {
+                None
+            };
+            let bytes = document
                 .preview_bytes(job.comments)
                 .map_err(|error| error.to_string())?;
-            let mut backend = MacBackend::new(bytes, title).map_err(|error| error.to_string())?;
-            let sizes = backend.page_sizes().map_err(|error| error.to_string())?;
-            backend
-                .print(&job, &impose(&job, &sizes))
-                .map_err(|error| error.to_string())
+            send_to_printer(bytes, title.clone(), &job)?;
+            // A second job: the summary's pages after the document's.
+            if let Some(summary) = summary {
+                let appendix = onionskin_print::appendix_job(&job);
+                send_to_printer(
+                    std::sync::Arc::new(summary),
+                    format!("{title} - Comments"),
+                    &appendix,
+                )?;
+            }
+            Ok(())
         });
         let printer = job.printer.clone().unwrap_or_default();
         self.finish_print(sent.map(|()| format!("Sent to {printer}")), cx);
@@ -250,6 +278,22 @@ fn platform_printers() -> Vec<String> {
 #[cfg(not(target_os = "macos"))]
 fn platform_printers() -> Vec<String> {
     Vec::new()
+}
+
+/// One job to the printer through PDFKit.
+#[cfg(target_os = "macos")]
+fn send_to_printer(
+    bytes: std::sync::Arc<Vec<u8>>,
+    title: String,
+    job: &PrintJob,
+) -> Result<(), String> {
+    use onionskin_print::{impose, MacBackend, PrintBackend};
+
+    let mut backend = MacBackend::new(bytes, title).map_err(|error| error.to_string())?;
+    let sizes = backend.page_sizes().map_err(|error| error.to_string())?;
+    backend
+        .print(job, &impose(job, &sizes))
+        .map_err(|error| error.to_string())
 }
 
 /// `report.pdf` printed is `report (printed).pdf`.

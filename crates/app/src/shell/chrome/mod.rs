@@ -13,6 +13,7 @@ pub(in crate::shell) mod print_dialog;
 pub(in crate::shell) mod properties_dialog;
 mod quick_actions;
 mod rail;
+pub(in crate::shell) mod send_pages;
 mod side_panel;
 pub(in crate::shell) mod split_dialog;
 pub(in crate::shell) mod stamps_dialog;

@@ -64,6 +64,8 @@ impl ShellFrame {
             OrganizeAction::InsertFromFile | OrganizeAction::Replace | OrganizeAction::Extract => {
                 self.prompt_for_page_file(action, cx)
             }
+            OrganizeAction::CopyTo => self.open_send_pages(false, _window, cx),
+            OrganizeAction::MoveTo => self.open_send_pages(true, _window, cx),
         }
         cx.notify();
     }
@@ -229,7 +231,7 @@ impl ShellFrame {
 
     /// The pages an edit is about: the grid's selection while it is open,
     /// the page on screen otherwise, as Acrobat's thumbnail menu does.
-    fn target_pages(&self, cx: &gpui::App) -> Vec<PageIndex> {
+    pub(super) fn target_pages(&self, cx: &gpui::App) -> Vec<PageIndex> {
         match &self.page_grid {
             Some(state) => state.selected(),
             None => self
@@ -466,7 +468,7 @@ fn extracted_name(source: &Path, pages: &[PageIndex]) -> String {
 
 /// The page edits, through `tools-organize` when it is built in, and a
 /// refusal naming it when it is not.
-mod organize_edits {
+pub(super) mod organize_edits {
     use std::path::Path;
 
     use onionskin_core::{Document, PageIndex};
@@ -545,6 +547,32 @@ mod organize_edits {
         path: &Path,
     ) -> Result<(), CommandError> {
         onionskin_tools_organize::extract_pages_to(doc, pages, path, false)
+    }
+
+    /// Copy `pages` of `source` to the end of `doc`, or move them there.
+    #[cfg(feature = "tools-organize")]
+    pub(in crate::shell) fn send_pages(
+        doc: &mut Document,
+        source: &mut Document,
+        pages: &[PageIndex],
+        moving: bool,
+    ) -> Result<(), CommandError> {
+        let at = doc.page_count();
+        if moving {
+            onionskin_tools_organize::move_pages_between(doc, source, pages, at)
+        } else {
+            onionskin_tools_organize::copy_pages_between(doc, source, Some(pages), at)
+        }
+    }
+
+    #[cfg(not(feature = "tools-organize"))]
+    pub(in crate::shell) fn send_pages(
+        _: &mut Document,
+        _: &mut Document,
+        _: &[PageIndex],
+        _: bool,
+    ) -> Result<(), CommandError> {
+        missing()
     }
 
     #[cfg(not(feature = "tools-organize"))]

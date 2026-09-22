@@ -430,6 +430,7 @@ impl ShellFrame {
             Activation::ToggleStar(path) => self.toggle_star(&path, cx),
             Activation::ToggleToolShown(id) => self.toggle_tool_shown(id, cx),
             Activation::AdvancedSearch(action) => self.run_advanced_action(action, window, cx),
+            Activation::SendPages(index) => self.send_pages_to(index, window, cx),
             Activation::ChooseSearchResult(result) => {
                 self.choose_search_result(result, window, cx);
             }

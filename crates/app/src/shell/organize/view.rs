@@ -26,6 +26,9 @@ pub(in crate::shell) enum OrganizeAction {
     InsertFromFile,
     Extract,
     Replace,
+    /// Copy or move the chosen pages into another open document.
+    CopyTo,
+    MoveTo,
     Smaller,
     Larger,
     Close,
@@ -90,6 +93,18 @@ pub(in crate::shell) fn buttons(
             "organize-extract",
             "Extract…",
             OrganizeAction::Extract,
+            edits,
+        ),
+        button(
+            "organize-copy-to",
+            "Copy To Document…",
+            OrganizeAction::CopyTo,
+            edits,
+        ),
+        button(
+            "organize-move-to",
+            "Move To Document…",
+            OrganizeAction::MoveTo,
             edits,
         ),
         button(

@@ -51,6 +51,10 @@ pub(in crate::shell) enum ShellDialog {
     ManageTools,
     /// Edit > Advanced Search.
     AdvancedSearch,
+    /// Organize Pages' Copy To and Move To Document.
+    SendPages {
+        moving: bool,
+    },
 }
 
 impl ShellDialog {
@@ -72,6 +76,8 @@ impl ShellDialog {
             Self::PageProperties => "Page Properties",
             Self::ManageTools => "Manage Tools",
             Self::AdvancedSearch => "Advanced Search",
+            Self::SendPages { moving: true } => "Move Pages To",
+            Self::SendPages { moving: false } => "Copy Pages To",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -184,6 +190,11 @@ pub(in crate::shell) fn accessible(
         ),
         ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
         ShellDialog::PageProperties => row_labels(frame.page_property_rows()),
+        ShellDialog::SendPages { .. } => super::chrome::send_pages::accessible(
+            frame
+                .send_pages_dialog()
+                .expect("the send dialog has state"),
+        ),
         ShellDialog::AdvancedSearch => super::chrome::advanced_search::accessible(
             frame
                 .advanced_search_dialog()
@@ -369,6 +380,14 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::PageProperties => rows(frame.page_property_rows(), rects.clone())
             .text_color(theme.text)
             .into_any_element(),
+        ShellDialog::SendPages { .. } => super::chrome::send_pages::render(
+            frame
+                .send_pages_dialog()
+                .expect("the send dialog has state"),
+            theme,
+            cx,
+        )
+        .into_any_element(),
         ShellDialog::AdvancedSearch => super::chrome::advanced_search::render(
             frame
                 .advanced_search_dialog()

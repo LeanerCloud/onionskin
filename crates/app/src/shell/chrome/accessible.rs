@@ -103,6 +103,8 @@ pub(in crate::shell) enum Activation {
     QuickAction(QuickActionEntry),
     ToggleQuickActionCustomization,
     ToggleQuickActionVisibility(QuickAction),
+    /// Copy or move the grid's pages to the open document at this index.
+    SendPages(usize),
     /// A control in the Advanced Search dialog.
     AdvancedSearch(crate::shell::chrome::advanced_search::AdvancedAction),
     /// Manage Tools: show or hide this tool's rail button.
