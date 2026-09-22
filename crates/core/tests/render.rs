@@ -459,3 +459,81 @@ fn geometry_is_answered_for_a_page_an_edit_added_and_for_a_turned_one() {
     };
     assert_eq!(turned.rotate, 90, "the edited rotation, not the file's");
 }
+
+/// Two viewports over one session each get their own queue: a newer
+/// generation on one does not cancel the other's pages, which one shared
+/// queue would (View > New Window).
+#[test]
+fn a_second_view_has_its_own_queue() {
+    let mut document = Document::open_bytes(pages_pdf(2)).expect("document opens");
+    let mut view = document.new_render_view().expect("a view");
+    document
+        .request_render(request(0, 1.0, 5), None)
+        .expect("the primary queues");
+    // Generation 1 is older than the primary's 5; on its own queue it is
+    // the view's first generation and renders.
+    document
+        .request_render_in(&mut view, request(1, 1.0, 1), None)
+        .expect("the view queues");
+
+    let primary = collect(&mut document, 2);
+    assert!(primary.iter().any(
+        |response| matches!(response, RenderResponse::Raster { request, .. } if request.page == 0)
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut seen = Vec::new();
+    while !seen
+        .iter()
+        .any(|response| matches!(response, RenderResponse::Raster { .. }))
+    {
+        match document
+            .try_render_response_in(&mut view)
+            .expect("the view's worker lives")
+        {
+            Some(response) => seen.push(response),
+            None if Instant::now() < deadline => std::thread::yield_now(),
+            None => panic!("the view's raster never arrived"),
+        }
+    }
+    assert!(seen.iter().all(|response| response.request().page == 1));
+}
+
+/// An edit to the session reaches a view's worker before it draws again: a
+/// page rotated in the session measures turned through the view.
+#[test]
+fn an_edit_to_the_session_reaches_the_view() {
+    let mut document = Document::open_bytes(pages_pdf(1)).expect("document opens");
+    let mut view = document.new_render_view().expect("a view");
+    document
+        .edit_document("Rotate", |tx| {
+            onionskin_core::pages::rotate_pages(tx, &[0], 1)
+        })
+        .expect("rotates");
+    assert!(document
+        .request_page_geometry_in(&mut view, 0)
+        .expect("asks"));
+    assert!(
+        !document
+            .request_page_geometry_in(&mut view, 0)
+            .expect("asks again"),
+        "one request per page while it is pending"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let geometry = loop {
+        match document
+            .try_page_geometry_response_in(&mut view)
+            .expect("the view's worker lives")
+        {
+            Some(PageGeometryResponse::Ready(geometry)) => break geometry,
+            Some(PageGeometryResponse::Failed { error, .. }) => panic!("{error}"),
+            None if Instant::now() < deadline => std::thread::yield_now(),
+            None => panic!("timed out"),
+        }
+    };
+    let (width, height) = geometry.render_size;
+    assert!(
+        width > height,
+        "the rotation reached the view: {width}x{height}"
+    );
+    assert!(document.request_page_geometry_in(&mut view, 1).is_err());
+}

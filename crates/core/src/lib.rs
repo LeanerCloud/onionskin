@@ -84,7 +84,9 @@ pub use render::{
 pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection, TextSpan};
-pub use session::{Document, Error, ExportSnapshot, PageGeometryResponse, Result, SnapshotRequest};
+pub use session::{
+    Document, Error, ExportSnapshot, PageGeometryResponse, RenderView, Result, SnapshotRequest,
+};
 pub use signatures::SignatureField;
 pub use structure::{
     attach_annotation, check, read_structure, remove_page, remove_pages, reorder_pages, Element,

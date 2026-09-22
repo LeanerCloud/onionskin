@@ -7,6 +7,9 @@ use onionskin_content as content;
 use onionskin_cos::{BytesSource, Provenance};
 
 use crate::render::WorkerHandle;
+
+#[path = "render_view.rs"]
+mod render_view;
 use crate::search::{DocumentSearch, SearchUpdate};
 use crate::{
     attachments, layers, outline, signatures, Attachment, Layer, ObjRef, OutlineItem, PageGeometry,
@@ -14,6 +17,7 @@ use crate::{
     SearchOptions, SearchState, SearchWorkerError, Selection, SignatureField, ThumbnailRequest,
     ThumbnailResponse,
 };
+pub use render_view::RenderView;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -363,6 +367,9 @@ pub struct Document {
     /// When it trails the session, the next render-side call hands the worker
     /// the preview first, so what is drawn is what a save would write.
     worker_state: (u64, u64),
+    /// Bumped by every layer visibility change, so a second view's worker
+    /// knows to take the new map (see [`RenderView`]).
+    layer_epoch: u64,
 }
 
 impl Document {
@@ -409,6 +416,7 @@ impl Document {
             seen_epoch: 0,
             recovery: None,
             worker_state: (0, 0),
+            layer_epoch: 0,
         })
     }
 
@@ -1160,6 +1168,7 @@ impl Document {
         found.visible = visible;
         let overrides = layers::overrides(layers);
         self.render.set_layer_visibility(overrides)?;
+        self.layer_epoch += 1;
         Ok(true)
     }
 
@@ -1180,6 +1189,7 @@ impl Document {
         let overrides = layers::overrides(&initial);
         self.layers = Some(initial);
         self.render.set_layer_visibility(overrides)?;
+        self.layer_epoch += 1;
         Ok(true)
     }
 
