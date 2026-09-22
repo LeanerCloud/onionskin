@@ -827,3 +827,51 @@ fn concatenating_keeps_both_documents_pages_in_order() {
     assert_eq!(sizes, [(100.0, 100.0), (200.0, 200.0), (300.0, 300.0)]);
     assert!(onionskin_print::concatenate(b"not a pdf".to_vec(), Vec::new()).is_err());
 }
+
+// ----- Booklet and Poster (M4) ---------------------------------------
+
+/// Poster at 200%: four Letter tiles, each drawing the page clipped to its
+/// tile, so no tile shows past its own edge.
+#[test]
+fn a_poster_prints_one_clipped_tile_per_sheet() {
+    let mut document = marked(&[(612.0, 792.0, 0)]);
+    let job = PrintJob {
+        handling: onionskin_print::Handling::Poster(onionskin_print::Poster {
+            scale: 200,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let printed = print_to_file(&mut document, &job).expect("prints");
+    let sheets = read_sheets(&printed);
+    assert_eq!(sheets.len(), 4);
+    let doc = cos(&printed);
+    for index in 0..4 {
+        let page = doc.page(index).expect("a sheet");
+        let contents = doc
+            .resolve(page.dict.get(b"Contents").expect("contents"))
+            .expect("resolves");
+        let data = doc
+            .decode_stream(contents.as_stream().expect("a stream"))
+            .expect("decodes");
+        let text = String::from_utf8_lossy(&data).into_owned();
+        assert!(text.contains("0 0 612 792 re W n"), "sheet {index}: {text}");
+    }
+    assert!(sheets.iter().all(|sheet| sheet.drawn.len() == 1));
+}
+
+/// Booklet: eight pages print as four landscape sides of two pages each.
+#[test]
+fn a_booklet_prints_two_pages_to_each_landscape_side() {
+    let mut document = marked(&[(612.0, 792.0, 0); 8]);
+    let job = PrintJob {
+        handling: onionskin_print::Handling::Booklet(onionskin_print::Booklet::default()),
+        ..letter()
+    };
+    let sheets = read_sheets(&print_to_file(&mut document, &job).expect("prints"));
+    assert_eq!(sheets.len(), 4);
+    assert!(sheets
+        .iter()
+        .all(|sheet| sheet.size == (792.0, 612.0) && sheet.drawn.len() == 2));
+}

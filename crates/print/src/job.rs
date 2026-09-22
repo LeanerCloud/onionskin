@@ -184,6 +184,61 @@ impl Duplex {
     }
 }
 
+/// Page Sizing & Handling's other two buttons: the pages in a grid (Size and
+/// Multiple, which `sizing` and `n_up` describe), a booklet, or a poster.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Handling {
+    #[default]
+    Pages,
+    Booklet(Booklet),
+    Poster(Poster),
+}
+
+/// Booklet: pages two to a side, in the order that folds into a booklet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Booklet {
+    pub sides: BookletSides,
+    pub binding: Binding,
+}
+
+/// Acrobat's "Booklet subset".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BookletSides {
+    #[default]
+    BothSides,
+    FrontSideOnly,
+    BackSideOnly,
+}
+
+/// Which edge the booklet opens from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Binding {
+    #[default]
+    Left,
+    Right,
+}
+
+/// Poster: each page enlarged and split into tiles, one to a sheet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Poster {
+    /// Tile Scale, a percentage of the page's size.
+    pub scale: u16,
+    /// How much neighbouring tiles repeat, in points, for gluing.
+    pub overlap: f64,
+    /// Cut marks around each tile, in a margin they print in.
+    pub cut_marks: bool,
+}
+
+impl Default for Poster {
+    fn default() -> Self {
+        Poster {
+            scale: 200,
+            overlap: 18.0,
+            cut_marks: true,
+        }
+    }
+}
+
 /// Everything a print asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrintJob {
@@ -208,6 +263,8 @@ pub struct PrintJob {
     pub print_as_image: bool,
     /// The resolution Print as Image renders at.
     pub image_dpi: f32,
+    /// Size and Multiple, Booklet, or Poster.
+    pub handling: Handling,
 }
 
 impl Default for PrintJob {
@@ -225,6 +282,7 @@ impl Default for PrintJob {
             comments: AnnotationFilter::DocumentAndMarkups,
             print_as_image: false,
             image_dpi: 150.0,
+            handling: Handling::Pages,
         }
     }
 }

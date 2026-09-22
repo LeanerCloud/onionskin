@@ -6,8 +6,10 @@
 
 pub mod appendix;
 pub mod backend;
+pub mod booklet;
 pub mod impose;
 pub mod job;
+pub mod poster;
 pub mod ranges;
 pub mod sheet;
 
@@ -18,7 +20,8 @@ pub use backend::macos::{printers, MacBackend};
 pub use backend::{native_backend, PrintBackend, PrintError};
 pub use impose::{impose, PageSize};
 pub use job::{
-    Duplex, NUp, NUpOrder, Orientation, PageSelection, PaperSize, PrintJob, Sizing, Subset,
+    Binding, Booklet, BookletSides, Duplex, Handling, NUp, NUpOrder, Orientation, PageSelection,
+    PaperSize, Poster, PrintJob, Sizing, Subset,
 };
 pub use ranges::{parse_page_ranges, RangeError};
 pub use sheet::{Placement, Sheet};

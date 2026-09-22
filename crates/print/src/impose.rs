@@ -6,7 +6,7 @@
 //! backend has no hardware margins, and a platform backend that has them
 //! passes a smaller paper size rather than this module guessing.
 
-use crate::job::{NUpOrder, Orientation, PrintJob, Sizing};
+use crate::job::{Handling, NUpOrder, Orientation, PrintJob, Sizing};
 use crate::sheet::{Placement, Sheet};
 
 /// A page as displayed, `/Rotate` applied: its width and height in points.
@@ -14,6 +14,15 @@ pub type PageSize = (f64, f64);
 
 /// The sheets `job` prints from a document whose pages are `pages`.
 pub fn impose(job: &PrintJob, pages: &[PageSize]) -> Vec<Sheet> {
+    match job.handling {
+        Handling::Pages => impose_pages(job, pages),
+        Handling::Booklet(booklet) => crate::booklet::impose_booklet(job, booklet, pages),
+        Handling::Poster(poster) => crate::poster::impose_poster(job, poster, pages),
+    }
+}
+
+/// Size and Multiple: pages in a grid, one or more to a sheet.
+fn impose_pages(job: &PrintJob, pages: &[PageSize]) -> Vec<Sheet> {
     let selected: Vec<usize> = job
         .selection
         .pages(pages.len())
@@ -50,6 +59,7 @@ pub fn impose(job: &PrintJob, pages: &[PageSize]) -> Vec<Sheet> {
                 sheet.placements.push(Placement {
                     source: *page,
                     transform: place(pages[*page], origin, cell, job.sizing),
+                    clip: None,
                 });
                 if job.n_up.borders && per_sheet > 1 {
                     let footprint = sheet
@@ -103,7 +113,12 @@ fn cell_of(slot: usize, columns: usize, rows: usize, order: NUpOrder) -> (usize,
 
 /// The transform putting a page of `size` in the cell at `origin`, scaled by
 /// `sizing` and centred.
-fn place(size: PageSize, origin: (f64, f64), cell: (f64, f64), sizing: Sizing) -> [f64; 6] {
+pub(crate) fn place(
+    size: PageSize,
+    origin: (f64, f64),
+    cell: (f64, f64),
+    sizing: Sizing,
+) -> [f64; 6] {
     let fit = (cell.0 / size.0).min(cell.1 / size.1);
     let scale = match sizing {
         Sizing::Fit => fit,
@@ -313,10 +328,12 @@ mod tests {
                 Placement {
                     source: 3,
                     transform: [0.5, 0.0, 0.0, 0.5, 0.0, 0.0],
+                    clip: None,
                 },
                 Placement {
                     source: 0,
                     transform: [0.0, 0.5, -0.5, 0.0, 792.0, 0.0],
+                    clip: None,
                 },
             ],
             frames: Vec::new(),

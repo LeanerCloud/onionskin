@@ -298,8 +298,13 @@ fn write(
             let name = format!("P{slot}");
             let [a, b, c, d, e, f] = placement.transform;
             let [g, h, i, j, k, l] = drawing.inner;
+            // A poster tile's page is larger than the tile: clipped to it
+            // first, in sheet space, before the page's own transform.
+            let clip = placement.clip.map_or(String::new(), |[x0, y0, x1, y1]| {
+                format!("{x0} {y0} {} {} re W n ", x1 - x0, y1 - y0)
+            });
             content.push_str(&format!(
-                "q {a} {b} {c} {d} {e} {f} cm {g} {h} {i} {j} {k} {l} cm /{name} Do Q\n"
+                "q {clip}{a} {b} {c} {d} {e} {f} cm {g} {h} {i} {j} {k} {l} cm /{name} Do Q\n"
             ));
             xobjects.set(Name::new(&name), drawing.object.clone());
         }
