@@ -8,9 +8,14 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _,
 };
 use onionskin_core::AnnotationFilter;
-use onionskin_print::{Duplex, NUp, NUpOrder, Orientation, PaperSize, Sheet, Subset};
+use onionskin_print::{
+    Binding, BookletSides, Duplex, NUp, NUpOrder, Orientation, PaperSize, Sheet, Subset,
+};
 
-use super::{PageSetup, PagesChoice, PrintAction, PrintDialogState, SizingChoice};
+use super::{
+    HandlingChoice, PageSetup, PagesChoice, PrintAction, PrintDialogState, PrintSettings,
+    SizingChoice,
+};
 use crate::a11y::State as A11yState;
 use crate::shell::chrome::accessible::{Activation, Element, TextField};
 use crate::shell::chrome::combine_dialog::button;
@@ -94,6 +99,33 @@ const SUBSETS: [(Subset, &str); 3] = [
     (Subset::Even, "Even pages only"),
 ];
 
+const HANDLINGS: [(HandlingChoice, &str); 3] = [
+    (HandlingChoice::Pages, "Size and Multiple"),
+    (HandlingChoice::Booklet, "Booklet"),
+    (HandlingChoice::Poster, "Poster"),
+];
+
+const BOOKLET_SIDES: [(BookletSides, &str); 3] = [
+    (BookletSides::BothSides, "Both sides"),
+    (BookletSides::FrontSideOnly, "Front side only"),
+    (BookletSides::BackSideOnly, "Back side only"),
+];
+
+const BINDINGS: [(Binding, &str); 2] = [(Binding::Left, "Left"), (Binding::Right, "Right")];
+
+const TILE_SCALES: [(u16, &str); 4] = [
+    (150, "Tile scale 150%"),
+    (200, "Tile scale 200%"),
+    (300, "Tile scale 300%"),
+    (400, "Tile scale 400%"),
+];
+
+const OVERLAPS: [(u16, &str); 3] = [
+    (0, "No overlap"),
+    (18, "Overlap 0.25 in"),
+    (36, "Overlap 0.5 in"),
+];
+
 const SIZES: [(SizingChoice, &str); 4] = [
     (SizingChoice::Fit, "Fit"),
     (SizingChoice::ActualSize, "Actual size"),
@@ -164,9 +196,15 @@ fn groups(state: &PrintDialogState, setup: PageSetup) -> Vec<Group> {
             ],
         },
         pages_group(state),
-        sizing_group(state),
-        n_up_group(settings.n_up),
+        choices(
+            "print-handling",
+            "Page Sizing & Handling",
+            &HANDLINGS,
+            settings.handling,
+            PrintAction::Handling,
+        ),
     ];
+    groups.extend(handling_groups(state));
     groups.extend(setup_groups(setup));
     groups.push(choices(
         "print-comments",
@@ -287,6 +325,54 @@ fn sizing_group(state: &PrintDialogState) -> Group {
         id: "print-sizing",
         label: "Page Sizing & Handling",
         controls,
+    }
+}
+
+/// The groups the chosen handling asks for: size and pages per sheet, or
+/// the booklet's sides and binding, or the poster's tiles.
+fn handling_groups(state: &PrintDialogState) -> Vec<Group> {
+    let settings: &PrintSettings = &state.settings;
+    match settings.handling {
+        HandlingChoice::Pages => vec![sizing_group(state), n_up_group(settings.n_up)],
+        HandlingChoice::Booklet => vec![
+            choices(
+                "print-booklet-sides",
+                "Booklet subset",
+                &BOOKLET_SIDES,
+                settings.booklet.sides,
+                PrintAction::BookletSides,
+            ),
+            choices(
+                "print-binding",
+                "Binding",
+                &BINDINGS,
+                settings.booklet.binding,
+                PrintAction::Binding,
+            ),
+        ],
+        HandlingChoice::Poster => {
+            let poster = settings.poster;
+            let mut tiles = choices(
+                "print-poster",
+                "Poster",
+                &TILE_SCALES,
+                poster.scale,
+                PrintAction::TileScale,
+            );
+            tiles
+                .controls
+                .extend(OVERLAPS.iter().map(|(points, label)| {
+                    radio(
+                        *label,
+                        poster.overlap == f64::from(*points),
+                        PrintAction::Overlap(*points),
+                    )
+                }));
+            tiles
+                .controls
+                .push(check("Cut marks", poster.cut_marks, PrintAction::CutMarks));
+            vec![tiles]
+        }
     }
 }
 
@@ -578,7 +664,7 @@ fn draw_preview(
         .border_color(theme.hover);
     for placement in &sheet.placements {
         let (page_width, page_height) = state.printed.page_sizes[placement.source];
-        let [x0, y0, x1, y1] = placement.footprint(page_width, page_height);
+        let [x0, y0, x1, y1] = placement.visible(page_width, page_height);
         paper = paper.child(
             div()
                 .absolute()

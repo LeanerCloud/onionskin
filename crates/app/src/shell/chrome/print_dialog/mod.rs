@@ -20,8 +20,8 @@ pub(in crate::shell) use view::{accessible, accessible_setup, render, render_set
 use gpui::{AppContext as _, Context, Entity};
 use onionskin_core::AnnotationFilter;
 use onionskin_print::{
-    impose, parse_page_ranges, Duplex, NUp, NUpOrder, Orientation, PageSelection, PageSize,
-    PaperSize, PrintJob, Sheet, Sizing, Subset,
+    impose, parse_page_ranges, Binding, Booklet, BookletSides, Duplex, Handling, NUp, NUpOrder,
+    Orientation, PageSelection, PageSize, PaperSize, Poster, PrintJob, Sheet, Sizing, Subset,
 };
 
 use super::accessible::TextField;
@@ -45,6 +45,15 @@ pub(in crate::shell) enum SizingChoice {
     ActualSize,
     ShrinkOversized,
     Custom,
+}
+
+/// Page Sizing & Handling: the pages in a grid, a booklet, or a poster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::shell) enum HandlingChoice {
+    #[default]
+    Pages,
+    Booklet,
+    Poster,
 }
 
 /// Where the sheets go.
@@ -99,6 +108,14 @@ pub(in crate::shell) enum PrintAction {
     PrintAsImage,
     /// Summarize Comments: the comment summary prints after the document.
     SummarizeComments,
+    Handling(HandlingChoice),
+    BookletSides(BookletSides),
+    Binding(Binding),
+    /// Poster's Tile Scale, a percentage.
+    TileScale(u16),
+    /// Poster's Overlap, in points.
+    Overlap(u16),
+    CutMarks,
     PreviewPrevious,
     PreviewNext,
     Print,
@@ -119,6 +136,9 @@ pub(in crate::shell) struct PrintSettings {
     pub(in crate::shell) duplex: Duplex,
     pub(in crate::shell) print_as_image: bool,
     pub(in crate::shell) summarize_comments: bool,
+    pub(in crate::shell) handling: HandlingChoice,
+    pub(in crate::shell) booklet: Booklet,
+    pub(in crate::shell) poster: Poster,
 }
 
 impl Default for PrintSettings {
@@ -135,6 +155,9 @@ impl Default for PrintSettings {
             duplex: Duplex::Off,
             print_as_image: false,
             summarize_comments: false,
+            handling: HandlingChoice::Pages,
+            booklet: Booklet::default(),
+            poster: Poster::default(),
         }
     }
 }
@@ -175,6 +198,12 @@ pub(in crate::shell) fn apply(settings: &mut PrintSettings, action: PrintAction)
         PrintAction::SummarizeComments => {
             settings.summarize_comments = !settings.summarize_comments;
         }
+        PrintAction::Handling(handling) => settings.handling = handling,
+        PrintAction::BookletSides(sides) => settings.booklet.sides = sides,
+        PrintAction::Binding(binding) => settings.booklet.binding = binding,
+        PrintAction::TileScale(scale) => settings.poster.scale = scale,
+        PrintAction::Overlap(points) => settings.poster.overlap = f64::from(points),
+        PrintAction::CutMarks => settings.poster.cut_marks = !settings.poster.cut_marks,
         PrintAction::Orientation(_)
         | PrintAction::Paper(_)
         | PrintAction::PreviewPrevious
@@ -237,6 +266,11 @@ pub(in crate::shell) fn job(
         comments: settings.comments,
         print_as_image: settings.print_as_image || printed.image_only.is_some(),
         image_dpi: 150.0,
+        handling: match settings.handling {
+            HandlingChoice::Pages => Handling::Pages,
+            HandlingChoice::Booklet => Handling::Booklet(settings.booklet),
+            HandlingChoice::Poster => Handling::Poster(settings.poster),
+        },
     })
 }
 

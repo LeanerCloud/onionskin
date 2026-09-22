@@ -205,3 +205,46 @@ fn destinations_are_named_as_the_dialog_lists_them() {
     assert_eq!(Destination::SaveAsPdf.label(), "Save as PDF");
     assert_eq!(Destination::Printer("Office".into()).label(), "Office");
 }
+
+/// Booklet and Poster (M4) reach the job, and their sheets are what the
+/// preview shows: ten pages fold into three sheets, six sides; a poster at
+/// 200% with no overlap or marks is four tiles a page.
+#[test]
+fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
+    let mut settings = PrintSettings::default();
+    for action in [
+        PrintAction::Handling(HandlingChoice::Booklet),
+        PrintAction::Binding(Binding::Right),
+        PrintAction::BookletSides(BookletSides::BothSides),
+    ] {
+        assert!(apply(&mut settings, action));
+    }
+    let job = job_for(&settings, &typed()).expect("a job");
+    assert_eq!(
+        job.handling,
+        Handling::Booklet(Booklet {
+            sides: BookletSides::BothSides,
+            binding: Binding::Right,
+        })
+    );
+    assert_eq!(sheets(&job, &printed(10)).len(), 6);
+
+    for action in [
+        PrintAction::Handling(HandlingChoice::Poster),
+        PrintAction::TileScale(200),
+        PrintAction::Overlap(0),
+        PrintAction::CutMarks,
+    ] {
+        assert!(apply(&mut settings, action));
+    }
+    let job = job_for(&settings, &typed()).expect("a job");
+    assert_eq!(
+        job.handling,
+        Handling::Poster(Poster {
+            scale: 200,
+            overlap: 0.0,
+            cut_marks: false,
+        })
+    );
+    assert_eq!(sheets(&job, &printed(2)).len(), 8);
+}

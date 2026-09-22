@@ -410,3 +410,40 @@ fn summarize_comments_with_nothing_to_summarize_says_so(cx: &mut TestAppContext)
     );
     assert!(!dir.path().join("summarized.pdf").exists());
 }
+
+/// Booklet from the dialog: its own controls replace Size and Multiple, and
+/// the printed file is the booklet's landscape sides.
+#[gpui::test]
+fn choosing_booklet_shows_its_controls_and_prints_its_sides(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_over("two-page.pdf", cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let ids = print_ids(frame, window, cx);
+            assert!(ids.iter().any(|id| id.contains("print-booklet-sides")));
+            assert!(ids.iter().any(|id| id.contains("print-binding")));
+            assert!(!ids.iter().any(|id| id.contains("print-n-up")), "{ids:?}");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    let output = dir.path().join("booklet.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let printed = onionskin_cos::Document::open_path(&output).expect("printed");
+    // Two pages pad to four: one sheet, front and back.
+    assert_eq!(printed.page_count().expect("pages"), 2);
+    let [x0, y0, x1, y1] = printed.page(0).expect("a side").media_box.expect("a box");
+    assert!(x1 - x0 > y1 - y0, "a booklet side is landscape");
+}

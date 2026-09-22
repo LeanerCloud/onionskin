@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 158 planned / 27 partial / 80 out-of-scope. 138 implemented.**
+**403 rows: 156 planned / 27 partial / 80 out-of-scope. 140 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -640,8 +640,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Page range and subset (all, current, custom, odd/even) | implemented | M3 | All, Current page, typed ranges like 2-4, 7 (a backwards range is refused, not reversed), odd or even, and Reverse pages. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | implemented | M3 | Fit fits to the paper, not a printer's printable area. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Multiple pages per sheet (N-up) | implemented | M3 | 1, 2, 4, 6, 9 or 16 a sheet, Acrobat's four orders, and page borders. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
-| Booklet | planned | M4 | Moved from M3 by the M3 plan's ruling B: pure imposition over P15's sheet model, added at M4 without reopening it. |
-| Poster / tile | planned | M4 | Moved from M3 by the M3 plan's ruling B: the only placement that clips, so the clip lands with it at M4 on P15's sheet model. |
+| Booklet | implemented | M4 | Page Sizing & Handling's Booklet: saddle-stitch order two pages to a landscape side, padded with blanks to a multiple of four; both sides, front only or back only; left or right binding. Evidence: docs/evidence/m4-booklet-poster.md. |
+| Poster / tile | implemented | M4 | Page Sizing & Handling's Poster: each page enlarged by the tile scale and split into tiles, one to a sheet, clipped to the tile, with overlap and cut marks. Acrobat's tile labels (page and tile number printed in the margin) are not drawn. Evidence: docs/evidence/m4-booklet-poster.md. |
 | Print on both sides / duplex | partial | M3 | (judgment) Sheet order (a blank back for an odd count) is imposition and is in every printed file; long- or short-edge flipping reaches a printer through the macOS backend's `PMSetDuplex`, which has not yet been run on a Mac (docs/evidence/m3-p16-macos-print.md). Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Orientation (auto, portrait, landscape) | implemented | M3 | (judgment) Auto turns the sheet to suit the first page and the pages per sheet. Shared with Page Setup. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Comments & Forms (Document, Document and Markups, Document and Stamps, Form Fields Only) | implemented | M3 | (judgment) Printed annotations are each one's normal appearance where `/F` says it prints. Form Fields Only prints no markups, since M3 authors no fields. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
