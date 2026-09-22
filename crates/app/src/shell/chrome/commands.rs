@@ -108,6 +108,9 @@ impl MenuCommand {
             MenuCommand::ReadMode,
             MenuCommand::FullScreen,
             MenuCommand::NewWindow,
+            MenuCommand::Minimize,
+            MenuCommand::ZoomWindow,
+            MenuCommand::BringAllToFront,
             MenuCommand::About,
             MenuCommand::KeyboardShortcuts,
         ]);
@@ -208,6 +211,9 @@ impl MenuCommand {
             Self::ReadMode => "view.read-mode",
             Self::FullScreen => "view.full-screen",
             Self::NewWindow => "window.new",
+            Self::Minimize => "window.minimize",
+            Self::ZoomWindow => "window.zoom",
+            Self::BringAllToFront => "window.bring-all-to-front",
             Self::About => "help.about",
             Self::KeyboardShortcuts => "help.keyboard-shortcuts",
         }
@@ -231,6 +237,8 @@ impl MenuCommand {
             Self::PageSetup => "cmd-shift-p",
             // Acrobat's Ctrl+Shift+H, and free on macOS inside an app.
             Self::AutoScroll => "cmd-shift-h",
+            // The platform's own Minimize key.
+            Self::Minimize => "cmd-m",
             Self::Save => "cmd-s",
             Self::SaveAs => "cmd-shift-s",
             Self::Undo => "cmd-z",
@@ -303,6 +311,8 @@ impl MenuCommand {
             | Self::ThemeLight
             | Self::ThemeDark
             | Self::NewWindow
+            | Self::ZoomWindow
+            | Self::BringAllToFront
             | Self::About
             | Self::KeyboardShortcuts => return None,
         })
@@ -452,9 +462,7 @@ mod tests {
     /// it would report a milestone rather than do anything.
     #[test]
     fn commands_that_wait_for_a_later_milestone_ship_unbound() {
-        for command in [MenuCommand::NewWindow, MenuCommand::LineWeights] {
-            assert_eq!(command.default_keystroke(), None, "{}", command.id());
-        }
+        assert_eq!(MenuCommand::LineWeights.default_keystroke(), None);
     }
 
     /// The registry owns the keystroke of the commands it registers, so the

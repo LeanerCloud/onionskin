@@ -51,8 +51,8 @@ mod preferences_dialog;
 mod share;
 mod skins;
 
-const WINDOW_WIDTH: f32 = 1100.0;
-const WINDOW_HEIGHT: f32 = 860.0;
+pub(in crate::shell) const WINDOW_WIDTH: f32 = 1100.0;
+pub(in crate::shell) const WINDOW_HEIGHT: f32 = 860.0;
 const SCROLL_LINE_HEIGHT: f32 = 30.0;
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -121,6 +121,19 @@ pub(in crate::shell) struct ShellSettings {
 }
 
 impl ShellSettings {
+    /// What a second window starts with: the same files, preferences and
+    /// keys, without the notices the first window already showed.
+    pub(in crate::shell) fn for_new_window(&self) -> Self {
+        Self {
+            paths: self.paths.clone(),
+            preferences: self.preferences.clone(),
+            recents: self.recents.clone(),
+            registry: self.registry,
+            bindings: self.bindings.clone(),
+            notices: Vec::new(),
+        }
+    }
+
     /// What every tab's tools are configured with. The author is the name
     /// the Commenting preference gives, or `None` until the user chose one:
     /// a tool never falls back to the operating system's account name.
@@ -276,14 +289,18 @@ pub struct Canvas {
     theme: ThemeTokens,
     /// The field a just-placed comment is typed into, while it is open.
     inline: Option<inline_text::InlineText>,
+    /// The session stamp last passed on to other windows on this document.
+    told_peers: (u64, u64),
 }
 
 impl Canvas {
     fn new(model: CanvasModel, theme: ThemeTokens) -> Self {
+        let told_peers = model.session_stamp();
         Self {
             model,
             polling: false,
             snapshot_generation: 0,
+            told_peers,
             theme,
             inline: None,
         }
@@ -352,6 +369,23 @@ impl Canvas {
             }
         }
         self.copy_pending_snapshot(cx, recorded_error);
+        self.tell_peers(cx);
+    }
+
+    /// An edit made here, or a save, has to reach every other window on the
+    /// same document: they draw from the same session, but only redraw when
+    /// told. Deferred, because the other windows are updated from outside
+    /// this canvas's own update.
+    fn tell_peers(&mut self, cx: &mut Context<Self>) {
+        let stamp = self.model.session_stamp();
+        if stamp == self.told_peers || self.model.other_windows() == 0 {
+            self.told_peers = stamp;
+            return;
+        }
+        self.told_peers = stamp;
+        let file = self.model.shared_file();
+        let origin = cx.entity_id();
+        cx.defer(move |cx| notify_peers(&file, origin, stamp, cx));
     }
 
     /// The snapshot tool raises a request rather than holding a render
@@ -697,6 +731,34 @@ impl Canvas {
     }
 }
 
+/// Every other canvas on the session `file`, in any window: follow the
+/// session to `stamp` and redraw.
+fn notify_peers(
+    file: &canvas::SharedFile,
+    origin: gpui::EntityId,
+    stamp: (u64, u64),
+    cx: &mut App,
+) {
+    for handle in cx.windows() {
+        let Some(frame) = handle.downcast::<ShellFrame>() else {
+            continue;
+        };
+        let _ = frame.update(cx, |frame, _window, cx| {
+            for canvas in frame.canvases_on(file, cx) {
+                if canvas.entity_id() == origin {
+                    continue;
+                }
+                canvas.update(cx, |canvas, cx| {
+                    canvas.told_peers = stamp;
+                    canvas.handle_change(Ok(true), cx);
+                    cx.notify();
+                });
+            }
+            cx.notify();
+        });
+    }
+}
+
 impl Render for Canvas {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drive_auto_scroll(window, cx);
@@ -835,7 +897,7 @@ where
         model.configure_tools(&environment);
         settings
             .notices
-            .extend(repair_notice(path, model.provenance()));
+            .extend(repair_notice(path, &model.provenance()));
         if let Err(error) = apply_page_display(model, &settings.preferences) {
             settings.notices.push(format!(
                 "{} opened at the default view: {error}",

@@ -89,7 +89,7 @@ fn reduce_file_size_writes_a_smaller_copy_and_says_history_is_discarded(cx: &mut
             let model = &canvas.read(cx).model;
             assert_eq!(
                 model.path(),
-                Some(path.as_path()),
+                Some(path.clone()),
                 "the tab stays on the original"
             );
             assert!(!model.history_facts().dirty);

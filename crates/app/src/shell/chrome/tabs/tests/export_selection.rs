@@ -13,7 +13,7 @@ fn selected(cx: &mut TestAppContext) -> (gpui::WindowHandle<ShellFrame>, String)
         .update(cx, |frame, _window, cx| {
             let canvas = frame.active_canvas().unwrap().clone();
             canvas.update(cx, |canvas, _| {
-                let document = canvas.model.document_mut();
+                let mut document = canvas.model.document_mut();
                 let page = document.page_text(0).expect("reads").clone();
                 let (text, spans) = onionskin_core::textselect::styled_text(&page);
                 document

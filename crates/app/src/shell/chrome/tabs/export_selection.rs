@@ -30,7 +30,7 @@ impl ShellFrame {
             return;
         };
         let canvas = tab.canvas.read(cx);
-        let Some(selection) = canvas.model.text_selection().cloned() else {
+        let Some(selection) = canvas.model.text_selection() else {
             return;
         };
         if let Some(refusal) = canvas.model.read_out_refusal() {

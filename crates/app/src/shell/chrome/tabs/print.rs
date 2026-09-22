@@ -36,7 +36,7 @@ impl ShellFrame {
         };
         let printed = canvas.update(cx, |canvas, _| {
             let current_page = canvas.model.viewport().current_page();
-            let document = canvas.model.document_mut();
+            let mut document = canvas.model.document_mut();
             let image_only = document.read_out_refusal().map(|_| IMAGE_ONLY);
             (0..document.page_count())
                 .map(|page| {
@@ -159,7 +159,7 @@ impl ShellFrame {
             return;
         };
         let printed = canvas.update(cx, |canvas, _| {
-            onionskin_print::print_to_file(canvas.model.document_mut(), job)
+            onionskin_print::print_to_file(&mut canvas.model.document_mut(), job)
         });
         let written = printed
             .map_err(|error| error.to_string())

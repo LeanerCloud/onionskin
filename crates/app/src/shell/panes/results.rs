@@ -137,9 +137,9 @@ pub(super) fn accessible(
     };
     let search = canvas.read(cx).model.search();
     let found = search.len();
-    let rows = rows(search);
+    let rows = rows(&search);
     let capped = found > rows.len();
-    described(&summary(search), rows, capped)
+    described(&summary(&search), rows, capped)
 }
 
 /// The description, given the header, the rows and whether the find had more
@@ -180,9 +180,9 @@ pub(super) fn render(
         return empty_message(super::NO_DOCUMENT, theme).into_any_element();
     };
     let search = canvas.read(cx).model.search();
-    let header = summary(search);
+    let header = summary(&search);
     let found = search.len();
-    let rows = rows(search);
+    let rows = rows(&search);
     let capped = found > rows.len();
 
     let mut body = list("search-result-rows").child(

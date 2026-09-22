@@ -65,7 +65,6 @@ impl ShellFrame {
             .read(cx)
             .model
             .path()
-            .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("Untitled.pdf"));
         let directory = current
             .parent()
@@ -95,7 +94,7 @@ impl ShellFrame {
             return;
         };
         let message = canvas.update(cx, |canvas, _| {
-            reduce_document(canvas.model.document_mut(), path)
+            reduce_document(&mut canvas.model.document_mut(), path)
         });
         self.notices.push(match message {
             Ok(message) | Err(message) => message,
@@ -149,11 +148,7 @@ impl ShellFrame {
     /// The active document's file, when it has one on disk.
     fn active_saved_path(&self, cx: &gpui::App) -> Option<std::path::PathBuf> {
         let canvas = self.active_canvas_entity()?;
-        canvas
-            .read(cx)
-            .model
-            .path()
-            .map(std::path::Path::to_path_buf)
+        canvas.read(cx).model.path()
     }
 
     pub(super) fn undo_active(&mut self, cx: &mut Context<Self>) {
@@ -201,7 +196,7 @@ impl ShellFrame {
             return;
         };
         let origin = canvas.entity_id();
-        let current = canvas.read(cx).model.path().map(Path::to_path_buf);
+        let current = canvas.read(cx).model.path();
         let directory = current
             .as_deref()
             .and_then(Path::parent)
@@ -262,6 +257,13 @@ impl ShellFrame {
         canvas.read(cx).model.history_facts().dirty
     }
 
+    /// Whether closing the tab holding `canvas` would lose unsaved changes:
+    /// it is dirty and no other window shows the document. Closing one of
+    /// two windows on a document loses nothing; the other still has it.
+    pub(super) fn close_loses_changes(canvas: &Entity<Canvas>, cx: &gpui::App) -> bool {
+        Self::is_dirty(canvas, cx) && canvas.read(cx).model.other_windows() == 0
+    }
+
     /// Before a close: the documents it would lose unsaved changes in. When
     /// there are any, the question is asked and `true` returned, and the close
     /// waits for the answer.
@@ -280,7 +282,7 @@ impl ShellFrame {
                 PendingClose::Others(kept) => tab.canvas.entity_id() != kept,
                 PendingClose::All => true,
             })
-            .filter(|tab| Self::is_dirty(&tab.canvas, cx))
+            .filter(|tab| Self::close_loses_changes(&tab.canvas, cx))
             .map(|tab| (tab.canvas.entity_id(), tab.title().to_owned()))
             .collect();
         if unsaved.is_empty() {

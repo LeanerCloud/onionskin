@@ -109,7 +109,7 @@ fn check_criterion(
         return CriteriaOutcome::NotUsed;
     };
     canvas.update(cx, |canvas, _| {
-        let document = canvas.model.document_mut();
+        let mut document = canvas.model.document_mut();
         let read = document
             .info()
             .and_then(|info| document.xmp().map(|xmp| (info, xmp)));

@@ -35,21 +35,22 @@ pub struct RecoveryOffer {
 
 impl CanvasModel {
     pub fn history_facts(&self) -> HistoryFacts {
-        let history = self.document.edit().history();
+        let file = self.document.borrow();
+        let history = file.edit().history();
         HistoryFacts {
             undo: history.undo_label(),
             redo: history.redo_label(),
-            dirty: self.document.is_dirty(),
-            has_path: self.document.path().is_some(),
+            dirty: file.is_dirty(),
+            has_path: file.path().is_some(),
         }
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.document.path()
+    pub fn path(&self) -> Option<PathBuf> {
+        self.document.borrow().path().map(Path::to_path_buf)
     }
 
     pub fn undo(&mut self) -> Result<bool, CanvasError> {
-        let undone = self.document.document_mut().undo()?;
+        let undone = self.document.borrow_mut().document_mut().undo()?;
         if undone {
             self.relayout_after_edit()?;
         }
@@ -57,7 +58,7 @@ impl CanvasModel {
     }
 
     pub fn redo(&mut self) -> Result<bool, CanvasError> {
-        let redone = self.document.document_mut().redo()?;
+        let redone = self.document.borrow_mut().document_mut().redo()?;
         if redone {
             self.relayout_after_edit()?;
         }
@@ -66,13 +67,13 @@ impl CanvasModel {
 
     /// Write the edits to the file the document came from.
     pub fn save(&mut self) -> Result<(), CanvasError> {
-        self.document.save()?;
+        self.document.borrow_mut().save()?;
         self.relayout_after_edit()
     }
 
     /// Write the document to `path`, which it then belongs to.
     pub fn save_as(&mut self, path: &Path) -> Result<(), CanvasError> {
-        self.document.save_as(path)?;
+        self.document.borrow_mut().save_as(path)?;
         self.relayout_after_edit()
     }
 
@@ -82,6 +83,7 @@ impl CanvasModel {
     pub fn revert(&mut self) -> Result<(), CanvasError> {
         let path = self
             .document
+            .borrow_mut()
             .path()
             .ok_or(CanvasError::Core(onionskin_core::Error::NoPath))?
             .to_path_buf();
@@ -90,7 +92,7 @@ impl CanvasModel {
         if let Some(store) = recovery.clone() {
             reopened.set_recovery(store);
         }
-        let old = std::mem::replace(&mut self.document, reopened);
+        let old = std::mem::replace(&mut *self.document.borrow_mut(), reopened);
         // Nothing unsaved is worth keeping now, so the recovery goes too.
         old.close()?;
         self.relayout_after_edit()
@@ -98,41 +100,41 @@ impl CanvasModel {
 
     /// Every generation of the file, described, for the skins panel.
     pub fn generation_details(&self) -> Result<Vec<onionskin_core::GenerationDetail>, CanvasError> {
-        Ok(self.document.generation_details()?)
+        Ok(self.document.borrow_mut().generation_details()?)
     }
 
     /// Bumped whenever the bytes under the document change: a save, a
     /// revert, a roll back. What the skins panel re-reads on.
     pub fn byte_generation(&self) -> u64 {
-        self.document.byte_generation()
+        self.document.borrow_mut().byte_generation()
     }
 
     /// Keep generation `keep` and everything older, truncating the file.
     pub fn roll_back_to(&mut self, keep: usize) -> Result<(), CanvasError> {
-        self.document.roll_back_to(keep)?;
+        self.document.borrow_mut().roll_back_to(keep)?;
         self.relayout_after_edit()
     }
 
     /// The file as it was when generation `index` ended: the bytes an older
     /// version is, to open as a copy.
     pub fn version_bytes(&self, index: usize) -> Result<Vec<u8>, CanvasError> {
-        let generations = self.document.generations()?;
+        let generations = self.document.borrow_mut().generations()?;
         let generation = generations.get(index).ok_or(CanvasError::Core(
             onionskin_core::Error::RevertRefused(onionskin_core::RevertRefusal::NoSuchGeneration),
         ))?;
-        Ok(self.document.bytes()[..generation.end as usize].to_vec())
+        Ok(self.document.borrow_mut().bytes()[..generation.end as usize].to_vec())
     }
 
     /// Turn autosave on, writing into `store`.
     pub fn set_recovery(&mut self, store: RecoveryStore) {
         self.recovery = Some(store.clone());
-        self.document.set_recovery(store);
+        self.document.borrow_mut().set_recovery(store);
     }
 
     /// Write the recovery file for the current edits, or remove it when
     /// there are none. A no-op without a store or a path.
     pub fn autosave(&self) -> Result<Option<PathBuf>, CanvasError> {
-        Ok(self.document.autosave()?)
+        Ok(self.document.borrow_mut().autosave()?)
     }
 
     /// The recovery file for this document, if one applies to the file as it
@@ -140,10 +142,11 @@ impl CanvasModel {
     /// after it was written, is removed: replaying it would apply its edits
     /// twice.
     pub fn recovery_offer(&self) -> Result<Option<RecoveryOffer>, CanvasError> {
-        let (Some(store), Some(path)) = (&self.recovery, self.document.path()) else {
+        let (Some(store), Some(path)) = (&self.recovery, self.path()) else {
             return Ok(None);
         };
-        let original = self.document.bytes();
+        let path = path.as_path();
+        let original = self.document.borrow().bytes();
         match store.recover(path, &original).map_err(core_recovery)? {
             Recovered::Nothing => Ok(None),
             Recovered::Stale => {
@@ -162,13 +165,16 @@ impl CanvasModel {
 
     /// Replay an offered recovery as one undoable edit.
     pub fn accept_recovery(&mut self, offer: &RecoveryOffer) -> Result<(), CanvasError> {
-        self.document.document_mut().replay_recovery(&offer.bytes)?;
+        self.document
+            .borrow_mut()
+            .document_mut()
+            .replay_recovery(&offer.bytes)?;
         self.relayout_after_edit()
     }
 
     /// Decline an offered recovery: its file goes.
     pub fn discard_recovery(&self) -> Result<(), CanvasError> {
-        if let (Some(store), Some(path)) = (&self.recovery, self.document.path()) {
+        if let (Some(store), Some(path)) = (&self.recovery, self.document.borrow_mut().path()) {
             store.discard(path).map_err(core_recovery)?;
         }
         Ok(())

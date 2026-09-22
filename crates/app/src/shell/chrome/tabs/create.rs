@@ -143,7 +143,7 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) {
         let summary = canvas.update(cx, |canvas, _| {
-            extract_into(canvas.model.document_mut(), folder)
+            extract_into(&mut canvas.model.document_mut(), folder)
         });
         self.notices.push(summary);
         cx.notify();

@@ -33,7 +33,8 @@ impl CanvasModel {
     pub fn run_edit_verb(&mut self, verb: EditVerb, pasted: Option<&str>) -> Option<String> {
         self.edit_verb_availability(verb).ok()?;
         let index = self.active_tool?;
-        let document = self.document.document_mut();
+        let mut file = self.document.borrow_mut();
+        let document = file.document_mut();
         let viewport = &mut self.viewport;
         let tool = self.registry.tool_mut(index)?;
         tool.edit(

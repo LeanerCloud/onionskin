@@ -200,7 +200,7 @@ impl ShellFrame {
             return;
         };
         let outcome = canvas.update(cx, |canvas, _| {
-            split_document(canvas.model.document_mut(), choice)
+            split_document(&mut canvas.model.document_mut(), choice)
         });
         match outcome {
             Ok(summary) => {

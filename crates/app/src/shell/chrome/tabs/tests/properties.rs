@@ -64,7 +64,7 @@ fn with_document<T>(
     read: impl FnOnce(&mut Document) -> T,
 ) -> T {
     let canvas = frame.tabs.active().expect("a tab").canvas.clone();
-    canvas.update(cx, |canvas, _| read(canvas.model.document_mut()))
+    canvas.update(cx, |canvas, _| read(&mut canvas.model.document_mut()))
 }
 
 #[gpui::test]

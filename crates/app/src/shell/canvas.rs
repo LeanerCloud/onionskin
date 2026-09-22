@@ -417,10 +417,19 @@ enum ToolPointerPhase {
     Up,
 }
 
+/// A document and its file, shared by every window showing it (View > New
+/// Window): one session, one overlay, one undo stack.
+pub type SharedFile = std::rc::Rc<std::cell::RefCell<onionskin_core::DocumentFile>>;
+
 pub struct CanvasModel {
     /// The document with its file: what Save, Save As, Revert and autosave
     /// act through. Tools and commands are handed only the `Document` inside.
-    document: onionskin_core::DocumentFile,
+    /// Shared with any other window on the same document; borrowed for each
+    /// use and never held across a call that could borrow it again.
+    document: SharedFile,
+    /// This window's own render queue when it is not the document's first
+    /// window. `None` renders through the session's primary queue.
+    view: Option<onionskin_core::RenderView>,
     /// Where autosave writes, kept so a Revert can hand it to the document
     /// it reopens.
     recovery: Option<onionskin_core::RecoveryStore>,
@@ -485,6 +494,9 @@ pub struct CanvasModel {
     page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
     /// View > Page Display > Automatically Scroll, while it runs.
     auto_scroll: Option<onionskin_core::AutoScroll>,
+    /// `(byte generation, edit epoch)` the layout was last built for, so an
+    /// edit made in another window on the same document is followed.
+    laid_out_at: (u64, u64),
 }
 
 pub(super) struct PreparedExport {
@@ -497,35 +509,73 @@ pub(super) struct PreparedExport {
 
 impl CanvasModel {
     pub fn new(
-        mut document: Document,
+        document: Document,
+        registry: PluginRegistry,
+        size: ViewSize,
+    ) -> Result<Self, CanvasError> {
+        let file = std::rc::Rc::new(std::cell::RefCell::new(
+            onionskin_core::DocumentFile::from_document(document),
+        ));
+        Self::over(file, None, registry, size)
+    }
+
+    /// View > New Window: another viewport over this window's session. It
+    /// edits the same document with the same undo stack, and draws through a
+    /// render queue of its own so the two windows scroll and zoom apart.
+    pub fn new_window(
+        &self,
+        registry: PluginRegistry,
+        size: ViewSize,
+    ) -> Result<Self, CanvasError> {
+        let view = self.document.borrow_mut().new_render_view()?;
+        let mut model = Self::over(self.shared_file(), Some(view), registry, size)?;
+        model.recovery = self.recovery.clone();
+        Ok(model)
+    }
+
+    /// How many other windows show this window's document.
+    pub fn other_windows(&self) -> usize {
+        std::rc::Rc::strong_count(&self.document) - 1
+    }
+
+    fn over(
+        document: SharedFile,
+        view: Option<onionskin_core::RenderView>,
         mut registry: PluginRegistry,
         size: ViewSize,
     ) -> Result<Self, CanvasError> {
-        if document.page_count() == 0 {
-            return Err(CanvasError::EmptyDocument);
-        }
-        let page_count = document.page_count();
-        let first = document.page_geometry(0)?.clone();
-        let mut viewport = Viewport::new(page_count, size, PAGE_GAP)?;
-        viewport.measure_page(first)?;
-        viewport.fit(FitMode::Page)?;
-        let active_tool = registry.tools().next().map(|_| 0);
-        if let Some(index) = active_tool {
-            registry
-                .tool_mut(index)
-                .expect("the initial tool remains registered")
-                .on_activate(&mut ToolCtx {
-                    doc: &mut document,
-                    viewport: &mut viewport,
-                });
-        }
-        // Said at open rather than at the first refused edit, so the user
-        // knows before starting work they cannot keep.
-        let status = document
-            .protection_notice()
-            .map(|message| CanvasStatus::Notice { message });
+        let (viewport, active_tool, status, laid_out_at) = {
+            let mut file = document.borrow_mut();
+            if file.page_count() == 0 {
+                return Err(CanvasError::EmptyDocument);
+            }
+            let page_count = file.page_count();
+            let first = file.page_geometry(0)?.clone();
+            let mut viewport = Viewport::new(page_count, size, PAGE_GAP)?;
+            viewport.measure_page(first)?;
+            viewport.fit(FitMode::Page)?;
+            let active_tool = registry.tools().next().map(|_| 0);
+            if let Some(index) = active_tool {
+                registry
+                    .tool_mut(index)
+                    .expect("the initial tool remains registered")
+                    .on_activate(&mut ToolCtx {
+                        doc: &mut file,
+                        viewport: &mut viewport,
+                    });
+            }
+            // Said at open rather than at the first refused edit, so the user
+            // knows before starting work they cannot keep.
+            let status = file
+                .protection_notice()
+                .map(|message| CanvasStatus::Notice { message });
+            let laid_out_at = (file.byte_generation(), file.edit().epoch());
+            (viewport, active_tool, status, laid_out_at)
+        };
         Ok(Self {
-            document: onionskin_core::DocumentFile::from_document(document),
+            document,
+            view,
+            laid_out_at,
             recovery: None,
             viewport,
             view_history: ViewHistory::new(VIEW_HISTORY_CAPACITY),
@@ -586,20 +636,28 @@ impl CanvasModel {
 
     /// The document itself, for work that reads it out into new files - a
     /// split - and changes nothing the canvas draws.
-    pub(super) fn document_mut(&mut self) -> &mut Document {
-        self.document.document_mut()
+    pub(super) fn document_mut(&self) -> std::cell::RefMut<'_, Document> {
+        std::cell::RefMut::map(self.document.borrow_mut(), |file| file.document_mut())
+    }
+
+    /// The session this window shows, to open another window on it.
+    pub(super) fn shared_file(&self) -> SharedFile {
+        std::rc::Rc::clone(&self.document)
     }
 
     /// Why the document may not be read out into a new file, or `None`.
     pub(super) fn read_out_refusal(&self) -> Option<onionskin_core::protection::Refusal> {
-        self.document.document().read_out_refusal()
+        self.document.borrow_mut().document().read_out_refusal()
     }
 
     /// Why the open document may not be edited, as the short reason a disabled
     /// entry shows, or `None` when it may. Asked of `core`, which derives it
     /// from the document; the shell holds no flag of its own.
     pub fn edit_refusal(&self) -> Option<&'static str> {
-        self.document.edit_refusal().map(|refusal| refusal.reason())
+        self.document
+            .borrow_mut()
+            .edit_refusal()
+            .map(|refusal| refusal.reason())
     }
 
     /// Both of the document's refusals, as the context menu asks for them.
@@ -608,6 +666,7 @@ impl CanvasModel {
             edit: self.edit_refusal(),
             read_out: self
                 .document
+                .borrow_mut()
                 .read_out_refusal()
                 .map(|refusal| refusal.reason()),
         }
@@ -615,7 +674,7 @@ impl CanvasModel {
 
     /// What to tell the user about this document when it opens, if anything.
     pub fn protection_notice(&self) -> Option<String> {
-        self.document.protection_notice()
+        self.document.borrow_mut().protection_notice()
     }
 
     /// True when this build has the codec a menu entry would run.
@@ -629,7 +688,7 @@ impl CanvasModel {
         codec: &'static str,
         request: ExportRequest,
     ) -> Result<PreparedExport, CanvasError> {
-        let page_count = self.document.page_count();
+        let page_count = self.document.borrow_mut().page_count();
         let pages = request.pages.pages();
         PageRange::new(*pages.start(), *pages.end(), page_count)?;
         let codec = self
@@ -637,7 +696,7 @@ impl CanvasModel {
             .codec(codec)
             .ok_or(CanvasError::UnknownCodec(codec))?;
         Ok(PreparedExport {
-            snapshot: self.document.export_snapshot()?,
+            snapshot: self.document.borrow_mut().export_snapshot()?,
             output_kind: codec.output_kind(),
             codec,
             request,
@@ -647,8 +706,8 @@ impl CanvasModel {
 
     /// How this document was opened: clean, or repaired to make it open.
     /// The shell owes the user a notice for the second case.
-    pub fn provenance(&self) -> &Provenance {
-        self.document.provenance()
+    pub fn provenance(&self) -> Provenance {
+        self.document.borrow().provenance().clone()
     }
 
     /// Run a registered command against this document, on the page the
@@ -665,13 +724,13 @@ impl CanvasModel {
             .iter()
             .find(|command| command.id == id)
             .ok_or(CanvasError::UnknownCommand(id))?;
-        let before = self.document.edit().epoch();
+        let before = self.document.borrow_mut().edit().epoch();
         (command.run)(&mut CommandCtx {
-            doc: &mut self.document,
+            doc: &mut self.document.borrow_mut(),
             page: self.viewport.current_page(),
         })
         .map_err(CanvasError::Command)?;
-        if self.document.edit().epoch() != before {
+        if self.document.borrow_mut().edit().epoch() != before {
             self.relayout_after_edit()?;
         }
         Ok(())
@@ -684,9 +743,9 @@ impl CanvasModel {
         &mut self,
         edit: impl FnOnce(&mut Document) -> Result<(), onionskin_plugin_api::CommandError>,
     ) -> Result<(), CanvasError> {
-        let before = self.document.edit().epoch();
-        edit(self.document.document_mut()).map_err(CanvasError::Command)?;
-        if self.document.edit().epoch() != before {
+        let before = self.document.borrow_mut().edit().epoch();
+        edit(self.document.borrow_mut().document_mut()).map_err(CanvasError::Command)?;
+        if self.document.borrow_mut().edit().epoch() != before {
             self.relayout_after_edit()?;
         }
         Ok(())
@@ -700,7 +759,7 @@ impl CanvasModel {
     /// when that one is gone. Every raster goes, because a page index may now
     /// name a different page.
     fn relayout_after_edit(&mut self) -> Result<(), CanvasError> {
-        let count = self.document.page_count();
+        let count = self.document.borrow_mut().page_count();
         if count == 0 {
             return Err(CanvasError::EmptyDocument);
         }
@@ -708,7 +767,7 @@ impl CanvasModel {
         let mut viewport = Viewport::new(count, self.viewport.size(), PAGE_GAP)?;
         // Measured first: every layout call below needs an estimate to work
         // from, which is what the first page's geometry gives it.
-        viewport.measure_page(self.document.page_geometry(0)?.clone())?;
+        viewport.measure_page(self.document.borrow_mut().page_geometry(0)?.clone())?;
         viewport.set_mode(view.mode)?;
         viewport.set_show_cover(view.show_cover)?;
         viewport.set_rotation(view.rotation)?;
@@ -722,6 +781,7 @@ impl CanvasModel {
         self.viewport = viewport;
         // The history's states name page indices of the old pagination.
         self.view_history = ViewHistory::new(VIEW_HISTORY_CAPACITY);
+        self.laid_out_at = self.session_stamp();
         self.geometry_requests.clear();
         self.failed_geometry.clear();
         self.page_words.clear();
@@ -729,18 +789,56 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// What identifies the session's current content: its bytes and edits.
+    pub fn session_stamp(&self) -> (u64, u64) {
+        let file = self.document.borrow();
+        (file.byte_generation(), file.edit().epoch())
+    }
+
+    /// Follow an edit made to this document, in this window or another:
+    /// when it changed how many pages there are or the size of one on
+    /// screen, the layout is rebuilt as a page command's is. A comment
+    /// changes neither and leaves the view where it is.
+    fn follow_session(&mut self) -> Result<(), CanvasError> {
+        let stamp = self.session_stamp();
+        if stamp == self.laid_out_at {
+            return Ok(());
+        }
+        self.laid_out_at = stamp;
+        if self.layout_is_stale()? {
+            self.relayout_after_edit()?;
+        }
+        Ok(())
+    }
+
+    fn layout_is_stale(&self) -> Result<bool, CanvasError> {
+        let mut file = self.document.borrow_mut();
+        if file.page_count() != self.viewport.page_count() {
+            return Ok(true);
+        }
+        for placement in self.viewport.visible_pages()? {
+            if let Some(measured) = self.viewport.page_geometry(placement.page) {
+                if file.page_geometry(placement.page)?.render_size != measured.render_size {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// The text the current selection covers, which is what the context
     /// menu's Copy puts on the clipboard.
     /// The selected text with its faces, for Export Selection As.
-    pub fn text_selection(&self) -> Option<&onionskin_core::TextSelection> {
-        self.document.selection().text()
+    pub fn text_selection(&self) -> Option<onionskin_core::TextSelection> {
+        self.document.borrow().selection().text().cloned()
     }
 
-    pub fn selection_text(&self) -> Option<&str> {
+    pub fn selection_text(&self) -> Option<String> {
         self.document
+            .borrow()
             .selection()
             .text()
-            .map(|selection| selection.text.as_str())
+            .map(|selection| selection.text.clone())
     }
 
     /// The visible pages and their text, in the canvas's own coordinates.
@@ -796,6 +894,7 @@ impl CanvasModel {
         if !self.page_words.contains_key(&page) {
             let words = self
                 .document
+                .borrow_mut()
                 .page_text(page)
                 .map_err(|error| error.to_string())?
                 .runs
@@ -840,28 +939,28 @@ impl CanvasModel {
     /// session and handed back by value: a pane holds a snapshot rather than
     /// a borrow of the document the canvas is drawing from.
     pub fn outline(&mut self) -> Result<Vec<OutlineItem>, CanvasError> {
-        Ok(self.document.outline()?.to_vec())
+        Ok(self.document.borrow_mut().outline()?.to_vec())
     }
 
     pub fn attachments(&mut self) -> Result<Vec<Attachment>, CanvasError> {
-        Ok(self.document.attachments()?.to_vec())
+        Ok(self.document.borrow_mut().attachments()?.to_vec())
     }
 
     pub fn attachment_bytes(&mut self, index: usize) -> Result<Vec<u8>, CanvasError> {
-        Ok(self.document.attachment_bytes(index)?)
+        Ok(self.document.borrow_mut().attachment_bytes(index)?)
     }
 
     pub fn signatures(&mut self) -> Result<Vec<SignatureField>, CanvasError> {
-        Ok(self.document.signatures()?.to_vec())
+        Ok(self.document.borrow_mut().signatures()?.to_vec())
     }
 
     pub fn layers(&mut self) -> Result<Vec<Layer>, CanvasError> {
-        Ok(self.document.layers()?.to_vec())
+        Ok(self.document.borrow_mut().layers()?.to_vec())
     }
 
     /// Every annotation the edited document carries, for the Comments pane.
     pub fn annotations(&mut self) -> Result<Vec<onionskin_core::ReadAnnotation>, CanvasError> {
-        Ok(self.document.document_mut().annotations()?)
+        Ok(self.document.borrow_mut().document_mut().annotations()?)
     }
 
     /// Show or hide one optional content group, and drop every pixel that
@@ -873,7 +972,11 @@ impl CanvasModel {
     /// resetting it the generation would not advance and the visible pages
     /// would never be asked for again.
     pub fn set_layer_visible(&mut self, layer: ObjRef, visible: bool) -> Result<bool, CanvasError> {
-        if !self.document.set_layer_visible(layer, visible)? {
+        if !self
+            .document
+            .borrow_mut()
+            .set_layer_visible(layer, visible)?
+        {
             return Ok(false);
         }
         self.invalidate_rendered_pixels();
@@ -883,14 +986,14 @@ impl CanvasModel {
     /// A number that changes with every edit, undo and redo of the
     /// document, for a view that has to follow them.
     pub fn edit_epoch(&self) -> u64 {
-        self.document.edit().epoch()
+        self.document.borrow_mut().edit().epoch()
     }
 
     /// Drop the cached pixels when the document has been edited since they
     /// were drawn. A new comment is on the page the moment it is committed,
     /// not the next time the zoom changes.
     fn drop_pixels_older_than_the_document(&mut self) {
-        let epoch = self.document.edit().epoch();
+        let epoch = self.document.borrow_mut().edit().epoch();
         if epoch != self.pixels_epoch {
             self.pixels_epoch = epoch;
             self.invalidate_rendered_pixels();
@@ -923,7 +1026,7 @@ impl CanvasModel {
     /// own default configuration gives it, dropping the pixels that were
     /// produced under the overrides.
     pub fn reset_layer_visibility(&mut self) -> Result<bool, CanvasError> {
-        if !self.document.reset_layer_visibility()? {
+        if !self.document.borrow_mut().reset_layer_visibility()? {
             return Ok(false);
         }
         self.invalidate_rendered_pixels();
@@ -947,7 +1050,7 @@ impl CanvasModel {
             return Ok(());
         }
         let replaced = self.pending_thumbnails.insert(page, request);
-        if let Err(error) = self.document.request_thumbnail(request) {
+        if let Err(error) = self.queue_thumbnail(request) {
             match replaced {
                 Some(previous) => self.pending_thumbnails.insert(page, previous),
                 None => self.pending_thumbnails.remove(&page),
@@ -1000,7 +1103,7 @@ impl CanvasModel {
     }
 
     fn drain_thumbnail_responses(&mut self) -> Result<(), CanvasError> {
-        while let Some(response) = self.document.try_thumbnail_response()? {
+        while let Some(response) = self.next_thumbnail_response()? {
             self.accept_thumbnail(response);
         }
         Ok(())
@@ -1154,8 +1257,8 @@ impl CanvasModel {
         Ok(true)
     }
 
-    pub fn search(&self) -> &SearchState {
-        self.document.search()
+    pub fn search(&self) -> std::cell::Ref<'_, SearchState> {
+        std::cell::Ref::map(self.document.borrow(), |file| file.search())
     }
 
     /// Starts a document-wide find at the page in view, so the nearest hits
@@ -1167,16 +1270,19 @@ impl CanvasModel {
     ) -> Result<bool, CanvasError> {
         self.pending_reveal = None;
         let start_page = self.viewport.current_page();
-        Ok(self.document.start_search(needle, options, start_page)?)
+        Ok(self
+            .document
+            .borrow_mut()
+            .start_search(needle, options, start_page)?)
     }
 
     pub fn cancel_search(&mut self) {
         self.pending_reveal = None;
-        self.document.cancel_search();
+        self.document.borrow_mut().cancel_search();
     }
 
     pub fn select_next_match(&mut self) -> Result<bool, CanvasError> {
-        if !self.document.select_next_match() {
+        if !self.document.borrow_mut().select_next_match() {
             return Ok(false);
         }
         self.reveal_as_navigation()?;
@@ -1189,7 +1295,7 @@ impl CanvasModel {
     /// results pane does. Takes the same route as stepping to it, so
     /// Previous View comes back from the jump.
     pub fn select_match(&mut self, page: PageIndex, index: usize) -> Result<bool, CanvasError> {
-        if !self.document.select_match(page, index) {
+        if !self.document.borrow_mut().select_match(page, index) {
             return Ok(false);
         }
         self.reveal_as_navigation()?;
@@ -1197,7 +1303,7 @@ impl CanvasModel {
     }
 
     pub fn select_previous_match(&mut self) -> Result<bool, CanvasError> {
-        if !self.document.select_previous_match() {
+        if !self.document.borrow_mut().select_previous_match() {
             return Ok(false);
         }
         self.reveal_as_navigation()?;
@@ -1226,8 +1332,10 @@ impl CanvasModel {
     /// report a hit places the cursor, so a cursor that moved here means that
     /// page has just landed.
     fn poll_search(&mut self) -> Result<(), CanvasError> {
-        let before = self.document.search().cursor();
-        if self.document.poll_search() && self.document.search().cursor() != before {
+        let before = self.document.borrow_mut().search().cursor();
+        if self.document.borrow_mut().poll_search()
+            && self.document.borrow_mut().search().cursor() != before
+        {
             self.reveal_current_match()?;
         }
         Ok(())
@@ -1247,11 +1355,15 @@ impl CanvasModel {
     /// whether the user asked for the move.
     fn reveal_current_match(&mut self) -> Result<(), CanvasError> {
         self.pending_reveal = None;
-        let Some(hit) = self.document.search().current() else {
+        let Some((page, quads)) = self
+            .document
+            .borrow()
+            .search()
+            .current()
+            .map(|hit| (hit.page, hit.quads.clone()))
+        else {
             return Ok(());
         };
-        let page = hit.page;
-        let quads = hit.quads.clone();
         if let Some(bounds) = self.hit_bounds(page, &quads)? {
             return self.pan_onto(bounds);
         }
@@ -1345,7 +1457,7 @@ impl CanvasModel {
                 .tool_mut(active)
                 .expect("the active tool remains registered")
                 .on_deactivate(&mut ToolCtx {
-                    doc: &mut self.document,
+                    doc: &mut self.document.borrow_mut(),
                     viewport: &mut self.viewport,
                 });
         }
@@ -1354,7 +1466,7 @@ impl CanvasModel {
             .tool_mut(index)
             .expect("validated tools remain registered")
             .on_activate(&mut ToolCtx {
-                doc: &mut self.document,
+                doc: &mut self.document.borrow_mut(),
                 viewport: &mut self.viewport,
             });
         Ok(true)
@@ -1390,7 +1502,7 @@ impl CanvasModel {
 
     pub fn has_pending_work(&self) -> bool {
         self.has_pending_pages()
-            || self.document.search().is_running()
+            || self.document.borrow_mut().search().is_running()
             || !self.pending_thumbnails.is_empty()
     }
 
@@ -1619,6 +1731,7 @@ impl CanvasModel {
     }
 
     pub fn update(&mut self) -> Result<(), CanvasError> {
+        self.follow_session()?;
         self.poll_search()?;
         self.drain_thumbnail_responses()?;
         self.drain_geometry_responses()?;
@@ -1657,9 +1770,73 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// This window's render queue: its own view's when it is not the
+    /// document's first window, the session's primary otherwise. Each
+    /// borrows the session for the one call.
+    fn queue_render(
+        document: &SharedFile,
+        view: &mut Option<onionskin_core::RenderView>,
+        request: RenderRequest,
+        geometry: &onionskin_core::PageGeometry,
+        source: Option<&onionskin_render::BaseRaster>,
+    ) -> Result<(), onionskin_core::Error> {
+        let mut file = document.borrow_mut();
+        match view.as_mut() {
+            Some(view) => file.request_render_with_geometry_in(view, request, geometry, source),
+            None => file.request_render_with_geometry(request, geometry, source),
+        }
+    }
+
+    fn next_render_response(&mut self) -> Result<Option<RenderResponse>, onionskin_core::Error> {
+        let mut file = self.document.borrow_mut();
+        match self.view.as_mut() {
+            Some(view) => file.try_render_response_in(view),
+            None => file.try_render_response(),
+        }
+    }
+
+    fn queue_page_geometry(&mut self, page: PageIndex) -> Result<bool, onionskin_core::Error> {
+        let mut file = self.document.borrow_mut();
+        match self.view.as_mut() {
+            Some(view) => file.request_page_geometry_in(view, page),
+            None => file.request_page_geometry(page),
+        }
+    }
+
+    fn next_geometry_response(
+        &mut self,
+    ) -> Result<Option<onionskin_core::PageGeometryResponse>, onionskin_core::Error> {
+        let mut file = self.document.borrow_mut();
+        match self.view.as_mut() {
+            Some(view) => file.try_page_geometry_response_in(view),
+            None => file.try_page_geometry_response(),
+        }
+    }
+
+    fn queue_thumbnail(
+        &mut self,
+        request: onionskin_core::ThumbnailRequest,
+    ) -> Result<(), onionskin_core::Error> {
+        let mut file = self.document.borrow_mut();
+        match self.view.as_mut() {
+            Some(view) => file.request_thumbnail_in(view, request),
+            None => file.request_thumbnail(request),
+        }
+    }
+
+    fn next_thumbnail_response(
+        &mut self,
+    ) -> Result<Option<onionskin_core::ThumbnailResponse>, onionskin_core::Error> {
+        let mut file = self.document.borrow_mut();
+        match self.view.as_mut() {
+            Some(view) => file.try_thumbnail_response_in(view),
+            None => file.try_thumbnail_response(),
+        }
+    }
+
     fn drain_geometry_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
-        while let Some(response) = self.document.try_page_geometry_response()? {
+        while let Some(response) = self.next_geometry_response()? {
             drained += 1;
             self.apply_geometry_response(response)?;
         }
@@ -1674,7 +1851,7 @@ impl CanvasModel {
     /// computed moments earlier and could not have changed since.
     fn drain_render_responses(&mut self) -> Result<usize, CanvasError> {
         let mut drained = 0;
-        while let Some(response) = self.document.try_render_response()? {
+        while let Some(response) = self.next_render_response()? {
             drained += usize::from(self.apply_render_response(response));
         }
         Ok(drained)
@@ -1781,7 +1958,7 @@ impl CanvasModel {
     /// snapshot is the page alone. Acrobat's includes annotations, which is
     /// a gap to close when there are annotations to include.
     pub(super) fn take_snapshot_pixels(&mut self) -> Result<Option<SnapshotPixels>, CanvasError> {
-        let Some(request) = self.document.take_snapshot_request() else {
+        let Some(request) = self.document.borrow_mut().take_snapshot_request() else {
             return Ok(None);
         };
         let page = request.region.page;
@@ -1796,7 +1973,7 @@ impl CanvasModel {
 
     #[cfg(test)]
     pub(in crate::shell) fn request_snapshot_for_test(&mut self, region: PageRect) {
-        self.document.request_snapshot(region);
+        self.document.borrow_mut().request_snapshot(region);
     }
 
     /// Whether the current page already has a rendered raster.
@@ -1857,7 +2034,7 @@ impl CanvasModel {
     /// the results found so far, so a walk still running highlights the pages
     /// it has already reported.
     fn highlights(&self, visible: &[PagePlacement]) -> Result<Vec<HighlightPaint>, CanvasError> {
-        let cursor = self.document.search().cursor();
+        let cursor = self.document.borrow_mut().search().cursor();
         let mut highlights = Vec::new();
         // One mapping call per page, not per hit: each one re-walks the
         // layout, and a page can carry hundreds of hits.
@@ -1867,7 +2044,14 @@ impl CanvasModel {
             let page = placement.page;
             quads.clear();
             is_current.clear();
-            for (index, hit) in self.document.search().matches_on(page).iter().enumerate() {
+            for (index, hit) in self
+                .document
+                .borrow_mut()
+                .search()
+                .matches_on(page)
+                .iter()
+                .enumerate()
+            {
                 quads.extend(hit.quads.iter().copied());
                 is_current.resize(quads.len(), cursor == Some((page, index)));
             }
@@ -1910,7 +2094,7 @@ impl CanvasModel {
             {
                 continue;
             }
-            if self.document.request_page_geometry(placement.page)? {
+            if self.queue_page_geometry(placement.page)? {
                 self.geometry_requests.insert(placement.page);
                 queued += 1;
             }
@@ -2008,8 +2192,7 @@ impl CanvasModel {
             {
                 continue;
             }
-            self.document
-                .request_render_with_geometry(request, geometry, resident)?;
+            Self::queue_render(&self.document, &mut self.view, request, geometry, resident)?;
             self.requests.insert(placement.page, request);
             queued += 1;
         }
@@ -2074,7 +2257,7 @@ impl CanvasModel {
             .active_tool
             .and_then(|index| self.registry.tools().nth(index))
         {
-            Some(tool) => tool.overlays(&self.document),
+            Some(tool) => tool.overlays(&self.document.borrow()),
             None => return Vec::new(),
         };
         overlays
@@ -2202,7 +2385,7 @@ impl CanvasModel {
                 .tool(index)
                 .is_some_and(|tool| tool.takes_text());
         let before = if takes_text {
-            self.document.document_mut().annotations().ok()
+            self.document.borrow_mut().document_mut().annotations().ok()
         } else {
             None
         };
@@ -2217,7 +2400,12 @@ impl CanvasModel {
     /// is where the replacement is typed, so a note or free text is preferred
     /// over the markup that came with it.
     fn newly_placed(&mut self, before: &[onionskin_core::ReadAnnotation]) -> Option<TextTarget> {
-        let after = self.document.document_mut().annotations().ok()?;
+        let after = self
+            .document
+            .borrow_mut()
+            .document_mut()
+            .annotations()
+            .ok()?;
         let fresh: Vec<_> = after
             .into_iter()
             .filter(|annotation| !before.iter().any(|old| old.objref == annotation.objref))
@@ -2298,6 +2486,7 @@ impl CanvasModel {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs() as i64);
         self.document
+            .borrow_mut()
             .document_mut()
             .edit_document("Edit Comment Text", |tx| {
                 onionskin_core::review::set_contents(tx, target.annotation, text, now)
@@ -2306,7 +2495,8 @@ impl CanvasModel {
     }
 
     fn dispatch_tool_inner(&mut self, phase: ToolPointerPhase, input: PointerInput, index: usize) {
-        let document = self.document.document_mut();
+        let mut file = self.document.borrow_mut();
+        let document = file.document_mut();
         let viewport = &mut self.viewport;
         let tool = self
             .registry
@@ -2329,7 +2519,8 @@ impl CanvasModel {
         let Some(index) = self.active_tool else {
             return false;
         };
-        let document = self.document.document_mut();
+        let mut file = self.document.borrow_mut();
+        let document = file.document_mut();
         let viewport = &mut self.viewport;
         let tool = self
             .registry
@@ -2347,7 +2538,7 @@ impl CanvasModel {
     pub fn tool_has_pending_gesture(&self) -> bool {
         self.active_tool
             .and_then(|index| self.registry.tool(index))
-            .is_some_and(|tool| !tool.overlays(&self.document).is_empty())
+            .is_some_and(|tool| !tool.overlays(&self.document.borrow()).is_empty())
     }
 
     /// Escape on the canvas: drop the active tool's pending gesture.
@@ -2369,14 +2560,14 @@ impl CanvasModel {
         let Some(index) = self.active_tool else {
             return;
         };
-        let document = &mut self.document;
+        let mut document = self.document.borrow_mut();
         let viewport = &mut self.viewport;
         let tool = self
             .registry
             .tool_mut(index)
             .expect("the active tool remains registered");
         tool.on_cancel(&mut ToolCtx {
-            doc: document,
+            doc: &mut document,
             viewport,
         });
     }
@@ -3022,7 +3213,12 @@ mod tests {
             model.active_tool.is_none(),
             "a pointer press pans only when no tool has it"
         );
-        let second = model.document.page_geometry(1).unwrap().clone();
+        let second = model
+            .document
+            .borrow_mut()
+            .page_geometry(1)
+            .unwrap()
+            .clone();
         model.viewport.measure_page(second).unwrap();
         // Zoomed in and away from the ends, so the pan has room in both
         // directions and cannot be clamped into looking like a no-op.
@@ -3338,14 +3534,20 @@ mod tests {
         assert!(model.tool_has_pending_gesture());
         assert!(model.cancel_tool_gesture());
         assert!(!model.tool_has_pending_gesture(), "Escape abandoned it");
-        assert!(!model.document.is_dirty());
+        assert!(!model.document.borrow_mut().is_dirty());
 
         click(&mut model, 0.0, 0.0);
         click(&mut model, 60.0, 0.0);
         click(&mut model, 30.0, 50.0);
-        assert!(!model.document.is_dirty(), "nothing is written until Enter");
+        assert!(
+            !model.document.borrow_mut().is_dirty(),
+            "nothing is written until Enter"
+        );
         assert!(model.commit_active_tool());
-        assert!(model.document.is_dirty(), "Enter wrote the polygon");
+        assert!(
+            model.document.borrow_mut().is_dirty(),
+            "Enter wrote the polygon"
+        );
     }
 
     /// Every tool on the rail says how it is used: the rail draws a glyph,
@@ -3911,7 +4113,10 @@ mod tests {
     #[test]
     fn a_snapshot_request_crops_the_raster_the_canvas_is_painting() {
         let mut model = painted_model([128, 0, 0, 128]);
-        model.document.request_snapshot(snapshot_region());
+        model
+            .document
+            .borrow_mut()
+            .request_snapshot(snapshot_region());
 
         let png = take_snapshot_png(&mut model)
             .expect("the snapshot is produced")
@@ -3932,12 +4137,18 @@ mod tests {
     #[test]
     fn a_snapshot_turns_with_the_view() {
         let mut model = painted_model([255, 255, 255, 255]);
-        model.document.request_snapshot(snapshot_region());
+        model
+            .document
+            .borrow_mut()
+            .request_snapshot(snapshot_region());
         let upright = decode(&take_snapshot_png(&mut model).unwrap().unwrap()).dimensions();
 
         model.set_rotation(ViewRotation::Clockwise90).unwrap();
         model.update().expect("the rotated frame runs");
-        model.document.request_snapshot(snapshot_region());
+        model
+            .document
+            .borrow_mut()
+            .request_snapshot(snapshot_region());
         let turned = decode(&take_snapshot_png(&mut model).unwrap().unwrap()).dimensions();
 
         assert_eq!(turned, (upright.1, upright.0));
@@ -3947,7 +4158,7 @@ mod tests {
     #[test]
     fn a_snapshot_of_a_page_that_is_not_on_screen_fails_loudly() {
         let mut model = painted_model([255, 255, 255, 255]);
-        model.document.request_snapshot(PageRect {
+        model.document.borrow_mut().request_snapshot(PageRect {
             page: 1,
             ..snapshot_region()
         });
@@ -3965,13 +4176,16 @@ mod tests {
     fn a_snapshot_region_hanging_off_the_page_keeps_the_part_that_covers_pixels() {
         let mut model = painted_model([255, 255, 255, 255]);
         let inside = decode(&{
-            model.document.request_snapshot(snapshot_region());
+            model
+                .document
+                .borrow_mut()
+                .request_snapshot(snapshot_region());
             take_snapshot_png(&mut model).unwrap().unwrap()
         })
         .dimensions();
 
         // The same rectangle slid left so its left half hangs off the page.
-        model.document.request_snapshot(PageRect {
+        model.document.borrow_mut().request_snapshot(PageRect {
             x0: -50.0,
             x1: 50.0,
             ..snapshot_region()
@@ -3988,7 +4202,7 @@ mod tests {
     #[test]
     fn a_snapshot_region_off_the_page_fails_loudly() {
         let mut model = painted_model([255, 255, 255, 255]);
-        model.document.request_snapshot(PageRect {
+        model.document.borrow_mut().request_snapshot(PageRect {
             page: 0,
             x0: -400.0,
             y0: 20.0,
@@ -4081,7 +4295,7 @@ mod tests {
             .pointer_up(end, 1.0, GpuiModifiers::default())
             .unwrap();
 
-        assert!(model.document.selection().region().is_some());
+        assert!(model.document.borrow_mut().selection().region().is_some());
         assert!(model.take_snapshot_pixels().unwrap().is_some());
     }
 
@@ -4861,7 +5075,12 @@ mod tests {
     fn a_claim_expires_once_the_page_is_no_longer_on_screen() {
         let mut model = model();
         model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
-        let second = model.document.page_geometry(1).unwrap().clone();
+        let second = model
+            .document
+            .borrow_mut()
+            .page_geometry(1)
+            .unwrap()
+            .clone();
         model.viewport.measure_page(second).unwrap();
         model.first_page().unwrap();
         let raster = || BaseRaster::new(1, 1, 1.0, vec![255, 255, 255, 255]);
@@ -4956,7 +5175,12 @@ mod tests {
         let anchor = ViewPoint { x: 400.0, y: 300.0 };
         // One page on screen at a time, so leaving page zero really leaves it.
         model.viewport.set_mode(PageLayoutMode::SinglePage).unwrap();
-        let second = model.document.page_geometry(1).unwrap().clone();
+        let second = model
+            .document
+            .borrow_mut()
+            .page_geometry(1)
+            .unwrap()
+            .clone();
         model.viewport.measure_page(second).unwrap();
         model.viewport.zoom_to(1.0, anchor).unwrap();
         model.first_page().unwrap();
@@ -5137,6 +5361,7 @@ mod tests {
         let request = prepare_request(&mut model);
         let placeholder = model
             .document
+            .borrow_mut()
             .try_render_response()
             .unwrap()
             .expect("placeholder is immediate");
@@ -5207,6 +5432,7 @@ mod tests {
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         let placeholder = model
             .document
+            .borrow_mut()
             .try_render_response()
             .unwrap()
             .expect("new placeholder is immediate");
@@ -5258,6 +5484,7 @@ mod tests {
         assert_eq!(model.schedule_visible_renders(&visible).unwrap(), 1);
         let placeholder = model
             .document
+            .borrow_mut()
             .try_render_response()
             .unwrap()
             .expect("3x placeholder is immediate");
@@ -5324,7 +5551,12 @@ mod tests {
     #[test]
     fn visible_rasters_are_pinned_even_when_they_exceed_the_budget() {
         let mut model = model();
-        let second = model.document.page_geometry(1).unwrap().clone();
+        let second = model
+            .document
+            .borrow_mut()
+            .page_geometry(1)
+            .unwrap()
+            .clone();
         model.viewport.measure_page(second).unwrap();
         model.viewport.set_mode(PageLayoutMode::TwoPage).unwrap();
         model.viewport.fit(FitMode::Page).unwrap();
@@ -5767,8 +5999,14 @@ mod tests {
         let visible = measured_visible(&model);
         let expected: usize = visible
             .iter()
-            .flat_map(|page| model.search().matches_on(*page))
-            .map(|hit| hit.quads.len())
+            .map(|page| {
+                model
+                    .search()
+                    .matches_on(*page)
+                    .iter()
+                    .map(|hit| hit.quads.len())
+                    .sum::<usize>()
+            })
             .sum();
         let paint = model.paint_list().expect("paint list builds");
 
@@ -5793,8 +6031,8 @@ mod tests {
                 highlight.rect
             );
         }
-        let current = model
-            .search()
+        let search = model.search();
+        let current = search
             .current()
             .expect("the walk reported a hit to be current");
         assert_eq!(
@@ -5827,7 +6065,7 @@ mod tests {
         assert_eq!(model.search().failures().len(), 1);
 
         let summary =
-            crate::shell::find_bar::FindSummary::new(model.search(), model.viewport.page_count());
+            crate::shell::find_bar::FindSummary::new(&model.search(), model.viewport.page_count());
         let label = summary
             .failure_label()
             .expect("a page that could not be read is reported");
@@ -5857,7 +6095,8 @@ mod tests {
         // separator to match.
         find(&mut model, "\n", SearchOptions::default());
 
-        let hit = model.search().current().expect("the separator is a hit");
+        let search = model.search();
+        let hit = search.current().expect("the separator is a hit");
         assert_eq!(hit.page, 1);
         assert!(
             hit.quads.is_empty(),
@@ -6421,6 +6660,7 @@ mod tests {
         for page in 0..model.viewport.page_count() {
             let geometry = model
                 .document
+                .borrow_mut()
                 .page_geometry(page)
                 .expect("the seed measures")
                 .clone();

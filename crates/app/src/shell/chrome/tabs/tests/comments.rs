@@ -44,16 +44,19 @@ fn window_on(
 fn add_note(frame: &mut ShellFrame, text: &str, cx: &mut Context<ShellFrame>) -> ObjRef {
     let canvas = frame.tabs.active().expect("a tab").canvas.clone();
     canvas.update(cx, |canvas, cx| {
-        let document = canvas.model.document_mut();
-        let page = document.structure().unwrap().page(0).unwrap().objref;
-        let placed = document
-            .edit_annotations("Sticky Note", |tx, structure| {
-                let mut note = Annotation::new(Subtype::Text, Rect::new(50.0, 50.0, 70.0, 70.0));
-                note.contents = Some(text.to_owned());
-                note.author = Some("Zoe".to_owned());
-                onionskin_core::add_annotation(tx, structure, page, &note, NOW)
-            })
-            .expect("the note is added");
+        let placed = {
+            let mut document = canvas.model.document_mut();
+            let page = document.structure().unwrap().page(0).unwrap().objref;
+            document
+                .edit_annotations("Sticky Note", |tx, structure| {
+                    let mut note =
+                        Annotation::new(Subtype::Text, Rect::new(50.0, 50.0, 70.0, 70.0));
+                    note.contents = Some(text.to_owned());
+                    note.author = Some("Zoe".to_owned());
+                    onionskin_core::add_annotation(tx, structure, page, &note, NOW)
+                })
+                .expect("the note is added")
+        };
         canvas.handle_change(Ok(true), cx);
         placed
     })
@@ -541,7 +544,7 @@ fn find_with_include_comments_finds_a_comments_text(cx: &mut TestAppContext) {
             .update(cx, |frame, _window, cx| {
                 let canvas = frame.tabs.active().unwrap().canvas.clone();
                 canvas.update(cx, |canvas, _| {
-                    let document = canvas.model.document_mut();
+                    let mut document = canvas.model.document_mut();
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
                     while document.search().is_running() {
                         assert!(std::time::Instant::now() < deadline, "the walk never ended");

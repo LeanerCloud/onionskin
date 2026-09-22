@@ -102,7 +102,6 @@ impl ShellFrame {
                     .read(cx)
                     .model
                     .selection_text()
-                    .map(str::to_owned)
                     .filter(|text| !text.is_empty())
                 else {
                     return;

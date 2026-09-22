@@ -102,7 +102,7 @@ fn order(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -> Vec
         .update(cx, |frame, _window, cx| {
             let canvas = frame.tabs.active().unwrap().canvas.clone();
             canvas.update(cx, |canvas, _| {
-                let doc = canvas.model.document_mut();
+                let mut doc = canvas.model.document_mut();
                 (0..doc.page_count())
                     .map(|page| {
                         doc.page_text(page)
@@ -455,7 +455,8 @@ fn the_thumbnail_menus_page_entries_run_and_crop_still_waits(cx: &mut TestAppCon
         .update(cx, |frame, _window, cx| {
             let canvas = frame.tabs.active().unwrap().canvas.clone();
             canvas.update(cx, |canvas, _| {
-                let structure = canvas.model.document_mut().structure().expect("structure");
+                let mut document = canvas.model.document_mut();
+                let structure = document.structure().expect("structure");
                 let page = structure.page(0).expect("page");
                 assert!(page.dict.get(b"Thumb").is_some(), "embedded");
             });

@@ -73,7 +73,7 @@ impl ShellFrame {
             .map(|state| state.choice)
             .unwrap_or_default();
         let made = canvas.update(cx, |canvas, _| {
-            summarize(canvas.model.document_mut(), choice)
+            summarize(&mut canvas.model.document_mut(), choice)
         });
         let written = made.and_then(|bytes| {
             super::create::write_replacing(output, &bytes)

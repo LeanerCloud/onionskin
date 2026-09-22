@@ -248,6 +248,9 @@ pub(in crate::shell) enum MenuCommand {
     ReadMode,
     FullScreen,
     NewWindow,
+    Minimize,
+    ZoomWindow,
+    BringAllToFront,
     About,
     KeyboardShortcuts,
 }
@@ -765,12 +768,32 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
         },
         MenuSection {
             id: MenuSectionId::Window,
-            entries: vec![MenuEntry {
-                command: MenuCommand::NewWindow,
-                label: "New Window",
-                availability: Disabled("Window management lands in M3"),
-                selected: false,
-            }],
+            entries: vec![
+                MenuEntry {
+                    command: MenuCommand::Minimize,
+                    label: "Minimize",
+                    availability: Enabled,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::ZoomWindow,
+                    label: "Zoom",
+                    availability: Enabled,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::BringAllToFront,
+                    label: "Bring All to Front",
+                    availability: Enabled,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::NewWindow,
+                    label: "New Window",
+                    availability: document_command,
+                    selected: false,
+                },
+            ],
         },
         MenuSection {
             id: MenuSectionId::Help,
@@ -1313,6 +1336,9 @@ impl MenuCommand {
             | Self::ReadMode
             | Self::FullScreen
             | Self::NewWindow
+            | Self::Minimize
+            | Self::ZoomWindow
+            | Self::BringAllToFront
             | Self::About
             | Self::KeyboardShortcuts => return None,
         })
@@ -1392,6 +1418,9 @@ impl MenuCommand {
             | Self::LineWeights
             | Self::FullScreen
             | Self::NewWindow
+            | Self::Minimize
+            | Self::ZoomWindow
+            | Self::BringAllToFront
             | Self::About
             | Self::KeyboardShortcuts => return None,
         })
@@ -1431,7 +1460,13 @@ pub(in crate::shell) fn install_native_menus(
     cx.on_action(move |action: &RunCommand, cx| {
         let command = action.command;
         cx.defer(move |cx| {
-            ShellFrame::run_native_command(window, command, cx);
+            // The window in front, which is not the first one once New
+            // Window has opened another.
+            let target = cx
+                .active_window()
+                .and_then(|active| active.downcast::<ShellFrame>())
+                .unwrap_or(window);
+            ShellFrame::run_native_command(target, command, cx);
         });
     });
 
@@ -1566,8 +1601,12 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::CopyFileToClipboard
         | MenuCommand::Edit(_)
         | MenuCommand::Undo
-        | MenuCommand::Redo => Some(Box::new(RunCommand { command })),
-        MenuCommand::LineWeights | MenuCommand::NewWindow => None,
+        | MenuCommand::Redo
+        | MenuCommand::NewWindow
+        | MenuCommand::Minimize
+        | MenuCommand::ZoomWindow
+        | MenuCommand::BringAllToFront => Some(Box::new(RunCommand { command })),
+        MenuCommand::LineWeights => None,
     }
 }
 
@@ -1762,12 +1801,7 @@ mod tests {
         let disabled: Vec<_> = main_menu_schema(menu_state(2, None))
             .into_iter()
             .flat_map(|section| section.entries)
-            .filter(|entry| {
-                matches!(
-                    entry.command,
-                    MenuCommand::LineWeights | MenuCommand::NewWindow
-                )
-            })
+            .filter(|entry| matches!(entry.command, MenuCommand::LineWeights))
             .filter_map(|entry| entry.availability.reason())
             .collect();
 
@@ -2034,7 +2068,7 @@ mod tests {
         }
         assert_eq!(
             item_names(&menus[3]),
-            vec!["New Window (Window management lands in M3)"]
+            vec!["Minimize", "Zoom", "Bring All to Front", "New Window"]
         );
         assert_eq!(
             item_names(&menus[1]),

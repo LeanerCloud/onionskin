@@ -179,7 +179,7 @@ fn read_source(model: &mut CanvasModel, path: &Path) -> Result<PropertiesSource,
     let failed = |error: onionskin_core::Error| {
         format!("{}'s properties could not be read: {error}", path.display())
     };
-    let document = model.document_mut();
+    let mut document = model.document_mut();
     let info = document.info().map_err(failed)?;
     let view = document.initial_view().map_err(failed)?;
     let fonts = document

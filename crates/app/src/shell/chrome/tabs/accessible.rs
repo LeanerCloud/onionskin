@@ -146,7 +146,7 @@ impl ShellFrame {
             }
             if self.find.is_open() {
                 let summary = FindSummary::new(
-                    tab.canvas.read(cx).model.search(),
+                    &tab.canvas.read(cx).model.search(),
                     tab.canvas.read(cx).model.viewport().page_count(),
                 );
                 root = root.child(crate::shell::find_bar::accessible(

@@ -401,3 +401,120 @@ frames is GPUI's behaviour on macOS, read from its source, not a test here.
 
 **Not claimed.** Colour, position and paragraph layout are not carried; the
 file is the selected text with its type.
+
+## New Window and the Window menu (rows 24 and 8)
+
+**Decision.** Two windows over one document were built as one session with
+two viewports, the plan's correct model, rather than opening the file twice
+or mirroring one canvas. That meant splitting the session out of the canvas.
+
+**What the user gets.**
+
+- **Window > New Window** opens a second window on the document in front,
+  titled with its name.
+  - An edit in either window shows in both: a deleted page leaves both
+    layouts.
+  - One Undo, in either window, takes it back once. There is one history.
+  - Each window has its own scroll, zoom and layout.
+  - Closing one of two windows on an edited document asks nothing, because
+    the other still has the edits. Closing the last one asks as before.
+- **Window > Minimize** (Cmd/Ctrl+M), **Zoom** and **Bring All to Front** act
+  on the windows. Menu commands and keystrokes now go to the window in
+  front, not to the first window opened.
+- **Not offered: Cascade and Tile.** GPUI can size a window but has no call
+  to move one, so arranging windows needs a platform addition. Row 8 is
+  `partial` for that.
+
+**How it is built.**
+
+- **`core::RenderView`** (`render_view.rs`, a child of `session`). A second
+  viewport's render queue: its own worker thread and pending geometry.
+  - It is handed the session's preview bytes and layer visibility whenever
+    `(byte generation, edit epoch, layer epoch)` moved past what it holds.
+  - Its methods mirror the primary queue's: `request_render_in`,
+    `request_render_with_geometry_in`, `try_render_response_in`, the
+    geometry and thumbnail pairs.
+  - A view is needed because the worker's queue belongs to one viewport: a
+    newer generation replaces every older request, so two viewports sharing
+    one queue would cancel each other's pages.
+  - `Document` gains a `layer_epoch`, bumped by every visibility change.
+- **The canvas model shares its session.**
+  - `CanvasModel.document` is `Rc<RefCell<DocumentFile>>` (`SharedFile`).
+    It is borrowed for each use and never held across a call that borrows
+    again.
+  - `view: Option<RenderView>` picks the queue: `None` for a document's
+    first window, a view for each window New Window opens. Six small
+    routing functions (`queue_render`, `next_render_response` and so on) are
+    the only place that choice is made.
+  - Accessors that returned references into the document now return owned
+    values or `Ref`/`RefMut` guards. The app's callers were updated to
+    match, including two that held the document across `handle_change`,
+    which the borrow checker caught.
+- **Following the session.**
+  - `CanvasModel::update` compares the session's `(byte generation, edit
+    epoch)` with the one its layout was built for.
+  - When they differ, and the page count or a visible page's size changed,
+    the layout is rebuilt as after a page command. A comment changes neither
+    and leaves the view alone.
+  - The view history is still reset only by a rebuild.
+- **Telling the other windows.** `Canvas::handle_change` sends each new
+  session stamp to every other canvas on the same `SharedFile`, in every
+  window, from a deferred callback. Those canvases follow the session and
+  repaint, and each is marked as told so the message does not bounce back.
+- `MenuCommand::{Minimize, ZoomWindow, BringAllToFront}`, with `NewWindow`
+  now live, and `ShellSettings::for_new_window` so the second frame starts
+  with the same files and keys. `ShellFrame::close_loses_changes` is "dirty
+  and no other window has it".
+
+**Runs.**
+
+- `cargo test -p onionskin-core --test render`, 2 new tests:
+  - `a_second_view_has_its_own_queue`: the primary queues generation 5 and a
+    view queues generation 1; both rasters arrive, which one queue would
+    refuse.
+  - `an_edit_to_the_session_reaches_the_view`: a page rotated in the session
+    measures turned through the view; a pending request is not repeated; a
+    page past the end is refused.
+- Window tests `tabs::tests::new_window`, 3:
+  - `an_edit_in_one_window_shows_in_the_other_and_one_undo_takes_it_back`:
+    - both windows on `two-page.pdf` lay out 2 pages;
+    - deleting page 2 through the first window leaves both at 1 page with
+      Undo labelled "Delete Pages";
+    - Undo run from the second window's Edit menu leaves both at 2 pages
+      with nothing left to undo.
+  - `each_window_keeps_its_own_view`: Zoom In in the second window leaves
+    the first window's zoom unchanged.
+  - `closing_one_of_two_windows_asks_nothing_and_the_last_one_asks`: with an
+    unsaved edit, neither window's close would lose changes while both are
+    open; after the second window is removed, the first's would.
+- `tabs::windows::tests`: a window's title. The Window menu test lists
+  Minimize, Zoom, Bring All to Front and New Window, live with a document.
+- The whole app suite passed unchanged after the session split, before New
+  Window was built on it: 770 passing, with only the known environmental
+  failures.
+- **Full suites.** App `--lib` with and without default features: all pass
+  but the known environmental set. The app's integration tests pass, the
+  headline recount at 160 planned / 27 partial / 136 implemented included.
+  `cargo test -p onionskin-core`: passes.
+- **Lint.** `cargo clippy` for core and for the app in the four feature
+  sets: clean. `cargo fmt --all --check`: clean.
+
+**Mutations run.**
+
+- The plan's mutation: New Window opening a second `core::Document` from the
+  same bytes (two sessions) fails the shared-undo test and the close test.
+- Not telling the other windows (`tell_peers` removed) fails the shared-edit
+  test: the second window keeps laying out the deleted page.
+
+**Not claimed.**
+
+- The find results live in the document's one session, so a find in either
+  window replaces the other's.
+- The selection is the session's too, so text selected in one window is
+  selected in both.
+- Closing a window with the window's own close button does not ask about
+  unsaved changes, as before this package; the question is asked when a tab
+  is closed.
+- The platform behaviour of Minimize, Zoom and Bring All to Front is
+  GPUI's; the tests run on its test platform, where those calls do not
+  change anything visible.

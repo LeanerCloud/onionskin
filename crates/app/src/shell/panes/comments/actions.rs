@@ -290,15 +290,17 @@ fn annotation_edit(
     };
     let outcome = canvas.update(cx, |canvas, cx| {
         let author = canvas.model.author().map(str::to_owned);
-        let document = canvas.model.document_mut();
-        let result = document
-            .structure()
-            .and_then(|structure| Ok(structure.page(page_index)?.objref))
-            .and_then(|page| {
-                document.edit_annotations(label, |tx, structure| {
-                    change(tx, structure, page, author.as_deref())
+        let result = {
+            let mut document = canvas.model.document_mut();
+            document
+                .structure()
+                .and_then(|structure| Ok(structure.page(page_index)?.objref))
+                .and_then(|page| {
+                    document.edit_annotations(label, |tx, structure| {
+                        change(tx, structure, page, author.as_deref())
+                    })
                 })
-            });
+        };
         if result.is_ok() {
             canvas.handle_change(Ok(true), cx);
         }

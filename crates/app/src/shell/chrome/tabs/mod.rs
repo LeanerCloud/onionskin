@@ -19,6 +19,7 @@ mod properties;
 mod skins;
 mod stamps;
 mod summary;
+mod windows;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
@@ -327,7 +328,7 @@ impl ShellFrame {
         )
         .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
         model.configure_tools(&self.settings.tool_environment());
-        let repaired = repair_notice(&source, model.provenance());
+        let repaired = repair_notice(&source, &model.provenance());
         if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
         {
             self.notices.push(format!(
@@ -785,6 +786,18 @@ impl ShellFrame {
                 canvas.handle_change(result, cx);
             });
         }
+    }
+
+    /// This window's canvases on the session `file`.
+    pub(in crate::shell) fn canvases_on(
+        &self,
+        file: &crate::shell::canvas::SharedFile,
+        cx: &App,
+    ) -> Vec<Entity<Canvas>> {
+        self.canvases()
+            .into_iter()
+            .filter(|canvas| std::rc::Rc::ptr_eq(&canvas.read(cx).model.shared_file(), file))
+            .collect()
     }
 
     fn canvases(&self) -> Vec<Entity<Canvas>> {
@@ -1354,7 +1367,7 @@ impl Render for ShellFrame {
             // Summarised only when the bar is on screen to read it.
             let find_summary = self.find.is_open().then(|| {
                 FindSummary::new(
-                    tab.canvas.read(cx).model.search(),
+                    &tab.canvas.read(cx).model.search(),
                     tab.canvas.read(cx).model.viewport().page_count(),
                 )
             });
@@ -1702,6 +1715,8 @@ mod tests {
     mod manage_tools;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod native_input;
+    #[cfg(feature = "shell-test-support")]
+    mod new_window;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod organize_dialogs;
     #[cfg(feature = "shell-test-support")]

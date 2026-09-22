@@ -57,7 +57,8 @@ fn window_over_versions(
 fn edit_subject(frame: &mut ShellFrame, cx: &mut Context<ShellFrame>) {
     let canvas = frame.tabs.active().unwrap().canvas.clone();
     canvas.update(cx, |canvas, cx| {
-        let (edit, base) = canvas.model.document_mut().edit_mut();
+        let mut document = canvas.model.document_mut();
+        let (edit, base) = document.edit_mut();
         edit.apply(
             base,
             onionskin_core::DocumentEdit::SetInfoField {

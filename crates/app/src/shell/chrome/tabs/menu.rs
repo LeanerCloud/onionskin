@@ -18,6 +18,7 @@ use gpui::{
 };
 use onionskin_plugin_api::ToolCapability;
 
+use super::windows::bring_all_to_front;
 use super::{ShellFrame, TabCommand, TabError, CONVERT_PANEL_RIGHT, GLOBAL_BAR_HEIGHT};
 use crate::preferences::{PreferenceCategory, ThemePreference};
 use crate::shell::chrome::accessible::{Activation, Surface};
@@ -386,7 +387,27 @@ impl ShellFrame {
                 self.redo_active(cx);
                 Ok(())
             }
-            MenuCommand::LineWeights | MenuCommand::NewWindow => Err(TabError::CommandUnavailable),
+            MenuCommand::NewWindow => {
+                self.dismiss_menus(cx);
+                self.open_new_window(cx);
+                Ok(())
+            }
+            MenuCommand::Minimize => {
+                self.dismiss_menus(cx);
+                window.minimize_window();
+                Ok(())
+            }
+            MenuCommand::ZoomWindow => {
+                self.dismiss_menus(cx);
+                window.zoom_window();
+                Ok(())
+            }
+            MenuCommand::BringAllToFront => {
+                self.dismiss_menus(cx);
+                bring_all_to_front(window, cx);
+                Ok(())
+            }
+            MenuCommand::LineWeights => Err(TabError::CommandUnavailable),
         }
     }
 
@@ -952,8 +973,7 @@ mod tests {
                     .canvas
                     .read(cx)
                     .model
-                    .selection_text()
-                    .map(str::to_owned);
+                    .selection_text();
                 assert!(
                     selected.is_some_and(|text| !text.is_empty()),
                     "the Select All keystroke selected nothing"

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 162 planned / 26 partial / 80 out-of-scope. 135 implemented.**
+**403 rows: 160 planned / 27 partial / 80 out-of-scope. 136 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -187,7 +187,7 @@ M4 with P15, per the plan's ruling B.
 | Preferences dialog | partial | M2 | The live Commenting, Documents, General, Page Display, and Search subset is persisted; later feature categories land with their owners. Adobe-account, cloud-storage, Tracker, Updater, Multimedia, and 3D categories remain out of scope. Evidence: M2-PREFS. |
 | Keyboard shortcut remapping | implemented | M2 | Acrobat defaults are remappable through `keymap.json`, and the shortcut reference shows the effective bindings. Evidence: M2-PREFS. |
 | Autosave and crash recovery | implemented | M3 | Every 30 s into an owner-only store; a recovery is offered when its own document next opens, ranked most recent first, and replays as one undoable edit. Evidence: docs/evidence/m3-p18-save-undo.md. |
-| Window menu (New Window, Cascade, Tile, Minimize) | planned | M3 | Shell logic, no document dependency. (judgment) |
+| Window menu (New Window, Cascade, Tile, Minimize) | partial | M3 | Minimize (Cmd/Ctrl+M), Zoom, Bring All to Front and New Window are live, and menu commands go to the window in front. Cascade and Tile are not offered: GPUI can size a window but not place one, so arranging windows needs a platform addition. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Help menu (About, keyboard shortcuts) | implemented | M2 | About and the effective local shortcut reference are live; online help remains out of scope. Evidence: M2-SHELL. (judgment) |
 | Check for updates / auto-update | planned | post-1.0 | Plan lists auto-update as a post-1.0 slot (Schist's Check for Updates path as template). |
 | UI localization | planned | post-1.0 | Plan lists localization plus bidi/vertical text as post-1.0. |
@@ -260,7 +260,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Full Screen Mode | partial | M2 | Native entry/exit, complete chrome hiding, full viewport use, and Escape handling are live; presentation semantics remain missing. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
 | View > Read Out Loud | planned | M6 | `tools-accessibility` via platform TTS (AVSpeech / SAPI / speech-dispatcher). |
 | View > Split / Spreadsheet Split / Remove Split | planned | post-1.0 | Two panes, or four synchronized panes over one document. Not named in the plan. (judgment) |
-| View > New Window (second window on the same document) | planned | M3 | (judgment) |
+| View > New Window (second window on the same document) | implemented | M3 | Window > New Window opens a second window on the same session: an edit in either shows in both, one Undo in either takes it back once, each window keeps its own scroll and zoom and draws through its own render queue, and closing one of two windows asks nothing. The find results are the document's, shared by both windows. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | E-Sign menu | out-of-scope | - | Adobe Acrobat Sign, a cloud service, end to end. |
 
 ## Navigation panes
