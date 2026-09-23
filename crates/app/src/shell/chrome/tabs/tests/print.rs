@@ -5,6 +5,8 @@
 
 use super::*;
 use crate::shell::chrome::accessible::Activation;
+#[cfg(feature = "commands-core")]
+use crate::shell::chrome::global_bar::PageCommand;
 use crate::shell::chrome::print_dialog::{PagesChoice, PrintAction};
 use crate::shell::context_menu::CanvasContextCommand;
 use crate::shell::dialog::ShellDialog;
@@ -59,6 +61,40 @@ fn act(window: gpui::WindowHandle<ShellFrame>, action: PrintAction, cx: &mut Tes
     window
         .update(cx, |frame, window, cx| {
             frame.run_activation(Activation::Print(action), window, cx);
+        })
+        .unwrap();
+}
+
+fn page_text(path: &Path, page: usize) -> String {
+    let mut document = onionskin_core::Document::open_path(path).expect("opens PDF");
+    document
+        .page_text(page)
+        .expect("reads page text")
+        .flatten()
+        .text
+}
+
+#[cfg(feature = "tools-comment")]
+fn add_comment(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) {
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().unwrap().clone();
+            canvas.update(cx, |canvas, cx| {
+                let mut document = canvas.model.document_mut();
+                let page = document.structure().unwrap().page(0).unwrap().objref;
+                document
+                    .edit_annotations("Sticky Note", |tx, structure| {
+                        let mut note = onionskin_core::Annotation::new(
+                            onionskin_core::Subtype::Text,
+                            onionskin_core::Rect::new(50.0, 50.0, 70.0, 70.0),
+                        );
+                        note.contents = Some("Check the totals".to_owned());
+                        onionskin_core::add_annotation(tx, structure, page, &note, 0)
+                    })
+                    .expect("adds a note");
+                drop(document);
+                canvas.handle_change(Ok(true), cx);
+            });
         })
         .unwrap();
 }
@@ -348,21 +384,23 @@ fn print_summarized(
     act(window, PrintAction::SummarizeComments, cx);
     act(window, PrintAction::Print, cx);
     let output = dir.path().join("summarized.pdf");
-    let answer = output.clone();
-    cx.simulate_new_path_selection(move |_| Some(answer));
-    cx.run_until_parked();
-    let error = window
+    let preparation_error = window
         .update(cx, |frame, _, _| {
             frame.print_dialog().and_then(|state| state.error.clone())
         })
         .unwrap();
-    match error {
-        Some(error) => Err(error),
-        None => Ok(onionskin_cos::Document::open_path(&output)
-            .expect("printed")
-            .page_count()
-            .expect("pages") as usize),
+    if let Some(error) = preparation_error {
+        assert!(!cx.did_prompt_for_new_path());
+        return Err(error);
     }
+    assert!(cx.did_prompt_for_new_path());
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    Ok(onionskin_cos::Document::open_path(&output)
+        .expect("printed")
+        .page_count()
+        .expect("pages") as usize)
 }
 
 /// Summarize Comments puts the comment summary's pages after the
@@ -371,28 +409,7 @@ fn print_summarized(
 #[gpui::test]
 fn summarize_comments_prints_the_summary_after_the_document(cx: &mut TestAppContext) {
     let (dir, window, _bindings) = window_over("two-page.pdf", cx);
-    window
-        .update(cx, |frame, _, cx| {
-            let canvas = frame.active_canvas().unwrap().clone();
-            canvas.update(cx, |canvas, cx| {
-                {
-                    let mut document = canvas.model.document_mut();
-                    let page = document.structure().unwrap().page(0).unwrap().objref;
-                    document
-                        .edit_annotations("Sticky Note", |tx, structure| {
-                            let mut note = onionskin_core::Annotation::new(
-                                onionskin_core::Subtype::Text,
-                                onionskin_core::Rect::new(50.0, 50.0, 70.0, 70.0),
-                            );
-                            note.contents = Some("Check the totals".to_owned());
-                            onionskin_core::add_annotation(tx, structure, page, &note, 0)
-                        })
-                        .expect("adds a note");
-                }
-                canvas.handle_change(Ok(true), cx);
-            });
-        })
-        .unwrap();
+    add_comment(window, cx);
     let sheets = print_summarized(&dir, window, cx).expect("prints");
     assert!(sheets > 2, "the summary follows the two pages: {sheets}");
 }
@@ -409,6 +426,263 @@ fn summarize_comments_with_nothing_to_summarize_says_so(cx: &mut TestAppContext)
         "{error}"
     );
     assert!(!dir.path().join("summarized.pdf").exists());
+}
+
+/// Print freezes the submitted document before the destination chooser can
+/// let another tab become active.
+#[gpui::test]
+fn a_pending_print_uses_the_document_that_was_submitted(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window_in(
+        &["two-page.pdf", "hello.pdf"],
+        crate::config::ConfigPaths::default(),
+        cx,
+    );
+    let mut submitted = onionskin_core::Document::open_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf"),
+    )
+    .expect("submitted document");
+    let submitted_text = submitted
+        .page_text(0)
+        .expect("submitted page text")
+        .flatten()
+        .text;
+    window
+        .update(cx, |frame, window, cx| {
+            frame.activate(0, cx);
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    assert!(cx.did_prompt_for_new_path());
+    window
+        .update(cx, |frame, _, cx| frame.activate(1, cx))
+        .unwrap();
+    let output = dir.path().join("pending.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+
+    let mut printed = onionskin_core::Document::open_path(&output).expect("printed");
+    let printed_text = printed
+        .page_text(0)
+        .expect("printed page text")
+        .flatten()
+        .text;
+    assert_eq!(printed_text, submitted_text);
+}
+
+#[gpui::test]
+fn cancelling_a_pending_print_writes_nothing(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_over("two-page.pdf", cx);
+    let source = dir.path().join("two-page.pdf");
+    let before_bytes = std::fs::read(&source).expect("reads source");
+    let mut before_entries: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("reads directory")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    before_entries.sort();
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    cx.simulate_new_path_selection(|_| None);
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, _, _| {
+            let mut after_entries: Vec<_> = std::fs::read_dir(dir.path())
+                .expect("reads directory")
+                .map(|entry| entry.expect("entry").file_name())
+                .collect();
+            after_entries.sort();
+            assert_eq!(after_entries, before_entries);
+            assert_eq!(std::fs::read(&source).expect("reads source"), before_bytes);
+            assert!(frame.notices.is_empty());
+            assert_eq!(frame.dialog, None);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_new_print_dialog_survives_an_older_chooser_callback(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window(&["two-page.pdf"], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens newer dialog");
+        })
+        .unwrap();
+    let output = dir.path().join("older.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, _, _| {
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            assert!(output.exists());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closing_the_source_tab_does_not_change_a_pending_print(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window(&["two-page.pdf", "hello.pdf"], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, _, cx| {
+            frame
+                .run_tab_command(TabCommand::Close, 0, cx)
+                .expect("closes");
+        })
+        .unwrap();
+    let output = dir.path().join("closed-source.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    assert_eq!(page_text(&output, 0), "Page one");
+}
+
+#[cfg(feature = "commands-core")]
+#[gpui::test]
+fn editing_the_source_after_submit_does_not_change_a_pending_print(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window(&["two-page.pdf"], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_activation(
+                Activation::MainMenu(MenuCommand::Page(PageCommand::Delete)),
+                window,
+                cx,
+            );
+            assert_eq!(
+                frame
+                    .tabs
+                    .active()
+                    .unwrap()
+                    .canvas
+                    .read(cx)
+                    .model
+                    .view_state()
+                    .page_count,
+                1
+            );
+        })
+        .unwrap();
+    let output = dir.path().join("edited-source.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let printed = onionskin_core::Document::open_path(&output).expect("printed");
+    assert_eq!(printed.page_count(), 2);
+    assert_eq!(page_text(&output, 0), "Page one");
+}
+
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn summary_setting_is_frozen_for_a_pending_print(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window(&["two-page.pdf"], cx);
+    add_comment(window, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::SummarizeComments, cx);
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens newer dialog");
+            assert!(!frame.print_dialog().unwrap().settings.summarize_comments);
+        })
+        .unwrap();
+    let output = dir.path().join("summary-snapshot.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let printed = onionskin_cos::Document::open_path(&output).expect("printed");
+    assert!(printed.page_count().expect("pages") > 2);
+    assert!(page_text(&output, 2).contains("Check the totals"));
+    window
+        .update(cx, |frame, _, _| {
+            let state = frame.print_dialog().expect("newer dialog");
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            assert!(!state.settings.summarize_comments);
+            assert!(state.error.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_failed_pending_write_leaves_a_new_dialog_unchanged(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let (window, _bindings) = bound_window(&["two-page.pdf"], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens newer dialog");
+        })
+        .unwrap();
+    let output = dir.path().join("missing-parent").join("failed.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    assert!(!output.exists());
+    window
+        .update(cx, |frame, _, _| {
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            assert!(frame.print_dialog().unwrap().error.is_none());
+            assert!(frame
+                .notices
+                .iter()
+                .any(|notice| notice.contains("was not written")));
+        })
+        .unwrap();
 }
 
 /// Booklet from the dialog: its own controls replace Size and Multiple, and

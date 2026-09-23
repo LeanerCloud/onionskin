@@ -159,7 +159,28 @@ P16 macOS backend, which has not run on a Mac (see
   `the_preview_is_the_printed_files_sheets` (sheet 0: 1 placement against
   2) and the range test. This is the mutation the plan names.
 
-## Not claimed
+## 2026-09-23 print snapshot follow-up
+
+The Save as PDF path now prepares the complete submitted PDF before opening
+the destination chooser. It closes the submitted dialog before the chooser,
+then writes the captured bytes on acceptance. The delayed callback reports
+success or failure through notices only. The output document and settings are
+frozen at submission; completion does not modify a newer Print dialog, and
+cancellation writes nothing. The 16 focused macOS GPUI test-platform print
+tests cover these cases, including summary output and a failed destination
+write; `cargo test --locked -p onionskin-print` passes 55 tests.
+
+The regression test failed before the fix with emitted text `Hello Onionskin`
+versus submitted text `Page one`; after the fix the focused print suite passes
+16/16. Logs are retained under
+`/Users/cristi/.claude/projects/onionskin/verification/m4-print-file-snapshot/`.
+The macOS arm64 build succeeded from this worktree and was retained at
+`/Users/cristi/.claude/projects/onionskin/verification/print-snapshot-20260923/Onionskin.app`,
+but native UI acceptance remains pending because the desktop is locked. Full
+strict app Clippy stops on three baseline core diagnostics; app-only
+`--no-deps` strict Clippy passes.
+
+## Historical limitations (2026-09-21)
 
 - **Coverage of the app half** is not measured: `cargo tarpaulin` cannot
   build `onionskin-app` (the `pulp` dependency fails its size assertion

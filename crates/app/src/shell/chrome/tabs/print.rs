@@ -97,7 +97,7 @@ impl ShellFrame {
                 let count = state.preview(setup, cx).map_or(0, |sheets| sheets.len());
                 state.preview_sheet = (state.preview_sheet + 1).min(count.saturating_sub(1));
             }
-            PrintAction::Print => self.submit_print(cx),
+            PrintAction::Print => self.submit_print(window, cx),
             PrintAction::Cancel => self.close_dialog(window, cx),
             _ => {}
         }
@@ -115,26 +115,40 @@ impl ShellFrame {
     }
 
     /// Print: check the choices, then send the job where it was asked to go.
-    fn submit_print(&mut self, cx: &mut Context<Self>) {
+    fn submit_print(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let setup = self.page_setup;
-        let Some(state) = self.print.as_mut() else {
-            return;
-        };
-        let job = match state.job(setup, cx) {
-            Ok(job) => job,
-            Err(error) => {
-                state.error = Some(error);
+        let (job, destination, summarize) = {
+            let Some(state) = self.print.as_mut() else {
                 return;
-            }
+            };
+            let job = match state.job(setup, cx) {
+                Ok(job) => job,
+                Err(error) => {
+                    state.error = Some(error);
+                    return;
+                }
+            };
+            let destination = state.destinations.get(state.settings.destination).cloned();
+            (job, destination, state.settings.summarize_comments)
         };
-        match state.destinations.get(state.settings.destination).cloned() {
+        match destination {
             Some(Destination::Printer(_)) => self.print_to_printer(job, cx),
-            _ => self.prompt_for_print_file(job, cx),
+            _ => match self.prepare_print(&job, summarize, cx) {
+                Ok(bytes) => {
+                    self.close_dialog(window, cx);
+                    self.prompt_for_print_file(bytes, cx);
+                }
+                Err(error) => {
+                    if let Some(state) = self.print.as_mut() {
+                        state.error = Some(error);
+                    }
+                }
+            },
         }
     }
 
     /// Save as PDF: where the printed file goes.
-    fn prompt_for_print_file(&mut self, job: PrintJob, cx: &mut Context<Self>) {
+    fn prompt_for_print_file(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         let Some(source) = self.tabs.active().map(|tab| tab.source.clone()) else {
             return;
         };
@@ -143,27 +157,47 @@ impl ShellFrame {
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let chosen = cx.prompt_for_new_path(&directory, Some(&printed_name(&source)));
         cx.spawn(async move |frame, cx| {
-            let Ok(Ok(Some(output))) = chosen.await else {
-                return;
+            let output = match chosen.await {
+                Ok(Ok(Some(output))) => output,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    frame
+                        .update(cx, |frame, cx| {
+                            frame
+                                .notices
+                                .push(format!("The print destination failed: {error}"));
+                            cx.notify();
+                        })
+                        .ok();
+                    return;
+                }
             };
             frame
-                .update(cx, |frame, cx| frame.print_to_path(&output, &job, cx))
+                .update(cx, |frame, cx| {
+                    let notice = match super::create::write_replacing(&output, &bytes) {
+                        Ok(()) => format!("Printed to {}", output.display()),
+                        Err(error) => {
+                            format!("{} was not written: {error}", output.display())
+                        }
+                    };
+                    frame.notices.push(notice);
+                    cx.notify();
+                })
                 .ok();
         })
         .detach();
     }
 
-    /// Write the job's sheets to `output`, and say so; or say why not, in
-    /// the dialog.
-    pub(super) fn print_to_path(&mut self, output: &Path, job: &PrintJob, cx: &mut Context<Self>) {
+    fn prepare_print(
+        &mut self,
+        job: &PrintJob,
+        summarize: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<u8>, String> {
         let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
-            return;
+            return Err("There is no document to print".to_owned());
         };
-        let summarize = self
-            .print
-            .as_ref()
-            .is_some_and(|state| state.settings.summarize_comments);
-        let printed = canvas.update(cx, |canvas, _| {
+        canvas.update(cx, |canvas, _| {
             let mut document = canvas.model.document_mut();
             if !summarize {
                 return onionskin_print::print_to_file(&mut document, job)
@@ -173,15 +207,7 @@ impl ShellFrame {
                 .map_err(|reason| format!("The comments cannot be summarized: {reason}"))?;
             onionskin_print::print_with_appendix(&mut document, job, &summary)
                 .map_err(|error| error.to_string())
-        });
-        let written = printed.and_then(|bytes| {
-            super::create::write_replacing(output, &bytes)
-                .map_err(|error| format!("{} was not written: {error}", output.display()))
-        });
-        self.finish_print(
-            written.map(|()| format!("Printed to {}", output.display())),
-            cx,
-        );
+        })
     }
 
     #[cfg(target_os = "macos")]
