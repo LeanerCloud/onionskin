@@ -75,7 +75,9 @@ pub fn embed_thumbnails(doc: &mut Document) -> Result<usize> {
 /// deflated. ISO 32000-1 12.3.4.
 fn thumbnail_image(width: u32, height: u32, rgba: &[u8]) -> Object {
     let rgb: Vec<u8> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| {
             let alpha = u16::from(px[3]);
             [0, 1, 2].map(|i| (u16::from(px[i]) * alpha / 255 + (255 - alpha)) as u8)
@@ -112,5 +114,16 @@ mod tests {
             stream.raw,
             onionskin_cos::flate_encode(&[255, 255, 255, 10, 20, 30])
         );
+    }
+
+    #[test]
+    fn a_thumbnail_composites_alpha_and_drops_trailing_rgba_bytes() {
+        let rgba = [10, 20, 30, 128, 1, 2, 3];
+        for trailing in 0..=3 {
+            let Object::Stream(stream) = thumbnail_image(1, 1, &rgba[..4 + trailing]) else {
+                panic!("a stream");
+            };
+            assert_eq!(stream.raw, onionskin_cos::flate_encode(&[132, 137, 142]));
+        }
     }
 }

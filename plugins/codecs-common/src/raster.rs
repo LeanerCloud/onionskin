@@ -10,7 +10,7 @@ use onionskin_plugin_api::BaseRaster;
 /// where the page was clear.
 pub(crate) fn rgb_over_white(raster: &BaseRaster) -> Vec<u8> {
     let mut out = Vec::with_capacity(raster.rgba().len() / 4 * 3);
-    for pixel in raster.rgba().chunks_exact(4) {
+    for pixel in raster.rgba().as_chunks::<4>().0 {
         let clear = u8::MAX - pixel[3];
         out.extend(
             pixel[..3]

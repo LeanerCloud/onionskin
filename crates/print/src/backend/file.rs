@@ -123,7 +123,9 @@ impl FileBackend {
         let raster = &render.raster;
         let rgb: Vec<u8> = raster
             .rgba()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|px| {
                 let alpha = u16::from(px[3]);
                 // Premultiplied or not, a transparent pixel prints as paper.

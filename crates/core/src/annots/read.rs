@@ -172,7 +172,9 @@ pub(crate) fn ink_list(object: Option<&Object>) -> Vec<Vec<(f64, f64)>> {
         .iter()
         .map(|stroke| {
             numbers(Some(stroke))
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| (pair[0], pair[1]))
                 .collect()
         })
@@ -243,4 +245,32 @@ pub(crate) fn text(object: Option<&Object>) -> Option<String> {
         return Some(String::from_utf16_lossy(&units));
     }
     Some(bytes.iter().map(|byte| *byte as char).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ink_list_filters_non_numbers_and_drops_an_odd_tail() {
+        let object = Object::Array(vec![Object::Array(vec![
+            Object::Real(1.0),
+            Object::String(b"ignored".to_vec()),
+            Object::Integer(2),
+            Object::Real(3.0),
+            Object::Real(4.0),
+            Object::Real(5.0),
+            Object::name("ignored"),
+        ])]);
+        assert_eq!(ink_list(Some(&object)), vec![vec![(1.0, 2.0), (3.0, 4.0)]]);
+    }
+
+    #[test]
+    fn ink_list_accepts_empty_input() {
+        assert_eq!(ink_list(None), Vec::<Vec<(f64, f64)>>::new());
+        assert_eq!(
+            ink_list(Some(&Object::Array(Vec::new()))),
+            Vec::<Vec<(f64, f64)>>::new()
+        );
+    }
 }

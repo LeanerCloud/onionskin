@@ -66,7 +66,9 @@ impl Fixture {
             .expect("the page renders")
             .raster
             .rgba()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| i32::from(pixel[2]) > i32::from(pixel[0]) + 40)
             .count()
     }

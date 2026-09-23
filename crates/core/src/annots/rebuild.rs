@@ -63,7 +63,9 @@ pub(crate) fn model_from_dict(dict: &Dict) -> Option<Annotation> {
 
 fn pairs(object: Option<&Object>) -> Vec<(f64, f64)> {
     numbers(object)
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect()
 }
@@ -204,6 +206,50 @@ mod tests {
             model.border_effect,
             Some(BorderEffect::Cloudy { intensity: 2.0 })
         );
+    }
+
+    #[test]
+    fn polygon_and_free_text_pairs_filter_non_numbers_and_drop_odd_tails() {
+        let mixed = || {
+            Object::Array(vec![
+                Object::Real(1.0),
+                Object::String(b"ignored".to_vec()),
+                Object::Integer(2),
+                Object::Real(3.0),
+                Object::Real(4.0),
+                Object::Real(5.0),
+                Object::name("ignored"),
+            ])
+        };
+
+        let mut polygon = Dict::new();
+        polygon.set(Name::new("Subtype"), Object::name("Polygon"));
+        polygon.set(Name::new("Vertices"), mixed());
+        let model = model_from_dict(&polygon).expect("a polygon is drawn");
+        assert_eq!(model.vertices, [(1.0, 2.0), (3.0, 4.0)]);
+
+        let mut free_text = Dict::new();
+        free_text.set(Name::new("Subtype"), Object::name("FreeText"));
+        free_text.set(Name::new("CL"), mixed());
+        let model = model_from_dict(&free_text).expect("free text is drawn");
+        assert_eq!(model.callout, [(1.0, 2.0), (3.0, 4.0)]);
+    }
+
+    #[test]
+    fn polygon_and_free_text_pairs_accept_empty_input() {
+        let empty = Object::Array(Vec::new());
+
+        let mut polygon = Dict::new();
+        polygon.set(Name::new("Subtype"), Object::name("Polygon"));
+        polygon.set(Name::new("Vertices"), empty.clone());
+        let model = model_from_dict(&polygon).expect("a polygon is drawn");
+        assert!(model.vertices.is_empty());
+
+        let mut free_text = Dict::new();
+        free_text.set(Name::new("Subtype"), Object::name("FreeText"));
+        free_text.set(Name::new("CL"), empty);
+        let model = model_from_dict(&free_text).expect("free text is drawn");
+        assert!(model.callout.is_empty());
     }
 
     #[test]
