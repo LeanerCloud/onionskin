@@ -370,7 +370,7 @@ fn handling_groups(state: &PrintDialogState) -> Vec<Group> {
                 "print-poster",
                 "Poster",
                 &TILE_SCALES,
-                poster.scale,
+                poster.scale as u16,
                 PrintAction::TileScale,
             );
             tiles

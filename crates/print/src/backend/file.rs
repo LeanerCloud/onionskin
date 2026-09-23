@@ -16,7 +16,8 @@ use onionskin_cos::{Dict, Document as CosDocument, Name, Object, Stream};
 
 use super::{PrintBackend, PrintError};
 use crate::impose::{impose, PageSize};
-use crate::job::PrintJob;
+use crate::job::{Handling, PrintJob};
+use crate::poster::MAX_POSTER_SHEETS;
 use crate::sheet::Sheet;
 
 /// Print `doc` as it stands, edits included, to a new PDF's bytes: the
@@ -24,7 +25,7 @@ use crate::sheet::Sheet;
 /// written. What Save as PDF on the print dialog calls.
 pub fn print_to_file(doc: &mut Document, job: &PrintJob) -> Result<Vec<u8>, PrintError> {
     let mut backend = FileBackend::new(doc.preview_bytes(job.comments)?)?;
-    let sheets = impose(job, &backend.page_sizes()?);
+    let sheets = impose(job, &backend.page_sizes()?)?;
     backend.print(job, &sheets)?;
     Ok(backend
         .output
@@ -64,6 +65,13 @@ impl FileBackend {
 
 impl PrintBackend for FileBackend {
     fn print(&mut self, job: &PrintJob, sheets: &[Sheet]) -> Result<(), PrintError> {
+        if let Handling::Poster(poster) = job.handling {
+            if sheets.len() > MAX_POSTER_SHEETS {
+                return Err(crate::poster::PosterError::TooManySheets.into());
+            }
+            let sizes = self.page_sizes()?;
+            crate::poster::sheet_count(job, poster, &sizes)?;
+        }
         if sheets.iter().all(|sheet| sheet.placements.is_empty()) {
             return Err(PrintError::NothingToPrint);
         }

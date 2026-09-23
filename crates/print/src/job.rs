@@ -226,7 +226,7 @@ pub enum Binding {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Poster {
     /// Tile Scale, a percentage of the page's size.
-    pub scale: u16,
+    pub scale: f64,
     /// How much neighbouring tiles repeat, in points, for gluing.
     pub overlap: f64,
     /// Cut marks around each tile, in a margin they print in.
@@ -236,7 +236,7 @@ pub struct Poster {
 impl Default for Poster {
     fn default() -> Self {
         Poster {
-            scale: 200,
+            scale: 200.0,
             overlap: 18.0,
             cut_marks: true,
         }

@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn a_job_maps_to_exactly_these_settings_in_this_order() {
-        let sheets = impose(&job(), &[(595.276, 841.89)]);
+        let sheets = impose(&job(), &[(595.276, 841.89)]).expect("valid job");
         let entries = NativeSettings::new(&job(), &sheets).entries();
         assert_eq!(
             entries,
@@ -166,7 +166,7 @@ mod tests {
             },
             ..PrintJob::default()
         };
-        let sheets = impose(&two_up, &[(612.0, 792.0); 2]);
+        let sheets = impose(&two_up, &[(612.0, 792.0); 2]).expect("valid job");
         assert!(NativeSettings::new(&two_up, &sheets).landscape);
         assert!(!NativeSettings::new(&two_up, &[]).landscape, "no sheet");
     }

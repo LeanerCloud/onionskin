@@ -29,6 +29,56 @@ The revised headline is 156 planned / 29 partial / 80 out-of-scope, 138
 implemented. This correction adds no runtime or native-print verification
 claim. The Sept 22 test and coverage results below remain historical.
 
+## Poster A1 safety evidence, 2026-09-23
+
+Poster A1 hardens the shared print pipeline without claiming Acrobat or native
+print-driver parity. Poster settings use finite fractional `f64` scale and
+overlap values. Invalid scale, overlap, paper, source-page and derived
+geometry values return typed `PosterError` variants; they are not clamped or
+silently replaced. A shared geometry calculation supplies both preflight and
+tile emission, including finite placement and clip checks.
+
+The frozen main document and comment appendix are preflighted together against
+the named `MAX_POSTER_SHEETS` limit of 1024. The policy bounds each operation
+before materialization and rejects a combined over-cap job before either
+backend dispatches output. It is a safety limit for this implementation, not a
+claim about Acrobat's raster-memory behavior, native driver limits, or output
+parity. A fresh direct file backend applies the same cap to supplied sheets and
+leaves its output empty on rejection; this does not claim to erase output that
+was already produced by an earlier successful call on a reused backend.
+Existing Pages and Booklet behavior is preserved.
+
+The focused A1 treatment evidence includes:
+
+- 10 poster-control unit tests covering fractional transforms, numeric
+  endpoints, NaN/infinities, negative and zero dimensions, paper-area and
+  overlap transitions, finite-count overflow, exact-cap behavior, and reverse
+  duplicate selections.
+- 8 focused poster-control tests in the final unchanged-production consumer
+  rerun after the small test corrections. Earlier A1 checkpoint runs also
+  passed 30 file-backend tests and the complete print library suite passed 49
+  tests.
+- One GPUI `SummarizeComments` test using actual frozen main and appendix
+  backend page sizes. It asserts each side is at most 1024, their sum exceeds
+  1024, the typed limit error is shown, and no Save-as-PDF chooser or output is
+  created.
+- The API-compatible baseline controls for invalid scale `0` and overlap `145`
+  failed on the unchanged baseline and passed on the treatment. Baseline log:
+  `/tmp/claude/poster-a1-baseline-print-fresh-20260923.log`. Treatment log:
+  `/tmp/claude/poster-a1-treatment-print-fresh-20260923.log`.
+- Final independent focused logs are retained at
+  `/tmp/claude/poster-a1-independent-print-20260923-JYFfem`,
+  `/tmp/claude/poster-a1-independent-app-20260923-lyMqWt`,
+  `/tmp/claude/poster-a1-independent-fmt-20260923-DfoApG`,
+  `/tmp/claude/poster-a1-independent-print-clippy-20260923-NLOZq9`, and
+  `/tmp/claude/poster-a1-independent-app-clippy-20260923-aSvaix`.
+
+These checks cover implementation safety and the real file/GPUI consumers.
+They do not close the Poster parity row: custom scale and overlap entry remain
+unavailable in the dialog, Acrobat tile labels remain absent, and native
+macOS print-window, driver, screenshot, and raster-memory acceptance remain
+deferred.
+
 ## What the user gets
 
 The Print dialog's **Page Sizing & Handling** offers Size and Multiple (as

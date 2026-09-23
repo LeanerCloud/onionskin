@@ -192,8 +192,11 @@ fn the_preview_is_imposition_over_the_documents_own_page_sizes() {
         ..PrintSettings::default()
     };
     let job = job_for(&settings, &typed()).expect("a job");
-    let preview = sheets(&job, &printed(10));
-    assert_eq!(preview, onionskin_print::impose(&job, &[LETTER; 10]));
+    let preview = sheets(&job, &printed(10)).expect("valid preview");
+    assert_eq!(
+        preview,
+        onionskin_print::impose(&job, &[LETTER; 10]).expect("valid job")
+    );
     assert_eq!(preview.len(), 5);
     assert_eq!(
         preview_label(&preview, 0),
@@ -230,7 +233,7 @@ fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
             sheets: None,
         })
     );
-    assert_eq!(sheets(&job, &printed(10)).len(), 6);
+    assert_eq!(sheets(&job, &printed(10)).expect("valid preview").len(), 6);
 
     for action in [
         PrintAction::Handling(HandlingChoice::Poster),
@@ -244,12 +247,12 @@ fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
     assert_eq!(
         job.handling,
         Handling::Poster(Poster {
-            scale: 200,
+            scale: 200.0,
             overlap: 0.0,
             cut_marks: false,
         })
     );
-    assert_eq!(sheets(&job, &printed(2)).len(), 8);
+    assert_eq!(sheets(&job, &printed(2)).expect("valid preview").len(), 8);
 }
 
 #[test]

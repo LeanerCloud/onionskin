@@ -8,12 +8,14 @@
 //! the page range, odd/even and reverse choices are about the document, not
 //! about a summary of it. The two outputs are joined into one PDF.
 
+use crate::backend::file::FileBackend;
+use crate::backend::PrintBackend;
+use crate::backend::PrintError;
+use crate::impose::impose;
+use crate::job::{Handling, PageSelection, PrintJob};
+use crate::poster::preflight;
 use onionskin_core::pages::insert_pages_from;
 use onionskin_core::{AnnotationFilter, Document};
-
-use crate::backend::file::print_to_file;
-use crate::backend::PrintError;
-use crate::job::{Handling, PageSelection, PrintJob};
 
 /// `doc` printed by `job`, followed by `appendix` (a PDF's bytes) printed
 /// on the job's paper.
@@ -22,9 +24,27 @@ pub fn print_with_appendix(
     job: &PrintJob,
     appendix: &[u8],
 ) -> Result<Vec<u8>, PrintError> {
-    let printed = print_to_file(doc, job)?;
+    let main_bytes = doc.preview_bytes(job.comments)?;
+    let mut main_backend = FileBackend::new(main_bytes)?;
+    let appendix_job = appendix_job(job);
     let mut summary = Document::open_bytes(appendix.to_vec())?;
-    let appended = print_to_file(&mut summary, &appendix_job(job))?;
+    let appendix_bytes = summary.preview_bytes(appendix_job.comments)?;
+    let mut appendix_backend = FileBackend::new(appendix_bytes)?;
+    let main_sizes = main_backend.page_sizes()?;
+    let appendix_sizes = appendix_backend.page_sizes()?;
+    preflight(job, &main_sizes, Some(&appendix_sizes))?;
+    let main_sheets = impose(job, &main_sizes)?;
+    let appendix_sheets = impose(&appendix_job, &appendix_sizes)?;
+    main_backend.print(job, &main_sheets)?;
+    appendix_backend.print(&appendix_job, &appendix_sheets)?;
+    let printed = main_backend
+        .output()
+        .expect("a print that succeeded wrote a file")
+        .to_vec();
+    let appended = appendix_backend
+        .output()
+        .expect("a print that succeeded wrote a file")
+        .to_vec();
     concatenate(printed, appended)
 }
 

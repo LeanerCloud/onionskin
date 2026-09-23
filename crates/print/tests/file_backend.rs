@@ -10,9 +10,11 @@ use onionskin_core::{
 use onionskin_corpus_testing::{encrypted_fixture, seed};
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
 use onionskin_print::{
-    print_to_file, Binding, Booklet, BookletSides, Duplex, Handling, NUp, Orientation,
-    PageSelection, PaperSize, PrintError, PrintJob, Sizing, Subset,
+    impose, print_to_file, Binding, Booklet, BookletSides, Duplex, FileBackend, Handling, NUp,
+    Orientation, PageSelection, PaperSize, Poster, PrintBackend, PrintError, PrintJob, Sizing,
+    Subset,
 };
+use std::sync::Arc;
 
 const NOW: i64 = 1_758_000_000;
 
@@ -114,6 +116,18 @@ fn letter() -> PrintJob {
         paper: PaperSize::LETTER,
         orientation: Orientation::Portrait,
         ..PrintJob::default()
+    }
+}
+
+fn poster_job(selection: PageSelection) -> PrintJob {
+    PrintJob {
+        selection,
+        handling: Handling::Poster(Poster {
+            scale: 100.0,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
     }
 }
 
@@ -763,6 +777,157 @@ fn the_refusal_tells_the_reader_how_to_print_anyway() {
     );
 }
 
+#[test]
+fn poster_controls_baseline_invalid_scale_zero_is_rejected() {
+    let mut document = marked(&[(612.0, 792.0, 0)]);
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 0 as _,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    assert!(print_to_file(&mut document, &job).is_err());
+}
+
+#[test]
+fn poster_controls_baseline_overlap_145_is_rejected() {
+    let mut document = marked(&[(612.0, 792.0, 0)]);
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 100 as _,
+            overlap: 145.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    assert!(print_to_file(&mut document, &job).is_err());
+}
+
+#[test]
+fn poster_controls_direct_file_backend_rejects_supplied_poster_sheets_over_the_cap() {
+    let source = marked(&[(612.0, 792.0, 0)]);
+    let bytes = source.bytes();
+    let mut backend = FileBackend::new(Arc::new(bytes.as_ref().clone())).expect("backend");
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 100.0,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let sheets = impose(&job, &[(612.0, 792.0)]).expect("valid poster");
+    let supplied = vec![sheets[0].clone(); onionskin_print::MAX_POSTER_SHEETS + 1];
+    let error = backend
+        .print(&job, &supplied)
+        .expect_err("cap must be enforced");
+    assert!(matches!(
+        error,
+        PrintError::Poster(onionskin_print::PosterError::TooManySheets)
+    ));
+    assert!(backend.output().is_none());
+}
+
+#[test]
+fn poster_controls_direct_file_backend_accepts_exact_cap() {
+    let source = marked(&[(612.0, 792.0, 0)]);
+    let bytes = source.bytes();
+    let mut backend = FileBackend::new(Arc::new(bytes.as_ref().clone())).expect("backend");
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 100.0,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let sheet = impose(&job, &[(612.0, 792.0)])
+        .expect("valid poster")
+        .remove(0);
+    let supplied = vec![sheet; onionskin_print::MAX_POSTER_SHEETS];
+    backend
+        .print(&job, &supplied)
+        .expect("exact cap is accepted");
+    assert!(backend.output().is_some());
+}
+
+#[test]
+fn poster_controls_direct_file_backend_rejects_invalid_settings_before_empty_output() {
+    let source = marked(&[(612.0, 792.0, 0)]);
+    let bytes = source.bytes();
+    let mut backend = FileBackend::new(Arc::new(bytes.as_ref().clone())).expect("backend");
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 0.0,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let error = backend
+        .print(&job, &[])
+        .expect_err("invalid Poster must fail first");
+    assert!(matches!(error, PrintError::Poster(_)));
+    assert!(backend.output().is_none());
+}
+
+#[test]
+fn poster_controls_print_with_appendix_accepts_exact_combined_cap_and_rejects_over_cap() {
+    let mut main = marked(&vec![(612.0, 792.0, 0); 512]);
+    let summary = marked(&vec![(612.0, 792.0, 0); 512]);
+    let job = poster_job(PageSelection::all());
+    let bytes = onionskin_print::print_with_appendix(&mut main, &job, summary.bytes().as_ref())
+        .expect("combined exact cap");
+    assert_eq!(
+        read_sheets(&bytes).len(),
+        onionskin_print::MAX_POSTER_SHEETS
+    );
+
+    let mut main = marked(&vec![(612.0, 792.0, 0); 512]);
+    let summary = marked(&vec![(612.0, 792.0, 0); 513]);
+    let error = onionskin_print::print_with_appendix(&mut main, &job, summary.bytes().as_ref())
+        .expect_err("combined over-cap operation");
+    assert!(matches!(
+        error,
+        PrintError::Poster(onionskin_print::PosterError::TooManySheets)
+    ));
+}
+
+#[test]
+fn poster_controls_print_with_appendix_rejects_invalid_summary_before_output() {
+    let mut main = marked(&[(612.0, 792.0, 0)]);
+    let summary = marked(&[(f64::MAX, 1.0, 0)]);
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 200.0,
+            overlap: 0.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let error = onionskin_print::print_with_appendix(&mut main, &job, summary.bytes().as_ref())
+        .expect_err("invalid summary geometry");
+    assert!(matches!(
+        error,
+        PrintError::Poster(onionskin_print::PosterError::InvalidPage { page: 0, .. })
+    ));
+}
+
+#[test]
+fn poster_controls_print_with_appendix_keeps_main_selection_independent_from_summary() {
+    let mut main = marked(&[(612.0, 792.0, 0); 2]);
+    let summary = marked(&[(612.0, 792.0, 0); 2]);
+    let job = poster_job(PageSelection {
+        ranges: vec![(1, 1)],
+        ..PageSelection::default()
+    });
+    let bytes = onionskin_print::print_with_appendix(&mut main, &job, summary.bytes().as_ref())
+        .expect("independent selections");
+    assert_eq!(read_sheets(&bytes).len(), 3);
+}
+
 // ----- Summarize Comments: an appendix printed after the document -----
 
 /// A three-page document printing only page 2 as odd pages in reverse, and
@@ -874,7 +1039,7 @@ fn a_poster_prints_one_clipped_tile_per_sheet() {
     let mut document = marked(&[(612.0, 792.0, 0)]);
     let job = PrintJob {
         handling: onionskin_print::Handling::Poster(onionskin_print::Poster {
-            scale: 200,
+            scale: 200.0,
             overlap: 0.0,
             cut_marks: false,
         }),

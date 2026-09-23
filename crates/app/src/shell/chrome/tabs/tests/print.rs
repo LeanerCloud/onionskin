@@ -3,11 +3,15 @@
 //! is the printed file's sheets, the Pages box refuses a backwards range,
 //! and Page Setup and the Print dialog share one paper.
 
+use std::sync::Arc;
+
 use super::*;
 use crate::shell::chrome::accessible::Activation;
 #[cfg(feature = "commands-core")]
 use crate::shell::chrome::global_bar::PageCommand;
 use crate::shell::chrome::print_dialog::{PagesChoice, PrintAction};
+#[cfg(feature = "tools-comment")]
+use crate::shell::chrome::summary_dialog::SummaryChoice;
 use crate::shell::context_menu::CanvasContextCommand;
 use crate::shell::dialog::ShellDialog;
 
@@ -1124,6 +1128,90 @@ fn summarize_comments_with_nothing_to_summarize_says_so(cx: &mut TestAppContext)
         error.starts_with("The comments cannot be summarized"),
         "{error}"
     );
+    assert!(!dir.path().join("summarized.pdf").exists());
+}
+
+/// A combined Poster operation is rejected before the Save as PDF chooser
+/// when its main document plus generated comment appendix exceeds the cap.
+#[cfg(feature = "tools-comment")]
+#[gpui::test]
+fn poster_controls_summarize_comments_over_cap_keeps_chooser_closed(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_over("two-page.pdf", cx);
+    add_comment(window, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(window, PrintAction::SummarizeComments, cx);
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    act(window, PrintAction::Pages(PagesChoice::Custom), cx);
+    window
+        .update(cx, |frame, _window, cx| {
+            let pages = frame.print_dialog().expect("print dialog").pages.clone();
+            pages.update(cx, |input, cx| input.set_query("1-2,2", cx));
+        })
+        .unwrap();
+    // At 2800%, the three selected main pages fit under 1024, while the
+    // one-page comment appendix pushes the combined operation over the cap.
+    act(window, PrintAction::TileScale(2800), cx);
+    let main_sheets = window
+        .update(cx, |frame, _window, cx| frame.print_preview_sheets(cx))
+        .unwrap()
+        .expect("main preview");
+    assert!(main_sheets.len() <= onionskin_print::MAX_POSTER_SHEETS);
+    let (main_count, appendix_count) = window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            let job = state.job(frame.page_setup(), cx).expect("poster job");
+            let onionskin_print::Handling::Poster(poster) = job.handling else {
+                panic!("poster handling");
+            };
+            let canvas = frame.active_canvas().expect("canvas").clone();
+            canvas.update(cx, |canvas, _| {
+                let mut document = canvas.model.document_mut();
+                let main_bytes = document.preview_bytes(job.comments).expect("main bytes");
+                let summary_bytes =
+                    super::super::summary::summarize(&mut document, SummaryChoice::CommentsOnly)
+                        .expect("summary bytes");
+                let mut main_backend =
+                    onionskin_print::FileBackend::new(main_bytes).expect("main backend");
+                let mut appendix_backend =
+                    onionskin_print::FileBackend::new(Arc::new(summary_bytes))
+                        .expect("appendix backend");
+                let main_sizes = main_backend.page_sizes().expect("main sizes");
+                let appendix_sizes = appendix_backend.page_sizes().expect("appendix sizes");
+                (
+                    onionskin_print::poster_sheet_count(&job, poster, &main_sizes)
+                        .expect("main count"),
+                    onionskin_print::poster_sheet_count(
+                        &onionskin_print::appendix_job(&job),
+                        poster,
+                        &appendix_sizes,
+                    )
+                    .expect("appendix count"),
+                )
+            })
+        })
+        .unwrap();
+    assert!(main_count <= onionskin_print::MAX_POSTER_SHEETS);
+    assert!(appendix_count <= onionskin_print::MAX_POSTER_SHEETS);
+    assert!(main_count + appendix_count > onionskin_print::MAX_POSTER_SHEETS);
+    act(window, PrintAction::Print, cx);
+    let error = window
+        .update(cx, |frame, _, _| {
+            frame.print_dialog().and_then(|state| state.error.clone())
+        })
+        .unwrap()
+        .expect("over-cap error");
+    assert!(error.contains("limit of 1024"), "{error}");
+    assert!(!cx.did_prompt_for_new_path());
     assert!(!dir.path().join("summarized.pdf").exists());
 }
 

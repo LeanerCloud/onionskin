@@ -238,15 +238,41 @@ impl ShellFrame {
             let bytes = document
                 .preview_bytes(job.comments)
                 .map_err(|error| error.to_string())?;
-            send_to_printer(bytes, title.clone(), &job)?;
+            use onionskin_print::{impose, poster_preflight, MacBackend, PrintBackend};
+            let mut main_backend =
+                MacBackend::new(bytes, title.clone()).map_err(|error| error.to_string())?;
+            let main_sizes = main_backend
+                .page_sizes()
+                .map_err(|error| error.to_string())?;
             // A second job: the summary's pages after the document's.
-            if let Some(summary) = summary {
-                let appendix = onionskin_print::appendix_job(&job);
-                send_to_printer(
-                    std::sync::Arc::new(summary),
-                    format!("{title} - Comments"),
-                    &appendix,
-                )?;
+            let mut appendix_backend = summary
+                .map(|summary| {
+                    let appendix = onionskin_print::appendix_job(&job);
+                    let backend = MacBackend::new(
+                        std::sync::Arc::new(summary),
+                        format!("{title} - Comments"),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok::<_, String>((appendix, backend))
+                })
+                .transpose()?;
+            let appendix_sizes = if let Some((_, backend)) = appendix_backend.as_mut() {
+                Some(backend.page_sizes().map_err(|error| error.to_string())?)
+            } else {
+                None
+            };
+            poster_preflight(&job, &main_sizes, appendix_sizes.as_deref())
+                .map_err(|error| error.to_string())?;
+            let main_sheets = impose(&job, &main_sizes).map_err(|error| error.to_string())?;
+            main_backend
+                .print(&job, &main_sheets)
+                .map_err(|error| error.to_string())?;
+            if let Some((appendix, backend)) = appendix_backend.as_mut() {
+                let sizes = appendix_sizes.as_deref().expect("appendix sizes");
+                let sheets = impose(appendix, sizes).map_err(|error| error.to_string())?;
+                backend
+                    .print(appendix, &sheets)
+                    .map_err(|error| error.to_string())?;
             }
             Ok(())
         });
@@ -307,22 +333,6 @@ fn platform_printers() -> Vec<String> {
 #[cfg(not(target_os = "macos"))]
 fn platform_printers() -> Vec<String> {
     Vec::new()
-}
-
-/// One job to the printer through PDFKit.
-#[cfg(target_os = "macos")]
-fn send_to_printer(
-    bytes: std::sync::Arc<Vec<u8>>,
-    title: String,
-    job: &PrintJob,
-) -> Result<(), String> {
-    use onionskin_print::{impose, MacBackend, PrintBackend};
-
-    let mut backend = MacBackend::new(bytes, title).map_err(|error| error.to_string())?;
-    let sizes = backend.page_sizes().map_err(|error| error.to_string())?;
-    backend
-        .print(job, &impose(job, &sizes))
-        .map_err(|error| error.to_string())
 }
 
 /// `report.pdf` printed is `report (printed).pdf`.

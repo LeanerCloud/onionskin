@@ -13,10 +13,13 @@ use crate::sheet::{Placement, Sheet};
 pub type PageSize = (f64, f64);
 
 /// The sheets `job` prints from a document whose pages are `pages`.
-pub fn impose(job: &PrintJob, pages: &[PageSize]) -> Vec<Sheet> {
+pub fn impose(
+    job: &PrintJob,
+    pages: &[PageSize],
+) -> Result<Vec<Sheet>, crate::poster::PosterError> {
     match job.handling {
-        Handling::Pages => impose_pages(job, pages),
-        Handling::Booklet(booklet) => crate::booklet::impose_booklet(job, booklet, pages),
+        Handling::Pages => Ok(impose_pages(job, pages)),
+        Handling::Booklet(booklet) => Ok(crate::booklet::impose_booklet(job, booklet, pages)),
         Handling::Poster(poster) => crate::poster::impose_poster(job, poster, pages),
     }
 }
@@ -154,7 +157,7 @@ mod tests {
 
     #[test]
     fn one_page_fits_its_sheet_exactly() {
-        let sheets = impose(&job(), &[LETTER_PAGE]);
+        let sheets = impose(&job(), &[LETTER_PAGE]).expect("valid job");
         assert_eq!(sheets.len(), 1);
         assert_eq!(
             sheets[0].placements[0].transform,
@@ -172,7 +175,7 @@ mod tests {
             },
             ..job()
         };
-        let sheets = impose(&job, &[LETTER_PAGE; 4]);
+        let sheets = impose(&job, &[LETTER_PAGE; 4]).expect("valid job");
         assert_eq!(sheets.len(), 1);
         let sheet = &sheets[0];
         assert!(sheet.is_landscape());
@@ -208,7 +211,7 @@ mod tests {
             },
             ..job()
         };
-        let sheet = &impose(&job, &[LETTER_PAGE; 4])[0];
+        let sheet = &impose(&job, &[LETTER_PAGE; 4]).expect("valid job")[0];
         let footprint = |slot: usize| sheet.placements[slot].footprint(612.0, 792.0);
         assert_eq!(footprint(0)[0], footprint(1)[0], "same column");
         assert!(footprint(1)[1] < footprint(0)[1], "second below the first");
@@ -221,12 +224,12 @@ mod tests {
             sizing: Sizing::ShrinkOversized,
             ..job()
         };
-        let small = impose(&job, &[(300.0, 400.0)]);
+        let small = impose(&job, &[(300.0, 400.0)]).expect("valid job");
         assert_eq!(
             small[0].placements[0].transform[0], 1.0,
             "fits: actual size"
         );
-        let big = impose(&job, &[(1224.0, 1584.0)]);
+        let big = impose(&job, &[(1224.0, 1584.0)]).expect("valid job");
         assert_eq!(
             big[0].placements[0].transform[0], 0.5,
             "tabloid on letter: halved"
@@ -239,7 +242,8 @@ mod tests {
             sizing: Sizing::Custom(50),
             ..job()
         };
-        let [a, b, c, d, e, f] = impose(&job, &[LETTER_PAGE])[0].placements[0].transform;
+        let [a, b, c, d, e, f] =
+            impose(&job, &[LETTER_PAGE]).expect("valid job")[0].placements[0].transform;
         assert_eq!((a, b, c, d), (0.5, 0.0, 0.0, 0.5));
         assert_eq!((e, f), (153.0, 198.0), "centred");
     }
@@ -250,10 +254,10 @@ mod tests {
             duplex: Duplex::LongEdge,
             ..job()
         };
-        let sheets = impose(&job, &[LETTER_PAGE; 3]);
+        let sheets = impose(&job, &[LETTER_PAGE; 3]).expect("valid job");
         assert_eq!(sheets.len(), 4);
         assert!(sheets[3].placements.is_empty());
-        assert_eq!(impose(&job, &[LETTER_PAGE; 2]).len(), 2);
+        assert_eq!(impose(&job, &[LETTER_PAGE; 2]).expect("valid job").len(), 2);
     }
 
     #[test]
@@ -262,8 +266,8 @@ mod tests {
             orientation: Orientation::Auto,
             ..job()
         };
-        assert!(!impose(&auto, &[LETTER_PAGE])[0].is_landscape());
-        assert!(impose(&auto, &[(792.0, 612.0)])[0].is_landscape());
+        assert!(!impose(&auto, &[LETTER_PAGE]).expect("valid job")[0].is_landscape());
+        assert!(impose(&auto, &[(792.0, 612.0)]).expect("valid job")[0].is_landscape());
         let two_up = PrintJob {
             n_up: NUp {
                 per_sheet: 2,
@@ -272,7 +276,7 @@ mod tests {
             ..auto
         };
         assert!(
-            impose(&two_up, &[LETTER_PAGE; 2])[0].is_landscape(),
+            impose(&two_up, &[LETTER_PAGE; 2]).expect("valid job")[0].is_landscape(),
             "two portrait pages side by side"
         );
     }
@@ -287,7 +291,7 @@ mod tests {
             },
             ..job()
         };
-        let sheet = &impose(&bordered, &[LETTER_PAGE; 2])[0];
+        let sheet = &impose(&bordered, &[LETTER_PAGE; 2]).expect("valid job")[0];
         assert_eq!(sheet.frames.len(), 2);
         assert_eq!(sheet.frames[0], sheet.placements[0].footprint(612.0, 792.0));
         let single = PrintJob {
@@ -297,7 +301,9 @@ mod tests {
             },
             ..job()
         };
-        assert!(impose(&single, &[LETTER_PAGE])[0].frames.is_empty());
+        assert!(impose(&single, &[LETTER_PAGE]).expect("valid job")[0]
+            .frames
+            .is_empty());
     }
 
     #[test]
@@ -310,6 +316,7 @@ mod tests {
             ..job()
         };
         let sources: Vec<usize> = impose(&job, &[LETTER_PAGE; 5])
+            .expect("valid job")
             .iter()
             .flat_map(|sheet| sheet.placements.iter().map(|p| p.source))
             .collect();

@@ -33,7 +33,7 @@ mod macos {
         let bytes = std::fs::read(seed("hello.pdf")).expect("seed");
         let mut backend = MacBackend::new(Arc::new(bytes), "hello").expect("opens");
         let job = PrintJob::default();
-        let sheets = impose(&job, &backend.page_sizes().expect("sizes"));
+        let sheets = impose(&job, &backend.page_sizes().expect("sizes")).expect("valid job");
         match backend.print(&job, &sheets) {
             Err(PrintError::Platform(reason)) => assert!(reason.contains("main thread")),
             other => panic!("expected a refusal, got {other:?}"),

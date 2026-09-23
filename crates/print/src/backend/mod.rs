@@ -11,6 +11,7 @@ use onionskin_core::protection::Refusal;
 pub use file::FileBackend;
 
 use crate::job::PrintJob;
+use crate::poster::PosterError;
 use crate::sheet::Sheet;
 
 /// Why a print did not happen.
@@ -22,6 +23,7 @@ pub enum PrintError {
     Refused(Refusal),
     Core(onionskin_core::Error),
     Cos(onionskin_cos::Error),
+    Poster(PosterError),
     /// The job selected no page.
     NothingToPrint,
     /// The platform's print system failed, in its words.
@@ -37,6 +39,7 @@ impl std::fmt::Display for PrintError {
             ),
             Self::Core(error) => write!(f, "{error}"),
             Self::Cos(error) => write!(f, "{error}"),
+            Self::Poster(error) => write!(f, "{error}"),
             Self::NothingToPrint => write!(f, "The page selection selects no page"),
             Self::Platform(reason) => write!(f, "Could not print: {reason}"),
         }
@@ -54,6 +57,12 @@ impl From<onionskin_core::Error> for PrintError {
 impl From<onionskin_cos::Error> for PrintError {
     fn from(error: onionskin_cos::Error) -> Self {
         Self::Cos(error)
+    }
+}
+
+impl From<PosterError> for PrintError {
+    fn from(error: PosterError) -> Self {
+        Self::Poster(error)
     }
 }
 

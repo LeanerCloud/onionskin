@@ -203,7 +203,7 @@ pub(in crate::shell) fn apply(settings: &mut PrintSettings, action: PrintAction)
         PrintAction::Handling(handling) => settings.handling = handling,
         PrintAction::BookletSides(sides) => settings.booklet.sides = sides,
         PrintAction::Binding(binding) => settings.booklet.binding = binding,
-        PrintAction::TileScale(scale) => settings.poster.scale = scale,
+        PrintAction::TileScale(scale) => settings.poster.scale = f64::from(scale),
         PrintAction::Overlap(points) => settings.poster.overlap = f64::from(points),
         PrintAction::CutMarks => settings.poster.cut_marks = !settings.poster.cut_marks,
         PrintAction::Orientation(_)
@@ -317,8 +317,8 @@ pub(in crate::shell) fn job(
 
 /// The sheets the job prints: the preview, and exactly what the backend
 /// is given.
-pub(in crate::shell) fn sheets(job: &PrintJob, printed: &Printed) -> Vec<Sheet> {
-    impose(job, &printed.page_sizes)
+pub(in crate::shell) fn sheets(job: &PrintJob, printed: &Printed) -> Result<Vec<Sheet>, String> {
+    impose(job, &printed.page_sizes).map_err(|error| error.to_string())
 }
 
 /// Custom Scale, 1 to 999 percent.
@@ -429,7 +429,8 @@ impl PrintDialogState {
         setup: PageSetup,
         cx: &gpui::App,
     ) -> Result<Vec<Sheet>, String> {
-        self.job(setup, cx).map(|job| sheets(&job, &self.printed))
+        self.job(setup, cx)
+            .and_then(|job| sheets(&job, &self.printed))
     }
 
     pub(in crate::shell) fn preview_index(&self, side_count: usize) -> usize {

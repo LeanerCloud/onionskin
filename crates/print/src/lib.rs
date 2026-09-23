@@ -23,5 +23,9 @@ pub use job::{
     Binding, Booklet, BookletSides, Duplex, Handling, NUp, NUpOrder, Orientation, PageSelection,
     PaperSize, Poster, PrintJob, Sizing, Subset,
 };
+pub use poster::{
+    preflight as poster_preflight, sheet_count as poster_sheet_count, PosterError,
+    MAX_POSTER_SHEETS,
+};
 pub use ranges::{parse_page_ranges, RangeError};
 pub use sheet::{Placement, Sheet};
