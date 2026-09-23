@@ -5,8 +5,9 @@
 //! mutation this must catch is a dynamic stamp that ignores the clock - a
 //! stamp that says the same thing at every instant is a static one.
 
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use onionskin_core::images::{image_document, ImageColor, ImageData, ImagePage};
 use onionskin_core::{
@@ -140,24 +141,300 @@ fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn python_interpreter() -> &'static str {
+    ["python3", "python"]
+        .into_iter()
+        .find(|candidate| Command::new(candidate).arg("--version").output().is_ok())
+        .expect("a Python 3 interpreter")
+}
+
+fn stamp_fixture() -> tempfile::TempDir {
+    let fixture = tempfile::tempdir().expect("fixture directory");
+    let root = fixture.path();
+    fs::create_dir_all(root.join("assets/stamps")).expect("asset directory");
+    fs::create_dir_all(root.join("plugins/tools-comment/src/stamp")).expect("catalog directory");
+    fs::create_dir_all(root.join("tools")).expect("tools directory");
+    fs::copy(
+        repository().join("tools/stamps.py"),
+        root.join("tools/stamps.py"),
+    )
+    .expect("copy generator");
+    fs::copy(
+        repository().join("plugins/tools-comment/src/stamp/catalog.rs"),
+        root.join("plugins/tools-comment/src/stamp/catalog.rs"),
+    )
+    .expect("copy catalog");
+    for entry in fs::read_dir(repository().join("assets/stamps")).expect("read assets") {
+        let entry = entry.expect("asset entry");
+        fs::copy(
+            entry.path(),
+            root.join("assets/stamps").join(entry.file_name()),
+        )
+        .expect("copy asset");
+    }
+    fixture
+}
+
+fn check_fixture(fixture: &tempfile::TempDir) -> Output {
+    Command::new(python_interpreter())
+        .arg(fixture.path().join("tools/stamps.py"))
+        .arg("--check")
+        .current_dir(fixture.path())
+        .output()
+        .expect("the fixture generator runs")
+}
+
+fn approved_asset(fixture: &tempfile::TempDir) -> PathBuf {
+    fixture.path().join("assets/stamps/business-approved.svg")
+}
+
+fn replace_once(path: &Path, from: &str, to: &str) {
+    let before = fs::read_to_string(path).expect("read mutation target");
+    let after = before.replacen(from, to, 1);
+    assert_ne!(before, after, "mutation target is present: {from:?}");
+    fs::write(path, after).expect("write mutation target");
+}
+
+fn mutate_catalog(path: &Path) {
+    replace_once(
+        path,
+        "pub(crate) const FALLBACK: u16 = 556;",
+        "pub(crate) const FALLBACK: u16 = 557;",
+    );
+}
+
+fn mutate_extra_asset(path: &Path) {
+    let extra = path.parent().expect("asset directory").join("extra.svg");
+    fs::write(extra, "not generated").expect("write extra asset");
+}
+
+fn mutate_missing_asset(path: &Path) {
+    fs::remove_file(path).expect("remove fixture asset");
+}
+
+#[test]
+fn stamp_check_accepts_provenance_and_rejects_artwork_mutations() {
+    let committed = stamp_fixture();
+    let before = fixture_bytes(&committed);
+    let checked = check_fixture(&committed);
+    assert!(
+        checked.status.success(),
+        "committed provenance failed: {}",
+        output_text(&checked)
+    );
+    assert_eq!(
+        before,
+        fixture_bytes(&committed),
+        "check mode rewrote committed fixture"
+    );
+
+    let mutations: &[(&str, &str, &str)] = &[
+        ("root size", "width=\"116.79\"", "width=\"117.79\""),
+        ("geometry", "<rect x=\"0\" y=\"0\"", "<rect x=\"1\" y=\"0\""),
+        ("fill", "fill=\"#e4f0e7\"", "fill=\"#e4f0e8\""),
+        ("text", ">APPROVED</text>", ">ALTERED</text>"),
+        (
+            "drawable before metadata",
+            "<metadata>",
+            "<rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/><metadata>",
+        ),
+        (
+            "drawable after metadata",
+            "</metadata>",
+            "</metadata><rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/>",
+        ),
+        (
+            "drawable after manifest",
+            "</c2pa:manifest>",
+            "</c2pa:manifest><rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/>",
+        ),
+        (
+            "drawable inside manifest",
+            "</c2pa:manifest>",
+            "<rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/></c2pa:manifest>",
+        ),
+        (
+            "manifest attribute",
+            "<c2pa:manifest>",
+            "<c2pa:manifest data-test=\"changed\">",
+        ),
+        (
+            "metadata attribute",
+            "<metadata>",
+            "<metadata data-test=\"changed\">",
+        ),
+        (
+            "wrong namespace",
+            "xmlns:c2pa=\"http://c2pa.org/manifest\"",
+            "xmlns:c2pa=\"urn:wrong\"",
+        ),
+        (
+            "nested metadata",
+            "</metadata>",
+            "<metadata></metadata></metadata>",
+        ),
+        (
+            "multiple metadata",
+            "</metadata>",
+            "</metadata><metadata><c2pa:manifest>payload</c2pa:manifest></metadata>",
+        ),
+        ("malformed XML", "</svg>", "</svg"),
+        ("DOCTYPE", "<svg ", "<!DOCTYPE svg><svg "),
+        ("processing instruction", "<svg ", "<?stamp changed?><svg "),
+        (
+            "XML stylesheet processing instruction",
+            "<svg ",
+            "<?xml-stylesheet type=\"text/css\" href=\"https://example.com/changed.css\"?><svg ",
+        ),
+        (
+            "significant text before metadata",
+            "<metadata>",
+            "UNEXPECTED TEXT<metadata>",
+        ),
+    ];
+    for (label, from, to) in mutations {
+        let fixture = stamp_fixture();
+        let target = approved_asset(&fixture);
+        replace_once(&target, from, to);
+        let before = fixture_bytes(&fixture);
+        let checked = check_fixture(&fixture);
+        assert_eq!(
+            checked.status.code(),
+            Some(1),
+            "{label} had unexpected status: {}",
+            output_text(&checked)
+        );
+        assert!(
+            output_text(&checked).contains("assets/stamps/business-approved.svg"),
+            "{label} did not name the mutated asset: {}",
+            output_text(&checked)
+        );
+        assert_eq!(
+            before,
+            fixture_bytes(&fixture),
+            "check mode rewrote fixture for {label}"
+        );
+    }
+}
+
+#[test]
+fn stamp_check_rejects_catalog_and_file_set_mutations() {
+    let catalog = stamp_fixture();
+    let catalog_path = catalog
+        .path()
+        .join("plugins/tools-comment/src/stamp/catalog.rs");
+    mutate_catalog(&catalog_path);
+    let before = fixture_bytes(&catalog);
+    let checked = check_fixture(&catalog);
+    assert_eq!(
+        checked.status.code(),
+        Some(1),
+        "changed catalog had unexpected status: {}",
+        output_text(&checked)
+    );
+    assert!(output_text(&checked).contains("plugins/tools-comment/src/stamp/catalog.rs"));
+    assert_eq!(before, fixture_bytes(&catalog));
+
+    let extra = stamp_fixture();
+    let extra_target = extra.path().join("assets/stamps/business-approved.svg");
+    mutate_extra_asset(&extra_target);
+    let before = fixture_bytes(&extra);
+    let checked = check_fixture(&extra);
+    assert_eq!(
+        checked.status.code(),
+        Some(1),
+        "extra asset had unexpected status: {}",
+        output_text(&checked)
+    );
+    assert!(output_text(&checked).contains("assets/stamps/extra.svg"));
+    assert_eq!(before, fixture_bytes(&extra));
+
+    let missing = stamp_fixture();
+    let missing_target = missing.path().join("assets/stamps/business-approved.svg");
+    mutate_missing_asset(&missing_target);
+    let before = fixture_bytes(&missing);
+    let checked = check_fixture(&missing);
+    assert_eq!(
+        checked.status.code(),
+        Some(1),
+        "missing asset had unexpected status: {}",
+        output_text(&checked)
+    );
+    assert!(output_text(&checked).contains("assets/stamps/business-approved.svg"));
+    assert_eq!(before, fixture_bytes(&missing));
+}
+
+#[test]
+fn stamp_check_accepts_plain_generated_svg_without_write_mode() {
+    let fixture = stamp_fixture();
+    let path = approved_asset(&fixture);
+    let generated = Command::new(python_interpreter())
+        .arg("-c")
+        .arg("import runpy; ns=runpy.run_path('tools/stamps.py'); print(next(text for path, text in ns['outputs']().items() if path.name == 'business-approved.svg'), end='')")
+        .current_dir(fixture.path())
+        .output()
+        .expect("generate in memory");
+    assert!(generated.status.success(), "{}", output_text(&generated));
+    fs::write(&path, generated.stdout).expect("write plain fixture asset");
+    let before = fixture_bytes(&fixture);
+    let checked = check_fixture(&fixture);
+    assert!(
+        checked.status.success(),
+        "plain SVG failed: {}",
+        output_text(&checked)
+    );
+    assert_eq!(before, fixture_bytes(&fixture));
+
+    let mut declared = b"<?xml version=\"1.0\"?>\n".to_vec();
+    declared.extend(fs::read(&path).expect("read plain fixture asset"));
+    fs::write(&path, declared).expect("write declared fixture asset");
+    let before = fixture_bytes(&fixture);
+    let checked = check_fixture(&fixture);
+    assert!(
+        checked.status.success(),
+        "valid XML declaration failed: {}",
+        output_text(&checked)
+    );
+    assert_eq!(before, fixture_bytes(&fixture));
+}
+
+fn output_text(output: &Output) -> String {
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn fixture_bytes(fixture: &tempfile::TempDir) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = Vec::new();
+    collect_fixture_files(fixture.path(), &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+fn collect_fixture_files(path: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+    for entry in fs::read_dir(path).expect("read fixture directory") {
+        let entry = entry.expect("fixture entry");
+        let child = entry.path();
+        if child.is_dir() {
+            collect_fixture_files(&child, files);
+        } else {
+            files.push((child.clone(), fs::read(child).expect("read fixture bytes")));
+        }
+    }
+}
+
 /// Every built-in stamp is the script's output: an SVG or a catalog entry
 /// edited by hand no longer matches a fresh generation, and this fails.
 #[test]
 fn the_committed_stamps_are_what_the_generator_makes() {
-    let python = ["python3", "python"]
-        .into_iter()
-        .find(|candidate| Command::new(candidate).arg("--version").output().is_ok())
-        .expect("a Python 3 interpreter");
-    let checked = Command::new(python)
+    let checked = Command::new(python_interpreter())
         .arg(repository().join("tools/stamps.py"))
         .arg("--check")
         .output()
         .expect("the generator runs");
-    assert!(
-        checked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&checked.stdout)
-    );
+    assert!(checked.status.success(), "{}", output_text(&checked));
 }
 
 #[test]

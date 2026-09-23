@@ -32,6 +32,12 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- **Stamp generator provenance check, resolved 2026-09-23:** 22 committed
+  SVGs carry root C2PA metadata that the generator does not emit. The check
+  now ignores only the validated provenance shape while rejecting artwork and
+  malformed-XML changes. This preserves provenance but does not authenticate
+  its manifest; see `docs/evidence/stamp-provenance-check.md`.
+
 - `cos` object spans, found 2026-09-21 while fetching the corpus for P4:
   `crates/cos/tests/lazy.rs`'s `every_parsed_object_records_the_bytes_it_came_from`
   fails on `external/verapdf/Isartor test files/PDFA-1b/6.1 File structure/6.1.8

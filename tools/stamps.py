@@ -28,9 +28,11 @@ exits 1 on any difference.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
 SVG_DIR = ROOT / "assets" / "stamps"
@@ -97,6 +99,11 @@ STAMPS = [
 
 # What the SVG preview shows where a dynamic stamp's second line goes.
 DYNAMIC_SAMPLE = "Your Name, 2026-01-01 09:00 UTC"
+
+SVG_NS = "http://www.w3.org/2000/svg"
+C2PA_NS = "http://c2pa.org/manifest"
+PROVENANCE_METADATA = f"{{{SVG_NS}}}metadata"
+C2PA_MANIFEST = f"{{{C2PA_NS}}}manifest"
 
 
 def width(text: str, table: list[int], size: float) -> float:
@@ -283,14 +290,72 @@ def outputs() -> dict[Path, str]:
     return files
 
 
+def _svg_without_allowed_provenance(data: bytes) -> ET.Element:
+    """Parse an SVG and remove one structurally valid C2PA metadata node."""
+    if re.search(rb"<!DOCTYPE\b", data, re.IGNORECASE):
+        raise ValueError("DOCTYPE is not accepted in generated SVG")
+    processing_instruction = re.search(rb"<\?", data)
+    if processing_instruction:
+        declaration = re.match(rb"\A<\?xml(?:\s+[^?]*)?\?>", data)
+        if (
+            declaration is None
+            or processing_instruction.start() != declaration.start()
+            or re.search(rb"<\?", data[declaration.end() :])
+        ):
+            raise ValueError("processing instructions are not accepted in generated SVG")
+    parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
+    root = ET.fromstring(data, parser=parser)
+    metadata = [child for child in root if child.tag == PROVENANCE_METADATA]
+    if len(metadata) > 1:
+        raise ValueError("more than one provenance metadata node")
+    if metadata:
+        node = metadata[0]
+        if node.attrib or len(node) != 1:
+            raise ValueError("unexpected provenance metadata structure")
+        manifest = node[0]
+        if manifest.tag != C2PA_MANIFEST or manifest.attrib or len(manifest) != 0:
+            raise ValueError("unexpected provenance manifest structure")
+        if node.text and node.text.strip():
+            raise ValueError("unexpected text around provenance manifest")
+        if not manifest.text or not manifest.text.strip():
+            raise ValueError("missing provenance manifest payload")
+        if manifest.tail and manifest.tail.strip():
+            raise ValueError("unexpected manifest tail")
+        if node.tail and node.tail.strip():
+            raise ValueError("unexpected metadata tail")
+        index = list(root).index(node)
+        if index:
+            previous = list(root)[index - 1]
+            previous.tail = (previous.tail or "") + (node.tail or "")
+        else:
+            root.text = (root.text or "") + (node.tail or "")
+        root.remove(node)
+    return root
+
+
+def _svg_matches_generated(actual: Path, expected: str) -> bool:
+    try:
+        actual_root = _svg_without_allowed_provenance(actual.read_bytes())
+        expected_root = _svg_without_allowed_provenance(expected.encode("utf-8"))
+    except (ET.ParseError, ValueError, UnicodeDecodeError):
+        return False
+    ET.register_namespace("", SVG_NS)
+    return ET.tostring(actual_root, encoding="utf-8") == ET.tostring(expected_root, encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     files = outputs()
     if "--check" in argv:
-        stale = [
-            path
-            for path, text in files.items()
-            if not path.exists() or path.read_text(encoding="utf-8") != text
-        ]
+        stale = []
+        for path, text in files.items():
+            if not path.exists():
+                stale.append(path)
+            elif path.suffix == ".svg":
+                actual = path.read_text(encoding="utf-8")
+                if actual != text and not _svg_matches_generated(path, text):
+                    stale.append(path)
+            elif path.read_text(encoding="utf-8") != text:
+                stale.append(path)
         extra = sorted(set(SVG_DIR.glob("*.svg")) - set(files)) if SVG_DIR.exists() else []
         for path in stale:
             print(f"differs from a fresh generation: {path.relative_to(ROOT)}")
