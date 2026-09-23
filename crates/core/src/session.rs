@@ -328,6 +328,9 @@ pub struct Document {
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
+    /// The document snapshot used by the last search attempt, including a
+    /// failed attempt. A query alone is not enough after an edit.
+    search_snapshot: Option<(u64, u64)>,
     /// The navigation panes' readers, each run at most once per document.
     /// `None` is "nobody has opened that pane", which is the state most
     /// documents stay in: no pane, no walk.
@@ -404,6 +407,7 @@ impl Document {
             search: SearchState::default(),
             snapshot: None,
             search_worker: None,
+            search_snapshot: None,
             outline: None,
             attachments: None,
             signatures: None,
@@ -1221,18 +1225,20 @@ impl Document {
             .collect())
     }
 
-    /// Starts a document-wide walk for `needle`, beginning at `start_page` and
-    /// wrapping, on the search worker. Returns false when the query is the one
-    /// already running or already answered, whose results stay as they are.
-    ///
-    /// The call returns as soon as the worker has the request; results arrive
-    /// through [`Document::poll_search`], one page at a time.
+    /// Starts a document-wide walk for `needle`, beginning at `start_page`, and wrapping.
+    /// Returns false when the existing state is reused, the needle is empty, or preparation
+    /// fails; failures are recorded in [`SearchState::stopped`]. Results arrive through
+    /// [`Document::poll_search`].
     pub fn start_search(
         &mut self,
         needle: &str,
         options: SearchOptions,
         start_page: PageIndex,
     ) -> Result<bool> {
+        if needle.is_empty() {
+            self.cancel_search();
+            return Ok(false);
+        }
         if start_page >= self.page_count() {
             return Err(Error::NoSuchPage {
                 page: start_page,
@@ -1242,38 +1248,46 @@ impl Document {
         // A walk that died is worth repeating even when the query has not
         // changed: the state below would otherwise report the loss forever,
         // and the only way out would be editing the needle and editing it back.
+        let stamp = (self.byte_generation, self.edit.epoch());
         let died = self.search.stopped().is_some();
-        if !self.search.set_query(needle, options) && !died {
+        let same_source = self.search_snapshot == Some(stamp);
+        if !self.search.set_query(needle, options) && same_source && !died {
             return Ok(false);
         }
-        if needle.is_empty() {
-            self.cancel_search();
-            return Ok(false);
+        if let Some(worker) = &mut self.search_worker {
+            worker.cancel();
         }
-        let worker = match &mut self.search_worker {
-            Some(worker) => worker,
-            slot => slot.insert(DocumentSearch::spawn(Arc::clone(&self.bytes))?),
-        };
-        // The worker walks the bytes it was spawned over, which are the file as
-        // opened, so it is told that file's page count.
-        let searched = self.opened_page_count;
-        if let Err(error) = worker.start(
-            needle,
-            options,
-            start_page.min(searched.saturating_sub(1)),
-            searched,
-        ) {
-            // The worker died since the last poll. Same policy as polling: the
-            // find is lost and says so, the handle goes, and the next query
-            // starts a fresh one, which a stopped walk allows even unchanged.
+        if !same_source {
             self.search_worker = None;
+        }
+        self.search.clear_results();
+        self.search_snapshot = Some(stamp);
+
+        let result = (|| -> Result<()> {
+            let bytes = self.preview_bytes(crate::AnnotationFilter::DocumentAndMarkups)?;
+            let comments = options
+                .include_comments
+                .then(|| self.comment_hits(needle, options))
+                .transpose()?;
+            if self.search_worker.is_none() {
+                self.search_worker = Some(DocumentSearch::spawn(bytes)?);
+            }
+            let searched = self.page_count();
+            self.search_worker
+                .as_mut()
+                .expect("search worker prepared")
+                .start(needle, options, start_page, searched)?;
+            self.search.begin();
+            if let Some(hits) = comments {
+                self.search.set_comment_hits(hits);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.search_worker = None;
+            self.search.clear_results();
             self.search.record_stopped(error.to_string());
             return Ok(false);
-        }
-        self.search.begin();
-        if options.include_comments {
-            let hits = self.comment_hits(needle, options)?;
-            self.search.set_comment_hits(hits);
         }
         Ok(true)
     }
@@ -1331,6 +1345,17 @@ impl Document {
     /// viewer drawing pages, is not handed an error it would have to survive
     /// every frame from here on.
     pub fn poll_search(&mut self) -> bool {
+        if !self.search.needle().is_empty()
+            && self.search_snapshot != Some((self.byte_generation, self.edit.epoch()))
+        {
+            let visible = self.search_worker.is_some()
+                || self.search.is_running()
+                || !self.search.is_empty()
+                || self.search.stopped().is_some();
+            self.search_worker = None;
+            self.search.clear_results();
+            return visible;
+        }
         let Some(worker) = &mut self.search_worker else {
             return false;
         };
@@ -1561,7 +1586,6 @@ mod tests {
         assert!(!doc
             .start_search("Hello", SearchOptions::default(), 0)
             .expect("a dead worker is not an error the viewer has to handle"));
-
         assert!(doc.search().stopped().is_some());
         assert!(doc.search_worker.is_none());
         assert!(doc
@@ -1569,6 +1593,35 @@ mod tests {
             .expect("the retry spawns a live worker"));
         drain(&mut doc);
         assert_eq!(doc.search().stopped(), None);
+        assert_eq!(doc.search().len(), 1);
+    }
+
+    #[test]
+    fn edited_search_reports_snapshot_open_failure() {
+        let mut doc = seed();
+        let original = Arc::clone(&doc.bytes);
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("the search worker starts"));
+        drain(&mut doc);
+        assert_eq!(doc.search().len(), 1);
+        doc.bytes = Arc::new(b"not a PDF".to_vec());
+        doc.bump_generation();
+
+        assert!(!doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("open failure is visible in state"));
+        assert!(doc.search().is_empty());
+        assert!(doc.search().stopped().is_some());
+        assert!(!doc.search().is_running());
+        assert!(doc.search_worker.is_none());
+
+        doc.bytes = original;
+        doc.bump_generation();
+        assert!(doc
+            .start_search("Onionskin", SearchOptions::default(), 0)
+            .expect("restored bytes retry"));
+        drain(&mut doc);
         assert_eq!(doc.search().len(), 1);
     }
 

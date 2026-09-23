@@ -94,6 +94,10 @@ impl SearchState {
         &self.needle
     }
 
+    pub fn options(&self) -> SearchOptions {
+        self.options
+    }
+
     /// Every hit found so far, in document order.
     pub fn matches(&self) -> impl Iterator<Item = &SearchMatch> {
         self.pages.values().flatten()
@@ -264,7 +268,7 @@ impl SearchState {
         self.comment_hits = hits;
     }
 
-    fn clear_results(&mut self) {
+    pub(crate) fn clear_results(&mut self) {
         self.comment_hits.clear();
         self.pages.clear();
         self.failures.clear();

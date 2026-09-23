@@ -99,15 +99,13 @@ source IDs, severity, ownership, and required proof.
   adds `shell::panes::tests::the_thumbnails_pane_asks_only_for_the_rows_it_shows`,
   which passed alone on each of three reruns: the same race family.
 
-- **Find searches the file as opened, not as edited**, recorded 2026-09-21
-  during P11. The search worker is spawned over the session's original bytes
-  and never handed the preview, so after any unsaved edit its matches index the
-  document as it was opened. Every M3 edit has had this; page organization
-  makes it visible, because after a delete or a move a match's page index names
-  a different page. `Document::start_search` now clamps the start page to the
-  file the worker walks rather than panicking on a page only the edit has. The
-  fix is to hand the worker the preview on an epoch change, the way the render
-  worker already is; it belongs with P19's find-in-edited-document work.
+- **Find searches the file as opened, not as edited**, found 2026-09-21 during
+  P11 and resolved in the edited-snapshot implementation on 2026-09-23. The
+  search worker now receives the current preview when the source stamp changes,
+  while same-source queries reuse the worker; core regressions cover edits,
+  saves, comments, and preparation failures. Native Find acceptance remains
+  deferred while the Mac is locked; see the private treatment evidence for the
+  bounded headless proof and its baseline controls.
 
 - **P4's invariant does not see a `/ParentTree` entry naming an emptied
   element**, found 2026-09-21 by a P11 mutation. Removing two tagged pages one

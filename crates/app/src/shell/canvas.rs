@@ -497,6 +497,8 @@ pub struct CanvasModel {
     /// `(byte generation, edit epoch)` the layout was last built for, so an
     /// edit made in another window on the same document is followed.
     laid_out_at: (u64, u64),
+    /// The document snapshot this canvas last observed for Find.
+    find_seen_at: (u64, u64),
 }
 
 pub(super) struct PreparedExport {
@@ -576,6 +578,7 @@ impl CanvasModel {
             document,
             view,
             laid_out_at,
+            find_seen_at: laid_out_at,
             recovery: None,
             viewport,
             view_history: ViewHistory::new(VIEW_HISTORY_CAPACITY),
@@ -1270,10 +1273,12 @@ impl CanvasModel {
     ) -> Result<bool, CanvasError> {
         self.pending_reveal = None;
         let start_page = self.viewport.current_page();
-        Ok(self
+        let started = self
             .document
             .borrow_mut()
-            .start_search(needle, options, start_page)?)
+            .start_search(needle, options, start_page)?;
+        self.find_seen_at = self.session_stamp();
+        Ok(started)
     }
 
     pub fn cancel_search(&mut self) {
@@ -1332,6 +1337,21 @@ impl CanvasModel {
     /// report a hit places the cursor, so a cursor that moved here means that
     /// page has just landed.
     fn poll_search(&mut self) -> Result<(), CanvasError> {
+        let stamp = self.session_stamp();
+        if stamp != self.find_seen_at {
+            self.find_seen_at = stamp;
+            self.pending_reveal = None;
+            let (needle, options) = {
+                let search = self.document.borrow();
+                (
+                    search.search().needle().to_owned(),
+                    search.search().options(),
+                )
+            };
+            if !needle.is_empty() {
+                self.start_search(&needle, options)?;
+            }
+        }
         let before = self.document.borrow_mut().search().cursor();
         if self.document.borrow_mut().poll_search()
             && self.document.borrow_mut().search().cursor() != before
@@ -5950,6 +5970,139 @@ mod tests {
     fn find(model: &mut CanvasModel, needle: &str, options: SearchOptions) {
         model.start_search(needle, options).expect("search starts");
         drain_search(model);
+    }
+
+    #[test]
+    fn edited_search_refreshes_after_local_relayout() {
+        let mut model = model_from(assembled_pdf(
+            &[
+                "BT /F1 12 Tf 20 100 Td (alpha) Tj ET",
+                "BT /F1 12 Tf 20 100 Td (beta) Tj ET",
+            ],
+            2,
+        ));
+        find(&mut model, "beta", SearchOptions::default());
+        model.pending_reveal = Some((1, Vec::new()));
+
+        model
+            .document
+            .borrow_mut()
+            .document_mut()
+            .edit_pages("Delete", |tx, structure| {
+                onionskin_core::pages::delete_pages(tx, structure, &[0]).map(|_| ())
+            })
+            .expect("delete succeeds");
+        model.relayout_after_edit().expect("relayout succeeds");
+        model.update().expect("update succeeds");
+        drain_search(&mut model);
+
+        assert_eq!(model.search().current().map(|hit| hit.page), Some(0));
+        assert!(model.pending_reveal.is_none());
+        assert_eq!(model.viewport.current_page(), 0);
+
+        model.cancel_search();
+        model
+            .document
+            .borrow_mut()
+            .document_mut()
+            .edit_document("Touch", |tx| {
+                tx.set_trailer(
+                    onionskin_cos::Name::new("SearchTest"),
+                    Some(onionskin_cos::Object::Name(onionskin_cos::Name::new(
+                        "touch",
+                    ))),
+                )
+            })
+            .expect("touch succeeds");
+        model
+            .document
+            .borrow_mut()
+            .document_mut()
+            .undo()
+            .expect("undo succeeds");
+        model.update().expect("closed search update succeeds");
+        assert_eq!(model.search().needle(), "");
+        assert_eq!(model.search().len(), 0);
+        assert!(!model.search().is_running());
+    }
+
+    #[test]
+    fn edited_search_other_window_clears_pending_reveal_without_restarting_results() {
+        let mut a = model_from(assembled_pdf(
+            &[
+                "BT /F1 12 Tf 20 100 Td (alpha) Tj ET",
+                "BT /F1 12 Tf 20 100 Td (beta beta Beta) Tj ET",
+            ],
+            2,
+        ));
+        let mut b = a
+            .new_window(PluginRegistry::new(), VIEWPORT)
+            .expect("second window opens");
+        let options = SearchOptions {
+            case_sensitive: true,
+            ..SearchOptions::default()
+        };
+        find(&mut a, "beta", options);
+        assert_eq!(a.search().len(), 2);
+        let old_hit = a.search().current().expect("a hit exists").clone();
+        b.pending_reveal = Some((1, old_hit.quads.clone()));
+
+        a.document
+            .borrow_mut()
+            .document_mut()
+            .edit_pages("Delete", |tx, structure| {
+                onionskin_core::pages::delete_pages(tx, structure, &[0]).map(|_| ())
+            })
+            .expect("delete succeeds");
+        a.relayout_after_edit().expect("relayout succeeds");
+        a.update().expect("first window updates");
+        drain_search(&mut a);
+        assert!(a.select_match(0, 1).expect("second hit selects"));
+        let before = a.search().clone();
+
+        b.update().expect("second window updates");
+        assert!(b.pending_reveal.is_none());
+        assert_eq!(*b.search(), before);
+    }
+
+    #[test]
+    fn edited_search_rotation_preserves_user_quads_and_updates_geometry() {
+        let mut model = model_from(assembled_pdf(&["BT /F1 12 Tf 20 100 Td (Page) Tj ET"], 1));
+        find(&mut model, "Page", SearchOptions::default());
+        let original = model.search().matches_on(0)[0].quads.clone();
+
+        model
+            .document
+            .borrow_mut()
+            .document_mut()
+            .edit_pages("Rotate", |tx, _structure| {
+                onionskin_core::pages::rotate_pages(tx, &[0], 1)
+            })
+            .expect("rotation succeeds");
+        model
+            .relayout_after_edit()
+            .expect("rotated relayout succeeds");
+        model.update().expect("rotated update succeeds");
+        drain_search(&mut model);
+        settle_geometry(&mut model);
+
+        assert_eq!(model.viewport.page_geometry(0).unwrap().rotate, 90);
+        assert_eq!(model.search().matches_on(0)[0].quads, original);
+        let expected = model
+            .document
+            .borrow_mut()
+            .search_page(0, "Page", SearchOptions::default())
+            .expect("per-page search succeeds");
+        assert_eq!(model.search().matches_on(0), expected.as_slice());
+        let hit_bounds = model
+            .hit_bounds(0, &original)
+            .expect("hit bounds succeed")
+            .expect("the hit has bounds");
+        let mapped = model.viewport.page_quad_rects(0, &original).unwrap();
+        assert_eq!(
+            hit_bounds,
+            union_rect(&mapped).expect("mapped quads have bounds")
+        );
     }
 
     /// Runs updates until every visible page has been measured. Measurement

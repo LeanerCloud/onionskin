@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use onionskin_core::pages::{delete_pages, move_pages};
 use onionskin_core::{Document, SearchMatch, SearchOptions};
 
 /// Enough pages that the walk cannot plausibly finish between the call
@@ -236,6 +237,207 @@ fn a_start_page_outside_the_document_is_refused() {
         .is_err());
 }
 
+#[test]
+fn edited_search_tracks_delete_move_undo_and_redo() {
+    let mut doc = Document::open_bytes(multi_page_pdf(4, false)).expect("fixture opens");
+    let options = SearchOptions::default();
+
+    drain(&mut doc, "marker002", options, 0);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(2));
+    assert_eq!(doc.search().len(), 1);
+    assert_eq!(doc.search().searched_pages(), 4);
+    let expected = doc.search_page(2, "marker002", options).unwrap();
+    assert_eq!(doc.search().matches_on(2), expected.as_slice());
+    assert!(!doc.start_search("marker002", options, 0).unwrap());
+
+    doc.edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+        .expect("delete succeeds");
+    assert!(doc
+        .start_search("marker002", options, 0)
+        .expect("edited search starts"));
+    drain_running(&mut doc);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(1));
+    assert_eq!(doc.search().len(), 1);
+    assert_eq!(doc.search().searched_pages(), 3);
+    let expected = doc.search_page(1, "marker002", options).unwrap();
+    assert_eq!(doc.search().matches_on(1), expected.as_slice());
+    assert!(!doc.start_search("marker002", options, 0).unwrap());
+
+    doc.undo().expect("undo succeeds");
+    assert!(doc
+        .start_search("marker002", options, 0)
+        .expect("undo search starts"));
+    drain_running(&mut doc);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(2));
+    assert_eq!(doc.search().searched_pages(), 4);
+
+    doc.redo().expect("redo succeeds");
+    assert!(doc
+        .start_search("marker002", options, 0)
+        .expect("redo search starts"));
+    drain_running(&mut doc);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(1));
+    assert_eq!(doc.search().searched_pages(), 3);
+
+    doc.edit_pages("Move", |tx, structure| move_pages(tx, structure, &[1], 0))
+        .expect("move succeeds");
+    assert!(doc
+        .start_search("marker002", options, 0)
+        .expect("moved search starts"));
+    drain_running(&mut doc);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(0));
+    assert_eq!(doc.search().searched_pages(), 3);
+}
+
+#[test]
+fn edited_search_uses_saved_bytes_after_an_existing_worker() {
+    let mut file = onionskin_core::DocumentFile::from_document(
+        Document::open_bytes(multi_page_pdf(4, false)).expect("fixture opens"),
+    );
+    let options = SearchOptions::default();
+    drain(file.document_mut(), "marker002", options, 0);
+
+    file.document_mut()
+        .edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+        .expect("delete succeeds");
+    let dir = tempfile::tempdir().expect("temporary directory");
+    file.save_as(&dir.path().join("saved.pdf"))
+        .expect("save succeeds");
+
+    assert!(file
+        .document_mut()
+        .start_search("marker002", options, 0)
+        .expect("saved search starts"));
+    drain_running(file.document_mut());
+    assert_eq!(file.search().current().map(|hit| hit.page), Some(1));
+    assert_eq!(file.search().len(), 1);
+    assert_eq!(file.search().searched_pages(), 3);
+}
+
+#[test]
+fn edited_search_invalidates_once_and_stays_cancelled() {
+    let mut doc = Document::open_bytes(multi_page_pdf(4, false)).expect("fixture opens");
+    let options = SearchOptions::default();
+    drain(&mut doc, "marker002", options, 0);
+    doc.edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+        .expect("delete succeeds");
+
+    assert!(doc.poll_search(), "the stale search needs one repaint");
+    assert!(!doc.poll_search(), "stale state is not retried every frame");
+    assert_eq!(doc.search().needle(), "marker002");
+    assert_eq!(doc.search().len(), 0);
+    assert!(!doc.search().is_running());
+
+    assert!(doc.start_search("marker002", options, 0).unwrap());
+    doc.poll_search();
+    doc.cancel_search();
+    doc.undo().expect("undo after cancel succeeds");
+    assert!(!doc.poll_search());
+    doc.cancel_search();
+    assert_eq!(doc.search().needle(), "");
+    assert!(!doc.poll_search());
+    assert!(!doc
+        .start_search("", options, usize::MAX)
+        .expect("empty search cancels before page validation"));
+
+    let mut running = Document::open_bytes(multi_page_pdf(PAGES, false)).expect("fixture opens");
+    assert!(running.start_search("alpha", options, 0).unwrap());
+    running
+        .edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+        .expect("delete while running succeeds");
+    assert!(running.poll_search());
+    assert_eq!(running.search().len(), 0);
+    assert!(!running.poll_search());
+    assert!(running.start_search("alpha", options, 0).unwrap());
+    drain_running(&mut running);
+}
+
+#[test]
+fn edited_search_include_comments_rejects_overcounted_annotations() {
+    let mut doc = Document::open_bytes(multi_page_pdf(4, true)).expect("fixture opens");
+    let options = SearchOptions {
+        include_comments: true,
+        ..SearchOptions::default()
+    };
+    assert!(doc.annotations().is_err());
+    assert!(!doc
+        .start_search("marker000", options, 0)
+        .expect("annotation preparation failure is visible"));
+    assert!(doc.search().is_empty());
+    assert!(doc.search().stopped().is_some());
+    assert!(!doc.search().is_running());
+    assert!(!doc.poll_search());
+}
+
+#[test]
+fn edited_search_reads_changed_page_text() {
+    let mut doc = Document::open_bytes(multi_page_pdf(4, false)).expect("fixture opens");
+    let options = SearchOptions::default();
+    drain(&mut doc, "marker000", options, 0);
+    assert_eq!(doc.search().len(), 1);
+
+    let (edit, base) = doc.edit_mut();
+    edit.transact(base, "Replace Text", |tx| {
+        tx.put_object(
+            5,
+            0,
+            onionskin_cos::Object::Stream(onionskin_cos::Stream {
+                dict: onionskin_cos::Dict::new(),
+                raw: b"BT /F1 12 Tf 70 120 Td (replacement) Tj ET".to_vec(),
+            }),
+        )
+    })
+    .expect("text edit succeeds");
+
+    drain(&mut doc, "replacement", options, 0);
+    assert_eq!(doc.search().len(), 1);
+    assert_eq!(doc.search().current().map(|hit| hit.page), Some(0));
+    let expected = doc.search_page(0, "replacement", options).unwrap();
+    assert_eq!(doc.search().matches_on(0), expected.as_slice());
+    assert_eq!(doc.search().current().unwrap().quads[0].corners[0].0, 70.0);
+    drain(&mut doc, "marker000", options, 0);
+    assert_eq!(doc.search().len(), 0, "the original text is gone");
+}
+
+#[test]
+fn edited_search_reports_preparation_failure_and_retries() {
+    let mut doc = Document::open_bytes(multi_page_pdf(4, false)).expect("fixture opens");
+    let options = SearchOptions::default();
+    drain(&mut doc, "marker000", options, 0);
+    assert_eq!(doc.search().len(), 1);
+    doc.edit_document("Invalid real", |tx| {
+        tx.set_trailer(
+            onionskin_cos::Name::new("SearchTest"),
+            Some(onionskin_cos::Object::Real(f64::NAN)),
+        )
+    })
+    .expect("invalid trailer edit succeeds");
+    assert!(doc
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentAndMarkups)
+        .is_err());
+
+    assert!(!doc
+        .start_search("marker000", options, 0)
+        .expect("preparation failure is visible in state"));
+    assert!(doc.search().is_empty());
+    assert_eq!(doc.search().needle(), "marker000");
+    assert!(doc.search().stopped().is_some());
+    assert!(!doc.search().is_running());
+    assert!(!doc.poll_search());
+    assert!(!doc
+        .start_search("marker000", options, 0)
+        .expect("retry remains a visible failure"));
+    assert!(doc.search().is_empty());
+    assert!(doc.search().stopped().is_some());
+
+    doc.undo().expect("undo succeeds");
+    assert!(doc
+        .start_search("marker000", options, 0)
+        .expect("retry after undo starts"));
+    drain_running(&mut doc);
+    assert_eq!(doc.search().len(), 1);
+}
+
 /// The check the synthetic fixtures cannot make: real files, whose text comes
 /// out of real fonts, agree page for page with the per-page search.
 #[test]
@@ -457,20 +659,21 @@ fn stream(data: &[u8]) -> Vec<u8> {
 /// found, on the comment's page and over its rectangle; a reply is found at
 /// the comment it answers. Without the option, nothing.
 #[test]
-fn include_comments_finds_text_that_is_only_in_a_comment() {
+fn edited_search_include_comments_tracks_changed_contents_and_undo() {
     use onionskin_core::review::add_reply;
     use onionskin_core::{add_annotation, Annotation, Rect, Subtype};
 
     let mut doc = Document::open_path(&onionskin_corpus_testing::seed("hello.pdf")).expect("opens");
     let page = doc.structure().expect("doc").page(0).expect("page").objref;
-    doc.edit_annotations("Sticky Note", |tx, structure| {
-        let mut note = Annotation::new(Subtype::Text, Rect::new(40.0, 40.0, 60.0, 60.0));
-        note.contents = Some("check the zebracorn".into());
-        let placed = add_annotation(tx, structure, page, &note, 0)?;
-        add_reply(tx, structure, page, placed, "the okapi agrees", None, 0)?;
-        Ok(())
-    })
-    .expect("places");
+    let placed = doc
+        .edit_annotations("Sticky Note", |tx, structure| {
+            let mut note = Annotation::new(Subtype::Text, Rect::new(40.0, 40.0, 60.0, 60.0));
+            note.contents = Some("check the zebracorn".into());
+            let placed = add_annotation(tx, structure, page, &note, 0)?;
+            add_reply(tx, structure, page, placed, "the okapi agrees", None, 0)?;
+            Ok(placed)
+        })
+        .expect("places");
 
     let plain = SearchOptions::default();
     drain(&mut doc, "zebracorn", plain, 0);
@@ -496,5 +699,23 @@ fn include_comments_finds_text_that_is_only_in_a_comment() {
         hit.quads[0].corners[3],
         (60.0, 40.0),
         "at the note it answers"
+    );
+    drain(&mut doc, "Zebracorn", with_comments, 0);
+
+    doc.edit_document("Edit Comment Text", |tx| {
+        onionskin_core::review::set_contents(tx, placed, "the tapir agrees", 0)
+    })
+    .expect("edits comment");
+    drain(&mut doc, "Zebracorn", with_comments, 0);
+    assert_eq!(doc.search().len(), 0, "the old comment text is gone");
+    doc.undo().expect("undo succeeds");
+    drain(&mut doc, "Zebracorn", with_comments, 0);
+    assert_eq!(doc.search().len(), 1, "undo restores the comment hit");
+    assert_eq!(
+        doc.search().current().unwrap().quads,
+        vec![onionskin_core::PageQuad {
+            page: 0,
+            corners: [(40.0, 60.0), (60.0, 60.0), (40.0, 40.0), (60.0, 40.0)],
+        }]
     );
 }
