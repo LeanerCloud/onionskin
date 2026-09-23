@@ -111,10 +111,7 @@ pub(in crate::shell) enum PrintAction {
     Handling(HandlingChoice),
     BookletSides(BookletSides),
     Binding(Binding),
-    /// Poster's Tile Scale, a percentage.
-    TileScale(u16),
-    /// Poster's Overlap, in points.
-    Overlap(u16),
+    /// Toggle Poster cut marks.
     CutMarks,
     PreviewPrevious,
     PreviewNext,
@@ -168,6 +165,8 @@ pub(in crate::shell) struct Typed {
     pub(in crate::shell) copies: String,
     pub(in crate::shell) pages: String,
     pub(in crate::shell) scale: String,
+    pub(in crate::shell) poster_scale: String,
+    pub(in crate::shell) poster_overlap: String,
     pub(in crate::shell) booklet_from: String,
     pub(in crate::shell) booklet_to: String,
 }
@@ -203,8 +202,6 @@ pub(in crate::shell) fn apply(settings: &mut PrintSettings, action: PrintAction)
         PrintAction::Handling(handling) => settings.handling = handling,
         PrintAction::BookletSides(sides) => settings.booklet.sides = sides,
         PrintAction::Binding(binding) => settings.booklet.binding = binding,
-        PrintAction::TileScale(scale) => settings.poster.scale = f64::from(scale),
-        PrintAction::Overlap(points) => settings.poster.overlap = f64::from(points),
         PrintAction::CutMarks => settings.poster.cut_marks = !settings.poster.cut_marks,
         PrintAction::Orientation(_)
         | PrintAction::Paper(_)
@@ -293,9 +290,13 @@ pub(in crate::shell) fn job(
                 ..settings.booklet
             })
         }
-        HandlingChoice::Poster => Handling::Poster(settings.poster),
+        HandlingChoice::Poster => Handling::Poster(Poster {
+            scale: poster_scale(&typed.poster_scale)?,
+            overlap: poster_overlap(&typed.poster_overlap)?,
+            ..settings.poster
+        }),
     };
-    Ok(PrintJob {
+    let job = PrintJob {
         paper: setup.paper(),
         orientation: setup.orientation,
         selection,
@@ -312,7 +313,10 @@ pub(in crate::shell) fn job(
         print_as_image: settings.print_as_image || printed.image_only.is_some(),
         image_dpi: 150.0,
         handling,
-    })
+    };
+    onionskin_print::poster::preflight(&job, &printed.page_sizes, None)
+        .map_err(|error| error.to_string())?;
+    Ok(job)
 }
 
 /// The sheets the job prints: the preview, and exactly what the backend
@@ -321,7 +325,41 @@ pub(in crate::shell) fn sheets(job: &PrintJob, printed: &Printed) -> Result<Vec<
     impose(job, &printed.page_sizes).map_err(|error| error.to_string())
 }
 
-/// Custom Scale, 1 to 999 percent.
+/// Parse the Poster control's restricted ASCII decimal grammar.
+fn poster_number(text: &str, percent_suffix: bool) -> Result<f64, String> {
+    let mut text = text.trim();
+    if percent_suffix && text.ends_with('%') {
+        text = text[..text.len() - 1].trim_end();
+    }
+    if text.is_empty()
+        || text.bytes().filter(|b| *b == b'.').count() > 1
+        || !text.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        || !text.bytes().any(|b| b.is_ascii_digit())
+    {
+        return Err(format!("invalid Poster value {text:?}"));
+    }
+    text.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("invalid Poster value {text:?}"))
+}
+
+fn poster_scale(text: &str) -> Result<f64, String> {
+    let value = poster_number(text, true)?;
+    if !(1.0..=9999.0).contains(&value) {
+        return Err(format!("Tile Scale must be from 1 to 9999%, not {text:?}"));
+    }
+    Ok(value)
+}
+
+fn poster_overlap(text: &str) -> Result<f64, String> {
+    let value = poster_number(text, false)? * 72.0;
+    if !(0.0..=144.0).contains(&value) {
+        return Err(format!("Overlap must be from 0 to 2 inches, not {text:?}"));
+    }
+    Ok(value)
+}
+
 fn percent(text: &str) -> Result<u16, String> {
     let text = text.trim().trim_end_matches('%').trim();
     text.parse::<u16>()
@@ -349,6 +387,8 @@ pub(in crate::shell) struct PrintDialogState {
     pub(in crate::shell) copies: Entity<SearchInput>,
     pub(in crate::shell) pages: Entity<SearchInput>,
     pub(in crate::shell) scale: Entity<SearchInput>,
+    pub(in crate::shell) poster_scale: Entity<SearchInput>,
+    pub(in crate::shell) poster_overlap: Entity<SearchInput>,
     pub(in crate::shell) booklet_from: Entity<SearchInput>,
     pub(in crate::shell) booklet_to: Entity<SearchInput>,
     /// Which sheet the preview shows.
@@ -357,10 +397,12 @@ pub(in crate::shell) struct PrintDialogState {
 }
 
 /// The fields' ids, which the tree and the focus ring share.
-pub(in crate::shell) const TEXT_FIELDS: [TextField; 5] = [
+pub(in crate::shell) const TEXT_FIELDS: [TextField; 7] = [
     TextField::PrintCopies,
     TextField::PrintPages,
     TextField::PrintScale,
+    TextField::PrintPosterScale,
+    TextField::PrintPosterOverlap,
     TextField::PrintBookletFrom,
     TextField::PrintBookletTo,
 ];
@@ -389,6 +431,8 @@ impl PrintDialogState {
             copies: field("print-copies", "Copies", "1".to_owned()),
             pages: field("print-pages", "Pages, like 2-4, 7", pages),
             scale: field("print-scale", "Custom Scale (%)", "100".to_owned()),
+            poster_scale: field("print-poster-scale", "Tile Scale (%)", "200".to_owned()),
+            poster_overlap: field("print-poster-overlap", "Overlap (in)", "0.25".to_owned()),
             booklet_from: field("print-booklet-from", "Sheets from", "1".to_owned()),
             booklet_to: field("print-booklet-to", "To", booklet_to),
             settings,
@@ -404,6 +448,8 @@ impl PrintDialogState {
             copies: self.copies.read(cx).query().to_owned(),
             pages: self.pages.read(cx).query().to_owned(),
             scale: self.scale.read(cx).query().to_owned(),
+            poster_scale: self.poster_scale.read(cx).query().to_owned(),
+            poster_overlap: self.poster_overlap.read(cx).query().to_owned(),
             booklet_from: self.booklet_from.read(cx).query().to_owned(),
             booklet_to: self.booklet_to.read(cx).query().to_owned(),
         }
@@ -442,6 +488,12 @@ impl PrintDialogState {
             TextField::PrintCopies => Some(&self.copies),
             TextField::PrintPages => Some(&self.pages),
             TextField::PrintScale => Some(&self.scale),
+            TextField::PrintPosterScale if self.settings.handling == HandlingChoice::Poster => {
+                Some(&self.poster_scale)
+            }
+            TextField::PrintPosterOverlap if self.settings.handling == HandlingChoice::Poster => {
+                Some(&self.poster_overlap)
+            }
             TextField::PrintBookletFrom if self.settings.handling == HandlingChoice::Booklet => {
                 Some(&self.booklet_from)
             }

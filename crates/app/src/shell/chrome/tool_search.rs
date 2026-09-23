@@ -508,6 +508,8 @@ fn field_node(
         | TextField::SplitValue
         | TextField::PrintCopies
         | TextField::PrintScale
+        | TextField::PrintPosterScale
+        | TextField::PrintPosterOverlap
         | TextField::PrintBookletFrom
         | TextField::PrintBookletTo
         | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,

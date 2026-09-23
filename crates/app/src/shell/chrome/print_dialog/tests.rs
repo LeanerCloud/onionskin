@@ -14,6 +14,8 @@ fn typed() -> Typed {
         copies: "1".into(),
         pages: "2-4, 7".into(),
         scale: "50".into(),
+        poster_scale: "200".into(),
+        poster_overlap: "0.25".into(),
         booklet_from: "1".into(),
         booklet_to: "3".into(),
     }
@@ -237,13 +239,13 @@ fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
 
     for action in [
         PrintAction::Handling(HandlingChoice::Poster),
-        PrintAction::TileScale(200),
-        PrintAction::Overlap(0),
         PrintAction::CutMarks,
     ] {
         assert!(apply(&mut settings, action));
     }
-    let job = job_for(&settings, &typed()).expect("a job");
+    let mut poster_input = typed();
+    poster_input.poster_overlap = "0".into();
+    let job = job_for(&settings, &poster_input).expect("a job");
     assert_eq!(
         job.handling,
         Handling::Poster(Poster {
@@ -359,6 +361,152 @@ fn booklet_sheet_range_is_ignored_for_pages_and_poster() {
         ..typed()
     };
     for handling in [HandlingChoice::Pages, HandlingChoice::Poster] {
+        let settings = PrintSettings {
+            handling,
+            ..PrintSettings::default()
+        };
+        assert!(job_for(&settings, &input).is_ok(), "{handling:?}");
+    }
+}
+
+#[test]
+fn poster_controls_parse_ascii_scale_and_inches_with_explicit_defaults() {
+    let mut settings = PrintSettings::default();
+    settings.handling = HandlingChoice::Poster;
+    let mut input = typed();
+    input.poster_scale = " 125.5% ".into();
+    input.poster_overlap = ".125".into();
+    let parsed_job = job_for(&settings, &input).expect("valid custom Poster controls");
+    let Handling::Poster(poster) = parsed_job.handling else {
+        panic!("poster handling")
+    };
+    assert_eq!(poster.scale, 125.5);
+    assert_eq!(poster.overlap, 9.0);
+    input.poster_scale = "200".into();
+    input.poster_overlap = "0.25".into();
+    let defaults = job_for(&settings, &input).expect("default controls");
+    let Handling::Poster(poster) = defaults.handling else {
+        panic!("poster handling")
+    };
+    assert_eq!(poster.scale, 200.0);
+    assert_eq!(poster.overlap, 18.0);
+
+    let tiny = Printed {
+        page_sizes: vec![(0.01, 0.01)],
+        current_page: 0,
+        image_only: None,
+    };
+    for (scale, overlap) in [("1", "0"), ("9999", "2")] {
+        let mut endpoint = typed();
+        endpoint.poster_scale = scale.into();
+        endpoint.poster_overlap = overlap.into();
+        assert!(job(
+            &settings,
+            PageSetup::default(),
+            &endpoint,
+            &tiny,
+            &[Destination::SaveAsPdf]
+        )
+        .is_ok());
+    }
+    input.poster_scale = "2. %".into();
+    input.poster_overlap = "0".into();
+    assert!(job_for(&settings, &input).is_ok());
+}
+
+#[test]
+fn poster_controls_reject_non_ascii_decimal_grammar() {
+    let mut settings = PrintSettings::default();
+    settings.handling = HandlingChoice::Poster;
+    for bad in [
+        "", ".", "x", "١", "．", "+1", "-0", "1e2", "1,5", "1 0", "NaN", "inf", "1.2.3", "0.125in",
+        "9pt", "2mm", "100%%",
+    ] {
+        let mut input = typed();
+        input.poster_scale = bad.into();
+        assert!(
+            job_for(&settings, &input).is_err(),
+            "scale accepted {bad:?}"
+        );
+        input = typed();
+        input.poster_overlap = bad.into();
+        assert!(
+            job_for(&settings, &input).is_err(),
+            "overlap accepted {bad:?}"
+        );
+    }
+    let overflow = "1".repeat(400);
+    let mut input = typed();
+    input.poster_scale = overflow.clone();
+    assert!(
+        job_for(&settings, &input).is_err(),
+        "scale accepted 400 digits"
+    );
+    input = typed();
+    input.poster_overlap = overflow;
+    assert!(
+        job_for(&settings, &input).is_err(),
+        "overlap accepted 400 digits"
+    );
+}
+
+#[test]
+fn poster_controls_retain_values_when_handling_is_switched_away_and_back() {
+    let mut settings = PrintSettings::default();
+    settings.handling = HandlingChoice::Poster;
+    let mut input = typed();
+    input.poster_scale = "125.5%".into();
+    input.poster_overlap = ".125".into();
+    let first = job_for(&settings, &input).expect("custom Poster values");
+    settings.handling = HandlingChoice::Pages;
+    assert!(job_for(&settings, &input).is_ok());
+    settings.handling = HandlingChoice::Poster;
+    let second = job_for(&settings, &input).expect("retained Poster values");
+    assert_eq!(first.handling, second.handling);
+}
+
+#[test]
+fn poster_controls_cut_marks_revalidate_the_real_sheet_cap_without_clamping_values() {
+    let printed = Printed {
+        page_sizes: vec![(19_584.0, 25_344.0)],
+        current_page: 0,
+        image_only: None,
+    };
+    let mut settings = PrintSettings::default();
+    settings.handling = HandlingChoice::Poster;
+    settings.poster.cut_marks = false;
+    let mut input = typed();
+    input.poster_scale = "100".into();
+    input.poster_overlap = "0".into();
+    let destinations = [Destination::SaveAsPdf];
+    let setup = PageSetup {
+        paper: 0,
+        orientation: Orientation::Portrait,
+    };
+    let valid = job(&settings, setup, &input, &printed, &destinations)
+        .expect("32x32 tiles fit the 1024-sheet cap without marks");
+    assert_eq!(
+        valid.handling,
+        Handling::Poster(Poster {
+            scale: 100.0,
+            overlap: 0.0,
+            cut_marks: false
+        })
+    );
+    assert!(apply(&mut settings, PrintAction::CutMarks));
+    assert!(job(&settings, setup, &input, &printed, &destinations,).is_err());
+    assert!(apply(&mut settings, PrintAction::CutMarks));
+    let restored = job(&settings, setup, &input, &printed, &destinations)
+        .expect("turning marks off restores the valid job");
+    assert_eq!(restored.handling, valid.handling);
+}
+
+#[test]
+fn poster_controls_hidden_invalid_values_do_not_block_other_handling() {
+    let mut input = typed();
+    input.poster_scale = "not a number".into();
+    input.poster_overlap = "1e2".into();
+    for handling in [HandlingChoice::Pages, HandlingChoice::Booklet] {
         let settings = PrintSettings {
             handling,
             ..PrintSettings::default()

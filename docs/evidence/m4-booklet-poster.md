@@ -22,8 +22,9 @@ not fully accepted across all targets:
   complete padded composition. Native print-driver/default-retention and
   Binding dropdown, Tall binding variants, and auto-rotate-per-page remain
   missing; native print-driver/default-retention acceptance is deferred.
-- **Poster:** custom scale and overlap entry is not offered. Acrobat's printed
-  tile labels are also not drawn.
+- **Poster:** typed custom scale and overlap entry is now available, with the
+  bounded ASCII grammar and defaults documented below. Acrobat's printed tile
+  labels are not drawn.
 
 The revised headline is 156 planned / 29 partial / 80 out-of-scope, 138
 implemented. This correction adds no runtime or native-print verification
@@ -74,10 +75,63 @@ The focused A1 treatment evidence includes:
   `/tmp/claude/poster-a1-independent-app-clippy-20260923-aSvaix`.
 
 These checks cover implementation safety and the real file/GPUI consumers.
-They do not close the Poster parity row: custom scale and overlap entry remain
-unavailable in the dialog, Acrobat tile labels remain absent, and native
-macOS print-window, driver, screenshot, and raster-memory acceptance remain
-deferred.
+The A1 checkpoint did not add dialog entry controls. Later A2 work adds
+Onionskin's bounded text controls, while the Poster parity row remains partial
+because Acrobat tile labels and native print-window, driver, screenshot, and
+raster-memory acceptance remain deferred.
+
+## Poster A2/A3 consumer evidence, 2026-09-23
+
+A2 adds editable Poster controls to the real Print dialog. Scale accepts finite
+ASCII decimal values from `1` through `9999`, with an optional `%`; overlap
+accepts bare ASCII decimal inches from `0` through `2`. The explicit defaults
+are `200` and `0.25`. Invalid hidden values do not block Pages or Booklet,
+values survive switching handling and reopening the dialog resets to defaults,
+and the shared preflight cap remains enforced before output.
+
+A3 verifies the user-facing consumers, not only the parser:
+
+- real focus, keyboard entry, AX labels/roles, Tab and Shift-Tab traversal,
+  effective preview-index resolution after shrinking, and the shared four-tile
+  Letter case;
+- saved vector and image output with the fractional `125.5%` / `.125` case;
+  vector output asserts the exact ordered matrices and decoded tile clips,
+  while image output asserts the four-sheet count, clips and known colored
+  overlap probes from the real 612 x 792 marked fixture;
+- invalid input leaves the chooser closed;
+- a pending chooser freezes the submitted source and settings while a source
+  rotation, tab switch, and newer 100 / 0 dialog leave the original four-sheet
+  output unchanged and the newer dialog open.
+
+Final retained evidence uses these commands under the shared build lock,
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`,
+`CARGO_INCREMENTAL=0`, and the shared target directory:
+
+```text
+/usr/bin/lockf -k -t 600 /tmp/agent-locks/onionskin-build.lock env CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/cristi/Dropbox_Maestral/devel/onionskin/target cargo test --locked -p onionskin-app --lib --features shell-test-support shell::chrome::tabs::tests::print
+/usr/bin/lockf -k -t 600 /tmp/agent-locks/onionskin-build.lock env CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/cristi/Dropbox_Maestral/devel/onionskin/target cargo test --locked -p onionskin-app --lib --features shell-test-support shell::chrome::print_dialog::tests
+/usr/bin/lockf -k -t 600 /tmp/agent-locks/onionskin-build.lock env CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/cristi/Dropbox_Maestral/devel/onionskin/target cargo test --locked -p onionskin-print --lib --test file_backend
+```
+
+The final independent runtime pass covered 10 Poster app tests, 26 full tab
+print tests, 49 print-library tests, and 31 file-backend tests. The earlier
+focused dialog pass covered 19 dialog tests. The shared `numbered(0/1/8)`
+fixture identity check also passed; its retained raw log is
+`/tmp/claude/poster-numbered-identity-20260923-qGxFjU/raw.log`.
+
+The exact retained independent A3 runtime logs are
+`/tmp/claude/poster-a3-independent-app-20260923-Ut7SvF`,
+`/tmp/claude/poster-a3-independent-tabs-print-20260923-rS18Rf`, and
+`/tmp/claude/poster-a3-independent-broad-print-20260923-Yv24vx`. The earlier
+dialog log is `/tmp/claude/poster-a2-independent-dialog-20260923-QbtDRn`.
+Final focused compiler/lint logs are
+`/tmp/claude/poster-a3-final-fractional-20260923-cAPaBP`,
+`/tmp/claude/poster-a3-final-fmt-20260923-QGR9YA`,
+`/tmp/claude/poster-a3-final-print-clippy-20260923-orN74j`, and
+`/tmp/claude/poster-a3-final-app-clippy-20260923-tUC1Md`. Earlier A2 logs
+remain retained as historical checkpoints, not substitutes for final A3
+evidence. No hosted CI, native
+macOS print-window, printer-driver, screenshot, or Acrobat run is claimed.
 
 ## What the user gets
 
@@ -100,11 +154,11 @@ and the preview and the printed file are the chosen handling's sheets.
   - **Sheets.** `Sheets from` and `To` select an inclusive physical-sheet
     interval after composition; invalid values are rejected at submit time.
 - **Poster.**
-  - **Tiles.** Each page is enlarged by the tile scale (150, 200, 300 or 400
-    percent) and split into as many sheets as it takes. The tiles run left
+  - **Tiles.** Each page is enlarged by the typed tile scale (`1` through
+    `9999`, optional `%`) and split into as many sheets as it takes. The tiles run left
     to right, top to bottom, page after page.
-  - **Overlap.** None, 0.25 in or 0.5 in: neighbouring tiles repeat that
-    much of the page for gluing.
+  - **Overlap.** A bare decimal from `0` through `2` inches: neighbouring
+    tiles repeat that much of the page for gluing.
   - **Cut marks.** They frame each tile's area in an 18-point margin.
   - **Clipping.** Each tile's page is clipped to the tile, so nothing prints
     into the margin.
@@ -124,9 +178,9 @@ and the preview and the printed file are the chosen handling's sheets.
   - `Placement::visible` is the footprint cut to the clip, which the
     dialog's preview outlines.
 - **Dialog.** `HandlingChoice` and the booklet and poster settings live in
-  `PrintSettings`. The actions are `Handling`, `BookletSides`, `Binding`,
-  `TileScale`, `Overlap` and `CutMarks`. `handling_groups` shows the groups
-  the choice needs.
+  `PrintSettings`. Poster scale and overlap are editable text fields with
+  AX/keyboard focus routing; `CutMarks` remains a toggle. `handling_groups`
+  shows the groups the choice needs.
 - **Physical interval.** `Booklet.sheets` filters the original padded sheet
   loop, preserving source selection, blank padding, side mode and binding.
   Comment-summary appendix jobs reset this document-specific interval.

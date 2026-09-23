@@ -17,6 +17,13 @@ use crate::shell::panes::{PaneAction, ThumbnailAction, ThumbnailsCommand};
 /// A document of `count` pages, each saying "Page n" so an order can be
 /// read back from the text.
 pub(super) fn numbered(count: usize) -> Vec<u8> {
+    let contents = (0..count)
+        .map(|page| format!("BT /F1 18 Tf 20 40 Td (Page {}) Tj ET", page + 1).into_bytes())
+        .collect();
+    pdf_pages([0, 0, 200, 100], contents)
+}
+
+fn pdf_pages(media_box: [i64; 4], contents: Vec<Vec<u8>>) -> Vec<u8> {
     let dict = |entries: Vec<(&str, Object)>| {
         let mut dict = Dict::new();
         for (key, value) in entries {
@@ -25,6 +32,7 @@ pub(super) fn numbered(count: usize) -> Vec<u8> {
         dict
     };
     let reference = |number: u32| Object::Ref(ObjRef::new(number, 0));
+    let count = contents.len();
     let mut objects = vec![
         (
             ObjRef::new(1, 0),
@@ -43,13 +51,13 @@ pub(super) fn numbered(count: usize) -> Vec<u8> {
         ),
     ];
     let mut kids = Vec::new();
-    for page in 0..count {
+    for (page, raw) in contents.into_iter().enumerate() {
         let (content, leaf) = (4 + 2 * page as u32, 5 + 2 * page as u32);
         objects.push((
             ObjRef::new(content, 0),
             Object::Stream(Stream {
                 dict: Dict::new(),
-                raw: format!("BT /F1 18 Tf 20 40 Td (Page {}) Tj ET", page + 1).into_bytes(),
+                raw,
             }),
         ));
         objects.push((
@@ -59,7 +67,7 @@ pub(super) fn numbered(count: usize) -> Vec<u8> {
                 ("Parent", reference(2)),
                 (
                     "MediaBox",
-                    Object::Array([0, 0, 200, 100].map(Object::Integer).to_vec()),
+                    Object::Array(media_box.map(Object::Integer).to_vec()),
                 ),
                 (
                     "Resources",
@@ -82,6 +90,14 @@ pub(super) fn numbered(count: usize) -> Vec<u8> {
         ])),
     ));
     CosDocument::write_new(&objects, dict(vec![("Root", reference(1))])).expect("writes")
+}
+
+/// A single Letter page with visible colored marks at known source coordinates.
+pub(super) fn letter_marked() -> Vec<u8> {
+    pdf_pages(
+        [0, 0, 612, 792],
+        vec![b"q 1 0 0 rg 483 399 2 2 re f 0 0 1 rg 199 164 2 2 re f Q".to_vec()],
+    )
 }
 
 /// A window on the first page of a numbered document.

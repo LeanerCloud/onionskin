@@ -678,6 +678,8 @@ impl ShellFrame {
             TextField::PrintCopies
             | TextField::PrintPages
             | TextField::PrintScale
+            | TextField::PrintPosterScale
+            | TextField::PrintPosterOverlap
             | TextField::PrintBookletFrom
             | TextField::PrintBookletTo => self
                 .print

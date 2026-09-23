@@ -113,19 +113,6 @@ const BOOKLET_SIDES: [(BookletSides, &str); 3] = [
 
 const BINDINGS: [(Binding, &str); 2] = [(Binding::Left, "Left"), (Binding::Right, "Right")];
 
-const TILE_SCALES: [(u16, &str); 4] = [
-    (150, "Tile scale 150%"),
-    (200, "Tile scale 200%"),
-    (300, "Tile scale 300%"),
-    (400, "Tile scale 400%"),
-];
-
-const OVERLAPS: [(u16, &str); 3] = [
-    (0, "No overlap"),
-    (18, "Overlap 0.25 in"),
-    (36, "Overlap 0.5 in"),
-];
-
 const SIZES: [(SizingChoice, &str); 4] = [
     (SizingChoice::Fit, "Fit"),
     (SizingChoice::ActualSize, "Actual size"),
@@ -365,27 +352,31 @@ fn handling_groups(state: &PrintDialogState) -> Vec<Group> {
             ),
         ],
         HandlingChoice::Poster => {
-            let poster = settings.poster;
-            let mut tiles = choices(
-                "print-poster",
-                "Poster",
-                &TILE_SCALES,
-                poster.scale as u16,
-                PrintAction::TileScale,
-            );
-            tiles
-                .controls
-                .extend(OVERLAPS.iter().map(|(points, label)| {
-                    radio(
-                        *label,
-                        poster.overlap == f64::from(*points),
-                        PrintAction::Overlap(*points),
-                    )
-                }));
-            tiles
-                .controls
-                .push(check("Cut marks", poster.cut_marks, PrintAction::CutMarks));
-            vec![tiles]
+            vec![
+                Group {
+                    id: "print-poster",
+                    label: "Poster",
+                    controls: vec![
+                        Control::Field {
+                            label: "Tile Scale (%)",
+                            field: TextField::PrintPosterScale,
+                        },
+                        Control::Field {
+                            label: "Overlap (in)",
+                            field: TextField::PrintPosterOverlap,
+                        },
+                    ],
+                },
+                Group {
+                    id: "print-poster-marks",
+                    label: "Marks",
+                    controls: vec![check(
+                        "Cut marks",
+                        settings.poster.cut_marks,
+                        PrintAction::CutMarks,
+                    )],
+                },
+            ]
         }
     }
 }
@@ -516,6 +507,8 @@ pub(in crate::shell) fn accessible(
             TextField::PrintCopies => (&state.copies, "Copies"),
             TextField::PrintPages => (&state.pages, "Pages"),
             TextField::PrintScale => (&state.scale, "Custom Scale (%)"),
+            TextField::PrintPosterScale => (&state.poster_scale, "Tile Scale (%)"),
+            TextField::PrintPosterOverlap => (&state.poster_overlap, "Overlap (in)"),
             TextField::PrintBookletFrom => (&state.booklet_from, "Sheets from"),
             TextField::PrintBookletTo => (&state.booklet_to, "To"),
             _ => unreachable!("non-print text field in print dialog"),

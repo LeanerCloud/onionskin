@@ -27,7 +27,13 @@ const MARK: [f64; 4] = [20.0, 20.0, 60.0, 60.0];
 /// square at `MARK`.
 fn marked(pages: &[(f64, f64, i64)]) -> Document {
     let [x0, y0, x1, y1] = MARK;
-    let content = format!("0 g {x0} {y0} {} {} re f", x1 - x0, y1 - y0);
+    marked_with_content(
+        pages,
+        &format!("0 g {x0} {y0} {} {} re f", x1 - x0, y1 - y0),
+    )
+}
+
+fn marked_with_content(pages: &[(f64, f64, i64)], content: &str) -> Document {
     let mut objects = vec![
         (
             ObjRef::new(1, 0),
@@ -64,6 +70,10 @@ fn marked(pages: &[(f64, f64, i64)]) -> Document {
     };
     let bytes = CosDocument::write_new(&objects, trailer).expect("writes");
     Document::open_bytes(bytes).expect("opens")
+}
+
+fn marked_overlap(pages: &[(f64, f64, i64)]) -> Document {
+    marked_with_content(pages, "1 0 0 rg 483 399 2 2 re f 0 0 1 rg 199 164 2 2 re f")
 }
 
 /// `hello.pdf` with a blue rectangle and a stamp on it.
@@ -157,6 +167,44 @@ fn read_sheets(bytes: &[u8]) -> Vec<ReadSheet> {
     let doc = cos(bytes);
     let count = doc.page_count().expect("a page tree") as usize;
     (0..count).map(|index| read_sheet(&doc, index)).collect()
+}
+
+fn assert_poster_clips(bytes: &[u8]) {
+    let doc = cos(bytes);
+    for index in 0..doc.page_count().expect("a page tree") as usize {
+        let page = doc.page(index).expect("a sheet");
+        let contents = doc
+            .resolve(page.dict.get(b"Contents").expect("contents"))
+            .expect("resolves contents");
+        let data = doc
+            .decode_stream(contents.as_stream().expect("a stream"))
+            .expect("decodes contents");
+        let mut operators = Vec::new();
+        let mut tokens = Tokenizer::new(&data);
+        while let Some(operation) = tokens.next_operation() {
+            operators.push(operation.operator.as_bytes().to_vec());
+            if operation.operator.as_bytes() == b"re" {
+                assert_eq!(
+                    operation.numbers::<4>().expect("clip values"),
+                    [0.0, 0.0, 612.0, 792.0]
+                );
+            }
+        }
+        assert_eq!(
+            operators,
+            vec![
+                b"q".to_vec(),
+                b"re".to_vec(),
+                b"W".to_vec(),
+                b"n".to_vec(),
+                b"cm".to_vec(),
+                b"cm".to_vec(),
+                b"Do".to_vec(),
+                b"Q".to_vec(),
+            ],
+            "sheet {index} must have one clipped placement"
+        );
+    }
 }
 
 fn read_sheet(doc: &CosDocument, index: usize) -> ReadSheet {
@@ -1061,6 +1109,91 @@ fn a_poster_prints_one_clipped_tile_per_sheet() {
         assert!(text.contains("0 0 612 792 re W n"), "sheet {index}: {text}");
     }
     assert!(sheets.iter().all(|sheet| sheet.drawn.len() == 1));
+}
+
+#[test]
+fn poster_controls_fractional_letter_scale_and_overlap_keep_four_tiles() {
+    let mut document = marked(&[(612.0, 792.0, 0)]);
+    let job = PrintJob {
+        handling: Handling::Poster(Poster {
+            scale: 125.5,
+            overlap: 9.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let sheets =
+        read_sheets(&print_to_file(&mut document, &job).expect("fractional Poster prints"));
+    assert_eq!(sheets.len(), 4);
+    assert!(sheets.iter().all(|sheet| sheet.drawn.len() == 1));
+    let matrices: Vec<_> = sheets
+        .iter()
+        .flat_map(|sheet| sheet.drawn.iter().map(|drawn| drawn.matrix))
+        .collect();
+    let expected_matrices = vec![
+        [1.255, 0.0, 0.0, 1.255, 0.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, -603.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, 0.0, 581.04],
+        [1.255, 0.0, 0.0, 1.255, -603.0, 581.04],
+    ];
+    assert_eq!(matrices.len(), expected_matrices.len());
+    for (matrix, expected_matrix) in matrices.iter().zip(expected_matrices) {
+        for (actual, expected) in matrix.iter().zip(expected_matrix) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+    }
+    let vector_bytes =
+        print_to_file(&mut marked_overlap(&[(612.0, 792.0, 0)]), &job).expect("vector output");
+    assert_poster_clips(&vector_bytes);
+    for (sheet, probe, red) in [
+        (0, (607.42, 300.04), true),
+        (1, (4.42, 300.04), true),
+        (0, (251.0, 5.115), false),
+        (2, (251.0, 788.115), false),
+    ] {
+        let pixels = Pixels::of(vector_bytes.clone(), sheet);
+        let pixel = pixels.at(probe);
+        assert!(
+            pixel[3] > 200
+                && if red {
+                    pixel[0] > 200 && pixel[1] < 50 && pixel[2] < 50
+                } else {
+                    pixel[2] > 200 && pixel[0] < 50 && pixel[1] < 50
+                },
+            "vector sheet {sheet} missing colored overlap patch at {probe:?}: {pixel:?}"
+        );
+    }
+    let mut image = marked_overlap(&[(612.0, 792.0, 0)]);
+    let image_job = PrintJob {
+        print_as_image: true,
+        handling: Handling::Poster(Poster {
+            scale: 125.5,
+            overlap: 9.0,
+            cut_marks: false,
+        }),
+        ..letter()
+    };
+    let image_bytes = print_to_file(&mut image, &image_job).expect("image Poster prints");
+    assert_poster_clips(&image_bytes);
+    assert_eq!(read_sheets(&image_bytes).len(), 4);
+    for (sheet, probe, red) in [
+        (0, (607.42, 300.04), true),
+        (1, (4.42, 300.04), true),
+        (0, (251.0, 5.115), false),
+        (2, (251.0, 788.115), false),
+    ] {
+        let pixels = Pixels::of(image_bytes.clone(), sheet);
+        let pixel = pixels.at(probe);
+        assert!(
+            pixel[3] > 200
+                && if red {
+                    pixel[0] > 200 && pixel[1] < 50 && pixel[2] < 50
+                } else {
+                    pixel[2] > 200 && pixel[0] < 50 && pixel[1] < 50
+                },
+            "image sheet {sheet} missing colored overlap patch at {probe:?}: {pixel:?}"
+        );
+    }
 }
 
 /// Booklet: eight pages print as four landscape sides of two pages each.

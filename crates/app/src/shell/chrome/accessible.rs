@@ -71,6 +71,8 @@ pub(in crate::shell) enum TextField {
     PrintCopies,
     PrintPages,
     PrintScale,
+    PrintPosterScale,
+    PrintPosterOverlap,
     PrintBookletFrom,
     PrintBookletTo,
     /// Advanced Search's words, and its criterion's value.

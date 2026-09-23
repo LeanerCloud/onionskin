@@ -35,6 +35,19 @@ fn window_over(
     window_on(dir, path, cx)
 }
 
+fn window_letter_marked(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    gpui::WindowHandle<ShellFrame>,
+    Vec<crate::keymap::Binding>,
+) {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("letter-marked.pdf");
+    std::fs::write(&path, super::page_grid::letter_marked()).expect("writes Letter fixture");
+    window_on(dir, path, cx)
+}
+
 fn window_on(
     dir: tempfile::TempDir,
     path: PathBuf,
@@ -76,6 +89,86 @@ fn page_text(path: &Path, page: usize) -> String {
         .expect("reads page text")
         .flatten()
         .text
+}
+
+fn saved_poster_geometry(path: &Path) -> Vec<([f64; 6], [f64; 4])> {
+    let document = onionskin_cos::Document::open_path(path).expect("opens saved PDF");
+    let count =
+        usize::try_from(document.page_count().expect("page count")).expect("page count fits");
+    (0..count)
+        .map(|index| {
+            let page = document.page(index).expect("saved sheet");
+            assert_eq!(page.media_box, Some([0.0, 0.0, 612.0, 792.0]));
+            let contents = document
+                .resolve(page.dict.get(b"Contents").expect("contents"))
+                .expect("resolves contents");
+            let data = document
+                .decode_stream(contents.as_stream().expect("content stream"))
+                .expect("decodes contents");
+            let tokens: Vec<_> = std::str::from_utf8(&data)
+                .expect("ASCII content stream")
+                .split_ascii_whitespace()
+                .collect();
+            assert_eq!(tokens.len(), 25, "one clipped placement stream");
+            assert_eq!(tokens[0], "q");
+            assert_eq!(tokens[5], "re");
+            assert_eq!(tokens[6], "W");
+            assert_eq!(tokens[7], "n");
+            assert_eq!(tokens[14], "cm");
+            assert_eq!(tokens[21], "cm");
+            assert_eq!(tokens[22], "/P0");
+            assert_eq!(tokens[23], "Do");
+            assert_eq!(tokens[24], "Q");
+            let rect: [f64; 4] = tokens[1..5]
+                .iter()
+                .map(|token| token.parse().expect("clip number"))
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("four clip numbers");
+            assert_eq!(rect, [0.0, 0.0, 612.0, 792.0]);
+            let transform: [f64; 6] = tokens[8..14]
+                .iter()
+                .map(|token| token.parse().expect("placement number"))
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("six placement numbers");
+            let inner: [f64; 6] = tokens[15..21]
+                .iter()
+                .map(|token| token.parse().expect("form number"))
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("six form numbers");
+            assert_eq!(inner, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+            (transform, [0.0, 0.0, 612.0, 792.0])
+        })
+        .collect()
+}
+
+fn assert_saved_mark(render: &onionskin_core::PageRender, point: (f64, f64), red: bool) {
+    let width = render.raster.width() as usize;
+    let height = render.raster.height() as usize;
+    let (x, y) = point;
+    let raster_y = height as f64 - y;
+    let found = ((raster_y.floor() as isize - 2)..=(raster_y.ceil() as isize + 2)).any(|row| {
+        ((x.floor() as isize - 2)..=(x.ceil() as isize + 2)).any(|column| {
+            if row < 0 || column < 0 || row >= height as isize || column >= width as isize {
+                return false;
+            }
+            let offset = (row as usize * width + column as usize) * 4;
+            let pixel = &render.raster.rgba()[offset..offset + 4];
+            pixel[3] > 200
+                && if red {
+                    pixel[0] > 200 && pixel[1] < 80 && pixel[2] < 80
+                } else {
+                    pixel[2] > 200 && pixel[0] < 80 && pixel[1] < 80
+                }
+        })
+    });
+    assert!(
+        found,
+        "missing {} mark near {point:?}",
+        if red { "red" } else { "blue" }
+    );
 }
 
 #[cfg(feature = "tools-comment")]
@@ -180,6 +273,594 @@ fn closing_the_dialog_takes_every_control_out_of_the_tree(cx: &mut TestAppContex
         .update(cx, |frame, window, cx| {
             assert_eq!(frame.dialog, None);
             assert_eq!(print_ids(frame, window, cx), Vec::<String>::new());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn poster_controls_editable_fields_save_fractional_letter(cx: &mut TestAppContext) {
+    let (dir, window, _bindings) = window_letter_marked(cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens print dialog");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    act(window, PrintAction::CutMarks, cx);
+    window
+        .update(cx, |frame, _window, _cx| {
+            assert!(
+                !frame
+                    .print_dialog()
+                    .expect("dialog")
+                    .settings
+                    .poster
+                    .cut_marks
+            );
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query("", cx));
+            frame.run_activation(
+                Activation::Focus(crate::shell::chrome::accessible::TextField::PrintPosterScale),
+                window,
+                cx,
+            );
+            let tree = frame.accessible(window, cx);
+            for (id, label) in [
+                ("print-poster-scale", "Tile Scale (%)"),
+                ("print-poster-overlap", "Overlap (in)"),
+            ] {
+                let field = tree.find(&id.into()).expect("Poster field");
+                assert_eq!(field.label, label);
+                assert_eq!(field.role, accesskit::Role::NumberInput);
+            }
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "125.5%");
+    cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), "tab");
+    cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), ".125");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-poster-overlap".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintPosterOverlap)
+                .expect("overlap field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("125.5%")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some(".125")
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some(gpui::ElementId::NamedInteger(
+                    "print-poster-marks".into(),
+                    0
+                ))
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-poster-overlap".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintPosterOverlap)
+                .expect("overlap field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-poster-scale".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintPosterScale)
+                .expect("scale field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("125.5%")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some(".125")
+            );
+        })
+        .unwrap();
+    for handling in [
+        crate::shell::chrome::print_dialog::HandlingChoice::Pages,
+        crate::shell::chrome::print_dialog::HandlingChoice::Booklet,
+        crate::shell::chrome::print_dialog::HandlingChoice::Poster,
+    ] {
+        act(window, PrintAction::Handling(handling), cx);
+    }
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("125.5%")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some(".125")
+            );
+        })
+        .unwrap();
+    let preview = window
+        .update(cx, |frame, _window, cx| frame.print_preview_sheets(cx))
+        .unwrap()
+        .expect("fractional preview");
+    assert_eq!(preview.len(), 4);
+    window
+        .update(cx, |frame, _window, _cx| {
+            assert_eq!(
+                frame.print_dialog().expect("dialog").printed.page_sizes,
+                vec![(612.0, 792.0)]
+            );
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    let output = dir.path().join("poster-fractional.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let document = onionskin_core::Document::open_path(&output).expect("saved Poster output");
+    assert_eq!(document.page_count(), 4);
+    let geometries = saved_poster_geometry(&output);
+    let expected_matrices = [
+        [1.255, 0.0, 0.0, 1.255, 0.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, -603.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, 0.0, 581.04],
+        [1.255, 0.0, 0.0, 1.255, -603.0, 581.04],
+    ];
+    assert_eq!(geometries.len(), expected_matrices.len());
+    for ((matrix, clip), expected) in geometries.iter().zip(expected_matrices) {
+        for (actual, expected) in matrix.iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        assert_eq!(*clip, [0.0, 0.0, 612.0, 792.0]);
+    }
+    let mut parsed = onionskin_core::Document::open_path(&output).expect("reopens saved PDF");
+    for (sheet, point, red) in [
+        (0, (607.42, 300.04), true),
+        (1, (4.42, 300.04), true),
+        (0, (251.0, 5.115), false),
+        (2, (251.0, 788.115), false),
+    ] {
+        let render = parsed
+            .render_page_now(sheet, 1.0)
+            .expect("renders saved sheet");
+        assert_saved_mark(&render, point, red);
+    }
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("reopens print dialog");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    act(window, PrintAction::CutMarks, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("200")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("0.25")
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn poster_controls_invalid_text_keeps_chooser_closed_and_hides_when_switching_modes(
+    cx: &mut TestAppContext,
+) {
+    let (_dir, window, _bindings) = window_letter_marked(cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens")
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    window
+        .update(cx, |frame, _window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("1e2", cx));
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    assert!(!cx.did_prompt_for_new_path());
+    window
+        .update(cx, |frame, window, cx| {
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            assert!(frame
+                .accessible(window, cx)
+                .find(&"print-error".into())
+                .is_some());
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("125.5", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query("0.125in", cx));
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    assert!(!cx.did_prompt_for_new_path());
+    window
+        .update(cx, |frame, window, cx| {
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            assert!(frame
+                .accessible(window, cx)
+                .find(&"print-error".into())
+                .is_some());
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Pages),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintPosterScale)
+                .is_none());
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintPosterOverlap)
+                .is_none());
+            assert!(frame
+                .print_dialog()
+                .unwrap()
+                .job(crate::shell::chrome::print_dialog::PageSetup::default(), cx)
+                .is_ok());
+            assert!(frame
+                .accessible(window, cx)
+                .find(&"print-poster-scale".into())
+                .is_none());
+            assert!(frame
+                .accessible(window, cx)
+                .find(&"print-poster-overlap".into())
+                .is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn poster_controls_shrinking_preview_uses_effective_index(cx: &mut TestAppContext) {
+    let (_dir, window, _bindings) = window_letter_marked(cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens")
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    act(window, PrintAction::CutMarks, cx);
+    window
+        .update(cx, |frame, _window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("125.5", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query(".125", cx));
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, _cx| {
+            assert_eq!(
+                frame.print_dialog().expect("dialog").printed.page_sizes,
+                vec![(612.0, 792.0)]
+            );
+        })
+        .unwrap();
+    assert_eq!(
+        window
+            .update(cx, |frame, _window, cx| frame
+                .print_preview_sheets(cx)
+                .unwrap()
+                .len())
+            .unwrap(),
+        4
+    );
+    act(window, PrintAction::PreviewNext, cx);
+    act(window, PrintAction::PreviewNext, cx);
+    act(window, PrintAction::PreviewNext, cx);
+    window
+        .update(cx, |frame, _window, _cx| {
+            assert_eq!(frame.print_dialog().expect("dialog").preview_index(4), 3);
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("100", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query("0", cx));
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            assert_eq!(frame.print_dialog().expect("dialog").preview_index(1), 0);
+            let tree = frame.accessible(window, cx);
+            assert!(
+                tree.find(&"print-preview-previous".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+            assert!(
+                tree.find(&"print-preview-next".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+            assert!(tree
+                .find(&"print-preview".into())
+                .unwrap()
+                .label
+                .contains("sheet 1 of 1"));
+        })
+        .unwrap();
+}
+
+#[cfg(feature = "commands-core")]
+#[gpui::test]
+fn poster_controls_pending_chooser_freezes_source_and_new_dialog(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let hello =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf"))
+            .expect("reads second tab");
+    let (window, _bindings) = bound_window_from_bytes(
+        vec![
+            ("letter-marked.pdf", super::page_grid::letter_marked()),
+            ("hello.pdf", hello),
+        ],
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.activate(0, cx);
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens Poster source dialog");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    act(window, PrintAction::CutMarks, cx);
+    window
+        .update(cx, |frame, _window, cx| {
+            let dialog = frame.print_dialog().expect("dialog");
+            assert!(!dialog.settings.poster.cut_marks);
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("125.5%", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query(".125", cx));
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    assert!(cx.did_prompt_for_new_path());
+    window
+        .update(cx, |frame, window, cx| {
+            frame.activate(0, cx);
+            frame.run_activation(
+                Activation::MainMenu(MenuCommand::Page(PageCommand::RotateClockwise)),
+                window,
+                cx,
+            );
+            let canvas = frame.tabs.active().expect("source tab").canvas.clone();
+            canvas.update(cx, |canvas, _| {
+                assert_eq!(
+                    canvas
+                        .model
+                        .document_mut()
+                        .page_geometry(0)
+                        .expect("rotated geometry")
+                        .render_size,
+                    (792.0, 612.0)
+                );
+            });
+            frame.activate(1, cx);
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens newer dialog");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let dialog = frame.print_dialog().expect("newer dialog");
+            dialog
+                .poster_scale
+                .update(cx, |input, cx| input.set_query("100", cx));
+            dialog
+                .poster_overlap
+                .update(cx, |input, cx| input.set_query("0", cx));
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("100")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("0")
+            );
+        })
+        .unwrap();
+    let output = dir.path().join("pending-poster.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let printed = onionskin_core::Document::open_path(&output).expect("saved pending Poster");
+    assert_eq!(printed.page_count(), 4);
+    let geometries = saved_poster_geometry(&output);
+    let expected = [
+        [1.255, 0.0, 0.0, 1.255, 0.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, -603.0, -201.96],
+        [1.255, 0.0, 0.0, 1.255, 0.0, 581.04],
+        [1.255, 0.0, 0.0, 1.255, -603.0, 581.04],
+    ];
+    for ((matrix, clip), expected) in geometries.iter().zip(expected) {
+        for (actual, expected) in matrix.iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        assert_eq!(*clip, [0.0, 0.0, 612.0, 792.0]);
+    }
+    let mut parsed = onionskin_core::Document::open_path(&output).expect("reopens pending Poster");
+    for (sheet, point, red) in [
+        (0, (607.42, 300.04), true),
+        (1, (4.42, 300.04), true),
+        (0, (251.0, 5.115), false),
+        (2, (251.0, 788.115), false),
+    ] {
+        let render = parsed
+            .render_page_now(sheet, 1.0)
+            .expect("renders pending sheet");
+        assert_saved_mark(&render, point, red);
+    }
+    window
+        .update(cx, |frame, window, cx| {
+            assert_eq!(frame.dialog, Some(ShellDialog::Print));
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-poster-scale".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("100")
+            );
+            assert_eq!(
+                tree.find(&"print-poster-overlap".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("0")
+            );
         })
         .unwrap();
 }
@@ -1160,7 +1841,16 @@ fn poster_controls_summarize_comments_over_cap_keeps_chooser_closed(cx: &mut Tes
         .unwrap();
     // At 2800%, the three selected main pages fit under 1024, while the
     // one-page comment appendix pushes the combined operation over the cap.
-    act(window, PrintAction::TileScale(2800), cx);
+    window
+        .update(cx, |frame, _window, cx| {
+            let scale = frame
+                .print_dialog()
+                .expect("print dialog")
+                .poster_scale
+                .clone();
+            scale.update(cx, |input, cx| input.set_query("2800", cx));
+        })
+        .unwrap();
     let main_sheets = window
         .update(cx, |frame, _window, cx| frame.print_preview_sheets(cx))
         .unwrap()
