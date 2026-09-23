@@ -10,8 +10,8 @@ use onionskin_core::{
 use onionskin_corpus_testing::{encrypted_fixture, seed};
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
 use onionskin_print::{
-    print_to_file, Duplex, NUp, Orientation, PageSelection, PaperSize, PrintError, PrintJob,
-    Sizing, Subset,
+    print_to_file, Binding, Booklet, BookletSides, Duplex, Handling, NUp, Orientation,
+    PageSelection, PaperSize, PrintError, PrintJob, Sizing, Subset,
 };
 
 const NOW: i64 = 1_758_000_000;
@@ -812,6 +812,43 @@ fn an_appendix_is_imposed_with_the_jobs_layout() {
 }
 
 #[test]
+fn booklet_sheet_range_does_not_filter_the_appendix() {
+    let mut document = marked(&[(612.0, 792.0, 0); 8]);
+    let summary = marked(&[(300.0, 400.0, 0); 2]);
+    let job = PrintJob {
+        handling: Handling::Booklet(Booklet {
+            binding: Binding::Right,
+            sides: BookletSides::BothSides,
+            sheets: Some((1, 1)),
+        }),
+        ..letter()
+    };
+    let printed =
+        onionskin_print::print_with_appendix(&mut document, &job, summary.bytes().as_ref())
+            .expect("prints document and summary");
+    let sheets = read_sheets(&printed);
+    assert_eq!(sheets.len(), 4);
+    assert!(sheets.iter().all(|sheet| sheet.size == (792.0, 612.0)));
+    assert_eq!(sheets[0].drawn.len(), 2);
+    assert_eq!(sheets[1].drawn.len(), 2);
+    assert_eq!(sheets[2].drawn.len(), 1);
+    assert_eq!(sheets[3].drawn.len(), 1);
+    let appendix = onionskin_print::appendix_job(&job);
+    assert_eq!(appendix.selection, PageSelection::all());
+    assert_eq!(appendix.paper, job.paper);
+    assert_eq!(appendix.sizing, job.sizing);
+    assert_eq!(appendix.n_up, job.n_up);
+    assert_eq!(
+        appendix.handling,
+        Handling::Booklet(Booklet {
+            binding: Binding::Right,
+            sides: BookletSides::BothSides,
+            sheets: None,
+        })
+    );
+}
+
+#[test]
 fn concatenating_keeps_both_documents_pages_in_order() {
     let first = marked(&[(100.0, 100.0, 0)]);
     let second = marked(&[(200.0, 200.0, 0), (300.0, 300.0, 0)]);
@@ -874,4 +911,119 @@ fn a_booklet_prints_two_pages_to_each_landscape_side() {
     assert!(sheets
         .iter()
         .all(|sheet| sheet.size == (792.0, 612.0) && sheet.drawn.len() == 2));
+}
+
+#[test]
+fn booklet_sheet_range_prints_only_the_selected_physical_sheet() {
+    let mut document = marked(&[(612.0, 792.0, 0); 8]);
+    let job = PrintJob {
+        handling: Handling::Booklet(Booklet {
+            sheets: Some((1, 1)),
+            ..Booklet::default()
+        }),
+        ..letter()
+    };
+    let bytes = print_to_file(&mut document, &job).expect("prints");
+    let sheets = read_sheets(&bytes);
+    assert_eq!(sheets.len(), 2);
+    assert!(sheets
+        .iter()
+        .all(|sheet| sheet.size == (792.0, 612.0) && sheet.drawn.len() == 2));
+    let expected_scale = 396.0 / 612.0;
+    let expected_y = (612.0 - 792.0 * expected_scale) / 2.0;
+    for sheet in &sheets {
+        for (actual, expected) in sheet.drawn[0].matrix.into_iter().zip([
+            expected_scale,
+            0.0,
+            0.0,
+            expected_scale,
+            0.0,
+            expected_y,
+        ]) {
+            assert!((actual - expected).abs() < 1e-9);
+        }
+        for (actual, expected) in sheet.drawn[1].matrix.into_iter().zip([
+            expected_scale,
+            0.0,
+            0.0,
+            expected_scale,
+            396.0,
+            expected_y,
+        ]) {
+            assert!((actual - expected).abs() < 1e-9);
+        }
+    }
+    for index in 0..2 {
+        let pixels = Pixels::of(bytes.clone(), index);
+        assert!(pixels.is_ink((40.0 * expected_scale, expected_y + 40.0 * expected_scale)));
+        assert!(pixels.is_ink((
+            396.0 + 40.0 * expected_scale,
+            expected_y + 40.0 * expected_scale
+        )));
+    }
+}
+
+#[test]
+fn booklet_sheet_range_filters_front_and_back_and_rejects_invalid_output() {
+    for (sides, count) in [
+        (BookletSides::FrontSideOnly, 1),
+        (BookletSides::BackSideOnly, 1),
+        (BookletSides::BothSides, 2),
+    ] {
+        let mut document = marked(&[(612.0, 792.0, 0); 8]);
+        let job = PrintJob {
+            handling: Handling::Booklet(Booklet {
+                sides,
+                sheets: Some((1, 1)),
+                ..Booklet::default()
+            }),
+            ..letter()
+        };
+        assert_eq!(
+            read_sheets(&print_to_file(&mut document, &job).expect("prints")).len(),
+            count
+        );
+    }
+    let mut document = marked(&[(612.0, 792.0, 0); 8]);
+    let job = PrintJob {
+        handling: Handling::Booklet(Booklet {
+            sheets: Some((2, 2)),
+            ..Booklet::default()
+        }),
+        ..letter()
+    };
+    assert!(matches!(
+        print_to_file(&mut document, &job),
+        Err(PrintError::NothingToPrint)
+    ));
+    let mut document = marked(&[(612.0, 792.0, 0); 5]);
+    let job = PrintJob {
+        handling: Handling::Booklet(Booklet {
+            sheets: Some((1, 1)),
+            ..Booklet::default()
+        }),
+        ..letter()
+    };
+    let sheets = read_sheets(&print_to_file(&mut document, &job).expect("prints padded sheet"));
+    assert_eq!(
+        sheets
+            .iter()
+            .map(|sheet| sheet.drawn.len())
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    let mut document = marked(&[(612.0, 792.0, 0); 8]);
+    let job = PrintJob {
+        selection: PageSelection::page(4),
+        handling: Handling::Booklet(Booklet {
+            sides: BookletSides::BackSideOnly,
+            sheets: Some((0, 0)),
+            ..Booklet::default()
+        }),
+        ..letter()
+    };
+    assert!(matches!(
+        print_to_file(&mut document, &job),
+        Err(PrintError::NothingToPrint)
+    ));
 }

@@ -1,7 +1,7 @@
 # M4 verification: Booklet and Poster printing
 
-Date: 2026-09-22. Linux x86-64, stable toolchain. No macOS, Windows or
-hosted-CI run is claimed.
+Date: 2026-09-22 historical baseline; interval evidence added 2026-09-23 on
+the macOS GPUI test host. No native print-driver or hosted-CI run is claimed.
 
 ## Rows
 
@@ -15,12 +15,13 @@ hosted-CI run is claimed.
 ## Correction, 2026-09-23
 
 The Sept 22 row promotion and headline are historical evidence. The current
-parity inventory marks both rows `partial` because these named behaviours are
-missing:
+parity inventory keeps both rows `partial` because these named behaviours are
+not fully accepted across all targets:
 
-- **Booklet:** Acrobat's physical-sheet **From / To** range is not offered;
-  the page range changes booklet composition instead of selecting physical
-  sheets.
+- **Booklet:** physical-sheet **From / To** selection is implemented after
+  complete padded composition. Native print-driver/default-retention and
+  Binding dropdown, Tall binding variants, and auto-rotate-per-page remain
+  missing; native print-driver/default-retention acceptance is deferred.
 - **Poster:** custom scale and overlap entry is not offered. Acrobat's printed
   tile labels are also not drawn.
 
@@ -46,6 +47,8 @@ and the preview and the printed file are the chosen handling's sheets.
     documents.
   - **Page range.** The range and odd/even choices pick which pages go into
     the booklet.
+  - **Sheets.** `Sheets from` and `To` select an inclusive physical-sheet
+    interval after composition; invalid values are rejected at submit time.
 - **Poster.**
   - **Tiles.** Each page is enlarged by the tile scale (150, 200, 300 or 400
     percent) and split into as many sheets as it takes. The tiles run left
@@ -74,8 +77,54 @@ and the preview and the printed file are the chosen handling's sheets.
   `PrintSettings`. The actions are `Handling`, `BookletSides`, `Binding`,
   `TileScale`, `Overlap` and `CutMarks`. `handling_groups` shows the groups
   the choice needs.
+- **Physical interval.** `Booklet.sheets` filters the original padded sheet
+  loop, preserving source selection, blank padding, side mode and binding.
+  Comment-summary appendix jobs reset this document-specific interval.
 
-## Runs
+## Physical-sheet interval evidence, 2026-09-23
+
+- `cargo test --locked -p onionskin-print --lib --test file_backend
+  booklet_sheet_range`: 8 passed, including exact side counts, transforms,
+  blank padding, invalid-range rejection, and appendix reset.
+- `cargo test --locked -p onionskin-app --features shell-test-support
+  shell::chrome::print_dialog::tests`: 14 passed, including selected-source
+  totals, Odd bounds, strict fields, Current revalidation and Pages/Poster isolation.
+- `cargo test --locked -p onionskin-app --features shell-test-support
+  shell::chrome::tabs::tests::print::booklet_sheet_range`: 5 passed, including
+  actual Save-as-PDF output, pending chooser tab/source edit, field keyboard
+  entry, invalid-to-fixed submit, and preview narrowing with drawn-window AX.
+- `cargo clippy --locked -p onionskin-print -p onionskin-app
+  --features onionskin-app/shell-test-support --all-targets -- -D warnings`
+  and `cargo fmt --all -- --check`: passed.
+- Native macOS print-window/driver checks remain deferred. Binding dropdown
+  shape, Tall variants and auto-rotate-per-page remain missing from this row.
+- Baseline-compatible control proof used the preserved worktree
+  `/Users/cristi/Dropbox_Maestral/devel/onionskin-booklet-sheet-range-baseline`
+  at `62b8830`, with only
+  `booklet_sheet_range_publishes_physical_sheet_inputs` copied into the
+  existing test file. The exact `cargo test --locked -vv -p onionskin-app
+  --features shell-test-support --lib
+  shell::chrome::tabs::tests::print::booklet_sheet_range_publishes_physical_sheet_inputs`
+  compiled the baseline app crate and failed at runtime on the missing
+  `print-booklet-from` control. Log:
+  `/Users/cristi/Dropbox_Maestral/devel/onionskin-booklet-sheet-range-baseline/verification/booklet-sheet-range-20260923/baseline.log`.
+- The same test passed against the frozen treatment source after forcing source
+  compilation with package-scoped test profile overrides; the shared target had
+  otherwise reused the baseline artifact. The final verbose treatment log
+  contains the treatment `CARGO_MANIFEST_DIR` rustc invocation and 10 matching
+  tests passed:
+  `/Users/cristi/Dropbox_Maestral/devel/onionskin-booklet-sheet-range/verification/booklet-sheet-range-20260923/final-treatment.log`.
+  This is control-presence evidence only, not a baseline saved-output claim.
+- The pre-fix Tab regression (focus landed on `print-binding` instead of
+  `print-booklet-to`) is preserved in session `35491`; the corrected test now
+  covers forward Tab, reverse Shift-Tab, group entry/exit, actual field focus
+  and keyboard entry.
+- Final focus correction verification: print-dialog tests 14 passed, print-tab
+  tests 21 passed, `a11y::focus::tests` 15 passed, strict clippy passed, and
+  `cargo fmt --all -- --check` passed. The focused final treatment transcript
+  is `verification/booklet-sheet-range-20260923/final-treatment.log`.
+
+## Historical runs, 2026-09-22
 
 - `cargo test -p onionskin-print --lib`: 34 pass, 9 of them new.
   - **Booklet (4):**
@@ -120,5 +169,8 @@ and the preview and the printed file are the chosen handling's sheets.
 
 - Acrobat's poster tile labels (the page and tile number printed in the
   margin) are not drawn.
-- Booklet's "sheets from / to" range is not offered; the page range picks
-  the pages instead.
+- Native macOS print-window, printer-driver and screenshot acceptance remains
+  deferred. The Booklet parity row remains partial for binding dropdown shape,
+  Tall variants, auto-rotate-per-page and those native gaps.
+- The interval proof is source-based and macOS-host GPUI-test-based; it does not claim
+  Acrobat's native default-retention or printer-driver behavior.

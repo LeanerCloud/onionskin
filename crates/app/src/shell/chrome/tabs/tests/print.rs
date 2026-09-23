@@ -280,6 +280,705 @@ fn a_typed_range_prints_those_pages_and_a_backwards_one_is_refused(cx: &mut Test
 }
 
 #[gpui::test]
+fn booklet_sheet_range_prints_the_selected_physical_sheet(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("numbered.pdf");
+    std::fs::write(&source, super::page_grid::numbered(8)).expect("writes source");
+    let (_dir, window, _bindings) = window_on(dir, source.clone(), cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("2", cx));
+            state
+                .booklet_to
+                .update(cx, |input, cx| input.set_query("2", cx));
+        })
+        .unwrap();
+    let preview = window
+        .update(cx, |frame, _window, cx| frame.print_preview_sheets(cx))
+        .unwrap()
+        .expect("preview");
+    assert_eq!(preview.len(), 2);
+    assert_eq!(
+        preview
+            .iter()
+            .flat_map(|sheet| sheet.placements.iter().map(|placement| placement.source))
+            .collect::<Vec<_>>(),
+        [5, 2, 3, 4]
+    );
+    act(window, PrintAction::Print, cx);
+    let output = source.with_file_name("printed.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let printed = onionskin_cos::Document::open_path(&output).expect("printed");
+    assert_eq!(printed.page_count().expect("pages"), 2);
+    for page in 0..2 {
+        let [x0, y0, x1, y1] = printed.page(page).expect("page").media_box.expect("box");
+        assert_eq!((x1 - x0, y1 - y0), (792.0, 612.0));
+    }
+    let text = (0..2)
+        .map(|page| page_text(&output, page))
+        .collect::<Vec<_>>();
+    assert!(text[0].contains("Page 6") && text[0].contains("Page 3"));
+    assert!(text[1].contains("Page 4") && text[1].contains("Page 5"));
+    assert!(text
+        .iter()
+        .all(|page| !page.contains("Page 1") && !page.contains("Page 2")));
+    let mut parsed = onionskin_core::Document::open_path(&output).expect("opens output");
+    for (page, expected) in [
+        (0, [("Page 6", true), ("Page 3", false)]),
+        (1, [("Page 4", true), ("Page 5", false)]),
+    ] {
+        let page_text = parsed.page_text(page).expect("text");
+        let labels = page_text
+            .runs
+            .iter()
+            .map(|run| run.text.trim())
+            .filter(|text| text.starts_with("Page "))
+            .collect::<Vec<_>>();
+        let expected_labels = if page == 0 {
+            vec!["Page 6", "Page 3"]
+        } else {
+            vec!["Page 4", "Page 5"]
+        };
+        assert_eq!(labels, expected_labels, "exact labels on side {page}");
+        for (needle, left) in expected {
+            let run = page_text
+                .runs
+                .iter()
+                .find(|run| run.text.contains(needle))
+                .expect("text run");
+            let x = run
+                .glyphs
+                .iter()
+                .flat_map(|glyph| glyph.quad.corners.into_iter().map(|(x, _)| x))
+                .sum::<f64>()
+                / (run.glyphs.len() * 4) as f64;
+            assert_eq!(x < 396.0, left, "{needle} side");
+        }
+        let render = parsed.render_page_now(page, 1.0).expect("renders");
+        let width = render.raster.width() as usize;
+        let height = render.raster.height() as usize;
+        for (start, end) in [(0, width / 2), (width / 2, width)] {
+            assert!((0..height).any(|row| {
+                (start..end).any(|column| {
+                    let offset = (row * width + column) * 4;
+                    let px = &render.raster.rgba()[offset..offset + 4];
+                    px[3] > 200 && px[0] < 80 && px[1] < 80 && px[2] < 80
+                })
+            }));
+        }
+    }
+}
+
+#[cfg(feature = "commands-core")]
+#[gpui::test]
+fn booklet_sheet_range_pending_chooser_keeps_submitted_composition(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("numbered.pdf");
+    std::fs::write(&source, super::page_grid::numbered(8)).expect("writes source");
+    let second = dir.path().join("hello.pdf");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf"),
+        &second,
+    )
+    .expect("copies second source");
+    let model = |path: &Path| {
+        CanvasModel::new(
+            onionskin_core::Document::open_path(path).expect("opens"),
+            crate::build_registry(),
+            ViewSize {
+                width: 800.0,
+                height: 600.0,
+            },
+        )
+        .expect("model")
+    };
+    let (window, _bindings) = bound_window_with_models(
+        vec![
+            (source.clone(), model(&source)),
+            (second, model(&dir.path().join("hello.pdf"))),
+        ],
+        crate::config::ConfigPaths::default(),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.activate(0, cx);
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("2", cx));
+            state
+                .booklet_to
+                .update(cx, |input, cx| input.set_query("2", cx));
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            assert_eq!(state.booklet_from.read(cx).query(), "2");
+            assert_eq!(state.booklet_to.read(cx).query(), "2");
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    assert!(cx.did_prompt_for_new_path());
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_activation(
+                Activation::MainMenu(MenuCommand::Page(PageCommand::Delete)),
+                window,
+                cx,
+            );
+            assert_eq!(
+                frame
+                    .tabs
+                    .active()
+                    .expect("source tab")
+                    .canvas
+                    .read(cx)
+                    .model
+                    .view_state()
+                    .page_count,
+                7
+            );
+            frame.activate(1, cx);
+        })
+        .unwrap();
+    let output = dir.path().join("pending-booklet.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    let mut printed = onionskin_core::Document::open_path(&output).expect("printed");
+    assert_eq!(printed.page_count(), 2);
+    for (page, expected, excluded) in [
+        (
+            0,
+            ["Page 6", "Page 3"],
+            ["Page 1", "Page 2", "Page 4", "Page 5"],
+        ),
+        (
+            1,
+            ["Page 4", "Page 5"],
+            ["Page 1", "Page 2", "Page 3", "Page 6"],
+        ),
+    ] {
+        let text = printed.page_text(page).expect("text").flatten().text;
+        for needle in expected {
+            assert!(text.contains(needle), "{needle} missing from side {page}");
+        }
+        for needle in excluded {
+            assert!(!text.contains(needle), "{needle} leaked onto side {page}");
+        }
+    }
+    for (page, expected) in [(0, ["Page 6", "Page 3"]), (1, ["Page 4", "Page 5"])] {
+        let parsed_page = printed.page_text(page).expect("parsed text");
+        let labels = parsed_page
+            .runs
+            .iter()
+            .map(|run| run.text.trim())
+            .filter(|text| text.starts_with("Page "))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, expected.to_vec(), "exact labels on side {page}");
+        for (index, needle) in expected.into_iter().enumerate() {
+            let run = parsed_page
+                .runs
+                .iter()
+                .find(|run| run.text.contains(needle))
+                .expect("text run");
+            let x = run
+                .glyphs
+                .iter()
+                .flat_map(|glyph| glyph.quad.corners.into_iter().map(|(x, _)| x))
+                .sum::<f64>()
+                / (run.glyphs.len() * 4) as f64;
+            assert_eq!(x < 396.0, index == 0, "{needle} side");
+        }
+    }
+}
+
+#[gpui::test]
+fn booklet_sheet_range_narrowing_keeps_preview_and_navigation_in_bounds(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("numbered.pdf");
+    std::fs::write(&source, super::page_grid::numbered(8)).expect("writes source");
+    let (_dir, window, _bindings) = window_on(dir, source, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    for _ in 0..3 {
+        act(window, PrintAction::PreviewNext, cx);
+    }
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            assert_eq!(state.preview_sheet, 3);
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("2", cx));
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, _cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            assert_eq!(state.preview_sheet, 3);
+            assert_eq!(state.preview_index(2), 1);
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    draw_window(&mut visual);
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-preview".into()).expect("preview").label,
+                "Preview: sheet 2 of 2, landscape, pages 4, 5"
+            );
+            assert!(
+                !tree
+                    .find(&"print-preview-previous".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+            assert!(
+                tree.find(&"print-preview-next".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+        })
+        .unwrap();
+    visual.run_until_parked();
+    act(window, PrintAction::PreviewPrevious, cx);
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-preview".into()).expect("preview").label,
+                "Preview: sheet 1 of 2, landscape, pages 6, 3"
+            );
+            assert!(
+                tree.find(&"print-preview-previous".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+            assert!(
+                !tree
+                    .find(&"print-preview-next".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+        })
+        .unwrap();
+    act(window, PrintAction::PreviewNext, cx);
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-preview".into()).expect("preview").label,
+                "Preview: sheet 2 of 2, landscape, pages 4, 5"
+            );
+        })
+        .unwrap();
+    window
+        .update(&mut visual, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("3", cx));
+        })
+        .unwrap();
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-preview".into()).unwrap().label,
+                "No preview until the settings are fixed"
+            );
+            assert!(
+                tree.find(&"print-preview-previous".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+            assert!(
+                tree.find(&"print-preview-next".into())
+                    .unwrap()
+                    .state
+                    .disabled
+            );
+        })
+        .unwrap();
+    window
+        .update(&mut visual, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("2", cx));
+        })
+        .unwrap();
+    draw_window(&mut visual);
+    window
+        .update(&mut visual, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-preview".into()).unwrap().label,
+                "Preview: sheet 2 of 2, landscape, pages 4, 5"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn booklet_sheet_range_validation_and_focus_switching(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("numbered.pdf");
+    std::fs::write(&source, super::page_grid::numbered(8)).expect("writes source");
+    let (_dir, window, _bindings) = window_on(dir, source, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            for (id, label, value) in [
+                ("print-booklet-from", "Sheets from", "1"),
+                ("print-booklet-to", "To", "2"),
+            ] {
+                let field = tree.find(&id.into()).expect("booklet field");
+                assert_eq!(field.label, label);
+                assert_eq!(field.role, accesskit::Role::NumberInput);
+                assert_eq!(field.value.as_deref(), Some(value));
+            }
+            assert!(tree.find(&"print-pages-group".into()).is_some());
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("", cx));
+            state
+                .booklet_to
+                .update(cx, |input, cx| input.set_query("", cx));
+            frame.run_activation(
+                Activation::Focus(crate::shell::chrome::accessible::TextField::PrintBookletFrom),
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "3");
+    cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), "tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-booklet-to".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletTo)
+                .expect("to field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "3");
+    cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), "tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some(gpui::ElementId::NamedInteger("print-binding".into(), 0))
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-booklet-to".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletTo)
+                .expect("to field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-booklet-from".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletFrom)
+                .expect("from field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert!(matches!(
+                frame.a11y.published_focus(),
+                Some(gpui::ElementId::NamedInteger(name, 0)) if name == "print-booklet-sides"
+            ));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "tab");
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.serve_accessibility(window, cx);
+            assert_eq!(
+                frame.a11y.published_focus(),
+                Some("print-booklet-from".into())
+            );
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletFrom)
+                .expect("from field")
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            assert_eq!(state.booklet_from.read(cx).query(), "3");
+            assert_eq!(state.booklet_to.read(cx).query(), "3");
+            let tree = frame.accessible(window, cx);
+            assert_eq!(
+                tree.find(&"print-booklet-from".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("3")
+            );
+            assert_eq!(
+                tree.find(&"print-booklet-to".into())
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some("3")
+            );
+        })
+        .unwrap();
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"print-error".into()).is_some());
+        })
+        .unwrap();
+    assert!(
+        !cx.did_prompt_for_new_path(),
+        "invalid interval does not open chooser"
+    );
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Pages),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"print-booklet-sheets".into()).is_none());
+            assert!(tree.find(&"print-n-up".into()).is_some());
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletFrom)
+                .is_none());
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletTo)
+                .is_none());
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Poster),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"print-booklet-sheets".into()).is_none());
+            assert!(tree.find(&"print-poster".into()).is_some());
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletFrom)
+                .is_none());
+            assert!(frame
+                .text_field(crate::shell::chrome::accessible::TextField::PrintBookletTo)
+                .is_none());
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("2", cx));
+            state
+                .booklet_to
+                .update(cx, |input, cx| input.set_query("2", cx));
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    let valid_preview = window
+        .update(cx, |frame, _window, cx| frame.print_preview_sheets(cx))
+        .unwrap()
+        .expect("valid booklet interval preview");
+    assert_eq!(valid_preview.len(), 2);
+    assert_eq!(
+        valid_preview
+            .iter()
+            .flat_map(|sheet| sheet.placements.iter().map(|placement| placement.source))
+            .collect::<Vec<_>>(),
+        [5, 2, 3, 4]
+    );
+    act(window, PrintAction::Pages(PagesChoice::Current), cx);
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    act(window, PrintAction::Print, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            assert!(frame
+                .accessible(window, cx)
+                .find(&"print-error".into())
+                .is_some());
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, _window, cx| {
+            let state = frame.print_dialog().expect("print dialog");
+            state
+                .booklet_from
+                .update(cx, |input, cx| input.set_query("1", cx));
+            state
+                .booklet_to
+                .update(cx, |input, cx| input.set_query("1", cx));
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    act(window, PrintAction::Print, cx);
+    let output = _dir.path().join("fixed-booklet.pdf");
+    let answer = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(answer));
+    cx.run_until_parked();
+    assert!(output.exists(), "corrected interval prints successfully");
+}
+
+/// Baseline-compatible behavioral proof: before the interval feature these
+/// existing Print/Booklet actions ran but the two physical-sheet controls were
+/// absent from the accessible tree, so this exact test would fail at runtime.
+#[gpui::test]
+fn booklet_sheet_range_publishes_physical_sheet_inputs(cx: &mut TestAppContext) {
+    let (_dir, window, _bindings) = window_over("two-page.pdf", cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .run_main_menu_command(MenuCommand::Print, window, cx)
+                .expect("opens");
+        })
+        .unwrap();
+    act(
+        window,
+        PrintAction::Handling(crate::shell::chrome::print_dialog::HandlingChoice::Booklet),
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            let tree = frame.accessible(window, cx);
+            assert!(tree.find(&"print-booklet-from".into()).is_some());
+            assert!(tree.find(&"print-booklet-to".into()).is_some());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn page_setup_and_the_print_dialog_share_one_paper(cx: &mut TestAppContext) {
     let (_dir, window, bindings) = window_over("two-page.pdf", cx);
     cx.simulate_keystrokes(window.into(), &keystroke_for(&bindings, "file.page-setup"));

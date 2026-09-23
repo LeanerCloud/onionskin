@@ -13,7 +13,7 @@ use onionskin_core::{AnnotationFilter, Document};
 
 use crate::backend::file::print_to_file;
 use crate::backend::PrintError;
-use crate::job::{PageSelection, PrintJob};
+use crate::job::{Handling, PageSelection, PrintJob};
 
 /// `doc` printed by `job`, followed by `appendix` (a PDF's bytes) printed
 /// on the job's paper.
@@ -31,9 +31,17 @@ pub fn print_with_appendix(
 /// The job the appendix prints with: the same paper, sizing and layout, all
 /// of its pages in order, nothing filtered.
 pub fn appendix_job(job: &PrintJob) -> PrintJob {
+    let handling = match job.handling {
+        Handling::Booklet(mut booklet) => {
+            booklet.sheets = None;
+            Handling::Booklet(booklet)
+        }
+        handling => handling,
+    };
     PrintJob {
         selection: PageSelection::all(),
         comments: AnnotationFilter::DocumentAndMarkups,
+        handling,
         ..job.clone()
     }
 }

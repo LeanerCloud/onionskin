@@ -14,6 +14,8 @@ fn typed() -> Typed {
         copies: "1".into(),
         pages: "2-4, 7".into(),
         scale: "50".into(),
+        booklet_from: "1".into(),
+        booklet_to: "3".into(),
     }
 }
 
@@ -225,6 +227,7 @@ fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
         Handling::Booklet(Booklet {
             sides: BookletSides::BothSides,
             binding: Binding::Right,
+            sheets: None,
         })
     );
     assert_eq!(sheets(&job, &printed(10)).len(), 6);
@@ -247,4 +250,133 @@ fn booklet_and_poster_choices_reach_the_job_and_the_preview() {
         })
     );
     assert_eq!(sheets(&job, &printed(2)).len(), 8);
+}
+
+#[test]
+fn booklet_sheet_range_validation_uses_selected_source_pages() {
+    let settings = PrintSettings {
+        handling: HandlingChoice::Booklet,
+        pages: PagesChoice::Custom,
+        ..PrintSettings::default()
+    };
+    let mut input = typed();
+    input.pages = "1-8".into();
+    input.booklet_from = "2".into();
+    input.booklet_to = "2".into();
+    let full_job = job(
+        &settings,
+        PageSetup::default(),
+        &input,
+        &printed(10),
+        &[Destination::SaveAsPdf],
+    )
+    .expect("valid physical interval");
+    assert_eq!(
+        full_job.handling,
+        Handling::Booklet(Booklet {
+            sheets: Some((1, 1)),
+            ..Booklet::default()
+        })
+    );
+
+    for (from, to, expected) in [
+        ("", "2", "Sheets from"),
+        ("x", "2", "Sheets from"),
+        ("1.5", "2", "Sheets from"),
+        ("0", "2", "Sheets from"),
+        ("1", "184467440737095516160", "Sheets To"),
+        ("2", "1", "must not be after"),
+        ("1", "3", "from 1 to 2"),
+    ] {
+        input.booklet_from = from.into();
+        input.booklet_to = to.into();
+        let error = job(
+            &settings,
+            PageSetup::default(),
+            &input,
+            &printed(10),
+            &[Destination::SaveAsPdf],
+        )
+        .expect_err("invalid physical interval");
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn booklet_sheet_range_uses_odd_page_subset_bounds() {
+    let settings = PrintSettings {
+        handling: HandlingChoice::Booklet,
+        pages: PagesChoice::Custom,
+        subset: Subset::Odd,
+        ..PrintSettings::default()
+    };
+    let mut input = typed();
+    input.pages = "1-10".into();
+    input.booklet_from = "1".into();
+    input.booklet_to = "2".into();
+    let full_job = job(
+        &settings,
+        PageSetup::default(),
+        &input,
+        &printed(10),
+        &[Destination::SaveAsPdf],
+    )
+    .expect("odd selection has two physical sheets");
+    assert_eq!(full_job.handling, Handling::Booklet(Booklet::default()));
+    input.booklet_to = "3".into();
+    let error = job(
+        &settings,
+        PageSetup::default(),
+        &input,
+        &printed(10),
+        &[Destination::SaveAsPdf],
+    )
+    .expect_err("odd selection rejects a third sheet");
+    assert!(error.contains("from 1 to 2"), "{error}");
+}
+
+#[test]
+fn booklet_sheet_range_full_selection_is_stored_as_none() {
+    let settings = PrintSettings {
+        handling: HandlingChoice::Booklet,
+        ..PrintSettings::default()
+    };
+    let mut input = typed();
+    input.booklet_from = "1".into();
+    input.booklet_to = "3".into();
+    let job = job_for(&settings, &input).expect("valid full interval");
+    assert_eq!(job.handling, Handling::Booklet(Booklet::default()));
+}
+
+#[test]
+fn booklet_sheet_range_is_ignored_for_pages_and_poster() {
+    let input = Typed {
+        booklet_from: "not a sheet".into(),
+        booklet_to: "also not a sheet".into(),
+        ..typed()
+    };
+    for handling in [HandlingChoice::Pages, HandlingChoice::Poster] {
+        let settings = PrintSettings {
+            handling,
+            ..PrintSettings::default()
+        };
+        assert!(job_for(&settings, &input).is_ok(), "{handling:?}");
+    }
+}
+
+#[test]
+fn booklet_sheet_range_revalidates_retained_endpoints_for_current_selection() {
+    let settings = PrintSettings {
+        handling: HandlingChoice::Booklet,
+        pages: PagesChoice::Current,
+        ..PrintSettings::default()
+    };
+    let mut input = typed();
+    input.booklet_from = "2".into();
+    input.booklet_to = "2".into();
+    let error = job_for(&settings, &input).expect_err("current page has one sheet");
+    assert!(error.contains("from 1 to 1"), "{error}");
+    input.booklet_from = "1".into();
+    input.booklet_to = "1".into();
+    assert!(job_for(&settings, &input).is_ok());
 }

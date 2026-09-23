@@ -675,7 +675,11 @@ impl ShellFrame {
             TextField::CommentingAuthor => Some(&self.commenting_author),
             TextField::InspectorAuthor => Some(&self.inspector.author),
             TextField::InspectorSubject => Some(&self.inspector.subject),
-            TextField::PrintCopies | TextField::PrintPages | TextField::PrintScale => self
+            TextField::PrintCopies
+            | TextField::PrintPages
+            | TextField::PrintScale
+            | TextField::PrintBookletFrom
+            | TextField::PrintBookletTo => self
                 .print
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),

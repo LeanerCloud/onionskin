@@ -199,6 +199,10 @@ pub enum Handling {
 pub struct Booklet {
     pub sides: BookletSides,
     pub binding: Binding,
+    /// An inclusive zero-based physical-sheet interval. `None` prints all
+    /// composed sheets. An interval with `start > end`, or either endpoint
+    /// outside the composed sheet count, produces an empty imposition.
+    pub sheets: Option<(usize, usize)>,
 }
 
 /// Acrobat's "Booklet subset".

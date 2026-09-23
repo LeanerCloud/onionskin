@@ -342,6 +342,20 @@ fn handling_groups(state: &PrintDialogState) -> Vec<Group> {
                 settings.booklet.sides,
                 PrintAction::BookletSides,
             ),
+            Group {
+                id: "print-booklet-sheets",
+                label: "Sheets",
+                controls: vec![
+                    Control::Field {
+                        label: "Sheets from",
+                        field: TextField::PrintBookletFrom,
+                    },
+                    Control::Field {
+                        label: "To",
+                        field: TextField::PrintBookletTo,
+                    },
+                ],
+            },
             choices(
                 "print-binding",
                 "Binding",
@@ -414,6 +428,10 @@ fn activation(action: PrintAction) -> Activation {
 }
 
 fn describe(group: &Group, fields: &dyn Fn(TextField) -> Option<Element>) -> Element {
+    let fields_only = group
+        .controls
+        .iter()
+        .all(|control| matches!(control, Control::Field { .. }));
     let children = group
         .controls
         .iter()
@@ -445,7 +463,13 @@ fn describe(group: &Group, fields: &dyn Fn(TextField) -> Option<Element>) -> Ele
                     None => element.with_activation(activation(*action)),
                 })
             }
-            Control::Field { field, .. } => fields(*field),
+            Control::Field { field, .. } => fields(*field).map(|element| {
+                if fields_only {
+                    Element::new((group.id, index), Role::Group, "").with_children(vec![element])
+                } else {
+                    element
+                }
+            }),
         })
         .collect();
     Element::new(group.id, Role::Group, group.label).with_children(children)
@@ -491,7 +515,10 @@ pub(in crate::shell) fn accessible(
         let (input, label) = match field {
             TextField::PrintCopies => (&state.copies, "Copies"),
             TextField::PrintPages => (&state.pages, "Pages"),
-            _ => (&state.scale, "Custom Scale (%)"),
+            TextField::PrintScale => (&state.scale, "Custom Scale (%)"),
+            TextField::PrintBookletFrom => (&state.booklet_from, "Sheets from"),
+            TextField::PrintBookletTo => (&state.booklet_to, "To"),
+            _ => unreachable!("non-print text field in print dialog"),
         };
         Some(input.read(cx).accessible(label, field))
     };
@@ -500,23 +527,24 @@ pub(in crate::shell) fn accessible(
         .map(|group| describe(group, &fields))
         .collect();
     let preview = state.preview(setup, cx);
+    let sheet_count = preview.as_ref().map_or(0, Vec::len);
+    let shown = state.preview_index(sheet_count);
     body.push(Element::new(
         "print-preview",
         Role::Label,
         match &preview {
-            Ok(sheets) => preview_label(sheets, state.preview_sheet),
+            Ok(sheets) => preview_label(sheets, shown),
             Err(_) => "No preview until the settings are fixed".to_owned(),
         },
     ));
-    let sheet_count = preview.as_ref().map_or(0, Vec::len);
     body.push(
         Element::new("print-preview-previous", Role::Button, "Previous Sheet")
-            .with_state(A11yState::enabled(state.preview_sheet > 0))
+            .with_state(A11yState::enabled(shown > 0))
             .with_activation(activation(PrintAction::PreviewPrevious)),
     );
     body.push(
         Element::new("print-preview-next", Role::Button, "Next Sheet")
-            .with_state(A11yState::enabled(state.preview_sheet + 1 < sheet_count))
+            .with_state(A11yState::enabled(shown + 1 < sheet_count))
             .with_activation(activation(PrintAction::PreviewNext)),
     );
     if let Some(error) = state.error.clone().or(preview.err()) {
@@ -712,12 +740,13 @@ pub(in crate::shell) fn render(
     let preview = state.preview(setup, cx);
     let sheets = preview.as_deref().unwrap_or_default();
     let sheet_count = sheets.len();
+    let shown = state.preview_index(sheet_count);
     let error = state.error.clone().or(preview.as_ref().err().cloned());
     let side = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(draw_preview(sheets, state.preview_sheet, state, theme))
+        .child(draw_preview(sheets, shown, state, theme))
         .child(
             div()
                 .flex()
@@ -725,7 +754,7 @@ pub(in crate::shell) fn render(
                 .child(button(
                     "print-preview-previous",
                     "Previous Sheet",
-                    state.preview_sheet > 0,
+                    shown > 0,
                     theme,
                     focused,
                     cx,
@@ -734,7 +763,7 @@ pub(in crate::shell) fn render(
                 .child(button(
                     "print-preview-next",
                     "Next Sheet",
-                    state.preview_sheet + 1 < sheet_count,
+                    shown + 1 < sheet_count,
                     theme,
                     focused,
                     cx,

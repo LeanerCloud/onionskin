@@ -67,10 +67,12 @@ pub(in crate::shell) enum TextField {
     /// The properties inspector's author and subject.
     InspectorAuthor,
     InspectorSubject,
-    /// The Print dialog's copies, pages and custom scale.
+    /// The Print dialog's copies, pages, custom scale and booklet interval.
     PrintCopies,
     PrintPages,
     PrintScale,
+    PrintBookletFrom,
+    PrintBookletTo,
     /// Advanced Search's words, and its criterion's value.
     AdvancedQuery,
     AdvancedValue,

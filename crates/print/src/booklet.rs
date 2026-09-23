@@ -34,10 +34,23 @@ pub fn impose_booklet(job: &PrintJob, booklet: Booklet, pages: &[PageSize]) -> V
     );
     let half = (width / 2.0, height);
     let padded = selected.len().div_ceil(4) * 4;
+    let physical_count = padded / 4;
+    if booklet
+        .sheets
+        .is_some_and(|(first, last)| first > last || last >= physical_count)
+    {
+        return Vec::new();
+    }
     let slot = |index: usize| selected.get(index).copied();
 
     let mut sides = Vec::new();
     for sheet in 0..padded / 4 {
+        if booklet
+            .sheets
+            .is_some_and(|(first, last)| !(first..=last).contains(&sheet))
+        {
+            continue;
+        }
         let front = (padded - 1 - 2 * sheet, 2 * sheet);
         let back = (2 * sheet + 1, padded - 2 - 2 * sheet);
         let wanted = match booklet.sides {
@@ -146,6 +159,7 @@ mod tests {
         let back = Booklet {
             sides: BookletSides::BackSideOnly,
             binding: Binding::Right,
+            ..Booklet::default()
         };
         assert_eq!(
             sides(&impose_booklet(&job(back), back, &[PAGE; 4])),
@@ -153,6 +167,136 @@ mod tests {
             "the back of the one sheet, mirrored"
         );
         assert!(impose_booklet(&job(back), back, &[]).is_empty());
+    }
+
+    #[test]
+    fn booklet_sheet_range_selects_the_requested_physical_sheet_and_side() {
+        let selected = |side_mode, binding, sheets, pages| {
+            let booklet = Booklet {
+                sides: side_mode,
+                binding,
+                sheets: Some(sheets),
+            };
+            sides(&impose_booklet(&job(booklet), booklet, pages))
+        };
+        assert_eq!(
+            selected(BookletSides::BothSides, Binding::Left, (1, 1), &[PAGE; 8]),
+            [(Some(6), Some(3)), (Some(4), Some(5))]
+        );
+        assert_eq!(
+            selected(
+                BookletSides::FrontSideOnly,
+                Binding::Left,
+                (1, 1),
+                &[PAGE; 8]
+            ),
+            [(Some(6), Some(3))]
+        );
+        assert_eq!(
+            selected(
+                BookletSides::BackSideOnly,
+                Binding::Left,
+                (1, 1),
+                &[PAGE; 8]
+            ),
+            [(Some(4), Some(5))]
+        );
+        assert_eq!(
+            selected(BookletSides::BothSides, Binding::Right, (1, 1), &[PAGE; 8]),
+            [(Some(3), Some(6)), (Some(5), Some(4))]
+        );
+    }
+
+    #[test]
+    fn booklet_sheet_range_preserves_padding_and_source_selection() {
+        let booklet = Booklet {
+            sheets: Some((1, 1)),
+            ..Booklet::default()
+        };
+        assert_eq!(
+            sides(&impose_booklet(&job(booklet), booklet, &[PAGE; 5])),
+            [(None, Some(3)), (Some(4), Some(5))]
+        );
+        let selection = PrintJob {
+            selection: crate::job::PageSelection {
+                ranges: vec![(1, 6)],
+                ..Default::default()
+            },
+            ..job(booklet)
+        };
+        assert_eq!(
+            sides(&impose_booklet(&selection, booklet, &[PAGE; 8])),
+            [(Some(7), Some(4)), (Some(5), Some(6))]
+        );
+    }
+
+    #[test]
+    fn booklet_sheet_range_supports_current_subset_and_reverse_selection() {
+        let make = |selection, sheets| {
+            let booklet = Booklet {
+                sheets: Some(sheets),
+                ..Booklet::default()
+            };
+            let job = PrintJob {
+                selection,
+                ..job(booklet)
+            };
+            sides(&impose_booklet(&job, booklet, &[PAGE; 8]))
+        };
+        assert_eq!(
+            make(crate::job::PageSelection::page(4), (0, 0)),
+            [(None, Some(5)), (None, None)]
+        );
+        assert_eq!(
+            make(
+                crate::job::PageSelection {
+                    subset: crate::job::Subset::Odd,
+                    ..Default::default()
+                },
+                (0, 0)
+            ),
+            [(Some(7), Some(1)), (Some(3), Some(5))]
+        );
+        assert_eq!(
+            make(
+                crate::job::PageSelection {
+                    reverse: true,
+                    ..Default::default()
+                },
+                (1, 1)
+            ),
+            [(Some(3), Some(6)), (Some(5), Some(4))]
+        );
+    }
+
+    #[test]
+    fn booklet_sheet_range_all_is_identical_to_the_default() {
+        let default = Booklet::default();
+        let explicit = Booklet {
+            sheets: Some((0, 1)),
+            ..default
+        };
+        assert_eq!(
+            impose_booklet(&job(default), default, &[PAGE; 8]),
+            impose_booklet(&job(explicit), explicit, &[PAGE; 8])
+        );
+    }
+
+    #[test]
+    fn booklet_sheet_range_rejects_invalid_intervals_without_clamping() {
+        let invalid = [(2, 1), (2, 2), (usize::MAX, usize::MAX)];
+        for sheets in invalid {
+            let booklet = Booklet {
+                sheets: Some(sheets),
+                ..Booklet::default()
+            };
+            assert!(impose_booklet(&job(booklet), booklet, &[PAGE; 8]).is_empty());
+        }
+        let empty = Booklet {
+            sheets: Some((0, 0)),
+            ..Booklet::default()
+        };
+        assert!(impose_booklet(&job(empty), empty, &[]).is_empty());
     }
 
     /// Each half is a portrait page's space, and a page fits in it.

@@ -508,6 +508,8 @@ fn field_node(
         | TextField::SplitValue
         | TextField::PrintCopies
         | TextField::PrintScale
+        | TextField::PrintBookletFrom
+        | TextField::PrintBookletTo
         | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
         TextField::CombinePages
         | TextField::PrintPages

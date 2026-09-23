@@ -168,6 +168,8 @@ pub(in crate::shell) struct Typed {
     pub(in crate::shell) copies: String,
     pub(in crate::shell) pages: String,
     pub(in crate::shell) scale: String,
+    pub(in crate::shell) booklet_from: String,
+    pub(in crate::shell) booklet_to: String,
 }
 
 /// What the document being printed is, as far as the dialog needs it.
@@ -246,14 +248,57 @@ pub(in crate::shell) fn job(
         SizingChoice::ShrinkOversized => Sizing::ShrinkOversized,
         SizingChoice::Custom => Sizing::Custom(percent(&typed.scale)?),
     };
+    let selection = PageSelection {
+        ranges,
+        subset: settings.subset,
+        reverse: settings.reverse,
+    };
+    let handling = match settings.handling {
+        HandlingChoice::Pages => Handling::Pages,
+        HandlingChoice::Booklet => {
+            let total = selection.pages(count).len().div_ceil(4);
+            if total == 0 {
+                return Err("Nothing to print: the selected pages contain no sheets".to_owned());
+            }
+            let parse_sheet = |label: &str, text: &str| {
+                text.trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|sheet| *sheet > 0)
+                    .ok_or_else(|| {
+                        format!(
+                            "Sheets {label} must be a whole number from 1 to {total}, not {text:?}"
+                        )
+                    })
+            };
+            let first = parse_sheet("from", &typed.booklet_from)?;
+            let last = parse_sheet("To", &typed.booklet_to)?;
+            if first > last {
+                return Err(format!(
+                    "Sheets from must not be after To (allowed 1 to {total})"
+                ));
+            }
+            if last > total {
+                return Err(format!(
+                    "Sheets must be from 1 to {total}, not {first} to {last}"
+                ));
+            }
+            let sheets = if (first, last) == (1, total) {
+                None
+            } else {
+                Some((first - 1, last - 1))
+            };
+            Handling::Booklet(Booklet {
+                sheets,
+                ..settings.booklet
+            })
+        }
+        HandlingChoice::Poster => Handling::Poster(settings.poster),
+    };
     Ok(PrintJob {
         paper: setup.paper(),
         orientation: setup.orientation,
-        selection: PageSelection {
-            ranges,
-            subset: settings.subset,
-            reverse: settings.reverse,
-        },
+        selection,
         sizing,
         n_up: settings.n_up,
         duplex: settings.duplex,
@@ -266,11 +311,7 @@ pub(in crate::shell) fn job(
         comments: settings.comments,
         print_as_image: settings.print_as_image || printed.image_only.is_some(),
         image_dpi: 150.0,
-        handling: match settings.handling {
-            HandlingChoice::Pages => Handling::Pages,
-            HandlingChoice::Booklet => Handling::Booklet(settings.booklet),
-            HandlingChoice::Poster => Handling::Poster(settings.poster),
-        },
+        handling,
     })
 }
 
@@ -308,16 +349,20 @@ pub(in crate::shell) struct PrintDialogState {
     pub(in crate::shell) copies: Entity<SearchInput>,
     pub(in crate::shell) pages: Entity<SearchInput>,
     pub(in crate::shell) scale: Entity<SearchInput>,
+    pub(in crate::shell) booklet_from: Entity<SearchInput>,
+    pub(in crate::shell) booklet_to: Entity<SearchInput>,
     /// Which sheet the preview shows.
     pub(in crate::shell) preview_sheet: usize,
     pub(in crate::shell) error: Option<String>,
 }
 
 /// The fields' ids, which the tree and the focus ring share.
-pub(in crate::shell) const TEXT_FIELDS: [TextField; 3] = [
+pub(in crate::shell) const TEXT_FIELDS: [TextField; 5] = [
     TextField::PrintCopies,
     TextField::PrintPages,
     TextField::PrintScale,
+    TextField::PrintBookletFrom,
+    TextField::PrintBookletTo,
 ];
 
 impl PrintDialogState {
@@ -335,6 +380,7 @@ impl PrintDialogState {
             })
         };
         let pages = format!("1-{}", printed.page_sizes.len().max(1));
+        let booklet_to = printed.page_sizes.len().div_ceil(4).max(1).to_string();
         let settings = PrintSettings {
             print_as_image: printed.image_only.is_some(),
             ..PrintSettings::default()
@@ -343,6 +389,8 @@ impl PrintDialogState {
             copies: field("print-copies", "Copies", "1".to_owned()),
             pages: field("print-pages", "Pages, like 2-4, 7", pages),
             scale: field("print-scale", "Custom Scale (%)", "100".to_owned()),
+            booklet_from: field("print-booklet-from", "Sheets from", "1".to_owned()),
+            booklet_to: field("print-booklet-to", "To", booklet_to),
             settings,
             printed,
             destinations,
@@ -356,6 +404,8 @@ impl PrintDialogState {
             copies: self.copies.read(cx).query().to_owned(),
             pages: self.pages.read(cx).query().to_owned(),
             scale: self.scale.read(cx).query().to_owned(),
+            booklet_from: self.booklet_from.read(cx).query().to_owned(),
+            booklet_to: self.booklet_to.read(cx).query().to_owned(),
         }
     }
 
@@ -382,11 +432,21 @@ impl PrintDialogState {
         self.job(setup, cx).map(|job| sheets(&job, &self.printed))
     }
 
+    pub(in crate::shell) fn preview_index(&self, side_count: usize) -> usize {
+        self.preview_sheet.min(side_count.saturating_sub(1))
+    }
+
     pub(in crate::shell) fn text_field(&self, field: TextField) -> Option<&Entity<SearchInput>> {
         match field {
             TextField::PrintCopies => Some(&self.copies),
             TextField::PrintPages => Some(&self.pages),
             TextField::PrintScale => Some(&self.scale),
+            TextField::PrintBookletFrom if self.settings.handling == HandlingChoice::Booklet => {
+                Some(&self.booklet_from)
+            }
+            TextField::PrintBookletTo if self.settings.handling == HandlingChoice::Booklet => {
+                Some(&self.booklet_to)
+            }
             _ => None,
         }
     }

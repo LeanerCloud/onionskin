@@ -91,11 +91,14 @@ impl ShellFrame {
         }
         match action {
             PrintAction::PreviewPrevious => {
-                state.preview_sheet = state.preview_sheet.saturating_sub(1);
+                let count = state.preview(setup, cx).map_or(0, |sheets| sheets.len());
+                let shown = state.preview_index(count);
+                state.preview_sheet = shown.saturating_sub(1);
             }
             PrintAction::PreviewNext => {
                 let count = state.preview(setup, cx).map_or(0, |sheets| sheets.len());
-                state.preview_sheet = (state.preview_sheet + 1).min(count.saturating_sub(1));
+                let shown = state.preview_index(count);
+                state.preview_sheet = (shown + 1).min(count.saturating_sub(1));
             }
             PrintAction::Print => self.submit_print(window, cx),
             PrintAction::Cancel => self.close_dialog(window, cx),

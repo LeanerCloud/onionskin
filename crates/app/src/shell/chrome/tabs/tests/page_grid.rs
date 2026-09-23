@@ -16,7 +16,7 @@ use crate::shell::panes::{PaneAction, ThumbnailAction, ThumbnailsCommand};
 
 /// A document of `count` pages, each saying "Page n" so an order can be
 /// read back from the text.
-fn numbered(count: usize) -> Vec<u8> {
+pub(super) fn numbered(count: usize) -> Vec<u8> {
     let dict = |entries: Vec<(&str, Object)>| {
         let mut dict = Dict::new();
         for (key, value) in entries {
