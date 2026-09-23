@@ -7,12 +7,13 @@ mod common;
 
 use std::io;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 
-use common::{corpus_dir, pdfs_in, Tally};
+use common::{corpus_dir, corpus_root, missing, pdfs_in, Tally};
 use onionskin_cos::{
     BytesSource, Document, Error, FileSource, Object, RepairReason, Section, Source,
 };
@@ -26,6 +27,102 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
         .windows(needle.len())
         .filter(|w| *w == needle)
         .count()
+}
+
+const LINEARIZED_HAYRO: &str = "external/hayro/pdfs/custom/font_standard_2.pdf";
+const LINEARIZED_VERAPDF: &str =
+    "external/verapdf/PDF_UA-1/7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf";
+
+fn linearized_fixtures() -> Option<(Vec<u8>, Vec<u8>)> {
+    let Some(root) = corpus_root() else {
+        missing("no corpus found; set ONIONSKIN_CORPUS to the corpus directory");
+        return None;
+    };
+    let paths = [root.join(LINEARIZED_HAYRO), root.join(LINEARIZED_VERAPDF)];
+    for path in &paths {
+        match std::fs::metadata(path) {
+            Ok(metadata) if !metadata.is_file() => {
+                missing(&format!("{} is not a regular file", path.display()));
+                return None;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing(&format!("{} is absent", path.display()));
+                return None;
+            }
+            Err(error) => panic!("metadata for {} failed: {error}", path.display()),
+        }
+    }
+    let once = std::fs::read(&paths[0])
+        .unwrap_or_else(|error| panic!("reading {} failed: {error}", paths[0].display()));
+    let updated = std::fs::read(&paths[1])
+        .unwrap_or_else(|error| panic!("reading {} failed: {error}", paths[1].display()));
+    Some((once, updated))
+}
+
+fn retained_temp_root() -> std::path::PathBuf {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after the Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "onionskin-cos-sections-{}-{timestamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).expect("fresh temporary corpus parent must not already exist");
+    println!("retaining temporary corpus parent: {}", root.display());
+    root
+}
+
+fn write_placeholder(root: &Path, relative: &str) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().expect("fixture path has a parent"))
+        .expect("temporary corpus directories can be created");
+    std::fs::write(path, []).expect("temporary corpus placeholder can be written");
+}
+
+fn run_linearized_child(test_name: &str, root: &Path, required: bool) -> std::process::Output {
+    let executable = std::env::current_exe().expect("sections test executable is available");
+    let mut command = Command::new(executable);
+    command
+        .arg(test_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("ONIONSKIN_CORPUS", root)
+        .env_remove("ONIONSKIN_CORPUS_REQUIRED");
+    if required {
+        command.env("ONIONSKIN_CORPUS_REQUIRED", "1");
+    }
+    command
+        .output()
+        .unwrap_or_else(|error| panic!("running child {test_name} failed: {error}"))
+}
+
+fn assert_linearized_child(test_name: &str, root: &Path, expected_reason: &str, required: bool) {
+    let output = run_linearized_child(test_name, root, required);
+    let mut transcript = String::from_utf8_lossy(&output.stdout).into_owned();
+    transcript.push_str(&String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        transcript.matches("running 1 test").count(),
+        1,
+        "child must run exactly one selected test; transcript:\n{transcript}"
+    );
+    assert_eq!(
+        output.status.success(),
+        !required,
+        "{} mode has wrong status; transcript:\n{}",
+        if required { "required" } else { "normal" },
+        transcript
+    );
+    let marker = if required {
+        "corpus required but"
+    } else {
+        "SKIPPED:"
+    };
+    assert!(
+        transcript.contains(marker) && transcript.contains(expected_reason),
+        "child transcript lacks {marker:?} and {expected_reason:?}:\n{transcript}"
+    );
 }
 
 /// Appends one generation carrying `producer`, and returns the new bytes.
@@ -385,13 +482,11 @@ fn named_multi_generation_fixtures_report_every_generation() {
 /// that, because a phantom split still partitions the file.
 #[test]
 fn a_linearized_files_first_page_table_is_not_a_generation() {
-    let Some(root) = corpus_dir("external") else {
+    let Some((once, updated)) = linearized_fixtures() else {
         return;
     };
 
     // Linearized, never updated: two `%%EOF` markers, one generation.
-    let once = std::fs::read(root.join("hayro/pdfs/custom/font_standard_2.pdf"))
-        .expect("the fixture is readable");
     assert_eq!(count(&once, b"%%EOF"), 2, "the fixture must be linearized");
     assert_eq!(
         open(&once).sections().expect("the chain walks"),
@@ -403,10 +498,6 @@ fn a_linearized_files_first_page_table_is_not_a_generation() {
     );
 
     // Linearized and updated since: three markers, two generations.
-    let updated = std::fs::read(
-        root.join("verapdf/PDF_UA-1/7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf"),
-    )
-    .expect("the fixture is readable");
     assert_eq!(count(&updated, b"%%EOF"), 3);
     let document = open(&updated);
     let sections = document.sections().expect("the chain walks");
@@ -915,20 +1006,14 @@ fn oversized_footer_reads_are_invalid_data() {
 
 #[test]
 fn linearized_header_bias_keeps_one_and_two_generation_classification() {
-    let Some(root) = corpus_dir("external") else {
+    let Some((once, updated)) = linearized_fixtures() else {
         return;
     };
-    let once = std::fs::read(root.join("hayro/pdfs/custom/font_standard_2.pdf"))
-        .expect("the linearized fixture is readable");
     assert!(
         count(&once, b"startxref\r0\r%%EOF") > 0,
         "the front linearized footer uses the real CR form"
     );
 
-    let updated = std::fs::read(
-        root.join("verapdf/PDF_UA-1/7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf"),
-    )
-    .expect("the updated linearized fixture is readable");
     for (name, bytes, generations) in [("one", once, 1usize), ("two", updated, 2usize)] {
         let expected = open(&bytes)
             .sections()
@@ -990,6 +1075,46 @@ fn linearized_header_bias_keeps_one_and_two_generation_classification() {
                 sections[1].start > prefix_len,
                 "two-generation boundary includes the header prefix"
             );
+        }
+    }
+}
+
+#[test]
+fn missing_linearized_fixtures_follow_corpus_policy_in_subprocesses() {
+    let retained_parent = retained_temp_root();
+    let missing_root = retained_parent.join("no-root");
+    let partial_hayro = retained_parent.join("missing-hayro");
+    write_placeholder(
+        &partial_hayro,
+        "external/verapdf/PDF_UA-1/7.4 Headings/7.4.4 Unnumbered headings/7.4.4-t01-pass-a.pdf",
+    );
+    let partial_verapdf = retained_parent.join("missing-verapdf");
+    write_placeholder(
+        &partial_verapdf,
+        "external/hayro/pdfs/custom/font_standard_2.pdf",
+    );
+
+    let cases = [
+        (
+            "no corpus root",
+            missing_root,
+            "no corpus found; set ONIONSKIN_CORPUS to the corpus directory",
+        ),
+        ("missing hayro fixture", partial_hayro, LINEARIZED_HAYRO),
+        (
+            "missing veraPDF fixture",
+            partial_verapdf,
+            LINEARIZED_VERAPDF,
+        ),
+    ];
+    for (label, root, expected_reason) in cases {
+        println!("running retained missing-fixture case: {label}");
+        for test_name in [
+            "a_linearized_files_first_page_table_is_not_a_generation",
+            "linearized_header_bias_keeps_one_and_two_generation_classification",
+        ] {
+            assert_linearized_child(test_name, &root, expected_reason, false);
+            assert_linearized_child(test_name, &root, expected_reason, true);
         }
     }
 }

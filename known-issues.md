@@ -68,9 +68,14 @@ source IDs, severity, ownership, and required proof.
   corpus fetched without the `hayro` set - which is what a network that
   blocks `hayro-assets.dev` gets - has `external/verapdf` and no `hayro`, so
   the guard passes and the read panics. Independent of any M3 package: it
-  reproduces with `crates/cos` unmodified. The fix is a `corpus_file` lookup
-  that skips, or fails under `ONIONSKIN_CORPUS_REQUIRED`, like every other
-  corpus read.
+  reproduces with `crates/cos` unmodified.
+  **2026-09-23 Task B resolution:** both exact linearized fixture paths are
+  preflighted with error-aware metadata, and one shared helper applies the
+  optional-versus-required corpus policy before either read. The retained
+  subprocess matrix covers 12 child checks across no-root and both partial
+  corpus shapes; both exact tests pass against the complete primary corpus.
+  The source and runtime commands, statuses, and logs are recorded in the
+  private COS corpus-contracts plan. No production parser change was needed.
 
 - **The shell test suite's first Linux run, 2026-09-21 (P9a).** With
   `libxkbcommon-dev` and `libxkbcommon-x11-dev` installed, `cargo test -p
