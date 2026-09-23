@@ -8,8 +8,86 @@ use std::time::Instant;
 use common::{classic_pdf, corpus_dir, corpus_root, pdfs_in, skeleton};
 use onionskin_cos::{
     BytesSource, CountingSource, Document, Error, FileSource, ObjRef, Object, Origin, Provenance,
-    Span,
+    Span, XrefEntry,
 };
+
+fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, 0 | b'\t' | b'\n' | b'\x0c' | b'\r' | b' ')
+}
+
+fn is_pdf_delimiter(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
+}
+
+fn skip_pdf_trivia(bytes: &[u8], mut at: usize) -> Option<usize> {
+    let start = at;
+    loop {
+        match bytes.get(at).copied() {
+            Some(byte) if is_pdf_whitespace(byte) => at += 1,
+            Some(b'%') => {
+                at += 1;
+                while let Some(byte) = bytes.get(at).copied() {
+                    at += 1;
+                    if matches!(byte, b'\r' | b'\n') {
+                        if byte == b'\r' && bytes.get(at) == Some(&b'\n') {
+                            at += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    (at > start).then_some(at)
+}
+
+fn read_unsigned_token(bytes: &[u8], at: usize) -> Option<(u64, usize)> {
+    let mut end = at;
+    while bytes.get(end).is_some_and(|byte| byte.is_ascii_digit()) {
+        end += 1;
+    }
+    (end > at)
+        .then(|| {
+            std::str::from_utf8(&bytes[at..end])
+                .ok()?
+                .parse()
+                .ok()
+                .map(|value| (value, end))
+        })
+        .flatten()
+}
+
+/// Checks only the lexical contract needed by the span oracle: an exact object
+/// header at byte zero, followed by the object's body.
+fn header_matches(bytes: &[u8], expected: ObjRef) -> bool {
+    let Some((number, after_number)) = read_unsigned_token(bytes, 0) else {
+        return false;
+    };
+    let Some(after_number) = skip_pdf_trivia(bytes, after_number) else {
+        return false;
+    };
+    let Some((generation, after_generation)) = read_unsigned_token(bytes, after_number) else {
+        return false;
+    };
+    let Some(after_generation) = skip_pdf_trivia(bytes, after_generation) else {
+        return false;
+    };
+    if bytes.get(after_generation..after_generation + 3) != Some(b"obj") {
+        return false;
+    }
+    let after_keyword = after_generation + 3;
+    if bytes
+        .get(after_keyword)
+        .is_some_and(|byte| !is_pdf_whitespace(*byte) && !is_pdf_delimiter(*byte))
+    {
+        return false;
+    }
+    number == u64::from(expected.number) && generation == u64::from(expected.generation)
+}
 
 /// Only files this big make the claim interesting; below it, one read window
 /// covers the document anyway.
@@ -148,10 +226,24 @@ fn every_parsed_object_records_the_bytes_it_came_from() {
                         within.end > within.start,
                         "{name}: object {number} has an empty span in its container"
                     );
+                    let container_number = container;
+                    let container = document
+                        .get(container_number)
+                        .expect("object-stream container must be readable");
+                    assert_eq!(
+                        container.objref.number, container_number,
+                        "{name}: object {number} resolved the wrong container identity"
+                    );
                     assert!(
-                        bytes[container_span.start as usize..]
-                            .starts_with(format!("{container} ").as_bytes()),
-                        "{name}: object {number} names container {container}, whose span starts elsewhere"
+                        container_span.end <= bytes.len() as u64,
+                        "{name}: object {number} names a container span outside the file"
+                    );
+                    assert!(
+                        header_matches(
+                            &bytes[container_span.start as usize..container_span.end as usize],
+                            container.objref,
+                        ),
+                        "{name}: object {number} names container {container_number}, whose span starts elsewhere"
                     );
                     compressed += 1;
                     continue;
@@ -159,9 +251,16 @@ fn every_parsed_object_records_the_bytes_it_came_from() {
                 Origin::Pending => continue,
             };
             let slice = &bytes[span.start as usize..span.end as usize];
+            assert_eq!(
+                parsed.objref.number, number,
+                "{name}: object {number}'s span resolved a different object identity"
+            );
             assert!(
-                slice.starts_with(format!("{number} {} obj", parsed.objref.generation).as_bytes()),
-                "{name}: object {number}'s span does not start at its header"
+                header_matches(slice, parsed.objref),
+                "{name}: object {number}'s span does not start at its header (objref={:?}, span={:?}, bytes={:?})",
+                parsed.objref,
+                span,
+                &slice[..slice.len().min(32)]
             );
             let end = slice
                 .iter()
@@ -195,6 +294,94 @@ fn every_parsed_object_records_the_bytes_it_came_from() {
         );
     }
     println!("byte spans verified: {in_file} in file, {compressed} in object streams");
+}
+
+#[test]
+fn header_oracle_matches_pdf_trivia_and_rejects_wrong_boundaries() {
+    let accepted = [
+        (b"12 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"12  0 obj\n".as_slice(), ObjRef::new(12, 0)),
+        (b"12\t0\nobj<".as_slice(), ObjRef::new(12, 0)),
+        (b"12\r0\x0cobj/".as_slice(), ObjRef::new(12, 0)),
+        (b"12 0 obj>".as_slice(), ObjRef::new(12, 0)),
+        (
+            b"12\0% first comment\r\n0007%second\nobj(".as_slice(),
+            ObjRef::new(12, 7),
+        ),
+        (b"00012 0007 obj".as_slice(), ObjRef::new(12, 7)),
+    ];
+    for (bytes, expected) in accepted {
+        assert!(header_matches(bytes, expected), "accepted case: {bytes:?}");
+    }
+
+    let rejected = [
+        (b"13 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"12 1 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"18446744073709551616 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"+12 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"12 0 object".as_slice(), ObjRef::new(12, 0)),
+        (b"12 0 objX".as_slice(), ObjRef::new(12, 0)),
+        (b"\n12 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"% comment\n12 0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"12x0 obj".as_slice(), ObjRef::new(12, 0)),
+        (b"12 0obj".as_slice(), ObjRef::new(12, 0)),
+        (b"2 0 obj".as_slice(), ObjRef::new(12, 0)),
+    ];
+    for (bytes, expected) in rejected {
+        assert!(!header_matches(bytes, expected), "rejected case: {bytes:?}");
+    }
+}
+
+#[test]
+fn header_oracle_checks_the_actual_file_span_and_identity() {
+    let variants = [
+        b"4 0 obj\n<</Type/Spare/Marker 1>>\nendobj".as_slice(),
+        b"4  0 obj\n<</Type/Spare/Marker 1>>\nendobj".as_slice(),
+        b"4\t0\nobj\n<</Type/Spare/Marker 1>>\nendobj".as_slice(),
+    ];
+    for inner in variants {
+        let body = [b"prefix\n".as_slice(), inner].concat();
+        let mut bodies = skeleton();
+        bodies.push(&body);
+        let honest = classic_pdf(&bodies, &[]);
+        let inner_at = honest
+            .windows(inner.len())
+            .position(|window| window == inner)
+            .expect("the varied header is in the generated object body")
+            as u64;
+        let bytes = classic_pdf(&bodies, &[(4, inner_at)]);
+        let document = Document::open(Box::new(BytesSource::new(bytes.clone())))
+            .expect("the synthetic file opens cleanly");
+        assert_eq!(
+            document.xref().get(4),
+            Some(XrefEntry::InFile {
+                offset: inner_at,
+                generation: 0,
+            })
+        );
+        let parsed = document
+            .get(4)
+            .expect("the xref points to the inner object");
+        assert_eq!(parsed.objref, ObjRef::new(4, 0));
+        let expected_span = Span::new(inner_at, inner_at + inner.len() as u64);
+        assert_eq!(parsed.origin, Origin::File(expected_span));
+        let span = expected_span;
+        let slice = &bytes[span.start as usize..span.end as usize];
+        assert_eq!(slice, inner);
+        assert!(header_matches(slice, parsed.objref));
+        assert!(!header_matches(slice, ObjRef::new(5, 0)));
+        assert!(!header_matches(
+            &bytes[(span.start - 1) as usize..span.end as usize],
+            parsed.objref
+        ));
+        assert!(!header_matches(&slice[1..], parsed.objref));
+
+        let old_literal = format!("{} {} obj", parsed.objref.number, parsed.objref.generation);
+        assert_eq!(
+            slice.starts_with(old_literal.as_bytes()),
+            inner == variants[0]
+        );
+    }
 }
 
 #[test]

@@ -49,6 +49,15 @@ source IDs, severity, ownership, and required proof.
   unmodified, and only surfaces once `corpus/external/verapdf` is present, which
   is why a fresh clone has not seen it. Not diagnosed further here; it belongs to
   whoever owns the boundary-recovery path.
+  **2026-09-23 Task A resolution:** the parser's recorded span is correct; the
+  oracle now accepts PDF trivia such as the fixture's double space while still
+  requiring exact numeric identity and token boundaries. The unchanged predicate
+  fails on an isolated copy of the real fixture; the treatment passes the complete
+  selected corpus (401 fixture links available; the test's first-400 selection
+  includes the real fixture and 399 ordinary external files) with 22,230
+  in-file and 18,507 object-stream spans checked. The matching baseline and
+  treatment commands and their exit statuses are recorded in the private Task A
+  plan evidence.
 
 - **Two `cos` section tests read a `hayro` fixture without checking it is
   there**, found 2026-09-21 during P1b. `crates/cos/tests/sections.rs`'s
