@@ -192,3 +192,18 @@ strict app Clippy stops on three baseline core diagnostics; app-only
   dependency graph builds C code (`ring`) that cross-checking cannot, and
   it has not run.
 - **Summaries** in the print output (row 96) are not built.
+
+## Headless integration evidence (2026-09-23, b679efa)
+
+Fresh headless results at `b679efa`:
+
+- 16 GPUI test-platform print tests passed.
+- 34 `onionskin-print` unit tests and 19 file-backend tests passed.
+- The exact parity inventory test passed.
+- Full app strict Clippy, including dependencies, passed.
+- `cargo fmt --all --check` and `git diff --check` passed.
+
+Native UI interaction, screenshots, physical printing, and the two macOS-only
+platform tests remain deferred per the latest user instruction. They are not
+claimed as passed and are not integration blockers for this headless
+checkpoint. No new application bundle is claimed here.
