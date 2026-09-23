@@ -5,12 +5,28 @@ hosted-CI run is claimed.
 
 ## Rows
 
-- **To `implemented`:** Booklet, and Poster / tile. Both were moved from M3
-  to M4 by the M3 plan's ruling B: imposition over P15's sheet model, added
-  without reopening it.
-- **Headline:** 156 planned / 27 partial / 80 out-of-scope, 140
+- **Historical promotion, 2026-09-22:** Booklet and Poster / tile were marked
+  `implemented`. Both had been moved from M3 to M4 by the M3 plan's ruling B:
+  imposition over P15's sheet model, added without reopening it.
+- **Historical headline:** 156 planned / 27 partial / 80 out-of-scope, 140
   implemented. `acrobat_parity_headline_matches_every_inventory_row`
   passes.
+
+## Correction, 2026-09-23
+
+The Sept 22 row promotion and headline are historical evidence. The current
+parity inventory marks both rows `partial` because these named behaviours are
+missing:
+
+- **Booklet:** Acrobat's physical-sheet **From / To** range is not offered;
+  the page range changes booklet composition instead of selecting physical
+  sheets.
+- **Poster:** custom scale and overlap entry is not offered. Acrobat's printed
+  tile labels are also not drawn.
+
+The revised headline is 156 planned / 29 partial / 80 out-of-scope, 138
+implemented. This correction adds no runtime or native-print verification
+claim. The Sept 22 test and coverage results below remain historical.
 
 ## What the user gets
 
