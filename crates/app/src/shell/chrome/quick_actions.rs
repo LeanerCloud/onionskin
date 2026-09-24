@@ -723,6 +723,7 @@ mod tests {
             ToolCapability::PrepareForm => &[ToolCapability::PrepareForm],
             ToolCapability::EditImages => &[ToolCapability::EditImages],
             ToolCapability::PlacesImage => &[ToolCapability::PlacesImage],
+            ToolCapability::EditText => &[ToolCapability::EditText],
         }
     }
 

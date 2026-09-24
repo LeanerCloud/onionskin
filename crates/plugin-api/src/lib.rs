@@ -120,6 +120,9 @@ pub enum ToolCapability {
     /// Places a picture the user picks, handed over as a one-page PDF: the
     /// shell makes one from an image file before [`ToolPlugin::choose`].
     PlacesImage,
+    /// Edits a line of text where it is: the shell opens an editor on the
+    /// line the tool asks for.
+    EditText,
 }
 
 impl ToolCapability {
@@ -142,7 +145,8 @@ impl ToolCapability {
             | ToolCapability::Redact
             | ToolCapability::PrepareForm
             | ToolCapability::EditImages
-            | ToolCapability::PlacesImage => true,
+            | ToolCapability::PlacesImage
+            | ToolCapability::EditText => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom
