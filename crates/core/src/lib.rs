@@ -65,6 +65,7 @@ pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,
     ViewRotation, ViewSize,
 };
+pub use onionskin_content::placements::ImagePlacement;
 pub use onionskin_content::{Glyph, Mapping, MatchMode, PageText, SearchOptions, TextRun};
 /// Re-exported because a [`Layer`] is named by the object its dictionary
 /// lives in, and the shell has to be able to name one back.
@@ -87,7 +88,7 @@ pub use render::{
 };
 pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
-pub use selection::{Selection, TextSelection, TextSpan};
+pub use selection::{ImageSelection, Selection, TextSelection, TextSpan};
 pub use session::{
     Document, Error, ExportSnapshot, FieldRequest, LinkRequest, PageGeometryResponse, RenderView,
     Result, SnapshotRequest,

@@ -1540,6 +1540,14 @@ impl Document {
         crate::links::read_links(self.structure()?, page_count)
     }
 
+    /// Every image page `index` draws, and where, as the document is now.
+    pub fn page_images(
+        &mut self,
+        index: PageIndex,
+    ) -> Result<Vec<onionskin_content::placements::ImagePlacement>> {
+        Ok(onionskin_content::page_images(self.structure()?, index)?)
+    }
+
     /// The form: every field, as the document has it now.
     pub fn form(&mut self) -> Result<crate::forms::Form> {
         crate::forms::read_form(self.structure()?)

@@ -1,8 +1,8 @@
 //! What the user has picked out on a page.
 //!
-//! A [`Selection`] is one of two things, never both: a marquee region or a run
-//! of text quads. `set_region` and `set_text_quads` each clear the other for
-//! that reason, so no consumer has to decide which of two populated fields
+//! A [`Selection`] is one of three things, never two: a marquee region, a
+//! run of text quads, or an image. Setting one clears the others for that
+//! reason, so no consumer has to decide which of two populated fields
 //! wins. Both are expressed in page user space, not device pixels, so a
 //! selection survives a zoom, a rotation and a re-render without being
 //! recomputed.
@@ -37,10 +37,20 @@ pub struct TextSpan {
     pub size: f64,
 }
 
+/// A selected image: which of its page's placements, in drawing order,
+/// and where it was when it was selected.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageSelection {
+    pub page: PageIndex,
+    pub index: usize,
+    pub placement: onionskin_content::placements::ImagePlacement,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Selection {
     region: Option<PageRect>,
     text: Option<TextSelection>,
+    image: Option<ImageSelection>,
 }
 
 impl Selection {
@@ -59,19 +69,29 @@ impl Selection {
         }
     }
 
+    pub fn image(&self) -> Option<&ImageSelection> {
+        self.image.as_ref()
+    }
+
     pub fn set_region(&mut self, region: PageRect) {
+        self.clear();
         self.region = Some(region);
-        self.text = None;
     }
 
     pub fn set_text(&mut self, text: TextSelection) {
-        self.region = None;
+        self.clear();
         self.text = Some(text);
+    }
+
+    pub fn set_image(&mut self, image: ImageSelection) {
+        self.clear();
+        self.image = Some(image);
     }
 
     pub fn clear(&mut self) {
         self.region = None;
         self.text = None;
+        self.image = None;
     }
 }
 
@@ -103,6 +123,27 @@ mod tests {
         assert!(selection.region().is_none());
         assert_eq!(selection.text_quads().len(), 1);
         assert_eq!(selection.text().map(|text| text.text.as_str()), Some("a"));
+
+        selection.set_image(ImageSelection {
+            page: 0,
+            index: 1,
+            placement: onionskin_content::placements::ImagePlacement {
+                image: onionskin_cos::ObjRef::new(5, 0),
+                name: "Im0".into(),
+                ctm: onionskin_content::Matrix::IDENTITY,
+                provenance: None,
+            },
+        });
+        assert!(selection.text().is_none(), "an image replaces the text");
+        assert_eq!(selection.image().map(|image| image.index), Some(1));
+        selection.set_region(PageRect {
+            page: 0,
+            x0: 0.0,
+            y0: 0.0,
+            x1: 1.0,
+            y1: 1.0,
+        });
+        assert!(selection.image().is_none(), "a region replaces the image");
 
         selection.clear();
         assert!(selection.region().is_none());
