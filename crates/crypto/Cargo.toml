@@ -20,9 +20,10 @@ sha2 = "0.10"
 # Signatures: CMS SignedData and X.509 certificates, parsed with the
 # RustCrypto der 0.7 family; the public-key checks are ring's.
 cms = "0.2"
-der = { version = "0.7", features = ["std"] }
+der = { version = "0.7", features = ["std", "pem"] }
 ring = "0.17"
 # RSA-PSS with any salt length, which ring does not check.
 num-bigint = "0.4"
 sha1 = "0.10"
-x509-cert = "0.2"
+# PEM, for certificates a user adds to their trusted ones.
+x509-cert = { version = "0.2", features = ["pem"] }

@@ -11,6 +11,7 @@ mod cms;
 mod digest;
 mod keys;
 mod pss;
+pub mod trust;
 
 pub use certs::Certificate;
 pub use digest::Digest;

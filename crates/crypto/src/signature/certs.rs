@@ -58,6 +58,23 @@ impl Certificate {
             .map(|certificate| Certificate::from_x509(&certificate))
     }
 
+    /// Every certificate in a file a user chose: PEM, one certificate or
+    /// several, or a single DER certificate, as `.pem`, `.crt`, `.cer` and
+    /// `.der` files hold them. Empty when the file holds none.
+    pub fn from_file_bytes(bytes: &[u8]) -> Vec<Certificate> {
+        let pem = x509_cert::Certificate::load_pem_chain(bytes).unwrap_or_default();
+        if pem.is_empty() {
+            return Certificate::from_der(bytes).into_iter().collect();
+        }
+        pem.iter().map(Certificate::from_x509).collect()
+    }
+
+    /// The certificate as PEM text, which is how a trusted one is kept.
+    pub fn to_pem(&self) -> String {
+        der::pem::encode_string("CERTIFICATE", der::pem::LineEnding::LF, &self.der)
+            .expect("a certificate's DER encodes as PEM")
+    }
+
     /// Who signed, in words: the common name, or the whole subject.
     pub fn display_name(&self) -> &str {
         self.common_name.as_deref().unwrap_or(&self.subject)
