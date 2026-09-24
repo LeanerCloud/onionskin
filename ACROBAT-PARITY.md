@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 86 planned / 44 partial / 80 out-of-scope. 193 implemented.**
+**403 rows: 83 planned / 46 partial / 80 out-of-scope. 194 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
@@ -285,7 +285,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Tags pane (structure tree) | planned | M6 | `core` owns the tagged-PDF structure tree; this is its UI. |
 | Order pane (reading order) | planned | M6 | Reading-order view/repair is named in the plan for M6. |
 | Accessibility report pane | planned | M6 | Output of the rule-based checker. |
-| Security Settings pane | planned | M6 | With `tools-protect`. |
+| Security Settings pane | implemented | M6 | Offered in the navigation strip only on an encrypted document; lists what its security allows and opens Document Properties > Security with Permission Details. Evidence: docs/evidence/m6-trust.md. |
 | Destinations pane | planned | post-1.0 | Named destinations are a named post-1.0 slot. |
 | Articles pane | planned | post-1.0 | Articles are a named post-1.0 slot. |
 | Model Tree pane | out-of-scope | - | The navigation pane for 3D annotations, and 3D is named out of scope in the plan's GUI parity bullet. |
@@ -528,7 +528,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Validate an existing signature | partial | M6 | Integrity, the signer's key (RSA, RSA-PSS, ECDSA P-256/P-384, SHA-1 flagged weak), the revision covered, the changes made after it and DocMDP are checked, agreeing with pdfsig. Trust in the signer waits on trusted identities; timestamps are detected, not verified. Evidence: docs/evidence/m6-signature-validation.md. |
+| Validate an existing signature | partial | M6 | Integrity, the signer's key (RSA, RSA-PSS, ECDSA P-256/P-384, SHA-1 flagged weak), the revision covered, the changes made after it and DocMDP are checked, agreeing with pdfsig; the signer's identity is judged against the user's trusted certificates, agreeing with openssl verify. Revocation is not checked and timestamps are detected, not verified (WP11). Evidence: docs/evidence/m6-signature-validation.md, docs/evidence/m6-trust.md. |
 | Signature properties and validation report | implemented | M6 | Signature Properties: signer and certificate, algorithms, signing time, timestamp presence, certification level, revision covered, changes after signing, and View Signed Version. Evidence: docs/evidence/m6-signature-validation.md. |
 | Preserve signature validity across edits | implemented | M6 | Saves append a section and never touch signed bytes; a note keeps approval signatures valid (guarantee test 4, checked with pdfsig). Evidence: docs/evidence/m6-signature-validation.md. |
 | Digitally sign with a certificate | planned | M6 | PAdES signing. |
@@ -536,10 +536,10 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Manage digital IDs | planned | M6 | Platform keystores: Keychain, CNG, PKCS#11. |
 | Create a self-signed digital ID | planned | M6 | Acrobat offers self-signed and CA-issued IDs; `crypto` can mint the former. |
 | Create and manage signature appearances (name, logo, imported graphic, which fields show) | planned | M6 | Signature appearance management is named in the plan's M6 list. Distinct from the Fill & Sign scribble, which is not cryptographic. |
-| Signature verification preferences (auto-validate on open, revocation checking) | planned | M6 | (judgment) |
+| Signature verification preferences (auto-validate on open, revocation checking) | partial | M6 | Preferences > Signatures: verify when the document is opened (off offers Validate All in the pane), and verify at the current time or the signature's creation time. Revocation checking and the timestamp's secure time wait on WP11. Evidence: docs/evidence/m6-trust.md. |
 | Timestamp a document (RFC 3161 timestamp server) | planned | M6 | Timestamping is named in the plan's M6 list. |
 | Long-term validation (LTV) enablement | planned | M6 | Named in the plan's M6 list, alongside timestamping. |
-| Trusted identities / manage trusted certificates | planned | M6 | Trusted-identity management is named in the plan's M6 list; backed by the platform trust store. |
+| Trusted identities / manage trusted certificates | partial | M6 | Preferences > Signatures lists the trusted certificates, each trusted for signed and/or certified documents; Add Certificate reads PEM or DER files, Signature Properties adds a signer, Remove forgets one. Kept as PEM, owner-only. The platform trust stores (Keychain, Windows) are not consulted yet. Evidence: docs/evidence/m6-trust.md. |
 | Adobe Approved Trust List (AATL) and EUTL | out-of-scope | - | Adobe-operated trust programme distributed through Adobe's update channel; Onionskin uses the platform trust store instead. |
 | Lock a document after signing | planned | M6 | (judgment) |
 

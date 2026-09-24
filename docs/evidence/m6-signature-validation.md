@@ -13,8 +13,7 @@ entry. The fixtures are signed by pyHanko 0.37, and poppler's `pdfsig`
   - Signatures pane (was `partial`, M2).
 - **To `partial`:** Validate an existing signature. Integrity, the
   signer's key and what changed after signing are checked; whether the
-  signer is trusted waits on trusted identities (WP3 in
-  `docs/plans-remaining.md`).
+  signer is trusted landed next, in `m6-trust.md`.
 - **Headline:** 86 planned / 44 partial / 80 out-of-scope, 193
   implemented. By milestone unchanged.
   `acrobat_parity_headline_matches_every_inventory_row` passes.
