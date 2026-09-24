@@ -18,11 +18,14 @@ pub mod images;
 mod link_tool;
 pub mod links;
 pub mod marks;
+pub mod text;
+mod text_tool;
 
 pub use crop::{crop_pages, crop_to_content, crop_to_rect, white_margins, CropPages};
 pub use crop_tool::CropTool;
 pub use image_tool::{AddImageTool, EditImageTool};
 pub use link_tool::LinkTool;
+pub use text_tool::EditTextTool;
 
 pub struct EditToolsPlugin;
 
@@ -41,6 +44,7 @@ impl PluginManifest for EditToolsPlugin {
         registry.register_tool(Box::new(LinkTool::new()));
         registry.register_tool(Box::new(EditImageTool::new()));
         registry.register_tool(Box::new(AddImageTool::new()));
+        registry.register_tool(Box::new(EditTextTool::new()));
     }
 }
 
