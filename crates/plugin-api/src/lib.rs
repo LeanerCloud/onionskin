@@ -107,6 +107,9 @@ pub enum ToolCapability {
     /// Makes and changes links. The canvas context menu's Create Link finds
     /// its tool through this.
     Link,
+    /// Marks text and regions for redaction. The canvas context menu's
+    /// Redact Text finds its tool through this.
+    Redact,
 }
 
 impl ToolCapability {
@@ -125,7 +128,8 @@ impl ToolCapability {
             | ToolCapability::AddSignature
             | ToolCapability::Stamp
             | ToolCapability::EditPages
-            | ToolCapability::Link => true,
+            | ToolCapability::Link
+            | ToolCapability::Redact => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom

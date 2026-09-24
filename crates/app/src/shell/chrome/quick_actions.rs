@@ -719,6 +719,7 @@ mod tests {
             ToolCapability::Stamp => &[ToolCapability::Stamp],
             ToolCapability::EditPages => &[ToolCapability::EditPages],
             ToolCapability::Link => &[ToolCapability::Link],
+            ToolCapability::Redact => &[ToolCapability::Redact],
         }
     }
 
