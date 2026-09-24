@@ -770,22 +770,25 @@ impl CanvasModel {
         Ok(())
     }
 
-    /// Rewrite the line the Edit Text tool picked with `text`, as one undo
-    /// step. A line that says something else now is refused.
+    /// Rewrite the line the Edit Text tool picked with `text`, or draw it
+    /// where the Add Text tool clicked, as one undo step. A line that says
+    /// something else now is refused.
     #[cfg(feature = "tools-edit")]
     pub fn edit_text_line(
         &mut self,
         request: &onionskin_core::TextEditRequest,
         text: &str,
     ) -> Result<bool, CanvasError> {
-        self.edit_pages(|doc| {
-            onionskin_tools_edit::text::edit_line(
+        self.edit_pages(|doc| match request.line {
+            Some(line) => {
+                onionskin_tools_edit::text::edit_line(doc, request.page, line, &request.text, text)
+            }
+            None => onionskin_tools_edit::text::add_text(
                 doc,
                 request.page,
-                request.line,
-                &request.text,
+                (request.bounds[0], request.bounds[1]),
                 text,
-            )
+            ),
         })?;
         Ok(true)
     }

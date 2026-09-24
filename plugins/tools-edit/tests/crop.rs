@@ -94,7 +94,14 @@ fn the_plugin_registers_crop_as_an_edit() {
     let tools: Vec<_> = registry.tools().map(|tool| tool.id()).collect();
     assert_eq!(
         tools,
-        ["crop-pages", "link", "edit-image", "add-image", "edit-text"],
+        [
+            "crop-pages",
+            "link",
+            "edit-image",
+            "add-image",
+            "edit-text",
+            "add-text"
+        ],
         "and the tools that draw"
     );
     assert_eq!(EditToolsPlugin.id(), "onionskin.tools-edit");

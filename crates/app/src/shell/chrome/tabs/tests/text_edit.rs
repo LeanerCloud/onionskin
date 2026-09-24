@@ -115,9 +115,19 @@ fn replace_takes_one_match_and_replace_all_the_rest(cx: &mut TestAppContext) {
         .unwrap();
 }
 
-/// Choose the Edit Text tool, click the middle of page rectangle `rect`
-/// with it, and let the canvas answer.
+/// Click the middle of page rectangle `rect` with the Edit Text tool.
 fn click_line(window: gpui::WindowHandle<ShellFrame>, rect: [f64; 4], cx: &mut TestAppContext) {
+    click_with("edit-text", window, rect, cx);
+}
+
+/// Choose tool `tool`, click the middle of page rectangle `rect` with it,
+/// and let the canvas answer.
+fn click_with(
+    tool: &str,
+    window: gpui::WindowHandle<ShellFrame>,
+    rect: [f64; 4],
+    cx: &mut TestAppContext,
+) {
     window
         .update(cx, |frame, window, cx| {
             let canvas = frame.active_canvas().expect("a tab").clone();
@@ -126,7 +136,7 @@ fn click_line(window: gpui::WindowHandle<ShellFrame>, rect: [f64; 4], cx: &mut T
                     .model
                     .registry()
                     .tools()
-                    .position(|tool| tool.id() == "edit-text")
+                    .position(|found| found.id() == tool)
                     .expect("installed");
                 canvas.model.activate_tool(index).expect("activates");
                 let (at, width, height) = canvas.model.view_rect(0, rect).expect("in view");
@@ -206,6 +216,25 @@ fn the_edit_text_tool_opens_an_editor_on_the_line_and_keeps_what_is_typed(cx: &m
                 "{status:?}"
             );
             assert_eq!(lines(frame, cx)[1], "The text is final.");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn the_add_text_tool_draws_what_is_typed_where_it_was_clicked(cx: &mut TestAppContext) {
+    let (_dir, window) = text_window(cx);
+    click_with("add-text", window, [72.0, 390.0, 72.0, 410.0], cx);
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            let input = canvas.read(cx).line_editor_input().expect("open");
+            assert_eq!(input.read(cx).query(), "", "empty, for new text");
+            type_into(&input, "A new line", cx);
+            canvas.update(cx, |canvas, cx| canvas.commit_line_editor(cx));
+            assert_eq!(
+                lines(frame, cx),
+                ["Draft page 1", "The draft is final.", "A new line"]
+            );
         })
         .unwrap();
 }

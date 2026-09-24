@@ -7,7 +7,7 @@
 //! whatever has taken its place.
 
 use onionskin_core::text_edit::{
-    find_in_lines, page_lines, replace_matches, rewrite_lines, write_page_edit, LineMatch,
+    self, find_in_lines, page_lines, replace_matches, rewrite_lines, write_page_edit, LineMatch,
     MatchOptions,
 };
 use onionskin_core::{Document, PageIndex, TextLine};
@@ -61,6 +61,27 @@ pub fn edit_line(
     };
     doc.edit_document(LABEL, |tx| write_page_edit(tx, &edit))
         .map_err(failed(LABEL))
+}
+
+/// The size new text is set at.
+pub const NEW_TEXT_SIZE: f64 = 12.0;
+
+/// Draw `text` as a new line on `page`, its baseline starting at `at`, as
+/// one undo step. Nothing typed adds nothing.
+pub fn add_text(
+    doc: &mut Document,
+    page: PageIndex,
+    at: (f64, f64),
+    text: &str,
+) -> Result<(), CommandError> {
+    const LABEL: &str = "Add Text";
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    doc.edit_document(LABEL, |tx| {
+        text_edit::add_text(tx, page, at, NEW_TEXT_SIZE, text)
+    })
+    .map_err(failed(LABEL))
 }
 
 /// Every occurrence of `needle` in the document's text, line by line.

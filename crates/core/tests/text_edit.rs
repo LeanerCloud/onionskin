@@ -139,19 +139,56 @@ fn a_tool_asks_the_shell_to_edit_a_line_once() {
     let mut doc = onionskin_core::Document::open_bytes(tagged()).expect("opens");
     let request = onionskin_core::TextEditRequest {
         page: 0,
-        line: 0,
+        line: Some(0),
         text: "Page 1".to_owned(),
         bounds: [72.0, 690.0, 140.0, 720.0],
     };
     doc.request_text_edit(request.clone());
     doc.request_text_edit(onionskin_core::TextEditRequest {
-        line: 0,
+        line: None,
         ..request.clone()
     });
+    doc.request_text_edit(request.clone());
     assert_eq!(
         doc.take_text_edit_request(),
         Some(request),
         "the last click"
     );
     assert_eq!(doc.take_text_edit_request(), None, "taken once");
+}
+
+#[test]
+fn new_text_is_drawn_after_the_page_in_a_standard_font() {
+    use onionskin_core::text_edit::add_text;
+    let bytes = tagged();
+    let added = apply(&bytes, |tx, _| {
+        add_text(tx, 0, (72.0, 400.0), 18.0, "Added note €")
+    });
+    assert_eq!(texts(&added, 0), ["Page 1", "Added note €"]);
+    let doc = open(&added);
+    let lines = page_lines(&doc, 0).expect("reads");
+    let [x0, y0, _, _] = lines[1].bounds();
+    assert!(
+        (x0 - 72.0).abs() < 1e-6 && y0 < 400.0 && y0 > 390.0,
+        "{:?}",
+        lines[1].bounds()
+    );
+    let again = apply(&added, |tx, _| {
+        add_text(tx, 0, (72.0, 300.0), 12.0, "Again")
+    });
+    assert_eq!(texts(&again, 0), ["Page 1", "Added note €", "Again"]);
+    assert_eq!(texts(&again, 1), ["Page 2"], "the inherited resources stay");
+    let content = content_of(&again, 0);
+    assert!(
+        content.contains("/OSF1_Helvetica 12 Tf"),
+        "a name of its own: {content}"
+    );
+
+    for refused in ["日本", "   "] {
+        let error = common::try_apply(&bytes, |tx, _| {
+            add_text(tx, 0, (72.0, 400.0), 12.0, refused)
+        })
+        .expect_err("refused");
+        assert!(error.to_string().contains("no"), "{error}");
+    }
 }

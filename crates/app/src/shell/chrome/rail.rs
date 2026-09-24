@@ -167,6 +167,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "edit-image" => "⧉",
         "add-image" => "⊕",
         "edit-text" => "✎",
+        "add-text" => "T+",
         "fill-text" => "Ab",
         "fill-check" => "✓",
         "fill-cross" => "✗",

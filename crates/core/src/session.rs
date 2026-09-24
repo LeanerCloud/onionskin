@@ -328,12 +328,14 @@ pub enum LinkRequest {
     Follow(crate::PagePoint),
 }
 
-/// A line of text a tool clicked, for the shell to open an editor on.
+/// A line of text a tool clicked, for the shell to open an editor on, or
+/// the place a new one goes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextEditRequest {
     pub page: PageIndex,
-    /// The line, as `text_edit::page_lines` numbers it.
-    pub line: usize,
+    /// The line, as `text_edit::page_lines` numbers it, or `None` for new
+    /// text whose baseline starts at the lower left of `bounds`.
+    pub line: Option<usize>,
     /// What it says now, which the edit checks is still so.
     pub text: String,
     /// Where it is on the page.

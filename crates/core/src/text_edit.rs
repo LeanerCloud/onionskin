@@ -73,7 +73,13 @@ pub fn rewrite_lines(
         )));
     }
     let loaded = onionskin_content::page(doc, page)?;
-    let prefix = free_prefix(doc, &loaded.resources);
+    let fonts = loaded
+        .resources
+        .get(b"Font")
+        .and_then(|value| doc.resolve(value).ok())
+        .and_then(|value| value.as_dict().cloned())
+        .unwrap_or_default();
+    let prefix = free_prefix(&fonts);
     let edits: Vec<LineEdit> = lines
         .iter()
         .map(|(line, text)| LineEdit {
@@ -97,13 +103,8 @@ pub fn rewrite_lines(
     })
 }
 
-/// A prefix no font resource of the page starts with.
-fn free_prefix(doc: &CosDocument, resources: &Dict) -> String {
-    let fonts = resources
-        .get(b"Font")
-        .and_then(|value| doc.resolve(value).ok())
-        .and_then(|value| value.as_dict().cloned())
-        .unwrap_or_default();
+/// A prefix none of the page's `fonts` starts with.
+fn free_prefix(fonts: &Dict) -> String {
     let taken = |prefix: &str| {
         fonts
             .iter()
@@ -249,6 +250,64 @@ pub fn write_page_edit(tx: &mut Transaction<'_>, edit: &PageEdit) -> Result<()> 
         page_object.generation,
         Object::Dict(page),
     )
+}
+
+/// The standard font new text is set in.
+const NEW_TEXT_FACE: &str = "Helvetica";
+
+/// Draw `text` on `page` as a new line in Helvetica at `size`, its
+/// baseline starting at `at`, after everything the page draws.
+pub fn add_text(
+    tx: &mut Transaction<'_>,
+    page: PageIndex,
+    at: (f64, f64),
+    size: f64,
+    text: &str,
+) -> Result<()> {
+    let undrawable: String = text
+        .chars()
+        .filter(|ch| *ch != '?' && onionskin_content::encode_win_ansi(&ch.to_string()) == b"?")
+        .collect();
+    if text.trim().is_empty() || !undrawable.is_empty() {
+        return Err(refused(if undrawable.is_empty() {
+            "there is no text to add".to_owned()
+        } else {
+            format!("no font available can draw {undrawable:?}")
+        }));
+    }
+    let page_object = page_ref(tx, page)?;
+    let mut page_dict = dict_at(tx, page_object)?;
+    let inherited = crate::pages::inherited_resources(tx, page_object)?;
+    let mut resources = dict_of(tx, inherited.as_ref())?;
+    let mut fonts = dict_of(tx, resources.get(b"Font"))?;
+    let name = Name::new(&format!("{}{NEW_TEXT_FACE}", free_prefix(&fonts)));
+    let number = tx.reserve();
+    tx.put_object(number, 0, Object::Dict(standard_font(NEW_TEXT_FACE)))?;
+    fonts.set(name.clone(), Object::Ref(ObjRef::new(number, 0)));
+    resources.set(Name::new("Font"), Object::Dict(fonts));
+    let mut content = format!(
+        "BT /{} {} Tf {} {} Td <",
+        String::from_utf8_lossy(name.as_bytes()),
+        number_text(size),
+        number_text(at.0),
+        number_text(at.1)
+    );
+    for byte in onionskin_content::encode_win_ansi(text) {
+        content.push_str(&format!("{byte:02X}"));
+    }
+    content.push_str("> Tj ET\n");
+    crate::pages::append_content(tx, &mut page_dict, content.into_bytes())?;
+    page_dict.set(Name::new("Resources"), Object::Dict(resources));
+    tx.put_object(
+        page_object.number,
+        page_object.generation,
+        Object::Dict(page_dict),
+    )
+}
+
+fn number_text(value: f64) -> String {
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 fn dict_of(tx: &Transaction<'_>, value: Option<&Object>) -> Result<Dict> {

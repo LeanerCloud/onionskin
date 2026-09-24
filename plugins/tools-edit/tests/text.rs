@@ -8,8 +8,8 @@ use common::{at, content, pdf, Page};
 use onionskin_core::text_edit::MatchOptions;
 use onionskin_core::Document;
 use onionskin_plugin_api::{CommandError, ToolCapability, ToolPlugin};
-use onionskin_tools_edit::text::{edit_line, find, line_at, match_at, replace};
-use onionskin_tools_edit::EditTextTool;
+use onionskin_tools_edit::text::{add_text, edit_line, find, line_at, match_at, replace};
+use onionskin_tools_edit::{AddTextTool, EditTextTool};
 
 const FONT: &[u8] = b"<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>";
 
@@ -54,7 +54,7 @@ fn a_click_asks_for_the_line_under_it_and_a_drag_does_not() {
     let request = page.doc.take_text_edit_request().expect("asked");
     assert_eq!(
         (request.page, request.line, request.text.as_str()),
-        (0, 0, "Draft page 1")
+        (0, Some(0), "Draft page 1")
     );
     assert_eq!(tool.overlays(&page.doc).len(), 1, "the line outlined");
 
@@ -134,4 +134,48 @@ fn every_match_is_replaced_in_one_step_and_one_on_its_own() {
         0
     );
     assert!(find(&mut doc, "", options).expect("finds").is_empty());
+}
+
+#[test]
+fn the_add_text_tool_asks_for_new_text_where_it_is_clicked() {
+    let mut page = Page::new(document());
+    let mut tool = AddTextTool::new();
+    assert_eq!(
+        (tool.id(), tool.name(), tool.group(), tool.capabilities()),
+        (
+            "add-text",
+            "Add Text",
+            "edit-text",
+            &[ToolCapability::EditText][..]
+        )
+    );
+    assert!(tool.hint().is_some() && tool.overlays(&page.doc).is_empty());
+    page.drag(&mut tool, (100.0, 400.0), (100.0, 400.0));
+    let request = page.doc.take_text_edit_request().expect("asked");
+    assert_eq!((request.line, request.text.as_str()), (None, ""));
+    assert!((request.bounds[0] - 100.0).abs() < 1e-6 && (request.bounds[1] - 400.0).abs() < 1e-6);
+    page.drag(&mut tool, (100.0, 400.0), (300.0, 300.0));
+    assert!(page.doc.take_text_edit_request().is_none(), "a drag");
+    tool.on_pointer_down(&mut page.ctx(), at((100.0, 400.0)));
+    tool.on_cancel(&mut page.ctx());
+    tool.on_pointer_up(&mut page.ctx(), at((100.0, 400.0)));
+    assert!(page.doc.take_text_edit_request().is_none(), "Escape");
+
+    let doc = &mut page.doc;
+    add_text(doc, 0, (100.0, 400.0), "A new line").expect("adds");
+    assert_eq!(
+        lines(doc, 0),
+        ["Draft page 1", "The draft is final.", "A new line"]
+    );
+    assert_eq!(doc.edit().history().undo_label(), Some("Add Text"));
+    add_text(doc, 0, (100.0, 300.0), "  ").expect("nothing typed");
+    assert_eq!(lines(doc, 0).len(), 3);
+    let refused = add_text(doc, 0, (100.0, 300.0), "日本").expect_err("refused");
+    assert!(matches!(
+        refused,
+        CommandError::Edit {
+            label: "Add Text",
+            ..
+        }
+    ));
 }
