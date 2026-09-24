@@ -157,6 +157,23 @@ impl Field {
     pub fn page(&self) -> Option<PageIndex> {
         self.widgets.iter().find_map(|widget| widget.page)
     }
+
+    /// The list box option drawn at `point` on `widget`, by its index.
+    /// `None` for a point past the last option, or a field that is not a
+    /// list box.
+    pub fn list_row(&self, widget: &Widget, (_, y): (f64, f64)) -> Option<usize> {
+        let FieldKind::Choice {
+            combo: false,
+            options,
+            ..
+        } = &self.kind
+        else {
+            return None;
+        };
+        let da = appearance::parse_da(self.appearance.as_deref());
+        let top = widget.rect[1].max(widget.rect[3]);
+        appearance::list_row(&da, top, y).filter(|row| *row < options.len())
+    }
 }
 
 /// The form: every terminal field, and what the form dictionary says.

@@ -225,6 +225,14 @@ fn fields_are_found_by_place_and_ordered_for_tabbing() {
         .collect();
     assert_eq!(order[..3], ["person.first", "person.last", "agree"]);
     assert!(!order.contains(&"size") || order.iter().filter(|name| **name == "size").count() == 1);
+
+    let pets = form.field("pets").expect("pets");
+    let rows: Vec<Option<usize>> = [535.0, 520.0, 500.0, 490.0, 545.0]
+        .map(|y| pets.list_row(&pets.widgets[0], (60.0, y)))
+        .into();
+    assert_eq!(rows, [Some(0), Some(1), Some(2), None, None]);
+    let first = form.field("person.first").expect("a text field");
+    assert_eq!(first.list_row(&first.widgets[0], (100.0, 710.0)), None);
 }
 
 #[test]

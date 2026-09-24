@@ -320,6 +320,20 @@ pub(super) fn text_appearance(
     stream(frame, font, &body)
 }
 
+/// A list box's text size and row height.
+pub(super) fn list_metrics(da: &Da) -> (f64, f64) {
+    let size = if da.size > 0.0 { da.size } else { AUTO_MAX };
+    (size, size * 1.15)
+}
+
+/// The list box row at height `y` in a widget whose top is `top`, counted
+/// from the first, as [`list_appearance`] lays them out.
+pub(super) fn list_row(da: &Da, top: f64, y: f64) -> Option<usize> {
+    let (_, leading) = list_metrics(da);
+    let row = ((top - PADDING - y) / leading).floor();
+    (row >= 0.0).then_some(row as usize)
+}
+
 /// A list box's normal appearance: its entries from the top, the chosen
 /// ones on a highlight.
 pub(super) fn list_appearance(
@@ -328,8 +342,7 @@ pub(super) fn list_appearance(
     font: &Font,
     entries: &[(String, bool)],
 ) -> Stream {
-    let size = if da.size > 0.0 { da.size } else { AUTO_MAX };
-    let leading = size * 1.15;
+    let (size, leading) = list_metrics(da);
     let mut body = String::new();
     for (index, (_, chosen)) in entries.iter().enumerate() {
         if *chosen {
