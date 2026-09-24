@@ -10,3 +10,10 @@ onionskin-content.workspace = true
 onionskin-core.workspace = true
 onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
+
+# Guarantee test 8 edits tagged documents the ways the editing plugins do,
+# then checks them.
+[dev-dependencies]
+onionskin-corpus-testing.workspace = true
+onionskin-tools-edit.workspace = true
+onionskin-tools-organize.workspace = true

@@ -127,6 +127,7 @@ jobs:
           cargo test -p onionskin-cos --test robustness
           cargo test -p onionskin-cos --test roundtrip
           cargo test -p onionskin-cos --test sections
+          cargo test -p onionskin-tools-accessibility --test guarantee
       # Guarantee test 5: with every plugin compiled out, the app still
       # builds and boots to a workspace that can do nothing.
       - run: cargo test -p onionskin-app --no-default-features

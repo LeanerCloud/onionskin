@@ -461,10 +461,41 @@ fn js_form_fields_compute_the_way_acrobat_computes_them() {
 /// Guarantee 8, tag integrity: editing a tagged corpus document leaves
 /// its structure tree valid and consistent with the edited content,
 /// checked by the accessibility plugin's own checker.
+///
+/// Proved in `plugins/tools-accessibility/tests/guarantee.rs`, which puts
+/// tagged documents of its own and the PDF/UA conformance sets through
+/// every kind of edit that rewrites content or moves structure, and runs
+/// the plugin's checker after each. What this owns is that the suite is
+/// still there, still live, still asserts each clause, and is still
+/// reached by CI.
 #[test]
-#[ignore = "lands with tools-accessibility's checker in M5"]
 fn editing_a_tagged_document_leaves_its_structure_tree_valid() {
-    unimplemented!("needs core's structure tree and the accessibility checker")
+    let suite = enforcing_suite_at(
+        "plugins/tools-accessibility/tests",
+        "guarantee.rs",
+        8,
+        &[
+            "tagged_documents_stay_whole_through_every_edit",
+            "the_pdf_ua_corpus_is_edited_without_breaking_its_tags",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "an edit must leave no finding the document did not have",
+            "an edit is no longer graded by the checker against the document before it",
+        ),
+        (
+            "the tree must still be valid after every edit",
+            "the fixture's tree is no longer checked whole after every edit",
+        ),
+        (
+            "the PDF/UA sets must hold",
+            "the corpus walk no longer insists on the tagged files it covers",
+        ),
+    ] {
+        suite.asserts(marker, missing);
+    }
+    assert_ci_reaches("plugins/tools-accessibility");
 }
 
 /// Guarantee 9, performance: decision 11's budgets - time to first page
