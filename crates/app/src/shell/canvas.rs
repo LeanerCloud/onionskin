@@ -770,6 +770,26 @@ impl CanvasModel {
         Ok(())
     }
 
+    /// Rewrite the line the Edit Text tool picked with `text`, as one undo
+    /// step. A line that says something else now is refused.
+    #[cfg(feature = "tools-edit")]
+    pub fn edit_text_line(
+        &mut self,
+        request: &onionskin_core::TextEditRequest,
+        text: &str,
+    ) -> Result<bool, CanvasError> {
+        self.edit_pages(|doc| {
+            onionskin_tools_edit::text::edit_line(
+                doc,
+                request.page,
+                request.line,
+                &request.text,
+                text,
+            )
+        })?;
+        Ok(true)
+    }
+
     /// A command changed the document, and a page command can change what
     /// the layout was built from: how many pages there are, their order, and
     /// their size once turned. So the layout is rebuilt from the document as

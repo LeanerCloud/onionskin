@@ -745,6 +745,8 @@ impl ShellFrame {
             // The canvas holds it, not the frame; see `focusable_field`.
             #[cfg(feature = "tools-form")]
             TextField::FormField => None,
+            #[cfg(feature = "tools-edit")]
+            TextField::LineText => None,
             #[cfg(feature = "tools-form")]
             TextField::Field(field) => self
                 .field_dialog
@@ -764,7 +766,11 @@ impl ShellFrame {
         if field == TextField::FormField {
             return self.active_canvas()?.read(cx).field_editor_input();
         }
-        #[cfg(not(feature = "tools-form"))]
+        #[cfg(feature = "tools-edit")]
+        if field == TextField::LineText {
+            return self.active_canvas()?.read(cx).line_editor_input();
+        }
+        #[cfg(not(any(feature = "tools-form", feature = "tools-edit")))]
         let _ = cx;
         self.text_field(field).cloned()
     }
@@ -849,15 +855,20 @@ impl ShellFrame {
         .map(|input| input.read(cx).element_id().into())
     }
 
-    /// The form field editor's text box on the active canvas, while open.
+    /// The form field or line editor's text box on the active canvas, while
+    /// one is open.
     fn canvas_field_input(&self, cx: &App) -> Option<Entity<SearchInput>> {
+        let canvas = self.active_canvas()?.read(cx);
         #[cfg(feature = "tools-form")]
-        return self.active_canvas()?.read(cx).field_editor_input();
-        #[cfg(not(feature = "tools-form"))]
-        {
-            let _ = cx;
-            None
+        if let Some(input) = canvas.field_editor_input() {
+            return Some(input);
         }
+        #[cfg(feature = "tools-edit")]
+        if let Some(input) = canvas.line_editor_input() {
+            return Some(input);
+        }
+        let _ = canvas;
+        None
     }
 
     pub(super) fn text_field_focused(&self, window: &Window, cx: &App) -> bool {

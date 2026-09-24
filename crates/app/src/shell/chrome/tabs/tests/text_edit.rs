@@ -114,3 +114,98 @@ fn replace_takes_one_match_and_replace_all_the_rest(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Choose the Edit Text tool, click the middle of page rectangle `rect`
+/// with it, and let the canvas answer.
+fn click_line(window: gpui::WindowHandle<ShellFrame>, rect: [f64; 4], cx: &mut TestAppContext) {
+    window
+        .update(cx, |frame, window, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            canvas.update(cx, |canvas, cx| {
+                let index = canvas
+                    .model
+                    .registry()
+                    .tools()
+                    .position(|tool| tool.id() == "edit-text")
+                    .expect("installed");
+                canvas.model.activate_tool(index).expect("activates");
+                let (at, width, height) = canvas.model.view_rect(0, rect).expect("in view");
+                let origin = canvas.model.canvas_origin();
+                let at = gpui::point(
+                    gpui::px(origin.x + at.x + width / 2.0),
+                    gpui::px(origin.y + at.y + height / 2.0),
+                );
+                let modifiers = gpui::Modifiers::default();
+                canvas.model.pointer_down(at, 1.0, modifiers).unwrap();
+                canvas.model.pointer_up(at, 1.0, modifiers).unwrap();
+                canvas.answer_text_edit(window, cx);
+            });
+        })
+        .unwrap();
+}
+
+const SECOND_LINE: [f64; 4] = [72.0, 656.0, 240.0, 676.0];
+
+#[gpui::test]
+fn the_edit_text_tool_opens_an_editor_on_the_line_and_keeps_what_is_typed(cx: &mut TestAppContext) {
+    let (_dir, window) = text_window(cx);
+    click_line(window, SECOND_LINE, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            let input = canvas.read(cx).line_editor_input().expect("open");
+            assert_eq!(input.read(cx).query(), "The draft is final.");
+            assert!(input.read(cx).focus_handle(cx).is_focused(window));
+            assert!(has_label(&frame.accessible(window, cx), "Line of text"));
+            assert!(frame.focused_text_field(window, cx).is_some());
+
+            // Escape leaves it as it was.
+            canvas.update(cx, |canvas, cx| canvas.cancel_line_editor(cx));
+            assert!(canvas.read(cx).line_editor_input().is_none());
+            assert_eq!(lines(frame, cx)[1], "The draft is final.");
+        })
+        .unwrap();
+
+    click_line(window, SECOND_LINE, cx);
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            let input = canvas.read(cx).line_editor_input().expect("open");
+            type_into(&input, "The text is final.", cx);
+            canvas.update(cx, |canvas, cx| canvas.commit_line_editor(cx));
+            assert!(canvas.read(cx).line_editor_input().is_none());
+            assert_eq!(lines(frame, cx), ["Draft page 1", "The text is final."]);
+            let label = canvas
+                .read(cx)
+                .model
+                .document_mut()
+                .edit()
+                .history()
+                .undo_label()
+                .map(str::to_owned);
+            assert_eq!(label.as_deref(), Some("Edit Text"));
+        })
+        .unwrap();
+
+    click_line(window, SECOND_LINE, cx);
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            let input = canvas.read(cx).line_editor_input().expect("open");
+            type_into(&input, "日本", cx);
+            canvas.update(cx, |canvas, cx| canvas.commit_line_editor(cx));
+            let status = canvas
+                .read(cx)
+                .model
+                .status()
+                .map(|status| format!("{status:?}"));
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("cannot be written")),
+                "{status:?}"
+            );
+            assert_eq!(lines(frame, cx)[1], "The text is final.");
+        })
+        .unwrap();
+}

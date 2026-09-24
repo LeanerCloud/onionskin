@@ -105,6 +105,9 @@ pub(in crate::shell) enum TextField {
     /// A form field's Properties dialog's fields.
     #[cfg(feature = "tools-form")]
     Field(crate::shell::chrome::field_dialog::FieldInput),
+    /// The text box over a line of text being edited on the canvas.
+    #[cfg(feature = "tools-edit")]
+    LineText,
 }
 
 /// What activating an accessible element does.

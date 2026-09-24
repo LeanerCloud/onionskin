@@ -2288,6 +2288,8 @@ mod tests {
             crate::shell::inline_text::install_keybindings(cx);
             #[cfg(feature = "tools-form")]
             crate::shell::field_editor::install_keybindings(cx);
+            #[cfg(feature = "tools-edit")]
+            crate::shell::line_editor::install_keybindings(cx);
             crate::shell::panes::install_comment_keybindings(cx);
             crate::shell::preferences_dialog::install_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);

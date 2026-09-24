@@ -47,6 +47,8 @@ mod home;
 mod initial_view;
 mod inline_text;
 pub mod input;
+#[cfg(feature = "tools-edit")]
+mod line_editor;
 mod organize;
 mod panes;
 mod preferences_dialog;
@@ -316,6 +318,9 @@ pub struct Canvas {
     /// The form field being filled, while its editor is open.
     #[cfg(feature = "tools-form")]
     field_editor: Option<field_editor::FieldEditor>,
+    /// The line of text being edited, while its editor is open.
+    #[cfg(feature = "tools-edit")]
+    line_editor: Option<line_editor::LineEditor>,
     /// The session stamp last passed on to other windows on this document.
     told_peers: (u64, u64),
 }
@@ -332,6 +337,8 @@ impl Canvas {
             inline: None,
             #[cfg(feature = "tools-form")]
             field_editor: None,
+            #[cfg(feature = "tools-edit")]
+            line_editor: None,
         }
     }
 
@@ -668,6 +675,10 @@ impl Canvas {
         if let Some(editor) = self.field_editor_node(scale, cx) {
             document = document.child(editor);
         }
+        #[cfg(feature = "tools-edit")]
+        if let Some(editor) = self.line_editor_node(scale, cx) {
+            document = document.child(editor);
+        }
         #[cfg(not(feature = "tools-form"))]
         let _ = cx;
         document
@@ -682,9 +693,11 @@ impl Canvas {
         // Pressing anywhere else on the canvas finishes the comment being
         // typed, as clicking away from Acrobat's pop-up does.
         self.finish_inline_text(cx);
-        // And leaving a form field commits it.
+        // And leaving a form field commits it, and a line of text.
         #[cfg(feature = "tools-form")]
         self.commit_field_editor(cx);
+        #[cfg(feature = "tools-edit")]
+        self.commit_line_editor(cx);
         self.model.set_click_count(event.click_count);
         let result = self
             .model
@@ -714,7 +727,9 @@ impl Canvas {
         self.handle_change(result, cx);
         #[cfg(feature = "tools-form")]
         self.answer_field(window, cx);
-        #[cfg(not(feature = "tools-form"))]
+        #[cfg(feature = "tools-edit")]
+        self.answer_text_edit(window, cx);
+        #[cfg(not(any(feature = "tools-form", feature = "tools-edit")))]
         let _ = window;
     }
 
@@ -809,6 +824,8 @@ impl Render for Canvas {
         let inline = self.render_inline_text(self.theme, cx);
         #[cfg(feature = "tools-form")]
         let field_editor = self.render_field_editor(self.theme, cx);
+        #[cfg(feature = "tools-edit")]
+        let line_editor = self.render_line_editor(self.theme, cx);
         let prepare_entity = cx.entity();
         let exit_entity = cx.entity();
         let error_entity = cx.entity();
@@ -927,6 +944,10 @@ impl Render for Canvas {
         if let Some(editor) = field_editor {
             root = root.child(editor);
         }
+        #[cfg(feature = "tools-edit")]
+        if let Some(editor) = line_editor {
+            root = root.child(editor);
+        }
         root
     }
 }
@@ -974,6 +995,8 @@ where
         inline_text::install_keybindings(cx);
         #[cfg(feature = "tools-form")]
         field_editor::install_keybindings(cx);
+        #[cfg(feature = "tools-edit")]
+        line_editor::install_keybindings(cx);
         panes::install_comment_keybindings(cx);
         preferences_dialog::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);
