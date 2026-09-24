@@ -6,4 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+onionskin-content.workspace = true
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true

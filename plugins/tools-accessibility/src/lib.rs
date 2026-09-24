@@ -3,6 +3,8 @@
 //! Its checker is also what proves the tag-integrity guarantee, so the
 //! feature eats its own dog food.
 
+pub mod checker;
+
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
 pub struct AccessibilityToolsPlugin;

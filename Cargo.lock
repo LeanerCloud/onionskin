@@ -4632,6 +4632,9 @@ version = "0.1.0"
 name = "onionskin-tools-accessibility"
 version = "0.1.0"
 dependencies = [
+ "onionskin-content",
+ "onionskin-core",
+ "onionskin-cos",
  "onionskin-plugin-api",
 ]
 
