@@ -8,7 +8,7 @@
 //! with them needs its own encoding.
 
 use onionskin_content::{encode_win_ansi, standard_text_width};
-use onionskin_cos::{Dict, Name, Object, Stream};
+use onionskin_cos::{Dict, Name, ObjRef, Object, Stream};
 
 /// Space kept between the text and the widget's edge, in points.
 const PADDING: f64 = 2.0;
@@ -346,6 +346,42 @@ pub(super) fn button_states(frame: &Frame, mark: char, color: &[f64]) -> (Stream
     );
     let font = zapf_dingbats();
     (stream(frame, &font, &body), stream(frame, &font, ""))
+}
+
+/// A button showing form XObject `icon`, whose box is `bbox`, scaled to fit
+/// inside the frame and centred, as Acrobat fits an image field's icon.
+pub(super) fn icon_appearance(frame: &Frame, icon: ObjRef, [x0, y0, x1, y1]: [f64; 4]) -> Stream {
+    let inner_width = (frame.width - 2.0 * PADDING).max(0.0);
+    let inner_height = (frame.height - 2.0 * PADDING).max(0.0);
+    let (width, height) = ((x1 - x0).max(f64::EPSILON), (y1 - y0).max(f64::EPSILON));
+    let scale = (inner_width / width).min(inner_height / height);
+    let x = (frame.width - width * scale) / 2.0 - x0 * scale;
+    let y = (frame.height - height * scale) / 2.0 - y0 * scale;
+    let content = format!(
+        "{}q {scale} 0 0 {scale} {x} {y} cm /Img Do Q\n",
+        frame_content(frame)
+    );
+    let mut xobjects = Dict::new();
+    xobjects.set(Name::new("Img"), Object::Ref(icon));
+    let mut resources = Dict::new();
+    resources.set(Name::new("XObject"), Object::Dict(xobjects));
+    let mut dict = Dict::new();
+    dict.set(Name::new("Type"), Object::name("XObject"));
+    dict.set(Name::new("Subtype"), Object::name("Form"));
+    dict.set(
+        Name::new("BBox"),
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(frame.width),
+            Object::Real(frame.height),
+        ]),
+    );
+    dict.set(Name::new("Resources"), Object::Dict(resources));
+    Stream {
+        dict,
+        raw: content.into_bytes(),
+    }
 }
 
 fn zapf_dingbats() -> Font {

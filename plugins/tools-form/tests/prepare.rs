@@ -3,7 +3,9 @@
 
 use onionskin_core::forms::{KindOptions, NewField};
 use onionskin_core::{Document, ObjRef};
-use onionskin_tools_form::prepare::{delete_field, other_field_names, properties, set_properties};
+use onionskin_tools_form::prepare::{
+    delete_field, other_field_names, properties, set_image, set_properties,
+};
 
 mod common;
 
@@ -73,4 +75,38 @@ fn a_deleted_field_is_gone_in_one_step() {
     delete_field(&mut doc, field).expect("deletes");
     assert!(doc.form().expect("reads").field("Text1").is_none());
     assert_eq!(doc.edit().history().undo_label(), Some("Delete Field"));
+}
+
+#[test]
+fn an_image_field_takes_an_image_and_nothing_else_does() {
+    let mut doc = Document::open_bytes(common::document()).expect("opens");
+    let form = doc.form().expect("reads");
+    let added = doc
+        .edit_annotations("Add", |tx, structure| {
+            onionskin_core::forms::add_field(
+                tx,
+                structure,
+                &form,
+                &NewField::Image,
+                0,
+                [300.0, 600.0, 400.0, 700.0],
+            )
+        })
+        .expect("adds");
+    let picture = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 20 10] >>\nendobj\n\
+3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n\
+trailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        .to_vec();
+    set_image(&mut doc, added.field, added.widget, picture.clone()).expect("sets");
+    assert_eq!(doc.edit().history().undo_label(), Some("Set Image"));
+    let error = set_image(&mut doc, added.field, added.widget, b"not a pdf".to_vec()).unwrap_err();
+    assert!(error.to_string().contains("could not be read"), "{error}");
+    let qty = doc
+        .form()
+        .expect("reads")
+        .field("qty")
+        .expect("qty")
+        .clone();
+    assert!(set_image(&mut doc, qty.objref, qty.widgets[0].objref, picture).is_err());
 }

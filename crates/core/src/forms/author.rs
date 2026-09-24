@@ -40,8 +40,14 @@ pub enum NewField {
     ListBox,
     Dropdown,
     Button,
+    /// A button that shows an image picked when it is clicked, as
+    /// Acrobat's image field is: named `Image1_af_image`.
+    Image,
     Signature,
 }
+
+/// What ends the name of an image field, as Acrobat names them.
+pub const IMAGE_SUFFIX: &str = "_af_image";
 
 impl NewField {
     /// The name a new field of this kind is numbered after, as Acrobat
@@ -55,6 +61,7 @@ impl NewField {
             NewField::ListBox => "List Box",
             NewField::Dropdown => "Dropdown",
             NewField::Button => "Button",
+            NewField::Image => "Image",
             NewField::Signature => "Signature",
         }
     }
@@ -66,6 +73,7 @@ impl NewField {
             NewField::CheckBox | NewField::Radio { .. } => (14.0, 14.0),
             NewField::ListBox => (144.0, 72.0),
             NewField::Button => (72.0, 22.0),
+            NewField::Image => (100.0, 100.0),
             NewField::Signature => (180.0, 36.0),
         }
     }
@@ -82,8 +90,12 @@ pub struct Added {
 
 /// The first of `base1`, `base2`, ... that no field of `form` is called.
 pub fn unique_name(form: &Form, base: &str) -> String {
+    numbered(form, |number| format!("{base}{number}"))
+}
+
+fn numbered(form: &Form, name: impl Fn(usize) -> String) -> String {
     (1..)
-        .map(|number| format!("{base}{number}"))
+        .map(name)
         .find(|name| form.field(name).is_none())
         .expect("a name is free")
 }
@@ -112,6 +124,7 @@ pub fn add_field(
     };
     let name = match (kind, group) {
         (_, Some(group)) => group.name.clone(),
+        (NewField::Image, _) => numbered(form, |number| format!("Image{number}{IMAGE_SUFFIX}")),
         _ => unique_name(form, kind.base_name()),
     };
     let mut dict = widget_dict(page_object, rect, kind, parent_key);
@@ -251,6 +264,11 @@ fn widget_dict(page: ObjRef, rect: [f64; 4], kind: &NewField, parent_key: Option
             mk.set(Name::new("BG"), numbers(&[0.75, 0.75, 0.75]));
             mk.set(Name::new("CA"), text_string("Button"));
         }
+        NewField::Image => {
+            // Icon only, and no caption until an image is chosen.
+            mk.set(Name::new("TP"), Object::Integer(1));
+            mk.set(Name::new("CA"), text_string(""));
+        }
         _ => {}
     }
     dict.set(Name::new("MK"), Object::Dict(mk));
@@ -271,7 +289,7 @@ fn field_keys(dict: &mut Dict, kind: &NewField, name: &str) {
         NewField::Radio { .. } => ("Btn", RADIO_FLAGS),
         NewField::ListBox => ("Ch", 0),
         NewField::Dropdown => ("Ch", COMBO),
-        NewField::Button => ("Btn", PUSH_BUTTON),
+        NewField::Button | NewField::Image => ("Btn", PUSH_BUTTON),
         NewField::Signature => ("Sig", 0),
     };
     dict.set(Name::new("FT"), Object::name(field_type));
@@ -283,6 +301,13 @@ fn field_keys(dict: &mut Dict, kind: &NewField, name: &str) {
     }
     if matches!(kind, NewField::CheckBox) {
         dict.set(Name::new("V"), Object::name("Off"));
+    }
+    if matches!(kind, NewField::Image) {
+        // What Acrobat's image field runs on a click, so it works there too.
+        dict.set(
+            Name::new("A"),
+            javascript("event.target.buttonImportIcon();"),
+        );
     }
     if matches!(kind, NewField::Date) {
         let mut aa = Dict::new();
@@ -353,7 +378,7 @@ fn model(
             multi_select: false,
             options: Vec::new(),
         },
-        NewField::Button => FieldKind::PushButton,
+        NewField::Button | NewField::Image => FieldKind::PushButton,
         NewField::Signature => FieldKind::Signature,
     };
     let value = match field_kind {
@@ -380,6 +405,7 @@ fn model(
                 NewField::CheckBox => Some("4".to_owned()),
                 NewField::Radio { .. } => Some("l".to_owned()),
                 NewField::Button => Some("Button".to_owned()),
+                NewField::Image => Some(String::new()),
                 _ => None,
             },
         }],

@@ -3,9 +3,9 @@
 //! from a fresh parse.
 
 use onionskin_core::forms::{
-    add_field, properties_refusal, read_form, remove_field, reset_fields, set_field_properties,
-    set_field_value, unique_name, ChoiceOption, FieldKind, FieldProperties, FieldScripts,
-    FieldValue, Form, KindOptions, NewField,
+    add_field, properties_refusal, read_form, remove_field, reset_fields, set_button_icon,
+    set_field_properties, set_field_value, unique_name, ChoiceOption, FieldKind, FieldProperties,
+    FieldScripts, FieldValue, Form, KindOptions, NewField,
 };
 use onionskin_core::{EditSession, Structure, Transaction};
 use onionskin_cos::{BytesSource, Document as CosDocument, Object};
@@ -911,4 +911,66 @@ fn properties_that_cannot_be_written_say_why() {
         Ok(())
     });
     assert!(missing.len() >= bytes.len());
+}
+
+#[test]
+fn an_image_field_shows_the_image_chosen_for_it() {
+    let bytes = with_field(&blank(), NewField::Image, [100.0, 100.0, 200.0, 150.0]);
+    let bytes = with_field(&bytes, NewField::Image, [300.0, 100.0, 400.0, 200.0]);
+    let before = form(&bytes);
+    let image = before
+        .field("Image1_af_image")
+        .expect("named as Acrobat names it");
+    assert!(image.is_image());
+    assert!(before.field("Image2_af_image").is_some());
+    assert_eq!(image.kind, FieldKind::PushButton);
+    assert_eq!(NewField::Image.default_size(), (100.0, 100.0));
+    let doc = open(&bytes);
+    let dict = doc.get(image.objref.number).expect("widget").object;
+    let action = doc
+        .resolve(
+            dict.as_dict()
+                .and_then(|dict| dict.get(b"A"))
+                .expect("an /A"),
+        )
+        .expect("resolves");
+    let js = action
+        .as_dict()
+        .and_then(|action| action.get(b"JS"))
+        .cloned();
+    assert!(
+        matches!(js, Some(Object::String(ref text)) if text.starts_with(b"event.target.buttonImportIcon"))
+    );
+
+    // A 50 by 25 "image": a page drawing a rectangle.
+    let picture = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 25] /Contents 4 0 R >>".to_vec(),
+        stream("0 0 1 rg 0 0 50 25 re f"),
+    ]);
+    let source = open(&picture);
+    let (field, widget) = (image.objref, image.widgets[0].objref);
+    let bytes = apply(&bytes, |tx, _| {
+        set_button_icon(tx, &before, field, widget, &source)
+    });
+    let drawn = normal_appearance(&bytes, "Image1_af_image", None);
+    assert!(drawn.contains("/Img Do"), "{drawn}");
+    // 96 by 46 inside the frame: the height decides, 46 / 25, and the
+    // 92 by 46 it comes to is centred in the 100 by 50 button.
+    assert!(
+        drawn.contains("q 1.84 0 0 1.84 4 2 cm"),
+        "fitted and centred: {drawn}"
+    );
+
+    let text = with_field(&bytes, NewField::Text, [0.0, 0.0, 10.0, 10.0]);
+    let after = form(&text);
+    let field = after.field("Text1").expect("a text field");
+    let (text_field, text_widget) = (field.objref, field.widgets[0].objref);
+    assert!(!field.is_image());
+    let refused = apply(&text, |tx, _| {
+        assert!(set_button_icon(tx, &after, text_field, text_widget, &source).is_err());
+        Ok(())
+    });
+    assert!(refused.len() >= text.len());
 }

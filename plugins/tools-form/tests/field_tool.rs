@@ -84,6 +84,7 @@ fn every_kind_has_a_tool_in_one_rail_slot() {
             "form-list-box",
             "form-dropdown",
             "form-button",
+            "form-image",
             "form-date",
             "form-signature"
         ]
@@ -98,6 +99,7 @@ fn every_kind_has_a_tool_in_one_rail_slot() {
             "List Box",
             "Dropdown",
             "Button",
+            "Image Field",
             "Date Field",
             "Signature Field"
         ]

@@ -10,6 +10,7 @@
 
 mod appearance;
 mod author;
+mod icon;
 mod properties;
 mod read;
 mod write;
@@ -18,7 +19,8 @@ use onionskin_cos::{Dict, ObjRef};
 
 use crate::PageIndex;
 
-pub use author::{add_field, remove_field, unique_name, Added, NewField};
+pub use author::{add_field, remove_field, unique_name, Added, NewField, IMAGE_SUFFIX};
+pub use icon::set_button_icon;
 pub use properties::{
     refusal as properties_refusal, set_field_properties, FieldProperties, KindOptions,
 };
@@ -165,6 +167,12 @@ pub struct Field {
 }
 
 impl Field {
+    /// Whether this is an image field: a button that shows an image picked
+    /// when it is clicked, named as Acrobat's Prepare Form names them.
+    pub fn is_image(&self) -> bool {
+        self.kind == FieldKind::PushButton && self.name.ends_with(author::IMAGE_SUFFIX)
+    }
+
     /// The first widget's page, where a field is said to be.
     pub fn page(&self) -> Option<PageIndex> {
         self.widgets.iter().find_map(|widget| widget.page)

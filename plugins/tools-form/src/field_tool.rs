@@ -55,6 +55,7 @@ impl FieldTool {
             NewField::ListBox,
             NewField::Dropdown,
             NewField::Button,
+            NewField::Image,
             NewField::Date,
             NewField::Signature,
         ]
@@ -164,6 +165,7 @@ fn label(kind: &NewField) -> &'static str {
         NewField::ListBox => "Add List Box",
         NewField::Dropdown => "Add Dropdown",
         NewField::Button => "Add Button",
+        NewField::Image => "Add Image Field",
         NewField::Signature => "Add Signature Field",
     }
 }
@@ -178,6 +180,7 @@ impl ToolPlugin for FieldTool {
             NewField::ListBox => "form-list-box",
             NewField::Dropdown => "form-dropdown",
             NewField::Button => "form-button",
+            NewField::Image => "form-image",
             NewField::Signature => "form-signature",
         }
     }
@@ -191,6 +194,7 @@ impl ToolPlugin for FieldTool {
             NewField::ListBox => "List Box",
             NewField::Dropdown => "Dropdown",
             NewField::Button => "Button",
+            NewField::Image => "Image Field",
             NewField::Signature => "Signature Field",
         }
     }

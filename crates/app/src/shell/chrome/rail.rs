@@ -178,6 +178,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "form-list-box" => "☰",
         "form-dropdown" => "▾",
         "form-button" => "⊡",
+        "form-image" => "▨",
         "form-date" => "◷",
         "form-signature" => "✒",
         _ => "?",

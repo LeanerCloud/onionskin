@@ -2,7 +2,7 @@
 //! and its Delete do: each one undoable step.
 
 use onionskin_core::forms::{
-    properties_refusal, remove_field, set_field_properties, FieldProperties,
+    properties_refusal, remove_field, set_button_icon, set_field_properties, FieldProperties,
 };
 use onionskin_core::{Document, ObjRef};
 use onionskin_plugin_api::CommandError;
@@ -82,4 +82,32 @@ pub fn other_field_names(doc: &mut Document, field: ObjRef) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Show the image `document` (a PDF, as every image import makes one) on
+/// image field `field` through its widget `widget`, as one undo step.
+pub fn set_image(
+    doc: &mut Document,
+    field: ObjRef,
+    widget: ObjRef,
+    document: Vec<u8>,
+) -> Result<(), CommandError> {
+    const LABEL: &str = "Set Image";
+    let unreadable = |error: onionskin_core::Error| CommandError::Failed {
+        label: LABEL,
+        reason: format!("the image could not be read: {error}"),
+    };
+    let mut image = Document::open_bytes(document).map_err(unreadable)?;
+    let source = image.structure().map_err(unreadable)?;
+    let form = doc.form().map_err(failed(LABEL))?;
+    if !form
+        .field_by_ref(field)
+        .is_some_and(|target| target.is_image())
+    {
+        return Err(missing(LABEL));
+    }
+    doc.edit_annotations(LABEL, |tx, _| {
+        set_button_icon(tx, &form, field, widget, source)
+    })
+    .map_err(failed(LABEL))
 }
