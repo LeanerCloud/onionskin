@@ -192,8 +192,8 @@ fn a_line_and_new_text_take_a_style() {
     edit_styled_line(&mut doc, 0, 0, "Draft page 1", "Draft page 1", bold)
         .expect("the same words, restyled");
     assert_eq!(doc.edit().history().undo_label(), Some("Edit Text"));
-    let lines = onionskin_core::text_edit::page_lines(doc.structure().expect("reads"), 0)
-        .expect("lines");
+    let lines =
+        onionskin_core::text_edit::page_lines(doc.structure().expect("reads"), 0).expect("lines");
     let quad = lines[0].glyphs[0].quad.corners;
     assert!((quad[0].1 - quad[2].1).abs() > 24.0, "set at 30 pt");
     add_styled_text(&mut doc, 0, (72.0, 300.0), "Signed", bold).expect("adds");
