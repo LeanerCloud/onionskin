@@ -153,6 +153,12 @@ pub struct Document {
 #[derive(Clone)]
 struct Security {
     handler: Rc<onionskin_crypto::SecurityHandler>,
+    /// Which password opened it.
+    access: onionskin_crypto::Access,
+    /// What the handler was opened from, for a reader that needs the user
+    /// password where the owner's was given.
+    dict: Rc<onionskin_crypto::EncryptDict>,
+    file_id: Rc<Vec<u8>>,
     /// The `/Encrypt` dictionary's object number when it is indirect. Its
     /// strings are the handler's inputs and were never encrypted.
     encrypt_object: Option<u32>,
@@ -162,21 +168,36 @@ impl Document {
     /// Opens a file that is structurally sound. A file needing repair is
     /// refused with `Error::RepairRequired` rather than opened quietly.
     pub fn open(source: Box<dyn Source>) -> Result<Document> {
-        let (document, provenance) = Document::open_repairing(source)?;
-        match provenance {
-            Provenance::Clean => Ok(document),
-            Provenance::Repaired(report) => Err(Error::RepairRequired(Box::new(report))),
-        }
+        Document::open_with_password(source, b"")
     }
 
     pub fn open_path(path: &Path) -> Result<Document> {
         Document::open(Box::new(FileSource::open(path)?))
     }
 
+    /// [`Document::open`] with `password`, the user or owner password of an
+    /// encrypted document.
+    pub fn open_with_password(source: Box<dyn Source>, password: &[u8]) -> Result<Document> {
+        let (document, provenance) = Document::open_repairing_with_password(source, password)?;
+        match provenance {
+            Provenance::Clean => Ok(document),
+            Provenance::Repaired(report) => Err(Error::RepairRequired(Box::new(report))),
+        }
+    }
+
     /// Opens a file, repairing it if it needs repair, and hands back what
     /// happened. The caller cannot receive a repaired document without also
     /// receiving its `Provenance`.
     pub fn open_repairing(source: Box<dyn Source>) -> Result<(Document, Provenance)> {
+        Document::open_repairing_with_password(source, b"")
+    }
+
+    /// [`Document::open_repairing`] with `password`, the user or the owner
+    /// password of an encrypted document. A plain document ignores it.
+    pub fn open_repairing_with_password(
+        source: Box<dyn Source>,
+        password: &[u8],
+    ) -> Result<(Document, Provenance)> {
         let mut reader = Reader::new(source);
         if reader.len() == 0 {
             return Err(Error::NotAPdf);
@@ -273,12 +294,12 @@ impl Document {
             security: None,
         };
         let mut document = document;
-        document.install_security()?;
+        document.install_security(password)?;
         Ok((document, provenance))
     }
 
-    /// Open the standard security handler with the empty user password, or
-    /// refuse the document.
+    /// Open the standard security handler with `password`, or refuse the
+    /// document.
     ///
     /// Runs once the document exists, because an indirect `/Encrypt` has to be
     /// read through the xref - and read **before** there is a handler, so its
@@ -286,9 +307,10 @@ impl Document {
     /// thrown away afterwards: the structure check reads objects to validate
     /// offsets, and what it cached is ciphertext.
     ///
-    /// A document that needs a password is refused with `Error::Encrypted`,
-    /// exactly as before; that refusal names M6 wherever it is reported.
-    fn install_security(&mut self) -> Result<()> {
+    /// A document `password` does not open is refused with
+    /// `Error::Encrypted`: the empty password, for one that needs a password,
+    /// or a wrong one.
+    fn install_security(&mut self, password: &[u8]) -> Result<()> {
         let Some(entry) = self.trailer.get(b"Encrypt").cloned() else {
             return Ok(());
         };
@@ -309,15 +331,16 @@ impl Document {
             },
             _ => Vec::new(),
         };
-        let handler = onionskin_crypto::SecurityHandler::open(
-            &crate::decrypt::read_dict(&dict),
-            &file_id,
-            b"",
-        )
-        .map_err(|_| Error::Encrypted)?;
+        let encrypt = crate::decrypt::read_dict(&dict);
+        let (handler, access) =
+            onionskin_crypto::SecurityHandler::open_with(&encrypt, &file_id, password)
+                .map_err(|_| Error::Encrypted)?;
 
         self.security = Some(Security {
             handler: Rc::new(handler),
+            access,
+            dict: Rc::new(encrypt),
+            file_id: Rc::new(file_id),
             encrypt_object,
         });
         self.cache.borrow_mut().clear();
@@ -326,10 +349,45 @@ impl Document {
     }
 
     /// Whether this document is encrypted. True for every document that got
-    /// this far with an `/Encrypt` entry, since one that needs a password does
+    /// this far with an `/Encrypt` entry, since one no password opened does
     /// not open at all.
     pub fn is_encrypted(&self) -> bool {
         self.security.is_some()
+    }
+
+    /// How an encrypted document is encrypted: its `/R`, the cipher its
+    /// streams use, and whether its metadata is. `None` for a plain one.
+    pub fn encryption(&self) -> Option<(u8, onionskin_crypto::Method, bool)> {
+        self.security.as_ref().map(|security| {
+            (
+                security.handler.revision(),
+                security.handler.stream_method(),
+                security.handler.encrypts_metadata(),
+            )
+        })
+    }
+
+    /// The password a reader that knows only user passwords opens this
+    /// document with, given `password`, the one it opened with: the user
+    /// password the owner's unlocks, for `/R` 2 to 4, and `password` itself
+    /// otherwise.
+    pub fn reader_password(&self, password: &[u8]) -> Vec<u8> {
+        self.security
+            .as_ref()
+            .filter(|security| security.access == onionskin_crypto::Access::Owner)
+            .and_then(|security| {
+                onionskin_crypto::user_password_from_owner(
+                    &security.dict,
+                    &security.file_id,
+                    password,
+                )
+            })
+            .unwrap_or_else(|| password.to_vec())
+    }
+
+    /// Which password opened an encrypted document. `None` for a plain one.
+    pub fn access(&self) -> Option<onionskin_crypto::Access> {
+        self.security.as_ref().map(|security| security.access)
     }
 
     /// The `/P` permission bits of an encrypted document, decoded. `None` for
@@ -1789,7 +1847,12 @@ impl Document {
         if overlay.is_empty() && trailer_edits.is_empty() && self.provenance.is_clean() {
             return Ok(None);
         }
-        if self.trailer.contains(b"Encrypt") {
+        // An encrypted document the handler opened is written encrypted with
+        // its own key. One without a handler, or a section that would change
+        // the encryption itself, is refused: a whole new file does that.
+        if self.trailer.contains(b"Encrypt") && self.security.is_none()
+            || self.security.is_some() && trailer_edits.contains_key(&Name::new("Encrypt"))
+        {
             return Err(Error::EncryptedWrite);
         }
 
@@ -1805,7 +1868,9 @@ impl Document {
                 None => trailer.set(key.clone(), Object::Null),
             }
         }
-        refuse_encrypted_write(&trailer)?;
+        if self.security.is_none() {
+            refuse_encrypted_write(&trailer)?;
+        }
         let root_changed = trailer_edits.contains_key(&Name::new("Root"))
             || trailer
                 .get(b"Root")
@@ -1891,6 +1956,7 @@ impl Document {
         // into nothing is refused rather than written and discovered later.
         self.refuse_dangling_references(overlay, &objects, &trailer, trailer_edits)?;
 
+        self.encrypt_objects(&mut objects);
         let mut section = lead.to_vec();
         section.extend_from_slice(&writer::incremental_section(
             section_start,
@@ -1899,6 +1965,26 @@ impl Document {
             trailer,
         )?);
         Ok(Some(section))
+    }
+
+    /// Encrypt `objects` with the document's key, when it has one, leaving
+    /// its `/Encrypt` dictionary as it is.
+    fn encrypt_objects(&self, objects: &mut [(ObjRef, Object)]) {
+        let Some(security) = &self.security else {
+            return;
+        };
+        let mut random = onionskin_crypto::system_random;
+        for (objref, object) in objects {
+            if security.encrypt_object != Some(objref.number) {
+                crate::encrypt::object(
+                    &security.handler,
+                    objref.number,
+                    objref.generation,
+                    object,
+                    &mut random,
+                );
+            }
+        }
     }
 
     /// Writes the original bytes followed by the incremental section, copying
@@ -2057,6 +2143,13 @@ impl Document {
     /// `trailer` are its whole graph; [`Document::section_for`] has only the
     /// bounded view available while validating pending edits.
     pub fn write_new(objects: &[(ObjRef, Object)], trailer: Dict) -> Result<Vec<u8>> {
+        refuse_encrypted_write(&trailer)?;
+        Document::write_whole(objects, trailer)
+    }
+
+    /// [`Document::write_new`] for objects already encrypted under the
+    /// trailer's `/Encrypt`, which only [`Document::rewrite`] writes.
+    fn write_whole(objects: &[(ObjRef, Object)], trailer: Dict) -> Result<Vec<u8>> {
         // The binary comment (ISO 32000-1 7.5.2) is what makes a transfer that
         // sniffs content treat the file as binary rather than as text.
         const HEADER: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
@@ -2066,7 +2159,6 @@ impl Document {
                 detail: "a new document's trailer must name a /Root".into(),
             });
         }
-        refuse_encrypted_write(&trailer)?;
         let mut objects: Vec<(ObjRef, Object)> = objects.to_vec();
         objects.sort_by_key(|(r, _)| r.number);
         if let Some((r, _)) = objects.first() {
@@ -2126,6 +2218,50 @@ impl Document {
             trailer,
         )?);
         Ok(out)
+    }
+}
+
+impl Document {
+    /// The whole document as a new file: every object the trailer's `/Root`
+    /// and `/Info` reach, as `overlay` and `trailer_edits` leave them,
+    /// decrypted, and encrypted afresh under `protection` when there is one.
+    ///
+    /// What changes a document's security: protecting a plain one, lifting
+    /// the protection from an encrypted one, or changing its passwords or
+    /// permissions. None of them can be an appended section, because every
+    /// object already in the file would stay as it was. A reference to an
+    /// object the file does not have is written as null.
+    pub fn rewrite(
+        &self,
+        overlay: &BTreeMap<u32, PendingEdit>,
+        trailer_edits: &BTreeMap<Name, Option<Object>>,
+        protection: Option<&onionskin_crypto::Protection>,
+    ) -> Result<Vec<u8>> {
+        let base = self.base_view();
+        let lookup = |number: u32| -> Option<(ObjRef, Object)> {
+            match overlay.get(&number) {
+                Some(PendingEdit::Set { generation, object }) => {
+                    Some((ObjRef::new(number, *generation), object.clone()))
+                }
+                Some(PendingEdit::Delete { .. }) => None,
+                None => base
+                    .get(number)
+                    .ok()
+                    .map(|parsed| (parsed.objref, parsed.object)),
+            }
+        };
+        let mut trailer = self.trailer.clone();
+        for (key, value) in trailer_edits {
+            match value {
+                Some(value) => trailer.set(key.clone(), value.clone()),
+                None => {
+                    trailer.remove(key.as_bytes());
+                }
+            }
+        }
+        let mut random = onionskin_crypto::system_random;
+        let (objects, trailer) = crate::rewrite::whole(&trailer, &lookup, protection, &mut random)?;
+        Document::write_whole(&objects, trailer)
     }
 }
 

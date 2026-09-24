@@ -14,13 +14,13 @@ pub enum Error {
     Io(std::io::Error),
     /// No `%PDF-` header anywhere in the file.
     NotAPdf,
-    /// The file has a `/Encrypt` entry. The spike parses no security handler,
-    /// so this is a refusal rather than a partial open.
+    /// The file is encrypted and the password given does not open it: the
+    /// empty one, for a document that needs a password, or a wrong one.
     Encrypted,
-    /// A section was asked for on a document whose trailer names `/Encrypt`.
-    /// Writing one means encrypting the objects it carries, which is M6 work,
-    /// and emitting them in the clear under an `/Encrypt` trailer would
-    /// produce a file no reader opens and disclose a protected document.
+    /// A section would change a document's encryption, or name `/Encrypt`
+    /// on a document no handler opened. Encryption changes by writing the
+    /// whole document afresh (`Document::rewrite`); emitting objects in the
+    /// clear under an `/Encrypt` trailer would produce a file no reader opens.
     EncryptedWrite,
     /// A lexical or grammatical failure at a known byte offset.
     Syntax {
@@ -89,10 +89,10 @@ impl fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "io: {e}"),
             Error::NotAPdf => write!(f, "no %PDF- header found"),
-            Error::Encrypted => write!(f, "document is encrypted"),
+            Error::Encrypted => write!(f, "the document needs a password"),
             Error::EncryptedWrite => write!(
                 f,
-                "the document is encrypted; writing to one is M6 work and no section can be written to it"
+                "a section cannot change a document's encryption; the whole document is written afresh for that"
             ),
             Error::Syntax { offset, detail } => {
                 write!(f, "syntax error at byte {offset}: {detail}")

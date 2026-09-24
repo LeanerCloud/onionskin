@@ -54,12 +54,14 @@
 
 mod decrypt;
 mod document;
+mod encrypt;
 mod error;
 mod filters;
 mod object;
 mod parse;
 mod reader;
 mod repair;
+mod rewrite;
 mod writer;
 mod xref;
 

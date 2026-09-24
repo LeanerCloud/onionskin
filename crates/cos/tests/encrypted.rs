@@ -1,4 +1,5 @@
-//! Encrypted documents: the class M3 opens, and the class it refuses.
+//! Encrypted documents: opening them with or without a password, and writing
+//! them encrypted.
 //!
 //! # Where the known answers come from
 //!
@@ -199,7 +200,7 @@ fn a_document_with_a_user_password_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// Writing stays M6
+// Writing
 // ---------------------------------------------------------------------------
 
 /// Guarantee 1 holds for this class too, and for free: a no-op save writes
@@ -218,33 +219,196 @@ fn a_no_op_save_of_an_encrypted_document_writes_nothing() {
     }
 }
 
-/// A pending edit is a section, and a section into an encrypted document is
-/// refused rather than written as plaintext under a trailer that still names
-/// `/Encrypt`.
-#[test]
-fn an_edit_to_an_encrypted_document_is_refused() {
-    let document = open("r4-aes-128.pdf").expect("opens");
-    let catalog_number = document
+/// Every fixture's `/Info`, with its `/Title` replaced.
+fn retitled(
+    document: &Document,
+    title: &[u8],
+) -> (
+    u32,
+    std::collections::BTreeMap<u32, onionskin_cos::PendingEdit>,
+) {
+    let info = document
         .trailer()
-        .get(b"Root")
+        .get(b"Info")
         .and_then(Object::as_reference)
-        .expect("a catalog")
-        .number;
+        .expect("an indirect /Info");
+    let mut dict = document
+        .get(info.number)
+        .expect("/Info parses")
+        .object
+        .as_dict()
+        .cloned()
+        .expect("a dictionary");
+    dict.set("Title", Object::String(title.to_vec()));
     let mut edits = std::collections::BTreeMap::new();
     edits.insert(
-        catalog_number,
+        info.number,
         onionskin_cos::PendingEdit::Set {
-            generation: 0,
-            object: Object::Dict(document.catalog().expect("catalog")),
+            generation: info.generation,
+            object: Object::Dict(dict),
         },
     );
-    assert!(
-        matches!(
-            document.section_for(&edits, &Default::default()),
-            Err(Error::EncryptedWrite)
-        ),
-        "a section was written into an encrypted document"
+    (info.number, edits)
+}
+
+fn title(document: &Document, number: u32) -> Vec<u8> {
+    match document
+        .get(number)
+        .expect("parses")
+        .object
+        .as_dict()
+        .and_then(|dict| dict.get(b"Title"))
+        .cloned()
+    {
+        Some(Object::String(title)) => title,
+        other => panic!("/Title is a string: {other:?}"),
+    }
+}
+
+/// A section appended to an encrypted document is encrypted with its key,
+/// under every revision: nothing it adds is in the clear, and it reads back.
+#[test]
+fn an_edit_to_an_encrypted_document_is_written_encrypted() {
+    const NEW_TITLE: &[u8] = b"Retitled in the clear nowhere";
+    for name in OPENS {
+        let original = std::fs::read(fixture(name)).expect("readable");
+        let document = open(name).expect("opens");
+        let (number, edits) = retitled(&document, NEW_TITLE);
+        let section = document
+            .section_for(&edits, &Default::default())
+            .expect("an encrypted document takes a section")
+            .expect("one is written");
+        assert!(
+            !contains(&section, NEW_TITLE),
+            "{name}: the title is in the clear"
+        );
+        let mut saved = original;
+        saved.extend_from_slice(&section);
+        let reopened = Document::open(Box::new(BytesSource::new(saved))).expect("reopens");
+        assert_eq!(title(&reopened, number), NEW_TITLE, "{name}");
+    }
+}
+
+/// The security itself cannot be changed by a section: that is a new file.
+#[test]
+fn a_section_may_not_change_the_encryption() {
+    let document = open("r6-aes-256.pdf").expect("opens");
+    let edits: std::collections::BTreeMap<onionskin_cos::Name, Option<Object>> =
+        [(onionskin_cos::Name::new("Encrypt"), None)]
+            .into_iter()
+            .collect();
+    assert!(matches!(
+        document.section_for(&Default::default(), &edits),
+        Err(Error::EncryptedWrite)
+    ));
+}
+
+/// A user password opens a document that needs one, and the owner password
+/// opens it as its owner.
+#[test]
+fn the_user_and_owner_passwords_open_a_protected_document() {
+    use onionskin_crypto::Access;
+    let bytes = std::fs::read(fixture("r6-aes-256-user-password.pdf")).expect("readable");
+    let with = |password: &[u8]| {
+        Document::open_repairing_with_password(Box::new(BytesSource::new(bytes.clone())), password)
+            .map(|(document, _)| document)
+    };
+    let user = with(b"secret").expect("the user password opens it");
+    assert_eq!(user.access(), Some(Access::User));
+    assert_eq!(user.page_count().expect("pages"), 1);
+    let owner = with(b"owner-password").expect("the owner password opens it");
+    assert_eq!(owner.access(), Some(Access::Owner));
+    assert_eq!(
+        owner.reader_password(b"owner-password"),
+        b"owner-password",
+        "R 6"
     );
+    assert_eq!(user.reader_password(b"secret"), b"secret");
+    let r4 = Document::open_with_password(
+        Box::new(BytesSource::new(
+            std::fs::read(fixture("r4-aes-128.pdf")).expect("reads"),
+        )),
+        b"owner-password",
+    )
+    .expect("opens as its owner");
+    assert_eq!(
+        r4.reader_password(b"owner-password"),
+        b"",
+        "its user password is empty"
+    );
+    assert!(owner.permissions().expect("encrypted").modify());
+    assert!(matches!(with(b"guess"), Err(Error::Encrypted)));
+    assert_eq!(
+        open("r2-rc4-40.pdf").expect("opens").access(),
+        Some(Access::User),
+        "the empty password is the user's"
+    );
+}
+
+/// Protecting, changing and lifting security each write the whole document
+/// afresh, and what comes out opens as it should, under every level.
+#[test]
+fn a_document_is_rewritten_with_new_security_or_none() {
+    use onionskin_crypto::{Access, Permissions, Protection, Strength};
+    for strength in [Strength::Aes256, Strength::Aes128] {
+        let document = open("r4-aes-128-objstm.pdf").expect("opens");
+        let protection = Protection {
+            strength,
+            user_password: b"new user".to_vec(),
+            owner_password: b"new owner".to_vec(),
+            permissions: Permissions(Permissions::PRINT),
+            encrypt_metadata: true,
+        };
+        let (number, edits) = retitled(&document, b"Rewritten title");
+        let bytes = document
+            .rewrite(&edits, &Default::default(), Some(&protection))
+            .expect("rewrites");
+        assert!(
+            !contains(&bytes, b"Rewritten title"),
+            "{strength:?}: in the clear"
+        );
+        assert!(
+            !contains(&bytes, CONTENT_TEXT),
+            "{strength:?}: content in the clear"
+        );
+        let source = || Box::new(BytesSource::new(bytes.clone()));
+        assert!(
+            matches!(Document::open(source()), Err(Error::Encrypted)),
+            "needs its password"
+        );
+        let (user, _) =
+            Document::open_repairing_with_password(source(), b"new user").expect("opens");
+        assert_eq!(user.access(), Some(Access::User));
+        assert!(!user.permissions().expect("encrypted").modify());
+        let info = user
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference)
+            .expect("/Info");
+        assert_eq!(info.number, number);
+        assert_eq!(title(&user, number), b"Rewritten title");
+        let contents = user
+            .page(0)
+            .ok()
+            .and_then(|page| page.dict.get(b"Contents").and_then(Object::as_reference))
+            .expect("contents");
+        assert!(contains(
+            &decoded(&user, contents.number).expect("decodes"),
+            CONTENT_TEXT
+        ));
+        let (owner, _) =
+            Document::open_repairing_with_password(source(), b"new owner").expect("opens");
+        assert_eq!(owner.access(), Some(Access::Owner));
+
+        let plain = owner
+            .rewrite(&Default::default(), &Default::default(), None)
+            .expect("lifts");
+        let plain = Document::open(Box::new(BytesSource::new(plain.clone())))
+            .expect("opens with no password");
+        assert!(!plain.is_encrypted());
+        assert_eq!(title(&plain, number), b"Rewritten title");
+        assert_eq!(plain.page_count().expect("pages"), 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,4 +479,65 @@ fn walk(root: &std::path::Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+/// qpdf, an independent implementation, reads what is written: with each
+/// password, with the permissions set, and not without one. Skipped, loudly,
+/// where qpdf is not installed.
+#[test]
+fn qpdf_reads_what_is_written() {
+    use onionskin_crypto::{Permissions, Protection, Strength};
+    if std::process::Command::new("qpdf")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("qpdf is not installed: skipping the independent check");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("onionskin-qpdf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    for (strength, bits) in [(Strength::Aes256, "256"), (Strength::Aes128, "128")] {
+        let document = open("r6-aes-256.pdf").expect("opens");
+        let protection = Protection {
+            strength,
+            user_password: b"u".to_vec(),
+            owner_password: b"o".to_vec(),
+            permissions: Permissions(Permissions::PRINT | Permissions::PRINT_HIGH),
+            encrypt_metadata: true,
+        };
+        let bytes = document
+            .rewrite(&Default::default(), &Default::default(), Some(&protection))
+            .expect("rewrites");
+        let path = dir.join(format!("aes-{bits}.pdf"));
+        std::fs::write(&path, bytes).expect("writes");
+        let qpdf = |args: &[&str]| {
+            let output = std::process::Command::new("qpdf")
+                .args(args)
+                .arg(&path)
+                .output()
+                .expect("qpdf runs");
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+            )
+        };
+        assert_eq!(qpdf(&["--password=u", "--check"]).0, Some(0), "{bits}");
+        let (_, shown) = qpdf(&["--password=o", "--show-encryption"]);
+        assert!(
+            shown.contains(&format!(
+                "P = {}",
+                Permissions::PRINT | Permissions::PRINT_HIGH | Permissions::RESERVED
+            )),
+            "{shown}"
+        );
+        assert!(shown.contains("print low resolution: allowed"), "{shown}");
+        assert!(shown.contains("modify anything: not allowed"), "{shown}");
+        assert!(
+            shown.contains(if bits == "256" { "AESv3" } else { "AESv2" }),
+            "{shown}"
+        );
+        assert_ne!(qpdf(&["--password=wrong", "--check"]).0, Some(0), "{bits}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
 }

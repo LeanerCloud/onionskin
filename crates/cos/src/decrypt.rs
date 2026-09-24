@@ -1,4 +1,4 @@
-//! Decryption at parse time, for the class of encrypted document M3 opens.
+//! Decryption at parse time.
 //!
 //! **What is decrypted, and what is not.** Every string and every stream in an
 //! object read from the file, except:
