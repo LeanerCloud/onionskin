@@ -12,7 +12,10 @@ const GUARD: &str = "Guard";
 
 /// The page's content streams, each as the reference (or value) the page
 /// holds: `/Contents` may be one stream, an array, or missing.
-pub(super) fn parts(tx: &Transaction<'_>, contents: Option<&Object>) -> Result<Vec<Object>> {
+pub(in crate::pages) fn parts(
+    tx: &Transaction<'_>,
+    contents: Option<&Object>,
+) -> Result<Vec<Object>> {
     Ok(match contents {
         None => Vec::new(),
         Some(Object::Array(items)) => items.clone(),
@@ -37,7 +40,7 @@ pub(super) fn stream(tx: &mut Transaction<'_>, marker: &str, content: Vec<u8>) -
 
 /// Put `draw` behind everything, or after the page's content, guarding
 /// that content first if it is not guarded yet.
-pub(super) fn insert(
+pub(in crate::pages) fn insert(
     tx: &mut Transaction<'_>,
     parts: &mut Vec<Object>,
     draw: Object,

@@ -28,7 +28,7 @@
 //! shape Acrobat's own marks have. Removing drops those streams and the
 //! form names only they used; the guards go when no drawn-over mark is left.
 
-mod contents;
+pub(super) mod contents;
 mod recognise;
 
 use onionskin_cos::{Dict, Name, Object, Stream};

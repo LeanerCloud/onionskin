@@ -62,6 +62,36 @@ mod print_form;
 mod rewrite;
 
 pub(crate) use rewrite::{catalog_ref, dict_at, resolve};
+
+/// The resources page `page` has, its own or inherited.
+pub(crate) fn inherited_resources(
+    tx: &crate::edit::Transaction<'_>,
+    page: onionskin_cos::ObjRef,
+) -> crate::Result<Option<onionskin_cos::Object>> {
+    Ok(ops::leaves(tx)?
+        .into_iter()
+        .find(|leaf| leaf.objref == page)
+        .and_then(|leaf| leaf.inherited.resources))
+}
+
+/// Draw `content` after everything page dictionary `page` draws, as a
+/// content stream of its own, with the page's own content guarded so its
+/// leftover graphics state does not reach it.
+pub(crate) fn append_content(
+    tx: &mut crate::edit::Transaction<'_>,
+    page: &mut onionskin_cos::Dict,
+    content: Vec<u8>,
+) -> crate::Result<()> {
+    use onionskin_cos::{Dict, Name, ObjRef, Object, Stream};
+    let mut parts = marks::contents::parts(tx, page.get(b"Contents"))?;
+    let mut dict = Dict::new();
+    dict.set(Name::new("Length"), Object::Integer(content.len() as i64));
+    let number = tx.reserve();
+    tx.put_object(number, 0, Object::Stream(Stream { dict, raw: content }))?;
+    marks::contents::insert(tx, &mut parts, Object::Ref(ObjRef::new(number, 0)), false)?;
+    page.set(Name::new("Contents"), Object::Array(parts));
+    Ok(())
+}
 mod threads;
 mod thumbs;
 mod tree;

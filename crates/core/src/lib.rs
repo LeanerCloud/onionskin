@@ -14,6 +14,7 @@ mod file;
 pub mod forms;
 mod generations;
 mod history;
+pub mod image_edit;
 pub mod images;
 mod layers;
 mod layout;

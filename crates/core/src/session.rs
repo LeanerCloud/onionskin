@@ -101,6 +101,8 @@ pub enum Error {
     /// The image a page was to be made from is not one: its size, colour
     /// or samples do not agree.
     InvalidImage(String),
+    /// An image on a page cannot be edited as asked: why.
+    ImageEdit(String),
     /// An attachment's name is empty, or is a path rather than a file name.
     InvalidAttachmentName(String),
     /// A custom document property's key is empty, has spaces, or is one of
@@ -209,6 +211,7 @@ impl fmt::Display for Error {
             Error::InvalidImage(detail) => {
                 write!(f, "not an image a page can be made from: {detail}")
             }
+            Error::ImageEdit(why) => write!(f, "{why}"),
         }
     }
 }
@@ -240,6 +243,7 @@ impl std::error::Error for Error {
             | Error::RevertRefused(_)
             | Error::NotADictionary { .. }
             | Error::InvalidImage(_)
+            | Error::ImageEdit(_)
             | Error::InvalidAttachmentName(_)
             | Error::InvalidMetadataKey(_)
             | Error::NoSuchBookmark(_) => None,
