@@ -254,6 +254,9 @@ pub(in crate::shell) struct ShellFrame {
     /// A redaction mark the Redact tool clicked, for the next render to open.
     #[cfg(feature = "redact")]
     pub(super) pending_redaction: Option<onionskin_core::ObjRef>,
+    /// Check Spelling, while it is open.
+    #[cfg(feature = "spelling")]
+    pub(super) spelling: Option<crate::shell::chrome::spelling_dialog::SpellingState>,
     /// A form field's Properties, while open.
     #[cfg(feature = "tools-form")]
     pub(super) field_dialog: Option<crate::shell::chrome::field_dialog::FieldDialogState>,
@@ -467,6 +470,8 @@ impl ShellFrame {
             redact: None,
             #[cfg(feature = "redact")]
             pending_redaction: None,
+            #[cfg(feature = "spelling")]
+            spelling: None,
             #[cfg(feature = "tools-form")]
             field_dialog: None,
             #[cfg(feature = "tools-form")]

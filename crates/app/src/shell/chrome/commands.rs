@@ -63,6 +63,7 @@ impl MenuCommand {
             MenuCommand::TakeSnapshot,
             MenuCommand::Find,
             MenuCommand::AdvancedSearch,
+            MenuCommand::CheckSpelling,
         ]);
         all.extend([MenuCommand::OrganizePages, MenuCommand::CropPages]);
         all.extend(onionskin_core::pages::MarkKind::ALL.map(MenuCommand::PageMarks));
@@ -157,6 +158,7 @@ impl MenuCommand {
             Self::Signature { initials: false } => "fill-sign.add-signature",
             Self::Signature { initials: true } => "fill-sign.add-initials",
             Self::ClearForm => "forms.clear-form",
+            Self::CheckSpelling => "edit.check-spelling",
             Self::DetectFields => "forms.detect-fields",
             Self::Redact(command) => command.id(),
             Self::SummarizeComments => onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS,
@@ -309,6 +311,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::Signature { .. }
             | Self::ClearForm
+            | Self::CheckSpelling
             | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments

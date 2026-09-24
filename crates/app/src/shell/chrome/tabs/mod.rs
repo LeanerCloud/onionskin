@@ -30,12 +30,17 @@ mod replace;
 mod send_pages;
 mod signature;
 mod skins;
+#[cfg(feature = "spelling")]
+mod spelling;
 mod stamps;
 mod summary;
 mod windows;
 
 pub(in crate::shell) use self::forms::NO_FORMS;
 pub(in crate::shell) use self::images::NO_IMAGE_TOOL;
+
+/// What Check Spelling says in a build without the spelling plugin.
+pub(in crate::shell) const NO_SPELLING: &str = "No installed plugin checks spelling";
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::redact::{RedactCommand, NO_REDACT};
 pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
@@ -1794,6 +1799,8 @@ mod tests {
     mod signature;
     #[cfg(feature = "shell-test-support")]
     mod skins;
+    #[cfg(all(feature = "shell-test-support", feature = "spelling"))]
+    mod spelling;
     #[cfg(all(
         feature = "shell-test-support",
         feature = "tools-comment",

@@ -108,6 +108,9 @@ pub(in crate::shell) enum TextField {
     /// The text box over a line of text being edited on the canvas.
     #[cfg(feature = "tools-edit")]
     LineText,
+    /// Check Spelling's Change To.
+    #[cfg(feature = "spelling")]
+    SpellingChangeTo,
 }
 
 /// What activating an accessible element does.
@@ -190,6 +193,9 @@ pub(in crate::shell) enum Activation {
     /// A form field's Properties dialog.
     #[cfg(feature = "tools-form")]
     Field(crate::shell::chrome::field_dialog::FieldAction),
+    /// Check Spelling.
+    #[cfg(feature = "spelling")]
+    Spelling(crate::shell::chrome::spelling_dialog::SpellingAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

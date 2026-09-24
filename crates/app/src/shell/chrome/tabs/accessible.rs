@@ -525,6 +525,8 @@ impl ShellFrame {
             Activation::FormSuggestion(index) => self.pick_form_suggestion(index, cx),
             #[cfg(feature = "tools-form")]
             Activation::Field(action) => self.run_field_action(action, window, cx),
+            #[cfg(feature = "spelling")]
+            Activation::Spelling(action) => self.run_spelling_action(action, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -747,6 +749,8 @@ impl ShellFrame {
             TextField::FormField => None,
             #[cfg(feature = "tools-edit")]
             TextField::LineText => None,
+            #[cfg(feature = "spelling")]
+            TextField::SpellingChangeTo => self.spelling.as_ref().map(|state| &state.change_to),
             #[cfg(feature = "tools-form")]
             TextField::Field(field) => self
                 .field_dialog
@@ -836,6 +840,7 @@ impl ShellFrame {
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)
             .chain(crate::shell::chrome::crop_dialog::TEXT_FIELDS)
             .chain(mark_text_fields())
+            .chain(spelling_text_fields())
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());
@@ -937,6 +942,14 @@ impl ShellFrame {
 }
 
 /// The plugin dialogs' fields, in a build that has them.
+/// Check Spelling's field, in a build that checks spelling.
+fn spelling_text_fields() -> Vec<TextField> {
+    #[cfg(feature = "spelling")]
+    return vec![TextField::SpellingChangeTo];
+    #[cfg(not(feature = "spelling"))]
+    Vec::new()
+}
+
 fn mark_text_fields() -> Vec<TextField> {
     #[cfg_attr(
         not(any(

@@ -4459,6 +4459,7 @@ dependencies = [
  "onionskin-print",
  "onionskin-redact",
  "onionskin-render",
+ "onionskin-spelling",
  "onionskin-tools-accessibility",
  "onionskin-tools-basic",
  "onionskin-tools-comment",

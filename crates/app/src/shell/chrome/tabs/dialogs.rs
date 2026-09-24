@@ -118,6 +118,10 @@ impl ShellFrame {
         {
             self.field_dialog = None;
         }
+        #[cfg(feature = "spelling")]
+        {
+            self.spelling = None;
+        }
         self.send_pages = None;
         self.unsaved = None;
         self.recover = None;

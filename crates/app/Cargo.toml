@@ -52,6 +52,7 @@ onionskin-tools-accessibility = { workspace = true, optional = true }
 onionskin-tools-basic = { workspace = true, optional = true }
 onionskin-tools-comment = { workspace = true, optional = true }
 onionskin-tools-edit = { workspace = true, optional = true }
+onionskin-spelling = { workspace = true, optional = true }
 onionskin-tools-fill-sign = { workspace = true, optional = true }
 onionskin-tools-form = { workspace = true, optional = true }
 onionskin-tools-measure = { workspace = true, optional = true }
@@ -96,6 +97,7 @@ default = [
     "codecs-common",
     "commands-core",
     "redact",
+    "spelling",
     "tools-accessibility",
     "tools-basic",
     "tools-comment",
@@ -109,6 +111,7 @@ default = [
 codecs-common = ["dep:onionskin-codecs-common"]
 commands-core = ["dep:onionskin-commands-core"]
 redact = ["dep:onionskin-redact"]
+spelling = ["dep:onionskin-spelling"]
 tools-accessibility = ["dep:onionskin-tools-accessibility"]
 tools-basic = ["dep:onionskin-tools-basic"]
 tools-comment = ["dep:onionskin-tools-comment"]

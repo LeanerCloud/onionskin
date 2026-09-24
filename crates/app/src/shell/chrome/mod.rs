@@ -27,6 +27,8 @@ pub(in crate::shell) mod send_pages;
 mod side_panel;
 #[cfg(feature = "tools-fill-sign")]
 pub(in crate::shell) mod signature_dialog;
+#[cfg(feature = "spelling")]
+pub(in crate::shell) mod spelling_dialog;
 pub(in crate::shell) mod split_dialog;
 pub(in crate::shell) mod stamps_dialog;
 pub(in crate::shell) mod summary_dialog;

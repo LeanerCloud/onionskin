@@ -74,6 +74,9 @@ pub(in crate::shell) enum ShellDialog {
     /// A form field's Properties.
     #[cfg(feature = "tools-form")]
     FieldProperties(super::chrome::field_dialog::Shape),
+    /// Edit > Check Spelling.
+    #[cfg(feature = "spelling")]
+    Spelling,
     /// Organize Pages' Copy To and Move To Document.
     SendPages {
         moving: bool,
@@ -110,6 +113,8 @@ impl ShellDialog {
             Self::FieldProperties(shape) => shape.title(),
             Self::Signature { initials: false } => "Add Signature",
             Self::Signature { initials: true } => "Add Initials",
+            #[cfg(feature = "spelling")]
+            Self::Spelling => "Check Spelling",
             Self::SendPages { moving: true } => "Move Pages To",
             Self::SendPages { moving: false } => "Copy Pages To",
             Self::Preferences(_) => "Preferences",
@@ -255,6 +260,11 @@ pub(in crate::shell) fn accessible(
             frame
                 .redact_dialog()
                 .expect("the redaction dialog has state"),
+            cx,
+        ),
+        #[cfg(feature = "spelling")]
+        ShellDialog::Spelling => super::chrome::spelling_dialog::accessible(
+            frame.spelling_dialog().expect("check spelling has state"),
             cx,
         ),
         #[cfg(feature = "tools-form")]
@@ -499,6 +509,14 @@ pub(in crate::shell) fn render_dialog(
             frame
                 .redact_dialog()
                 .expect("the redaction dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        #[cfg(feature = "spelling")]
+        ShellDialog::Spelling => super::chrome::spelling_dialog::render(
+            frame.spelling_dialog().expect("check spelling has state"),
             focused,
             theme,
             cx,

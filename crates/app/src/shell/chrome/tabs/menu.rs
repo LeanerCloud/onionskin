@@ -380,6 +380,13 @@ impl ShellFrame {
                 self.run_detect_fields(cx);
                 Ok(())
             }
+            MenuCommand::CheckSpelling => {
+                #[cfg(feature = "spelling")]
+                self.open_spelling_dialog(window, cx);
+                #[cfg(not(feature = "spelling"))]
+                self.notices.push(super::NO_SPELLING.to_owned());
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]

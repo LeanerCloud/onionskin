@@ -199,6 +199,8 @@ pub(in crate::shell) enum MenuCommand {
     },
     /// Clear Form: every field of the document's form back to its default.
     ClearForm,
+    /// Check Spelling: the comments' and fields' words, one at a time.
+    CheckSpelling,
     /// Detect Form Fields: fields placed where the pages are filled in.
     DetectFields,
     /// The redaction commands: marking pages, finding, properties, and
@@ -766,6 +768,12 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     availability: document_command,
                     selected: false,
                 },
+                MenuEntry {
+                    command: MenuCommand::CheckSpelling,
+                    label: "Check Spelling…",
+                    availability: spelling_availability(state),
+                    selected: false,
+                },
             ])
             .chain([
                 MenuEntry {
@@ -983,6 +991,17 @@ fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
         availability,
         selected: false,
     })
+}
+
+/// Check Spelling: live in a build that checks spelling, on an open
+/// document. A document that may not be edited is still checked; a change
+/// to it says why it cannot be made.
+fn spelling_availability(state: MenuState) -> MenuAvailability {
+    match (cfg!(feature = "spelling"), state.has_active_tab) {
+        (false, _) => MenuAvailability::Disabled(super::tabs::NO_SPELLING),
+        (true, false) => MenuAvailability::Disabled("No document is open"),
+        (true, true) => MenuAvailability::Enabled,
+    }
 }
 
 /// Clear Form and Detect Form Fields: live in a build that fills forms, on
@@ -1510,6 +1529,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::Signature { .. }
             | Self::ClearForm
+            | Self::CheckSpelling
             | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments
@@ -1585,6 +1605,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::Signature { .. }
             | Self::ClearForm
+            | Self::CheckSpelling
             | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments
@@ -1805,6 +1826,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::PasteStamp
         | MenuCommand::Signature { .. }
         | MenuCommand::ClearForm
+        | MenuCommand::CheckSpelling
         | MenuCommand::DetectFields
         | MenuCommand::Redact(_)
         | MenuCommand::SummarizeComments
@@ -2322,6 +2344,7 @@ mod tests {
                 "Take a Snapshot",
                 "Find…",
                 "Advanced Search…",
+                "Check Spelling…",
                 "Organize Pages",
                 "Crop Pages…",
                 "Watermark…",
