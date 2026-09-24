@@ -106,6 +106,13 @@ pub fn page_images(doc: &Document, index: PageIndex) -> Result<Vec<placements::I
     interpret::page_images(doc, &page)
 }
 
+/// The marked-content ids page `index`'s own content opens: what the
+/// structure tree's elements refer to its content by.
+pub fn page_mcids(doc: &Document, index: PageIndex) -> Result<std::collections::BTreeSet<i64>> {
+    let page = page::page(doc, index)?;
+    interpret::page_mcids(doc, &page)
+}
+
 /// Every path page `index` paints, with its points in page space: what
 /// form field detection looks for. See [`shapes`].
 pub fn page_shapes(doc: &Document, index: PageIndex) -> Result<Vec<shapes::Shape>> {

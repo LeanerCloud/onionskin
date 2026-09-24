@@ -196,6 +196,18 @@ pub fn redact_page(
     })
 }
 
+/// The marked-content ids `page`'s own content opens: what a tagged page's
+/// structure elements refer to it by. A form's own ids belong to the form,
+/// so they are not among them.
+pub(crate) fn page_mcids(doc: &Document, page: &Page) -> Result<std::collections::BTreeSet<i64>> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
+    interpreter.mcids = Some(std::collections::BTreeSet::new());
+    interpreter.run(&content, &page.resources, GState::new(page.base_ctm()), 0);
+    Ok(interpreter.mcids.take().unwrap_or_default())
+}
+
 /// Every character each font on `page` draws, and the code it draws it
 /// with: what text editing writes new text in.
 pub(crate) fn seen_codes(doc: &Document, page: &Page) -> Result<crate::edit_text::Seen> {
@@ -258,6 +270,9 @@ struct Interpreter<'a> {
     /// Present while collecting the codes each font draws each character
     /// with, for text editing.
     seen: Option<crate::edit_text::Seen>,
+    /// Present while collecting the marked-content ids the page's own
+    /// content opens.
+    mcids: Option<std::collections::BTreeSet<i64>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -282,6 +297,7 @@ impl<'a> Interpreter<'a> {
             shapes: None,
             images: None,
             seen: None,
+            mcids: None,
         }
     }
 
@@ -386,6 +402,7 @@ impl<'a> Interpreter<'a> {
                 b"gs" => self.ext_gstate(&op, resources, &mut state, depth, rewrite.as_mut()),
                 b"BDC" | b"BMC" if marked.len() < MAX_MARKED => {
                     marked.push(self.sequence(&op, resources));
+                    self.note_mcid(&op, resources, depth);
                     self.open_sequence(&op, resources)
                 }
                 b"EMC" => {
@@ -1247,15 +1264,37 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<String> {
-        let properties = match op.operands.last()? {
-            Object::Dict(d) => d.clone(),
+    /// A `BDC`'s property list, written in the operator or named in the
+    /// resources' `/Properties`.
+    fn properties(&self, op: &Operation, resources: &Dict) -> Option<Dict> {
+        match op.operands.last()? {
+            Object::Dict(d) => Some(d.clone()),
             Object::Name(n) => self
                 .lookup(resources, b"Properties", n.as_bytes())?
                 .as_dict()
-                .cloned()?,
-            _ => return None,
-        };
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    /// While collecting them, the `/MCID` a `BDC` in the page's own content
+    /// opens.
+    fn note_mcid(&mut self, op: &Operation, resources: &Dict, depth: usize) {
+        if depth > 0 || self.mcids.is_none() {
+            return;
+        }
+        let mcid = self
+            .properties(op, resources)
+            .and_then(|properties| properties.get(b"MCID").cloned())
+            .and_then(|value| self.doc.resolve(&value).ok())
+            .and_then(|value| value.as_integer());
+        if let (Some(mcid), Some(found)) = (mcid, self.mcids.as_mut()) {
+            found.insert(mcid);
+        }
+    }
+
+    fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<String> {
+        let properties = self.properties(op, resources)?;
         let Object::String(bytes) = self.doc.resolve(properties.get(b"ActualText")?).ok()? else {
             return None;
         };
