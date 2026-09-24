@@ -41,7 +41,8 @@ pub struct Filled {
     pub changed: Vec<String>,
 }
 
-fn failed(label: &'static str) -> impl Fn(onionskin_core::Error) -> CommandError {
+/// A `core` error as the command `label` failing.
+pub(crate) fn failed(label: &'static str) -> impl Fn(onionskin_core::Error) -> CommandError {
     move |source| CommandError::Edit { label, source }
 }
 

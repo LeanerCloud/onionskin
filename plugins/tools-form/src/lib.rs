@@ -5,12 +5,16 @@
 //! - [`field_tool`]: the tools that place fields and choose them for their
 //!   properties.
 //! - [`fill`]: committing a value, toggling a check box, Clear Form.
+//! - [`prepare`]: a field's properties written, and a field deleted.
+//! - [`scripts`]: the Format, Validate and Calculate tabs' scripts.
 //! - [`replay`]: a session recorded in Acrobat made again and compared,
 //!   guarantee test 7's harness.
 
 pub mod field_tool;
 pub mod fill;
+pub mod prepare;
 pub mod replay;
+pub mod scripts;
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
