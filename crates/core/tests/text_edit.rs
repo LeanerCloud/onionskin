@@ -133,3 +133,25 @@ fn what_cannot_be_edited_is_refused() {
     let error = rewrite_lines(&doc, 0, &[(&lines[0], "Outside".to_owned())]).expect_err("refused");
     assert!(error.to_string().contains("form"), "{error}");
 }
+
+#[test]
+fn a_tool_asks_the_shell_to_edit_a_line_once() {
+    let mut doc = onionskin_core::Document::open_bytes(tagged()).expect("opens");
+    let request = onionskin_core::TextEditRequest {
+        page: 0,
+        line: 0,
+        text: "Page 1".to_owned(),
+        bounds: [72.0, 690.0, 140.0, 720.0],
+    };
+    doc.request_text_edit(request.clone());
+    doc.request_text_edit(onionskin_core::TextEditRequest {
+        line: 0,
+        ..request.clone()
+    });
+    assert_eq!(
+        doc.take_text_edit_request(),
+        Some(request),
+        "the last click"
+    );
+    assert_eq!(doc.take_text_edit_request(), None, "taken once");
+}

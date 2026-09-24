@@ -94,7 +94,7 @@ pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{ImageSelection, Selection, TextSelection, TextSpan};
 pub use session::{
     Document, Error, ExportSnapshot, FieldRequest, LinkRequest, PageGeometryResponse, RenderView,
-    Result, SnapshotRequest,
+    Result, SnapshotRequest, TextEditRequest,
 };
 pub use signatures::SignatureField;
 pub use structure::{

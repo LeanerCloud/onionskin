@@ -328,6 +328,18 @@ pub enum LinkRequest {
     Follow(crate::PagePoint),
 }
 
+/// A line of text a tool clicked, for the shell to open an editor on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextEditRequest {
+    pub page: PageIndex,
+    /// The line, as `text_edit::page_lines` numbers it.
+    pub line: usize,
+    /// What it says now, which the edit checks is still so.
+    pub text: String,
+    /// Where it is on the page.
+    pub bounds: [f64; 4],
+}
+
 /// A form field a tool clicked, for the shell to fill: open a text field's
 /// editor, toggle a check box, choose from a list.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -385,6 +397,8 @@ pub struct Document {
     /// A form field a tool clicked, for the shell to fill.
     field_request: Option<FieldRequest>,
     field_properties_request: Option<FieldRequest>,
+    /// A line of text a tool clicked, for the shell to edit.
+    text_request: Option<TextEditRequest>,
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
@@ -474,6 +488,7 @@ impl Document {
             redaction_request: None,
             field_request: None,
             field_properties_request: None,
+            text_request: None,
             search_worker: None,
             search_snapshot: None,
             outline: None,
@@ -1535,6 +1550,16 @@ impl Document {
 
     pub fn take_field_properties_request(&mut self) -> Option<FieldRequest> {
         self.field_properties_request.take()
+    }
+
+    /// Ask the shell to open an editor on a line of text. A request not
+    /// yet taken is replaced: the user meant the last click.
+    pub fn request_text_edit(&mut self, request: TextEditRequest) {
+        self.text_request = Some(request);
+    }
+
+    pub fn take_text_edit_request(&mut self) -> Option<TextEditRequest> {
+        self.text_request.take()
     }
 
     /// Every link in the document as the session currently has it.
