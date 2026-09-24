@@ -30,6 +30,16 @@ Fixtures, by what they exercise:
   r6-aes-256-user-password.pdf
                         /R 6 with a user password of "secret": an empty
                         password must NOT open it
+  r6-aes-256-print-only.pdf
+                        /R 6 whose permissions allow printing and nothing
+                        else: every change is refused, and so is copying
+                        pages out, unless the owner password opens it
+  r6-aes-256-comments-only.pdf
+                        /R 6 whose permissions allow comments and form
+                        filling, and no other change
+
+Named fixtures on the command line are the only ones written, so adding one
+leaves the committed bytes of the rest alone.
 
 Not byte-deterministic: AES needs a random IV per string and stream, and the
 /R 6 file key is random. Re-running produces different bytes and equivalent
@@ -104,12 +114,49 @@ FIXTURES = [
     ),
     ("r6-aes-256.pdf", dict(R=6), {}),
     ("r6-aes-256-user-password.pdf", dict(R=6, user="secret"), {}),
+    (
+        "r6-aes-256-print-only.pdf",
+        dict(
+            R=6,
+            allow=pikepdf.Permissions(
+                accessibility=True,
+                extract=False,
+                modify_annotation=False,
+                modify_assembly=False,
+                modify_form=False,
+                modify_other=False,
+                print_lowres=True,
+                print_highres=True,
+            ),
+        ),
+        {},
+    ),
+    (
+        "r6-aes-256-comments-only.pdf",
+        dict(
+            R=6,
+            allow=pikepdf.Permissions(
+                accessibility=True,
+                extract=False,
+                modify_annotation=True,
+                modify_assembly=False,
+                modify_form=True,
+                modify_other=False,
+                print_lowres=True,
+                print_highres=True,
+            ),
+        ),
+        {},
+    ),
 ]
 
 
 def main() -> int:
     OUT.mkdir(exist_ok=True)
+    wanted = set(sys.argv[1:])
     for name, spec, save_options in FIXTURES:
+        if wanted and name not in wanted:
+            continue
         user = spec.pop("user", "")
         encryption = pikepdf.Encryption(owner="owner-password", user=user, **spec)
         pdf = base()
