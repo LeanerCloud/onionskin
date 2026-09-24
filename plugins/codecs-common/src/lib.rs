@@ -23,7 +23,7 @@ mod svg;
 mod text;
 mod tiff;
 
-pub use images::{extract_images, ExtractedImage, Extraction, SkippedImage};
+pub use images::{extract_image, extract_images, ExtractedImage, Extraction, SkippedImage};
 pub use jpeg::JpegCodec;
 pub use png::PngCodec;
 pub use svg::SvgCodec;

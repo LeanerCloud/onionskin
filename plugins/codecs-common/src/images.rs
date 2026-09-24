@@ -11,8 +11,8 @@
 //! as the mask it is rather than merged into the image.
 
 use image::{ExtendedColorType, ImageEncoder};
-use onionskin_core::images::{document_images, DocumentImage, ImageColor, ImageData};
-use onionskin_cos::Document as CosDocument;
+use onionskin_core::images::{decode_image, document_images, DocumentImage, ImageColor, ImageData};
+use onionskin_cos::{Document as CosDocument, ObjRef, Object};
 
 use crate::tiff::encode;
 
@@ -45,11 +45,7 @@ pub fn extract_images(doc: &CosDocument) -> onionskin_core::Result<Extraction> {
     for image in document_images(doc)? {
         match file(&image) {
             Ok((extension, bytes)) => extraction.images.push(ExtractedImage {
-                name: format!(
-                    "page-{}-image-{}.{extension}",
-                    image.page + 1,
-                    image.object.number
-                ),
+                name: name_for(&image, extension),
                 bytes,
             }),
             Err(reason) => extraction.skipped.push(SkippedImage {
@@ -60,6 +56,40 @@ pub fn extract_images(doc: &CosDocument) -> onionskin_core::Result<Extraction> {
         }
     }
     Ok(extraction)
+}
+
+/// The image XObject `object`, drawn on `page`, as a file: what Save Image
+/// As writes, in the format Export All Images would give it.
+pub fn extract_image(
+    doc: &CosDocument,
+    object: ObjRef,
+    page: usize,
+) -> Result<ExtractedImage, String> {
+    let parsed = doc.get(object.number).map_err(|error| error.to_string())?;
+    let Object::Stream(stream) = parsed.object else {
+        return Err("the object is not an image".to_owned());
+    };
+    let (width, height, color, data) = decode_image(doc, &stream)?;
+    let image = DocumentImage {
+        page,
+        object,
+        width,
+        height,
+        content: Ok((color, data)),
+    };
+    let (extension, bytes) = file(&image)?;
+    Ok(ExtractedImage {
+        name: name_for(&image, extension),
+        bytes,
+    })
+}
+
+fn name_for(image: &DocumentImage, extension: &str) -> String {
+    format!(
+        "page-{}-image-{}.{extension}",
+        image.page + 1,
+        image.object.number
+    )
 }
 
 fn file(image: &DocumentImage) -> Result<(&'static str, Vec<u8>), String> {

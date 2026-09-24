@@ -9,7 +9,9 @@ use std::io::Cursor;
 
 use image::codecs::jpeg::{JpegEncoder, PixelDensity};
 use image::{ExtendedColorType, ImageEncoder, RgbImage};
-use onionskin_codecs_common::{extract_images, CommonCodecsPlugin, JpegCodec, PngCodec, TiffCodec};
+use onionskin_codecs_common::{
+    extract_image, extract_images, CommonCodecsPlugin, JpegCodec, PngCodec, TiffCodec,
+};
 use onionskin_core::images::{document_images, ImageColor, ImageData};
 use onionskin_core::pages::Assembly;
 use onionskin_core::Document;
@@ -486,4 +488,21 @@ trailer << /Root 1 0 R >>
         "{:?}",
         extraction.skipped
     );
+}
+
+#[test]
+fn one_image_comes_out_as_export_all_images_writes_it() {
+    let (pdf, photo, _, _) = three_image_document();
+    let (doc, _) = CosDocument::open_repairing(Box::new(BytesSource::new(pdf))).expect("opens");
+    let all = extract_images(&doc).expect("extracts");
+    let first = document_images(&doc).expect("finds")[0].object;
+    let one = extract_image(&doc, first, 0).expect("extracts one");
+    assert_eq!(one, all.images[0], "same name, same bytes");
+    assert_eq!(one.bytes, photo);
+
+    let catalog = onionskin_cos::ObjRef::new(1, 0);
+    let refused = extract_image(&doc, catalog, 0).expect_err("not an image");
+    assert!(refused.contains("not an image"), "{refused}");
+    let missing = onionskin_cos::ObjRef::new(9999, 0);
+    assert!(extract_image(&doc, missing, 0).is_err());
 }
