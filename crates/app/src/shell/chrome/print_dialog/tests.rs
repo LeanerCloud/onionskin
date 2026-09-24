@@ -371,8 +371,10 @@ fn booklet_sheet_range_is_ignored_for_pages_and_poster() {
 
 #[test]
 fn poster_controls_parse_ascii_scale_and_inches_with_explicit_defaults() {
-    let mut settings = PrintSettings::default();
-    settings.handling = HandlingChoice::Poster;
+    let settings = PrintSettings {
+        handling: HandlingChoice::Poster,
+        ..PrintSettings::default()
+    };
     let mut input = typed();
     input.poster_scale = " 125.5% ".into();
     input.poster_overlap = ".125".into();
@@ -416,8 +418,10 @@ fn poster_controls_parse_ascii_scale_and_inches_with_explicit_defaults() {
 
 #[test]
 fn poster_controls_reject_non_ascii_decimal_grammar() {
-    let mut settings = PrintSettings::default();
-    settings.handling = HandlingChoice::Poster;
+    let settings = PrintSettings {
+        handling: HandlingChoice::Poster,
+        ..PrintSettings::default()
+    };
     for bad in [
         "", ".", "x", "١", "．", "+1", "-0", "1e2", "1,5", "1 0", "NaN", "inf", "1.2.3", "0.125in",
         "9pt", "2mm", "100%%",
@@ -452,8 +456,10 @@ fn poster_controls_reject_non_ascii_decimal_grammar() {
 
 #[test]
 fn poster_controls_retain_values_when_handling_is_switched_away_and_back() {
-    let mut settings = PrintSettings::default();
-    settings.handling = HandlingChoice::Poster;
+    let mut settings = PrintSettings {
+        handling: HandlingChoice::Poster,
+        ..PrintSettings::default()
+    };
     let mut input = typed();
     input.poster_scale = "125.5%".into();
     input.poster_overlap = ".125".into();
@@ -472,8 +478,10 @@ fn poster_controls_cut_marks_revalidate_the_real_sheet_cap_without_clamping_valu
         current_page: 0,
         image_only: None,
     };
-    let mut settings = PrintSettings::default();
-    settings.handling = HandlingChoice::Poster;
+    let mut settings = PrintSettings {
+        handling: HandlingChoice::Poster,
+        ..PrintSettings::default()
+    };
     settings.poster.cut_marks = false;
     let mut input = typed();
     input.poster_scale = "100".into();
