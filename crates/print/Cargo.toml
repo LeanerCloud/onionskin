@@ -17,5 +17,6 @@ objc2-app-kit = "0.3"
 objc2-pdf-kit = "0.3"
 
 [dev-dependencies]
+tempfile.workspace = true
 onionskin-corpus-testing.workspace = true
 onionskin-content.workspace = true

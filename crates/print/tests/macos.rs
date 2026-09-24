@@ -1,13 +1,13 @@
-//! The platform backend: present on macOS only, and on macOS it refuses to
-//! start anywhere but the main thread rather than hang a print panel off a
-//! worker. What reaches the printer is `tests/file_backend.rs`'s output and
-//! `backend::native`'s settings, both tested on every platform; the print
-//! itself is the manual acceptance run in the P16 evidence.
+//! The macOS backend (and, off macOS, which backend the build has): on
+//! macOS it refuses to start anywhere but the main thread rather than hang
+//! a print panel off a worker. What reaches the printer is
+//! `tests/file_backend.rs`'s output and `backend::native`'s settings, both
+//! tested on every platform; the print itself is the P16 manual run.
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
-fn a_build_without_a_platform_backend_says_so() {
-    assert_eq!(onionskin_print::native_backend(), None);
+fn other_unixes_print_through_cups() {
+    assert_eq!(onionskin_print::native_backend(), Some("CUPS"));
 }
 
 #[cfg(target_os = "macos")]

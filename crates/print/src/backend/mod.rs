@@ -1,6 +1,7 @@
 //! Where the sheets go: a backend takes imposed sheets and puts them on
 //! paper, or in a file.
 
+pub mod cups;
 pub mod file;
 #[cfg(target_os = "macos")]
 pub mod macos;
@@ -72,11 +73,12 @@ pub trait PrintBackend {
 }
 
 /// The platform backend this build has, by name: `None` where there is
-/// none yet (Linux and Windows print at M4), so a build without one cannot
-/// pretend to print.
+/// none, so a build without one cannot pretend to print.
 pub fn native_backend() -> Option<&'static str> {
     if cfg!(target_os = "macos") {
         Some("macOS")
+    } else if cfg!(unix) {
+        Some("CUPS")
     } else {
         None
     }
@@ -102,7 +104,14 @@ mod tests {
     }
 
     #[test]
-    fn only_macos_has_a_platform_backend_at_m3() {
-        assert_eq!(native_backend().is_some(), cfg!(target_os = "macos"));
+    fn macos_prints_natively_and_other_unixes_through_cups() {
+        let expected = if cfg!(target_os = "macos") {
+            Some("macOS")
+        } else if cfg!(unix) {
+            Some("CUPS")
+        } else {
+            None
+        };
+        assert_eq!(native_backend(), expected);
     }
 }
