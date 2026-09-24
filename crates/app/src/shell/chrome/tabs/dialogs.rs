@@ -101,6 +101,7 @@ impl ShellFrame {
         self.advanced_search = None;
         self.crop = None;
         self.web_link = None;
+        self.signature_properties = None;
         #[cfg(feature = "tools-edit")]
         {
             self.marks = None;

@@ -537,6 +537,12 @@ impl ShellFrame {
             Activation::Password(action) => self.run_password_action(action, window, cx),
             Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
+            Activation::ShowSignatureProperties(index) => {
+                self.show_signature_properties(index, window, cx)
+            }
+            Activation::SignatureProperties(action) => {
+                self.run_signature_properties_action(action, window, cx)
+            }
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),

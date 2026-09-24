@@ -30,6 +30,7 @@ mod replace;
 mod security;
 mod send_pages;
 mod signature;
+mod signature_properties;
 mod skins;
 #[cfg(feature = "spelling")]
 mod spelling;
@@ -1898,6 +1899,7 @@ mod tests {
     mod send_pages;
     #[cfg(all(feature = "shell-test-support", feature = "tools-fill-sign"))]
     mod signature;
+    mod signatures;
     #[cfg(feature = "shell-test-support")]
     mod skins;
     #[cfg(all(feature = "shell-test-support", feature = "spelling"))]

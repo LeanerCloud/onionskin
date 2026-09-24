@@ -9,8 +9,8 @@ use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
     PagePoint, PageQuad, PageRect, PageRenderRect, Provenance, RenderRequest, RenderResponse,
-    SearchOptions, SearchState, SignatureField, ThumbnailRequest, ThumbnailResponse, ViewHistory,
-    ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    SearchOptions, SearchState, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
+    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
     CodecPlugin, CommandCtx, CommandError, ExportError, ExportOutputKind, ExportRequest, Overlay,
@@ -1008,8 +1008,25 @@ impl CanvasModel {
         Ok(self.document.borrow_mut().attachment_bytes(index)?)
     }
 
-    pub fn signatures(&mut self) -> Result<Vec<SignatureField>, CanvasError> {
-        Ok(self.document.borrow_mut().signatures()?.to_vec())
+    /// The signature fields, each with what validating it found. A
+    /// document whose signatures cannot be validated as a whole still lists
+    /// its fields, each marked not checked.
+    pub(in crate::shell) fn signatures(
+        &mut self,
+    ) -> Result<Vec<super::panes::signatures::SignatureRow>, CanvasError> {
+        let mut document = self.document.borrow_mut();
+        let fields = document.signatures()?.to_vec();
+        let validations = document.validate_signatures().unwrap_or_default();
+        Ok(super::panes::signatures::rows(fields, validations))
+    }
+
+    /// The document as the signature on `field` signed it, when the field
+    /// is signed and its signature covers a known length of the file.
+    pub(in crate::shell) fn signed_version(&mut self, field: &str) -> Option<Vec<u8>> {
+        let mut document = self.document.borrow_mut();
+        let validations = document.validate_signatures().ok()?;
+        let validation = validations.iter().find(|found| found.field == field)?;
+        document.signed_version(validation)
     }
 
     pub fn layers(&mut self) -> Result<Vec<Layer>, CanvasError> {

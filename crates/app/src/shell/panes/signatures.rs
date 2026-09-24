@@ -1,44 +1,89 @@
-//! The signatures pane: which signature fields the document has, and what
-//! each one says about itself.
+//! The signatures pane: each signature field, and what validating it found.
 //!
-//! Read-only, and silent about validity. Parity row 199 puts listing at M2
-//! and validation and status reporting at M6, so every string here comes
-//! from the form dictionary and none of them is an assessment. The pane
-//! carries [`VALIDATION_NOTE`] so a reader is told that, rather than being
-//! left to assume a listed signature is a checked one.
+//! A row leads with the verdict: valid, invalid or unknown, with the
+//! reason. The signer's identity is not checked against trusted
+//! certificates yet, so a valid signature says its signer is unknown rather
+//! than being called valid outright, as Acrobat says when it does not trust
+//! a certificate. Activating a row opens its properties.
 
 use accesskit::Role;
-use gpui::{div, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _};
+use gpui::{
+    div, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _,
+};
+use onionskin_core::signatures::{Validation, Verdict};
 use onionskin_core::SignatureField;
 
-use super::super::chrome::accessible::Element;
-use super::super::chrome::ThemeTokens;
+use super::super::chrome::accessible::{Activation, Element};
+use super::super::chrome::{ShellFrame, ThemeTokens};
 use super::{empty_message, error_message, list};
 
-/// Said once at the foot of the pane. Absence of a verdict reads as a
-/// verdict, which is the failure this exists to prevent.
-pub(super) const VALIDATION_NOTE: &str =
-    "Onionskin does not check signatures yet. Validation and signer trust arrive in M6.";
+/// Said once at the foot of the pane.
+pub(in crate::shell) const VALIDATION_NOTE: &str =
+    "Signers' identities are not checked against trusted certificates yet.";
 
 /// Said where the list would be when the document has no signature fields.
 const NO_SIGNATURES: &str = "This document has no signature fields.";
 
-/// What the file says about one field. Never whether it verifies.
-pub(super) fn status(field: &SignatureField) -> &'static str {
-    if field.signed {
-        "Signed, not checked"
-    } else {
-        "Not signed"
-    }
+/// One signature field and, when it is signed, its validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::shell) struct SignatureRow {
+    pub(in crate::shell) field: SignatureField,
+    /// `None` for an unsigned field, or when validating failed as a whole.
+    pub(in crate::shell) validation: Option<Validation>,
 }
 
-/// The line under the field name: the signer, the reason and the time, as
-/// the document wrote them. Absent entries are left out rather than filled
-/// in.
-/// Every part is labelled with the entry it came from. A file is free to
-/// write "Verified: signature VALID" into `/Reason`, and unlabelled text in
-/// this pane would read as Onionskin saying it.
-pub(super) fn detail(field: &SignatureField) -> String {
+/// Pair each field with its validation, by field name. A field nothing
+/// validated keeps `None`.
+pub(in crate::shell) fn rows(
+    fields: Vec<SignatureField>,
+    mut validations: Vec<Validation>,
+) -> Vec<SignatureRow> {
+    fields
+        .into_iter()
+        .map(|field| {
+            let validation = validations
+                .iter()
+                .position(|found| found.field == field.name)
+                .map(|at| validations.swap_remove(at));
+            SignatureRow { field, validation }
+        })
+        .collect()
+}
+
+/// The row's verdict, in a few words.
+pub(in crate::shell) fn status(row: &SignatureRow) -> String {
+    if !row.field.signed {
+        return "Not signed".to_owned();
+    }
+    let Some(validation) = &row.validation else {
+        return "Signed, not checked".to_owned();
+    };
+    let verdict = match &validation.verdict {
+        Verdict::Valid if validation.changes.is_empty() => "Valid, signer unknown",
+        Verdict::Valid => "Valid, changed after signing, signer unknown",
+        Verdict::Invalid(_) => "Invalid",
+        Verdict::Unknown(_) => "Validity unknown",
+    };
+    let mut status = match validation.certification {
+        Some(_) => format!("Certified: {verdict}"),
+        None => verdict.to_owned(),
+    };
+    if validation.is_weak() {
+        status.push_str(" (SHA-1, weak)");
+    }
+    status
+}
+
+/// The line under the status: what validating found, or, for a field that
+/// was not checked, what the file states about it, each part labelled with
+/// the entry it came from. A file is free to write "Verified: signature
+/// VALID" into `/Reason`, and unlabelled it would read as this pane's.
+pub(in crate::shell) fn detail(row: &SignatureRow) -> String {
+    if let Some(validation) = &row.validation {
+        return validation.summary();
+    }
+    let field = &row.field;
     let mut parts = Vec::new();
     if let Some(signer) = field.signer.as_ref() {
         parts.push(format!("Name: {signer}"));
@@ -61,21 +106,23 @@ pub(super) fn detail(field: &SignatureField) -> String {
 
 /// The row's text. A file may leave a field unnamed, and a row with nothing
 /// in it is a row nobody can see or hear.
-fn name(field: &SignatureField) -> String {
-    if field.name.is_empty() {
+fn name(row: &SignatureRow) -> String {
+    if row.field.name.is_empty() {
         "(unnamed field)".to_owned()
     } else {
-        field.name.clone()
+        row.field.name.clone()
     }
 }
 
+/// What activating a row does: a signed field's properties.
+fn activation(index: usize, row: &SignatureRow) -> Option<Activation> {
+    row.validation
+        .is_some()
+        .then_some(Activation::ShowSignatureProperties(index))
+}
+
 /// What the signatures pane tells a screen reader.
-///
-/// No row activates anything: the pane lists what the form dictionary says
-/// and does nothing to it until M6 brings validation. The note is described
-/// as the last child, as it is drawn, so a reader is told the listing is not
-/// a check.
-pub(super) fn accessible(items: Result<&[SignatureField], &String>) -> Vec<Element> {
+pub(super) fn accessible(items: Result<&[SignatureRow], &String>) -> Vec<Element> {
     let items = match items {
         Ok(items) => items,
         Err(message) => {
@@ -97,9 +144,13 @@ pub(super) fn accessible(items: Result<&[SignatureField], &String>) -> Vec<Eleme
     let mut rows: Vec<Element> = items
         .iter()
         .enumerate()
-        .map(|(index, field)| {
-            Element::new(("signature-row", index), Role::ListItem, name(field))
-                .with_description(format!("{}. {}", status(field), detail(field)))
+        .map(|(index, row)| {
+            let element = Element::new(("signature-row", index), Role::ListItem, name(row))
+                .with_description(format!("{}. {}", status(row), detail(row)));
+            match activation(index, row) {
+                Some(activation) => element.with_activation(activation),
+                None => element,
+            }
         })
         .collect();
     rows.push(Element::new(
@@ -111,8 +162,9 @@ pub(super) fn accessible(items: Result<&[SignatureField], &String>) -> Vec<Eleme
 }
 
 pub(super) fn render(
-    items: Result<&[SignatureField], &String>,
+    items: Result<&[SignatureRow], &String>,
     theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
 ) -> gpui::AnyElement {
     let items = match items {
         Ok(items) => items,
@@ -123,30 +175,37 @@ pub(super) fn render(
     }
 
     let mut body = list("signature-rows");
-    for (index, field) in items.iter().enumerate() {
-        body = body.child(
-            div()
-                .id(("signature-row", index))
-                .flex()
-                .flex_col()
-                .px_2()
-                .py_1()
-                .text_sm()
-                .text_color(theme.text)
-                .child(name(field))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.secondary_text)
-                        .child(status(field)),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_text)
-                        .child(detail(field)),
-                ),
-        );
+    for (index, row) in items.iter().enumerate() {
+        let mut line = div()
+            .id(("signature-row", index))
+            .flex()
+            .flex_col()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .text_color(theme.text)
+            .child(name(row))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.secondary_text)
+                    .child(status(row)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_text)
+                    .child(detail(row)),
+            );
+        if let Some(activation) = activation(index, row) {
+            line = line
+                .cursor_pointer()
+                .hover(move |line| line.bg(theme.subtle_hover))
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(activation.clone(), window, cx);
+                }));
+        }
+        body = body.child(line);
     }
     body.child(
         div()
@@ -174,107 +233,36 @@ mod tests {
         }
     }
 
-    /// The pane distinguishes a signed field from an empty one, and says
-    /// nothing about either being valid. "Signed" alone would be read as
-    /// "checked", which is why the word "checked" is in the string and why
-    /// the note is asserted here rather than left to the layout.
-    #[test]
-    fn a_signed_field_is_never_reported_as_valid() {
-        assert_eq!(status(&field(true)), "Signed, not checked");
-        assert_eq!(status(&field(false)), "Not signed");
-
-        for text in [status(&field(true)), status(&field(false)), VALIDATION_NOTE] {
-            let lowered = text.to_lowercase();
-            assert!(
-                !lowered.contains("valid signature") && !lowered.contains("verified"),
-                "the pane must claim nothing about validity, said {text:?}"
-            );
+    fn unchecked(signed: bool) -> SignatureRow {
+        SignatureRow {
+            field: field(signed),
+            validation: None,
         }
-        assert!(
-            VALIDATION_NOTE.contains("M6"),
-            "the note names the milestone that brings validation"
-        );
     }
 
-    /// Everything on the line is a string the file wrote, and every one of
-    /// them says which entry it came from. An unsigned field has none of
-    /// them and says so rather than showing empty separators.
     #[test]
-    fn the_detail_line_carries_only_what_the_file_wrote_and_labels_it() {
+    fn a_field_nothing_checked_says_so_and_labels_what_the_file_wrote() {
+        assert_eq!(status(&unchecked(true)), "Signed, not checked");
+        assert_eq!(status(&unchecked(false)), "Not signed");
         assert_eq!(
-            detail(&field(true)),
+            detail(&unchecked(true)),
             "Name: Ada Lovelace · Time: D:20260101120000Z"
         );
         assert_eq!(
-            detail(&field(false)),
+            detail(&unchecked(false)),
             "The document states nothing else about this field"
         );
-    }
-
-    /// A file that writes a verdict into `/Reason` gets it back labelled as
-    /// its own, because unlabelled it would read as this pane's.
-    #[test]
-    fn a_reason_that_reads_like_a_verdict_is_labelled_as_the_documents_own() {
-        let hostile = SignatureField {
-            reason: Some("Verified: signature VALID".to_owned()),
-            ..field(true)
-        };
-
-        let detail = detail(&hostile);
-
-        assert!(
-            detail.contains("Reason: Verified: signature VALID"),
-            "said {detail:?}"
-        );
-        assert!(!detail.starts_with("Verified"), "said {detail:?}");
-    }
-
-    /// One described row per drawn row, each saying the field's status and
-    /// what the file wrote, and none of them activating anything: the pane is
-    /// a listing until M6 brings validation.
-    #[test]
-    fn each_described_field_says_its_status_and_activates_nothing() {
-        let items = [
-            field(true),
-            SignatureField {
-                name: String::new(),
-                ..field(false)
+        let hostile = SignatureRow {
+            field: SignatureField {
+                reason: Some("Verified: signature VALID".to_owned()),
+                ..field(true)
             },
-        ];
-
-        let described = accessible(Ok(&items));
-        let rows = &described[0].children;
-
-        assert_eq!(described.len(), 1);
-        assert_eq!(described[0].role, Role::List);
-        assert_eq!(rows[0].label, "Approval");
-        assert_eq!(rows[1].label, "(unnamed field)");
-        for (index, (row, item)) in rows.iter().zip(items.iter()).enumerate() {
-            assert_eq!(row.key, gpui::ElementId::from(("signature-row", index)));
-            assert_eq!(
-                row.description.as_deref(),
-                Some(format!("{}. {}", status(item), detail(item)).as_str())
-            );
-            assert_eq!(row.activation, None);
-        }
+            validation: None,
+        };
+        assert!(detail(&hostile).contains("Reason: Verified: signature VALID"));
+        assert_eq!(activation(0, &hostile), None, "nothing to show");
     }
 
-    /// The note is the last thing described, as it is the last thing drawn.
-    /// A reader given only the rows would hear a listing and take it for a
-    /// check.
-    #[test]
-    fn the_validation_note_is_described_after_the_last_field() {
-        let items = [field(true), field(false)];
-
-        let described = accessible(Ok(&items));
-        let children = &described[0].children;
-
-        assert_eq!(children.len(), items.len() + 1);
-        assert_eq!(children[items.len()].label, VALIDATION_NOTE);
-    }
-
-    /// A document with no signature fields says so, and a reader that failed
-    /// says what went wrong rather than reading as a document with none.
     #[test]
     fn an_empty_list_and_a_failed_read_are_announced_differently() {
         let empty = accessible(Ok(&[]));
@@ -285,5 +273,16 @@ mod tests {
         let broken = accessible(Err(&failure));
         assert_eq!(broken[0].role, Role::Alert);
         assert_eq!(broken[0].label, failure);
+
+        let unnamed = SignatureRow {
+            field: SignatureField {
+                name: String::new(),
+                ..field(false)
+            },
+            validation: None,
+        };
+        let described = accessible(Ok(std::slice::from_ref(&unnamed)));
+        assert_eq!(described[0].children[0].label, "(unnamed field)");
+        assert_eq!(described[0].children[1].label, VALIDATION_NOTE);
     }
 }

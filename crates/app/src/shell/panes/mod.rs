@@ -21,7 +21,7 @@ mod bookmarks;
 mod comments;
 mod layers;
 mod results;
-mod signatures;
+pub(in crate::shell) mod signatures;
 mod thumbnails;
 
 use std::path::PathBuf;
@@ -32,9 +32,7 @@ use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Pixels, Point, StatefulInteractiveElement as _, Styled as _,
 };
-use onionskin_core::{
-    Attachment, Layer, ObjRef, OutlineItem, PageIndex, ReadAnnotation, SignatureField,
-};
+use onionskin_core::{Attachment, Layer, ObjRef, OutlineItem, PageIndex, ReadAnnotation};
 
 use super::canvas::CanvasError;
 use super::chrome::accessible::{Activation, Element, Rects, Surface};
@@ -140,7 +138,7 @@ enum PaneContent {
     Bookmarks(Result<Vec<OutlineItem>, String>),
     Attachments(Result<Vec<Attachment>, String>),
     Layers(Result<Vec<Layer>, String>),
-    Signatures(Result<Vec<SignatureField>, String>),
+    Signatures(Result<Vec<signatures::SignatureRow>, String>),
     Comments(Result<Vec<ReadAnnotation>, String>),
 }
 
@@ -736,7 +734,7 @@ fn render_body(
             layers::render(items.as_deref(), theme, cx)
         }
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
-            signatures::render(items.as_deref(), theme)
+            signatures::render(items.as_deref(), theme, cx)
         }
         (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
             let (reads, author) = comment_reads(canvas, cx);

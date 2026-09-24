@@ -213,6 +213,10 @@ pub(in crate::shell) enum Activation {
     Protect(crate::shell::chrome::protect_dialog::ProtectAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
+    /// The Signatures pane: open this row's Signature Properties.
+    ShowSignatureProperties(usize),
+    /// A button in Signature Properties.
+    SignatureProperties(crate::shell::chrome::signature_properties::SignaturePropertiesAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
