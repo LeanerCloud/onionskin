@@ -191,6 +191,11 @@ pub(in crate::shell) enum MenuCommand {
     CreateFromClipboard,
     Stamps,
     PasteStamp,
+    /// Add Signature…, or with `initials`, Add Initials…: the dialog that
+    /// makes one and chooses the Sign tool.
+    Signature {
+        initials: bool,
+    },
     SummarizeComments,
     SplitDocument,
     /// Crop Pages: the dialog, on the pages chosen.
@@ -336,6 +341,8 @@ pub(in crate::shell) struct RegistryFacts {
     image_import: bool,
     /// Whether a tool places stamps, which the Stamps entries open.
     stamp_tool: bool,
+    /// Whether a tool places a saved signature, which Add Signature arms.
+    sign_tool: bool,
     /// Why the active document may not be edited, from `core`. Carried with
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
@@ -362,6 +369,7 @@ impl RegistryFacts {
             any_tool: registry.tools().next().is_some(),
             image_import: registry.codecs().any(|codec| codec.imports()),
             stamp_tool: tool_with(registry, ToolCapability::Stamp).is_some(),
+            sign_tool: tool_with(registry, ToolCapability::AddSignature).is_some(),
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -756,6 +764,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain(link_entries(state))
             .chain(page_entries(state))
             .chain(stamp_entries(state))
+            .chain(signature_entries(state))
             .chain([MenuEntry {
                 command: MenuCommand::SummarizeComments,
                 label: "Summarize Comments…",
@@ -930,6 +939,26 @@ fn stamp_entries(state: MenuState) -> [MenuEntry; 2] {
             selected: false,
         },
     ]
+}
+
+/// Add Signature… and Add Initials…: live when a tool places signatures, a
+/// document is open, and it may be edited, since the dialog ends by arming
+/// that tool on it.
+fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
+    let availability = match (state.registry.sign_tool, state.has_active_tab) {
+        (false, _) => MenuAvailability::Disabled(super::tabs::NO_SIGN_TOOL),
+        (true, false) => MenuAvailability::Disabled("No document is open"),
+        (true, true) => state
+            .registry
+            .edit_refusal
+            .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
+    };
+    [(false, "Add Signature…"), (true, "Add Initials…")].map(|(initials, label)| MenuEntry {
+        command: MenuCommand::Signature { initials },
+        label,
+        availability,
+        selected: false,
+    })
 }
 
 /// The page commands, on the page the viewport is on.
@@ -1369,6 +1398,7 @@ impl MenuCommand {
             | Self::CreateFromClipboard
             | Self::Stamps
             | Self::PasteStamp
+            | Self::Signature { .. }
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
@@ -1439,6 +1469,7 @@ impl MenuCommand {
             | Self::CreateFromClipboard
             | Self::Stamps
             | Self::PasteStamp
+            | Self::Signature { .. }
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
@@ -1653,6 +1684,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::CreateFromClipboard
         | MenuCommand::Stamps
         | MenuCommand::PasteStamp
+        | MenuCommand::Signature { .. }
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument
@@ -1728,6 +1760,7 @@ mod tests {
             any_tool: true,
             image_import: true,
             stamp_tool: true,
+            sign_tool: true,
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -2051,6 +2084,7 @@ mod tests {
             cfg!(any(feature = "tools-basic", feature = "tools-comment"))
         );
         assert_eq!(facts.stamp_tool, cfg!(feature = "tools-comment"));
+        assert_eq!(facts.sign_tool, cfg!(feature = "tools-fill-sign"));
     }
 
     /// Open Recent is live when there is something to open, and says why
@@ -2179,6 +2213,8 @@ mod tests {
                 "Number Pages From 1",
                 "Stamps…",
                 "Paste Clipboard Image as Stamp",
+                "Add Signature…",
+                "Add Initials…",
                 "Summarize Comments…",
                 "Preferences…",
             ]

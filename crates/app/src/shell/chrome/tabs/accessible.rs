@@ -510,6 +510,8 @@ impl ShellFrame {
             Activation::Marks(action) => self.run_marks_action(action, window, cx),
             #[cfg(feature = "tools-edit")]
             Activation::Link(action) => self.run_link_action(action, window, cx),
+            #[cfg(feature = "tools-fill-sign")]
+            Activation::Signature(action) => self.run_signature_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -716,6 +718,11 @@ impl ShellFrame {
                 .link_dialog
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            #[cfg(feature = "tools-fill-sign")]
+            TextField::Signature(field) => self
+                .signature
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -865,18 +872,21 @@ impl ShellFrame {
     }
 }
 
-/// The page-marks dialog's fields, in a build that has it.
+/// The plugin dialogs' fields, in a build that has them.
 fn mark_text_fields() -> Vec<TextField> {
+    #[cfg_attr(
+        not(any(feature = "tools-edit", feature = "tools-fill-sign")),
+        allow(unused_mut)
+    )]
+    let mut fields = Vec::new();
     #[cfg(feature = "tools-edit")]
-    {
+    fields.extend(
         crate::shell::chrome::marks_dialog::text_fields()
-            .chain(crate::shell::chrome::link_dialog::text_fields())
-            .collect()
-    }
-    #[cfg(not(feature = "tools-edit"))]
-    {
-        Vec::new()
-    }
+            .chain(crate::shell::chrome::link_dialog::text_fields()),
+    );
+    #[cfg(feature = "tools-fill-sign")]
+    fields.extend(crate::shell::chrome::signature_dialog::text_fields());
+    fields
 }
 
 #[cfg(test)]

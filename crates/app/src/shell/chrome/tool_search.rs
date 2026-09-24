@@ -546,6 +546,8 @@ fn field_node(
         }
         #[cfg(feature = "tools-edit")]
         TextField::Link(_) => accesskit::Role::TextInput,
+        #[cfg(feature = "tools-fill-sign")]
+        TextField::Signature(_) => accesskit::Role::TextInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)

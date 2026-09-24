@@ -360,6 +360,10 @@ impl ShellFrame {
                 self.run_links_command(remove, cx);
                 Ok(())
             }
+            MenuCommand::Signature { initials } => {
+                self.open_signature_dialog(initials, window, cx);
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]

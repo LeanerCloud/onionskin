@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 142 planned / 30 partial / 80 out-of-scope. 151 implemented.**
+**403 rows: 136 planned / 30 partial / 80 out-of-scope. 157 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -162,7 +162,7 @@ M4 with P15, per the plan's ruling B.
 | Document tab context menu (Close, Close Others, Close All, Show Containing Folder, Copy Path) | implemented | M2 | All named entries are live. Counted once per the context-menu carve-out. Evidence: M2-SHELL. (judgment) |
 | All tools pane (left tool rail) | implemented | M2 | The registry-driven rail, compact icon rendering, and tool activation are live. Evidence: M2-SHELL and B3.8. |
 | "View more" / expand full tool list | implemented | M2 | Expand and collapse are live. Evidence: M2-SHELL. |
-| Quick action toolbar (floating over the page) | implemented | M2 | Toolbar, dragging, customization, Select, Comment (sticky note), Highlight and Draw are live; Fill text fields and Add Sign are disabled with their M5 reason. Evidence: M2-SHELL, docs/evidence/m3-p20b-comment-surfaces.md. |
+| Quick action toolbar (floating over the page) | implemented | M2 | Toolbar, dragging, customization, Select, Comment (sticky note), Highlight and Draw are live; Fill text fields and Add Sign choose the Fill & Sign plugin's Add Text and Sign tools, and are disabled with their M5 reason in a build without it. Evidence: M2-SHELL, docs/evidence/m3-p20b-comment-surfaces.md, docs/evidence/m5-fill-sign.md. |
 | Right-hand side panel | implemented | M2 | The contextual host, empty state, and open/close behavior are live; it shows the active tool's use and, for a chosen comment, the properties inspector. Evidence: M2-SHELL, B3.7 and docs/evidence/m3-p20b-comment-surfaces.md. |
 | Page controls / bottom toolbar | implemented | M2 | Page, rotate, zoom, fit controls, invalid-zoom display, and numeric page-field semantics are live. Evidence: M2-SHELL and B3.7. |
 | Global search field (tools and document text) | implemented | M2 | Tool lookup, current-document text search, and the no-document unavailable state are live. Evidence: M2-SEARCH and B3.7. |
@@ -456,12 +456,12 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Add text | planned | M5 | `tools-fill-sign`. |
-| Add checkmark / cross / dot | planned | M5 | |
-| Add circle / line | planned | M5 | |
-| Sign yourself: create signature (type, draw, image) | planned | M5 | Local appearance only; not a cryptographic signature. |
-| Sign yourself: add initials | planned | M5 | |
-| Save and reuse a signature locally | planned | M5 | |
+| Add text | implemented | M5 | `tools-fill-sign`: the Add Text tool types a borderless typewriter box where the page is clicked, on any page, with no form fields needed. Evidence: docs/evidence/m5-fill-sign.md. |
+| Add checkmark / cross / dot | implemented | M5 | One tool each; a click puts a 12-point mark there, as a stamp that moves and deletes like a comment. Evidence: docs/evidence/m5-fill-sign.md. |
+| Add circle / line | implemented | M5 | Dragged to size, or clicked for Acrobat-like default sizes; the drag is previewed. Evidence: docs/evidence/m5-fill-sign.md. |
+| Sign yourself: create signature (type, draw, image) | implemented | M5 | Edit > Add Signature: typed (set in Times Italic), drawn on a pad, or from an image or PDF; the Sign tool then places it where clicked. Local appearance only; not a cryptographic signature. Evidence: docs/evidence/m5-fill-sign.md. |
+| Sign yourself: add initials | implemented | M5 | Edit > Add Initials, made the same three ways and placed smaller. Evidence: docs/evidence/m5-fill-sign.md. |
+| Save and reuse a signature locally | implemented | M5 | The signature and the initials are kept as one-page PDFs in the app's data folder, offered by the Sign tool in every document until Clear Saved forgets them. Evidence: docs/evidence/m5-fill-sign.md. |
 | Sync signature across devices via an Adobe account | out-of-scope | - | Cloud-tethered account sync. |
 | Request e-signatures | out-of-scope | - | Adobe Acrobat Sign, a cloud service. |
 

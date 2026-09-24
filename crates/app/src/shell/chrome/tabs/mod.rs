@@ -24,12 +24,14 @@ mod page_grid;
 mod print;
 mod properties;
 mod send_pages;
+mod signature;
 mod skins;
 mod stamps;
 mod summary;
 mod windows;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
+pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
 pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
 
 use menu::MenuPanel;
@@ -1757,6 +1759,8 @@ mod tests {
     mod reduce;
     #[cfg(all(feature = "shell-test-support", feature = "tools-organize"))]
     mod send_pages;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-fill-sign"))]
+    mod signature;
     #[cfg(feature = "shell-test-support")]
     mod skins;
     #[cfg(all(

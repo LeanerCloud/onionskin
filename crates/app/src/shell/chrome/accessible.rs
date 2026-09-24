@@ -91,6 +91,9 @@ pub(in crate::shell) enum TextField {
     /// The link dialog's page number and web address.
     #[cfg(feature = "tools-edit")]
     Link(crate::shell::chrome::link_dialog::LinkField),
+    /// Add Signature's typed name.
+    #[cfg(feature = "tools-fill-sign")]
+    Signature(crate::shell::chrome::signature_dialog::SignatureField),
 }
 
 /// What activating an accessible element does.
@@ -154,6 +157,9 @@ pub(in crate::shell) enum Activation {
     /// Create Link and Link Properties.
     #[cfg(feature = "tools-edit")]
     Link(crate::shell::chrome::link_dialog::LinkAction),
+    /// Add Signature and Add Initials.
+    #[cfg(feature = "tools-fill-sign")]
+    Signature(crate::shell::chrome::signature_dialog::SignatureAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

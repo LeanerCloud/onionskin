@@ -63,6 +63,11 @@ pub(in crate::shell) enum ShellDialog {
     /// Edit > Watermark, Background, Header & Footer or Bates Numbering.
     #[cfg_attr(not(feature = "tools-edit"), allow(dead_code))]
     Marks(onionskin_core::pages::MarkKind),
+    /// Edit > Add Signature, or Add Initials when `initials`.
+    #[cfg_attr(not(feature = "tools-fill-sign"), allow(dead_code))]
+    Signature {
+        initials: bool,
+    },
     /// Organize Pages' Copy To and Move To Document.
     SendPages {
         moving: bool,
@@ -93,6 +98,8 @@ impl ShellDialog {
             Self::Link { editing: false } => "Create Link",
             Self::Link { editing: true } => "Link Properties",
             Self::WebLink => "Open Web Link",
+            Self::Signature { initials: false } => "Add Signature",
+            Self::Signature { initials: true } => "Add Initials",
             Self::SendPages { moving: true } => "Move Pages To",
             Self::SendPages { moving: false } => "Copy Pages To",
             Self::Preferences(_) => "Preferences",
@@ -232,6 +239,15 @@ pub(in crate::shell) fn accessible(
         ),
         #[cfg(not(feature = "tools-edit"))]
         ShellDialog::Link { .. } => Vec::new(),
+        #[cfg(feature = "tools-fill-sign")]
+        ShellDialog::Signature { .. } => super::chrome::signature_dialog::accessible(
+            frame
+                .signature_dialog()
+                .expect("the signature dialog has state"),
+            cx,
+        ),
+        #[cfg(not(feature = "tools-fill-sign"))]
+        ShellDialog::Signature { .. } => Vec::new(),
         ShellDialog::WebLink => super::chrome::web_link_dialog::accessible(
             frame
                 .web_link_prompt()
@@ -453,6 +469,18 @@ pub(in crate::shell) fn render_dialog(
         .into_any_element(),
         #[cfg(not(feature = "tools-edit"))]
         ShellDialog::Link { .. } => gpui::div().into_any_element(),
+        #[cfg(feature = "tools-fill-sign")]
+        ShellDialog::Signature { .. } => super::chrome::signature_dialog::render(
+            frame
+                .signature_dialog()
+                .expect("the signature dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        #[cfg(not(feature = "tools-fill-sign"))]
+        ShellDialog::Signature { .. } => gpui::div().into_any_element(),
         ShellDialog::WebLink => super::chrome::web_link_dialog::render(
             frame
                 .web_link_prompt()

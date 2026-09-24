@@ -610,8 +610,12 @@ what-does-not-transfer section demands:
   crop tool), the page marks (header and footer, watermark, background,
   Bates numbering, each with Update and Remove), and links (the Link tool,
   Create Links from URLs, Remove Web Links, following links, the Trust
-  Manager's web-link policy) have landed (docs/evidence/m5-crop-pages.md,
-  m5-page-marks.md, m5-links.md); the rest of M5 is planned.
+  Manager's web-link policy) have landed. `tools-fill-sign` has landed:
+  Add Text, checkmark, cross, dot, circle and line, and Sign with a typed,
+  drawn or image signature or initials kept locally
+  (docs/evidence/m5-crop-pages.md, m5-page-marks.md, m5-links.md,
+  m5-fill-sign.md). The rest of M5 (forms and `scripting`, text editing,
+  redaction, spell check, find-and-replace, images) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

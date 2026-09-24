@@ -107,6 +107,10 @@ impl ShellFrame {
             self.marks = None;
             self.link_dialog = None;
         }
+        #[cfg(feature = "tools-fill-sign")]
+        {
+            self.signature = None;
+        }
         self.send_pages = None;
         self.unsaved = None;
         self.recover = None;

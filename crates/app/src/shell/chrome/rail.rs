@@ -164,6 +164,13 @@ fn icon_glyph(icon: &str) -> &'static str {
         "snapshot" => "▣",
         "crop" => "⌗",
         "link" => "∞",
+        "fill-text" => "Ab",
+        "fill-check" => "✓",
+        "fill-cross" => "✗",
+        "fill-dot" => "•",
+        "fill-circle" => "○",
+        "fill-line" => "╱",
+        "fill-sign" => "✍",
         _ => "?",
     }
 }
@@ -560,6 +567,8 @@ mod tests {
         assert_eq!(icon_glyph("zoom"), "⌕");
         assert_eq!(icon_glyph("dynamic-zoom"), "⇕");
         assert_eq!(icon_glyph("snapshot"), "▣");
+        assert_eq!(icon_glyph("fill-check"), "✓");
+        assert_eq!(icon_glyph("fill-sign"), "✍");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }
 
