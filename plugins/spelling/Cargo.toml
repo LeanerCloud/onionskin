@@ -1,0 +1,17 @@
+[package]
+name = "onionskin-spelling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+# The dictionary is SCOWL's en_US, under its own permissive notice in
+# dictionary/COPYING.
+
+[dependencies]
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
+onionskin-plugin-api.workspace = true
+spellbook = "0.4"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -17,6 +17,7 @@ members = [
     "plugins/codecs-common",
     "plugins/commands-core",
     "plugins/redact",
+    "plugins/spelling",
     "plugins/tools-accessibility",
     "plugins/tools-basic",
     "plugins/tools-comment",
@@ -53,6 +54,7 @@ onionskin-text-engine = { path = "crates/text-engine" }
 onionskin-codecs-common = { path = "plugins/codecs-common" }
 onionskin-commands-core = { path = "plugins/commands-core" }
 onionskin-redact = { path = "plugins/redact" }
+onionskin-spelling = { path = "plugins/spelling" }
 onionskin-tools-accessibility = { path = "plugins/tools-accessibility" }
 onionskin-tools-basic = { path = "plugins/tools-basic" }
 onionskin-tools-comment = { path = "plugins/tools-comment" }
