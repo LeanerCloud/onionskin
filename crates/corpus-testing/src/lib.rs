@@ -18,9 +18,32 @@
 
 use std::path::{Path, PathBuf};
 
-// Deliberately not here: a recursive `pdfs_in`, which the four existing
-// helpers each carry. It belongs in this crate the moment a target that walks
-// a corpus directory reaches for it, and there is not one yet.
+/// Every PDF under `dir`, however deep, sorted. The first target outside
+/// `cos`, `content` and `core` to walk a corpus directory is guarantee test
+/// 8's, so the walk those crates' helpers each carry lives here for it.
+pub fn pdfs_in(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect(dir, &mut out);
+    out.sort();
+    out
+}
+
+fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(&path, out);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+        {
+            out.push(path);
+        }
+    }
+}
 
 /// Root of the shared corpus: `$ONIONSKIN_CORPUS`, else `<workspace>/corpus`.
 ///
@@ -134,4 +157,27 @@ fn workspace_root() -> &'static Path {
         root.display()
     );
     root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_pdf_under_a_directory_is_found_sorted() {
+        let root = std::env::temp_dir().join(format!("pdfs-in-{}", std::process::id()));
+        let nested = root.join("b").join("deeper");
+        std::fs::create_dir_all(&nested).expect("dirs");
+        for path in [
+            root.join("z.pdf"),
+            nested.join("a.PDF"),
+            root.join("b").join("notes.txt"),
+        ] {
+            std::fs::write(path, b"").expect("writes");
+        }
+        let found = pdfs_in(&root);
+        std::fs::remove_dir_all(&root).expect("cleans up");
+        assert_eq!(found, [nested.join("a.PDF"), root.join("z.pdf")]);
+        assert!(pdfs_in(&root).is_empty(), "a missing directory holds none");
+    }
 }
