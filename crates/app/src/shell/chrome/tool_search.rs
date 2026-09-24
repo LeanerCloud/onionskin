@@ -274,6 +274,8 @@ pub(in crate::shell) struct SearchInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     theme: ThemeTokens,
+    /// A password: shown, read out and copied as nothing but asterisks.
+    masked: bool,
 }
 
 impl SearchInput {
@@ -297,6 +299,7 @@ impl SearchInput {
             last_bounds: None,
             is_selecting: false,
             theme,
+            masked: false,
         }
     }
 
@@ -310,6 +313,23 @@ impl SearchInput {
 
     pub(in crate::shell) fn query(&self) -> &str {
         &self.buffer.content
+    }
+
+    /// Hide what is typed, as a password field does.
+    #[cfg_attr(not(feature = "tools-form"), allow(dead_code))]
+    pub(in crate::shell) fn set_masked(&mut self, masked: bool) {
+        self.masked = masked;
+    }
+
+    /// What is typed as the field shows it: an asterisk for every byte when
+    /// masked, so each offset into the text is the same offset into what is
+    /// drawn and the cursor needs no mapping.
+    fn shown(&self) -> String {
+        if self.masked {
+            "*".repeat(self.buffer.content.len())
+        } else {
+            self.buffer.content.clone()
+        }
     }
 
     /// The key the field's own node is published under, so a caller matching
@@ -332,7 +352,7 @@ impl SearchInput {
         field_node(
             self.element_id,
             label,
-            &self.buffer.content,
+            &self.shown(),
             &self.placeholder,
             field,
         )
@@ -411,7 +431,7 @@ impl SearchInput {
     }
 
     fn copy(&mut self, _: &SearchCopy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.buffer.selected_range.is_empty() {
+        if !self.masked && !self.buffer.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.buffer.content[self.buffer.selected_range.clone()].to_owned(),
             ));
@@ -552,6 +572,8 @@ fn field_node(
         TextField::Redact(field) if field.numeric() => accesskit::Role::NumberInput,
         #[cfg(feature = "redact")]
         TextField::Redact(_) => accesskit::Role::TextInput,
+        #[cfg(feature = "tools-form")]
+        TextField::FormField => accesskit::Role::TextInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)
@@ -757,7 +779,7 @@ impl Element for SearchTextElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
-        let content = input.buffer.content.clone();
+        let content = input.shown();
         let selection = input.buffer.selected_range.clone();
         let cursor = input.buffer.cursor_offset();
         let style = window.text_style();
@@ -1233,5 +1255,17 @@ mod tests {
         assert_eq!(typed.value.as_deref(), Some("7"));
         assert_eq!(typed.description, None);
         assert_eq!(typed.activation, Some(Activation::Focus(TextField::Page)));
+
+        let masked = input.update(cx, |input, cx| {
+            input.set_query("sé", cx);
+            input.set_masked(true);
+            input.accessible("Page Number", TextField::Page)
+        });
+        assert_eq!(
+            masked.value.as_deref(),
+            Some("***"),
+            "an asterisk for every byte"
+        );
+        input.update(cx, |input, _| assert_eq!(input.query(), "sé"));
     }
 }

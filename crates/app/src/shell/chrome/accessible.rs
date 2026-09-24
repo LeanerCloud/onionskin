@@ -97,6 +97,9 @@ pub(in crate::shell) enum TextField {
     /// The redaction dialog's fields.
     #[cfg(feature = "redact")]
     Redact(crate::shell::chrome::redact_dialog::RedactField),
+    /// The text box over a form field being filled on the canvas.
+    #[cfg(feature = "tools-form")]
+    FormField,
 }
 
 /// What activating an accessible element does.
@@ -166,6 +169,9 @@ pub(in crate::shell) enum Activation {
     /// The redaction dialog.
     #[cfg(feature = "redact")]
     Redact(crate::shell::chrome::redact_dialog::RedactAction),
+    /// Pick this option of the dropdown being filled on the canvas.
+    #[cfg(feature = "tools-form")]
+    FormOption(usize),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

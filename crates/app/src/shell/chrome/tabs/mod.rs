@@ -9,6 +9,7 @@ mod export;
 mod export_selection;
 mod file;
 mod follow_link;
+mod forms;
 mod frame_state;
 mod inspector;
 mod line_weights;
@@ -31,6 +32,7 @@ mod stamps;
 mod summary;
 mod windows;
 
+pub(in crate::shell) use self::forms::NO_FORMS;
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::redact::{RedactCommand, NO_REDACT};
 pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
@@ -616,6 +618,8 @@ impl ShellFrame {
         self.collect_thumbnails(cx);
         self.collect_link_request(cx);
         self.collect_redaction_request(cx);
+        #[cfg(feature = "tools-form")]
+        self.collect_form_notices(cx);
         self.follow_document_edits(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
@@ -1728,6 +1732,8 @@ mod tests {
     mod export_settings;
     #[cfg(feature = "shell-test-support")]
     mod file;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-form"))]
+    mod forms;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
     #[cfg(feature = "shell-test-support")]
@@ -2259,6 +2265,8 @@ mod tests {
             crate::shell::chrome::install_search_keybindings(cx);
             crate::shell::find_bar::install_keybindings(cx);
             crate::shell::inline_text::install_keybindings(cx);
+            #[cfg(feature = "tools-form")]
+            crate::shell::field_editor::install_keybindings(cx);
             crate::shell::panes::install_comment_keybindings(cx);
             crate::shell::preferences_dialog::install_keybindings(cx);
             crate::shell::chrome::export_dialog::install_keybindings(cx);

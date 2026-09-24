@@ -32,6 +32,8 @@ pub(in crate::shell) enum PreferenceChange {
     Layout(PageLayoutMode),
     Zoom(ZoomPreference),
     LineWeights(bool),
+    /// JavaScript: whether a form's scripts run.
+    JavaScript(bool),
     SearchCaseSensitive(bool),
     SearchWholeWord(bool),
     SearchMode(MatchMode),
@@ -136,6 +138,10 @@ pub(in crate::shell) fn category_rows(
                 choices: switch(preferences.line_weights, PreferenceChange::LineWeights),
             },
         ],
+        PreferenceCategory::JavaScript => vec![PreferenceRow {
+            label: "Enable Acrobat JavaScript".to_owned(),
+            choices: switch(preferences.javascript, PreferenceChange::JavaScript),
+        }],
         PreferenceCategory::TrustManager => {
             let mut rows = vec![PreferenceRow {
                 label: "Open web links".to_owned(),
@@ -549,6 +555,20 @@ mod tests {
 
     /// Page Display's Line Weights switch shows the setting in force and
     /// changes it, as the View menu's entry does.
+    #[test]
+    fn javascript_is_a_switch_that_starts_on() {
+        let rows = category_rows(&Preferences::default(), PreferenceCategory::JavaScript);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Enable Acrobat JavaScript");
+        let selected: Vec<_> = rows[0]
+            .choices
+            .iter()
+            .filter(|choice| choice.selected)
+            .map(|choice| choice.change)
+            .collect();
+        assert_eq!(selected, [PreferenceChange::JavaScript(true)]);
+    }
+
     #[test]
     fn page_display_offers_line_weights_as_a_switch() {
         let off = Preferences {

@@ -617,7 +617,13 @@ what-does-not-transfer section demands:
   m5-fill-sign.md). `redact` has landed: marking text, regions, pages and
   search results, properties and code sets, Apply Redactions as a verified
   flattening rewrite, and Remove Hidden Information; guarantee test 3 runs
-  (m5-redaction.md). The rest of M5 (forms and `scripting`, text editing,
+  (m5-redaction.md). Filling forms has landed: `scripting` runs the
+  Acrobat forms API subset on Boa, sandboxed, and the Hand tool fills
+  text fields, dropdowns, list boxes, check boxes and radio buttons with
+  their keystroke, validate, calculate and format scripts, Tab between
+  fields, Clear Form, and the JavaScript preference (m5-forms.md).
+  Guarantee test 7 waits on the JS-forms corpus's values recorded in
+  Acrobat. The rest of M5 (preparing forms, auto-complete, text editing,
   spell check, find-and-replace, images) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,

@@ -196,6 +196,8 @@ pub(in crate::shell) enum MenuCommand {
     Signature {
         initials: bool,
     },
+    /// Clear Form: every field of the document's form back to its default.
+    ClearForm,
     /// The redaction commands: marking pages, finding, properties, and
     /// writing a redacted or sanitized copy.
     Redact(super::tabs::RedactCommand),
@@ -771,6 +773,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain(signature_entries(state))
+            .chain([clear_form_entry(state)])
             .chain(redact_entries(state))
             .chain([MenuEntry {
                 command: MenuCommand::SummarizeComments,
@@ -966,6 +969,25 @@ fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
         availability,
         selected: false,
     })
+}
+
+/// Clear Form: live in a build that fills forms, on a document that may be
+/// edited. A document with no form says so when it is run.
+fn clear_form_entry(state: MenuState) -> MenuEntry {
+    let availability = match (cfg!(feature = "tools-form"), state.has_active_tab) {
+        (false, _) => MenuAvailability::Disabled(super::tabs::NO_FORMS),
+        (true, false) => MenuAvailability::Disabled("No document is open"),
+        (true, true) => state
+            .registry
+            .edit_refusal
+            .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
+    };
+    MenuEntry {
+        command: MenuCommand::ClearForm,
+        label: "Clear Form",
+        availability,
+        selected: false,
+    }
 }
 
 /// The redaction entries: live when a tool marks for redaction and a
@@ -1435,6 +1457,7 @@ impl MenuCommand {
             | Self::Stamps
             | Self::PasteStamp
             | Self::Signature { .. }
+            | Self::ClearForm
             | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
@@ -1507,6 +1530,7 @@ impl MenuCommand {
             | Self::Stamps
             | Self::PasteStamp
             | Self::Signature { .. }
+            | Self::ClearForm
             | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
@@ -1723,6 +1747,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Stamps
         | MenuCommand::PasteStamp
         | MenuCommand::Signature { .. }
+        | MenuCommand::ClearForm
         | MenuCommand::Redact(_)
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
@@ -2256,6 +2281,7 @@ mod tests {
                 "Paste Clipboard Image as Stamp",
                 "Add Signature…",
                 "Add Initials…",
+                "Clear Form",
                 "Mark Pages for Redaction…",
                 "Find Text & Redact…",
                 "Redaction Properties…",

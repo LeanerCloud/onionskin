@@ -176,6 +176,10 @@ pub struct ToolEnvironment {
     /// The look new redaction marks take, as Redaction Properties last set
     /// it; `None` for the redaction tool's own default.
     pub redaction: Option<RedactionDefault>,
+    /// Preferences > JavaScript has Acrobat JavaScript turned off, so a
+    /// form's scripts do not run when it is filled. Off by default, which
+    /// is scripts running.
+    pub javascript_off: bool,
 }
 
 /// How a redaction mark looks, as a preference: whole numbers, so the file

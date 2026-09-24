@@ -122,6 +122,7 @@ pub enum PreferenceCategory {
     Commenting,
     Documents,
     General,
+    JavaScript,
     PageDisplay,
     Search,
     TrustManager,
@@ -129,10 +130,11 @@ pub enum PreferenceCategory {
 
 impl PreferenceCategory {
     /// Acrobat's order, which is alphabetical.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Commenting,
         Self::Documents,
         Self::General,
+        Self::JavaScript,
         Self::PageDisplay,
         Self::Search,
         Self::TrustManager,
@@ -143,6 +145,7 @@ impl PreferenceCategory {
             Self::Commenting => "Commenting",
             Self::Documents => "Documents",
             Self::General => "General",
+            Self::JavaScript => "JavaScript",
             Self::PageDisplay => "Page Display",
             Self::Search => "Search",
             Self::TrustManager => "Trust Manager",
@@ -224,6 +227,9 @@ pub struct Preferences {
     /// Redaction Properties: the look new marks take. `None` for the
     /// redaction tool's own.
     pub redaction: Option<onionskin_plugin_api::RedactionDefault>,
+    /// JavaScript: "Enable Acrobat JavaScript", which here is a form's
+    /// calculation, validation and format scripts.
+    pub javascript: bool,
 }
 
 impl Default for Preferences {
@@ -243,6 +249,7 @@ impl Default for Preferences {
             web_links: WebLinks::default(),
             trusted_sites: BTreeSet::new(),
             redaction: None,
+            javascript: true,
         }
     }
 }
@@ -419,6 +426,7 @@ impl Preferences {
         file.insert("page_layout".into(), layout_key(self.layout).into());
         file.insert("zoom".into(), self.zoom.key().into());
         file.insert("line_weights".into(), self.line_weights.into());
+        file.insert("javascript".into(), self.javascript.into());
         file.insert(
             "search_case_sensitive".into(),
             self.search.case_sensitive.into(),
@@ -478,6 +486,7 @@ fn apply(
         "search_case_sensitive" => preferences.search.case_sensitive = flag(path, setting, value)?,
         "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
         "line_weights" => preferences.line_weights = flag(path, setting, value)?,
+        "javascript" => preferences.javascript = flag(path, setting, value)?,
         "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
         "commenting_author" => preferences.commenting_author = author(path, setting, value)?,
         "redaction" => {
@@ -843,6 +852,7 @@ mod tests {
                 outline: [255, 0, 0],
                 overlay: None,
             }),
+            javascript: false,
         };
 
         written.save(&path).expect("preferences save");
@@ -1103,6 +1113,7 @@ mod tests {
                 "Commenting",
                 "Documents",
                 "General",
+                "JavaScript",
                 "Page Display",
                 "Search",
                 "Trust Manager"

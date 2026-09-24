@@ -151,6 +151,10 @@ impl ShellFrame {
                 self.adopt_line_weights(on, cx);
                 super::line_weights::tell_other_windows(cx.entity_id(), on, cx);
             }
+            PreferenceChange::JavaScript(on) => {
+                preferences.javascript = on;
+                self.apply_tool_environment(cx);
+            }
             PreferenceChange::SearchCaseSensitive(on) => preferences.search.case_sensitive = on,
             PreferenceChange::SearchWholeWord(on) => preferences.search.whole_word = on,
             PreferenceChange::SearchMode(mode) => preferences.search.mode = mode,

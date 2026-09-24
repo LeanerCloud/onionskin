@@ -38,6 +38,8 @@ pub mod canvas;
 mod chrome;
 mod context_menu;
 mod dialog;
+#[cfg(feature = "tools-form")]
+mod field_editor;
 mod find_bar;
 #[cfg(test)]
 mod fixtures;
@@ -143,6 +145,7 @@ impl ShellSettings {
             comment_defaults: self.preferences.comment_defaults.clone(),
             redaction: self.preferences.redaction.clone(),
             data_dir: self.paths.data.clone(),
+            javascript_off: !self.preferences.javascript,
         }
     }
 
@@ -291,6 +294,9 @@ pub struct Canvas {
     theme: ThemeTokens,
     /// The field a just-placed comment is typed into, while it is open.
     inline: Option<inline_text::InlineText>,
+    /// The form field being filled, while its editor is open.
+    #[cfg(feature = "tools-form")]
+    field_editor: Option<field_editor::FieldEditor>,
     /// The session stamp last passed on to other windows on this document.
     told_peers: (u64, u64),
 }
@@ -305,6 +311,8 @@ impl Canvas {
             told_peers,
             theme,
             inline: None,
+            #[cfg(feature = "tools-form")]
+            field_editor: None,
         }
     }
 
@@ -553,6 +561,7 @@ impl Canvas {
         title: &str,
         scale: f32,
         with_text: bool,
+        cx: &App,
     ) -> A11yElement {
         let origin = self.model.canvas_origin();
         let page_count = self.model.viewport().page_count();
@@ -636,6 +645,12 @@ impl Canvas {
                 status_text(status),
             ));
         }
+        #[cfg(feature = "tools-form")]
+        if let Some(editor) = self.field_editor_node(scale, cx) {
+            document = document.child(editor);
+        }
+        #[cfg(not(feature = "tools-form"))]
+        let _ = cx;
         document
     }
 
@@ -648,6 +663,9 @@ impl Canvas {
         // Pressing anywhere else on the canvas finishes the comment being
         // typed, as clicking away from Acrobat's pop-up does.
         self.finish_inline_text(cx);
+        // And leaving a form field commits it.
+        #[cfg(feature = "tools-form")]
+        self.commit_field_editor(cx);
         self.model.set_click_count(event.click_count);
         let result = self
             .model
@@ -670,11 +688,15 @@ impl Canvas {
         self.handle_change(result, cx);
     }
 
-    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let result = self
             .model
             .pointer_up(event.position, event.pressure, event.modifiers);
         self.handle_change(result, cx);
+        #[cfg(feature = "tools-form")]
+        self.answer_field(window, cx);
+        #[cfg(not(feature = "tools-form"))]
+        let _ = window;
     }
 
     fn on_mouse_up_out(
@@ -766,6 +788,8 @@ impl Render for Canvas {
         self.drive_auto_scroll(window, cx);
         self.sync_inline_text(window, cx);
         let inline = self.render_inline_text(self.theme, cx);
+        #[cfg(feature = "tools-form")]
+        let field_editor = self.render_field_editor(self.theme, cx);
         let prepare_entity = cx.entity();
         let exit_entity = cx.entity();
         let error_entity = cx.entity();
@@ -880,6 +904,10 @@ impl Render for Canvas {
         if let Some(inline) = inline {
             root = root.child(inline);
         }
+        #[cfg(feature = "tools-form")]
+        if let Some(editor) = field_editor {
+            root = root.child(editor);
+        }
         root
     }
 }
@@ -926,6 +954,8 @@ where
         install_export_keybindings(cx);
         find_bar::install_keybindings(cx);
         inline_text::install_keybindings(cx);
+        #[cfg(feature = "tools-form")]
+        field_editor::install_keybindings(cx);
         panes::install_comment_keybindings(cx);
         preferences_dialog::install_keybindings(cx);
         chrome::install_a11y_keybindings(cx);

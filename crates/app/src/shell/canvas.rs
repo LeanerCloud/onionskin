@@ -25,11 +25,15 @@ mod auto_scroll;
 mod comment_reads;
 mod edit_verbs;
 mod file_ops;
+#[cfg(feature = "tools-form")]
+mod forms;
 
 pub(in crate::shell) use auto_scroll::AutoScrollChange;
 pub use comment_reads::CommentReads;
 pub use edit_verbs::edit_verb_refusal;
 pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
+#[cfg(feature = "tools-form")]
+pub use forms::{Entry, FieldPrompt};
 
 use super::input::{
     pointer_input, pointer_input_near, validate_pressure, DragKind, DragUpdate, InputError,
@@ -496,6 +500,9 @@ pub struct CanvasModel {
     page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
     /// View > Page Display > Automatically Scroll, while it runs.
     auto_scroll: Option<onionskin_core::AutoScroll>,
+    /// Whether form scripts run, and what filling had to say.
+    #[cfg(feature = "tools-form")]
+    forms: forms::FormFilling,
     /// `(byte generation, edit epoch)` the layout was last built for, so an
     /// edit made in another window on the same document is followed.
     laid_out_at: (u64, u64),
@@ -572,6 +579,7 @@ impl CanvasModel {
             // knows before starting work they cannot keep.
             let status = file
                 .protection_notice()
+                .or_else(|| form_notice(&mut file))
                 .map(|message| CanvasStatus::Notice { message });
             let laid_out_at = (file.byte_generation(), file.edit().epoch());
             let hairline_strokes = file.hairline_strokes();
@@ -612,6 +620,8 @@ impl CanvasModel {
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
             auto_scroll: None,
+            #[cfg(feature = "tools-form")]
+            forms: forms::FormFilling::default(),
         })
     }
 
@@ -626,6 +636,8 @@ impl CanvasModel {
     /// Hand this tab's tools the shell's environment.
     pub(super) fn configure_tools(&mut self, environment: &onionskin_plugin_api::ToolEnvironment) {
         self.author.clone_from(&environment.author);
+        #[cfg(feature = "tools-form")]
+        self.set_form_scripts(!environment.javascript_off);
         self.registry.configure_tools(environment);
     }
 
@@ -2482,23 +2494,14 @@ impl CanvasModel {
     /// where Acrobat opens its pop-up note.
     pub fn text_target_rect(&self) -> Option<(ViewPoint, f32, f32)> {
         let target = self.text_target?;
-        let corner = |x: f64, y: f64| {
-            self.map_point(PagePoint {
-                page: target.page,
-                x,
-                y,
-            })
-        };
-        let top_left = corner(target.rect.x0, target.rect.y1)?;
-        let bottom_right = corner(target.rect.x1, target.rect.y0)?;
-        let (left, right) = (
-            top_left.x.min(bottom_right.x),
-            top_left.x.max(bottom_right.x),
-        );
-        let (top, bottom) = (
-            top_left.y.min(bottom_right.y),
-            top_left.y.max(bottom_right.y),
-        );
+        let rect = [
+            target.rect.x0,
+            target.rect.y0,
+            target.rect.x1,
+            target.rect.y1,
+        ];
+        let (at, width, height) = self.view_rect(target.page, rect)?;
+        let (left, right, top, bottom) = (at.x, at.x + width, at.y, at.y + height);
         if target.popup {
             Some((
                 ViewPoint {
@@ -2515,6 +2518,32 @@ impl CanvasModel {
                 (bottom - top).max(28.0),
             ))
         }
+    }
+
+    /// Where page rectangle `rect` on `page` is, in canvas coordinates: its
+    /// top-left corner, width and height, whatever the page's rotation.
+    pub fn view_rect(
+        &self,
+        page: PageIndex,
+        [x0, y0, x1, y1]: [f64; 4],
+    ) -> Option<(ViewPoint, f32, f32)> {
+        let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+            .map(|(x, y)| self.map_point(PagePoint { page, x, y }));
+        let mut points = Vec::with_capacity(4);
+        for corner in corners {
+            points.push(corner?);
+        }
+        let left = points.iter().map(|at| at.x).fold(f32::INFINITY, f32::min);
+        let right = points
+            .iter()
+            .map(|at| at.x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let top = points.iter().map(|at| at.y).fold(f32::INFINITY, f32::min);
+        let bottom = points
+            .iter()
+            .map(|at| at.y)
+            .fold(f32::NEG_INFINITY, f32::max);
+        Some((ViewPoint { x: left, y: top }, right - left, bottom - top))
     }
 
     /// Write `text` into the waiting comment, as one undoable step, and stop
@@ -2620,6 +2649,12 @@ impl CanvasModel {
 
 /// The box around a hit's quads. A hit that wraps two lines is revealed as the
 /// one region it occupies, not as its first quad.
+/// What the document's form needs said when it opens, if anything.
+fn form_notice(file: &mut onionskin_core::DocumentFile) -> Option<String> {
+    let form = file.document_mut().form().ok()?;
+    form.notice().map(str::to_owned)
+}
+
 fn union_rect(rects: &[ViewRect]) -> Option<ViewRect> {
     let first = rects.first()?;
     let mut left = first.origin.x;

@@ -131,8 +131,8 @@ impl ShellFrame {
             // reader meets one or the other, not both.
             root = root.child(match self.accessible_grid(cx) {
                 Some(grid) => grid,
-                None => canvas.update(cx, |canvas, _cx| {
-                    canvas.accessible(&title, scale, with_text)
+                None => canvas.update(cx, |canvas, cx| {
+                    canvas.accessible(&title, scale, with_text, cx)
                 }),
             });
             if visibility.quick_actions {
@@ -514,6 +514,8 @@ impl ShellFrame {
             Activation::Signature(action) => self.run_signature_action(action, window, cx),
             #[cfg(feature = "redact")]
             Activation::Redact(action) => self.run_redact_action(action, window, cx),
+            #[cfg(feature = "tools-form")]
+            Activation::FormOption(index) => self.choose_form_option(index, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -524,7 +526,7 @@ impl ShellFrame {
             Activation::BookmarkTitle(action) => self.run_bookmark_title_action(action, window, cx),
             Activation::File(action) => self.run_file_action(action, window, cx),
             Activation::Focus(field) => {
-                if let Some(input) = self.text_field(field) {
+                if let Some(input) = self.focusable_field(field, cx) {
                     window.focus(&input.read(cx).focus_handle(cx));
                 }
             }
@@ -633,7 +635,7 @@ impl ShellFrame {
     pub(super) fn focus_ring_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.a11y.focused_activation() {
             Some(Activation::Focus(field)) => {
-                if let Some(input) = self.text_field(field) {
+                if let Some(input) = self.focusable_field(field, cx) {
                     window.focus(&input.read(cx).focus_handle(cx));
                 }
             }
@@ -730,11 +732,26 @@ impl ShellFrame {
                 .redact
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            // The canvas holds it, not the frame; see `focusable_field`.
+            #[cfg(feature = "tools-form")]
+            TextField::FormField => None,
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
         }
+    }
+
+    /// The input to focus for `field`: the frame's own, or the form field
+    /// editor the active canvas holds.
+    fn focusable_field(&self, field: TextField, cx: &App) -> Option<Entity<SearchInput>> {
+        #[cfg(feature = "tools-form")]
+        if field == TextField::FormField {
+            return self.active_canvas()?.read(cx).field_editor_input();
+        }
+        #[cfg(not(feature = "tools-form"))]
+        let _ = cx;
+        self.text_field(field).cloned()
     }
 
     /// Enter or Space: run what clicking the focused control would run.
@@ -810,8 +827,21 @@ impl ShellFrame {
         .into_iter()
         .chain(self.navigation.comment_draft())
         .chain([&self.inspector.author, &self.inspector.subject])
+        .cloned()
+        .chain(self.canvas_field_input(cx))
         .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
         .map(|input| input.read(cx).element_id().into())
+    }
+
+    /// The form field editor's text box on the active canvas, while open.
+    fn canvas_field_input(&self, cx: &App) -> Option<Entity<SearchInput>> {
+        #[cfg(feature = "tools-form")]
+        return self.active_canvas()?.read(cx).field_editor_input();
+        #[cfg(not(feature = "tools-form"))]
+        {
+            let _ = cx;
+            None
+        }
     }
 
     pub(super) fn text_field_focused(&self, window: &Window, cx: &App) -> bool {

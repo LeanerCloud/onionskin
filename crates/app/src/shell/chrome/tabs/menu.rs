@@ -368,6 +368,10 @@ impl ShellFrame {
                 self.run_redact_command(command, window, cx);
                 Ok(())
             }
+            MenuCommand::ClearForm => {
+                self.run_clear_form(cx);
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]

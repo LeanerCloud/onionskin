@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 128 planned / 31 partial / 80 out-of-scope. 164 implemented.**
+**403 rows: 124 planned / 33 partial / 80 out-of-scope. 166 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -481,17 +481,17 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Digital signature field | planned | M5 | Field at M5; signing at M6. |
 | Barcode field | planned | post-1.0 | Barcode form fields are a named post-1.0 slot. |
 | Field properties: General, Appearance, Position, Options, Actions | planned | M5 | |
-| Field properties: Format, Validate, Calculate | planned | M5 | The intended subset will be backed by `scripting` (Boa): `AFNumber_Format`, `AFSimple_Calculate`, and related helpers. Anything outside that subset must get a visible notice rather than a silent wrong value. No usable subset has shipped. |
-| Tab order / form field navigation | planned | M5 | |
-| Fill in a form (as an end user) | planned | M5 | Guarantee test 7: the JS-forms corpus fills like Acrobat. |
-| Clear form | planned | M5 | |
+| Field properties: Format, Validate, Calculate | planned | M5 | A form's own Format, Keystroke, Validate and Calculate scripts run when it is filled (see Fill in a form), on `scripting` (Boa): the `AF` number, percent, date, time, special and range functions, `AFSimple_Calculate`, `event`, `getField`, `util.printf`/`printd`/`scand` and `app.alert`. Setting them in a field's properties has not shipped. |
+| Tab order / form field navigation | partial | M5 | While a field is being filled, Tab and Shift-Tab commit it and move to the next or previous text field or dropdown, page by page, top to bottom then left to right, going round. The page's `/Tabs` order and setting a tab order when preparing a form are not honoured yet, and Tab does not stop on check boxes, radio buttons or list boxes. Evidence: docs/evidence/m5-forms.md. |
+| Fill in a form (as an end user) | partial | M5 | The Hand tool fills AcroForm fields where they are: a text box over a text field (masked for a password, capped at its length), a dropdown's options (typed text too when it is editable), a list box row by click (turned over in a multiple choice), check boxes and radio buttons toggled. A value goes through the field's Keystroke and Validate scripts, which can refuse it with their alert on the notice bar; calculations follow in the form's order, formats draw the result, and it is one undo step. A script outside the forms subset is named in a notice, not silently skipped. Buttons and signature fields say why a click does nothing. Guarantee test 7 is not run: the JS-forms corpus waits on values recorded in Acrobat (`corpus/js-forms/README.md`). Evidence: docs/evidence/m5-forms.md. |
+| Clear form | implemented | M5 | Edit > Clear Form puts every field back to its default (`/DV`), with new appearances, as one undo step; on a document without fields it says so. Offered in the Edit menu rather than Prepare Form's More menu, since filling is where a form is cleared. (judgment) Evidence: docs/evidence/m5-forms.md. |
 | Auto-Complete form entries (Off / Basic / Advanced, plus the editable entry list) | planned | M5 | Named in the plan's M5 list. It stays local, which is exactly why the stored entry list has to be inspectable and clearable. |
 | Import / export form data (FDF, XFDF, XML) | planned | post-1.0 | XFDF is a named post-1.0 slot. |
 | Distribute a form (email or internal server) | out-of-scope | - | A distribution and response-collection workflow, cloud- and server-tethered. |
 | Track forms / Forms Tracker / collect responses | out-of-scope | - | A cloud- and server-tethered response-collection workflow; it only exists once a form has been distributed. |
 | Create a web form | out-of-scope | - | Cloud-hosted service. |
-| XFA / LiveCycle Designer forms | out-of-scope | - | Legal posture rule 5: XFA is Adobe-specified, deprecated in PDF 2.0, and outside the clean ISO patent story. Future open handling must detect it and show an explicit read-only notice; that notice has not shipped. |
-| Document-level and interactive JavaScript beyond the forms API | out-of-scope | - | Decision 9 limits future scripting to a forms subset with no I/O and a fuel budget. Unsupported JavaScript must eventually produce a visible notice; that notice has not shipped. |
+| XFA / LiveCycle Designer forms | out-of-scope | - | Legal posture rule 5: XFA is Adobe-specified, deprecated in PDF 2.0, and outside the clean ISO patent story. A document with XFA says so when it opens: a pure XFA form is shown as drawn and read-only, and a hybrid form's standard fields are the ones filled. Evidence: docs/evidence/m5-forms.md. |
+| Document-level and interactive JavaScript beyond the forms API | out-of-scope | - | Decision 9 limits scripting to a forms subset with no I/O and a fuel budget. A field script that uses anything outside it, throws, or runs out of its budget produces a notice naming the field. Evidence: docs/evidence/m5-forms.md. |
 
 ## Toolset: Redact a PDF
 
@@ -520,7 +520,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Security policies (save and reuse a security setting) | planned | post-1.0 | Convenience layer over the same primitives. |
 | Adobe Experience Manager / LiveCycle Rights Management policies | out-of-scope | - | Server-tethered enterprise DRM. |
 | Protected View / Enhanced Security / privileged locations | out-of-scope | - | These configure Acrobat's sandbox around document JavaScript, embedded media and network access. Onionskin's `scripting` sandbox has no I/O and no network at all, so there is nothing to loosen or tighten. |
-| JavaScript preferences (enable or disable document JavaScript) | planned | M5 | Decision 9: a user-facing preference disables document JavaScript entirely, mirroring Acrobat's. Ships with `scripting` at M5. |
+| JavaScript preferences (enable or disable document JavaScript) | implemented | M5 | Preferences > JavaScript > Enable Acrobat JavaScript, on by default: off, a form is filled with no script run, as typed. Decision 9. Evidence: docs/evidence/m5-forms.md. |
 | Trust Manager: allow or block links and attachment opening | implemented | M5 | Preferences > Trust Manager: web links open after asking (with Always Allow for the site), always, or never, and each always-allowed site is listed and can be forgotten. A file link opens only a PDF, in Onionskin, and an attachment is only ever saved, never opened with another application, so there is no attachment type to trust. The JavaScript preference is its own row. (judgment) Evidence: docs/evidence/m5-links.md. |
 | Document properties > Security tab | planned | M6 | (judgment) |
 
