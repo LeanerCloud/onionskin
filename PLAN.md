@@ -647,7 +647,11 @@ what-does-not-transfer section demands:
   signature appearance management, trusted-identity management, timestamping
   and LTV, encrypted-document open/save, PAdES signing.
   `tools-accessibility`: checker, reading-order repair, Read Out Loud.
-  `tools-measure`.
+  `tools-measure`. Status: the Measure tools have landed. Distance,
+  Perimeter and Area snap to the page's line art, read against a shared
+  scale in the side panel's Measurement Info, and keep each measurement as
+  a dimension comment Acrobat reads (m6-measure.md). Typing a scale,
+  precision, and rulers and grids are still to come.
 - **Post-1.0.** The MCP server (`crates/mcp`): sessions, `describe`,
   generic invokers over the registry and `render` returning inline PNG, with
   Schist's `mcp` crate as the template; moved here from M4. Then

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 101 planned / 43 partial / 80 out-of-scope. 179 implemented.**
+**403 rows: 94 planned / 45 partial / 80 out-of-scope. 184 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -560,13 +560,13 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Distance tool | planned | M6 | Named in the plan's `tools-measure` list. |
-| Perimeter tool | planned | M6 | Named in the plan's `tools-measure` list. |
-| Area tool | planned | M6 | Named in the plan's `tools-measure` list. |
-| Scale ratio and units | planned | M6 | |
-| 2D snap settings (endpoints, midpoints, intersections; sensitivity, snap hint colour) | planned | M6 | (judgment) |
-| Enable Measurement Markup (persist a measurement as an annotation) | planned | M6 | (judgment) |
-| Measurement Info panel (live measurement, delta X/Y, active scale) | planned | M6 | (judgment) |
+| Distance tool | implemented | M6 | Two clicks or a drag, snapped; read against the scale and kept as a `/LineDimension` line (m6-measure.md). |
+| Perimeter tool | implemented | M6 | Clicked point by point, ended by a double click or Enter; kept as a `/PolyLineDimension` polyline (m6-measure.md). |
+| Area tool | implemented | M6 | Ended by a click on the first corner, a double click or Enter; kept as a `/PolygonDimension` polygon (m6-measure.md). |
+| Scale ratio and units | partial | M6 | Nine units, written to `/Measure` and read back; the side panel lists eight scales and keeps any other set through the tool, but has no field to type one. Precision is fixed at two places (m6-measure.md). |
+| 2D snap settings (endpoints, midpoints, intersections; sensitivity, snap hint colour) | partial | M6 | Endpoints, midpoints, intersections and paths, each on or off. Sensitivity (8 view pixels) and the hint's colour are fixed (m6-measure.md). |
+| Enable Measurement Markup (persist a measurement as an annotation) | implemented | M6 | On by default, turned off in the side panel; the value is in `/Contents` and drawn as the caption (m6-measure.md). |
+| Measurement Info panel (live measurement, delta X/Y, active scale) | implemented | M6 | The side panel's Measurement Info: the scale, the value, ΔX, ΔY, the angle and what was snapped to (m6-measure.md). |
 | Geospatial location tool (read coordinates off a map PDF) | out-of-scope | - | Geospatial PDFs are named out of scope in the plan's GUI parity bullet: no crate owns coordinate systems and no plan milestone claims them. |
 | Register / edit geospatial map info | out-of-scope | - | Authoring the map registration a geospatial PDF carries; geospatial PDFs are out of scope in the plan's GUI parity bullet. |
 | Measure 3D objects | out-of-scope | - | 3D only; see Rich media and 3D. |
