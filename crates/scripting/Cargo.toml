@@ -4,3 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+# Decision 9: the one pure-Rust JavaScript engine, for the forms subset.
+boa_engine = "0.22"
+# Field values go in and results come out as JSON, which is also a
+# JavaScript literal.
+serde_json.workspace = true
