@@ -31,6 +31,22 @@ const NOTHING_TO_COUNT: &str = "No search yet";
 
 pub(in crate::shell) const FIND_INPUT_ID: &str = "find-input";
 pub(in crate::shell) const FIND_PLACEHOLDER: &str = "Find in document";
+/// The Replace row's field, named here for the same reason.
+pub(in crate::shell) const REPLACE_INPUT_ID: &str = "find-replace-input";
+pub(in crate::shell) const REPLACE_PLACEHOLDER: &str = "Replace with";
+
+/// The Replace row's two buttons: the match on screen, or every one.
+const REPLACE_BUTTONS: [(&str, &str, bool); 2] = [
+    ("find-replace", "Replace", false),
+    ("find-replace-all", "Replace All", true),
+];
+
+/// Acrobat's Replace Text, under the find bar: what replaces the matches,
+/// and why the buttons are off when they are.
+pub(in crate::shell) struct ReplaceRow<'a> {
+    pub(in crate::shell) replacement: &'a str,
+    pub(in crate::shell) refusal: Option<&'static str>,
+}
 
 const BOOKMARKS_DEFERRED: &str = "Bookmarks arrive with the navigation panes in M2 P8";
 
@@ -317,6 +333,7 @@ pub(in crate::shell) fn accessible(
     state: FindBarState,
     summary: &FindSummary,
     query: &str,
+    replace: &ReplaceRow<'_>,
     rects: &Rects,
 ) -> Element {
     let mut bar = Element::new("find-bar", Role::Toolbar, "Find").with_children(
@@ -345,6 +362,9 @@ pub(in crate::shell) fn accessible(
                 })
                 .with_description(reason),
         );
+    }
+    for node in describe_replace(replace) {
+        bar = bar.child(node);
     }
     if let Some(progress) = summary.progress_label() {
         bar = bar.child(Element::new("find-progress", Role::Label, progress));
@@ -386,6 +406,32 @@ fn describe(item: Item, summary: &FindSummary, query: &str) -> Element {
     }
 }
 
+/// The Replace row: its field, then its buttons, off with the reason when
+/// the document cannot be edited.
+fn describe_replace(replace: &ReplaceRow<'_>) -> Vec<Element> {
+    let mut field = Element::new(REPLACE_INPUT_ID, Role::TextInput, "Replace With")
+        .with_value(replace.replacement)
+        .with_activation(Activation::Focus(TextField::Replace));
+    if replace.replacement.is_empty() {
+        field = field.with_description(REPLACE_PLACEHOLDER);
+    }
+    let buttons = REPLACE_BUTTONS.into_iter().map(|(id, label, all)| {
+        let node = Element::new(id, Role::Button, label);
+        match replace.refusal {
+            Some(reason) => node
+                .with_state(A11yState {
+                    toggled: None,
+                    selected: None,
+                    disabled: true,
+                    read_only: false,
+                })
+                .with_description(reason),
+            None => node.with_activation(Activation::ReplaceText { all }),
+        }
+    });
+    std::iter::once(field).chain(buttons).collect()
+}
+
 fn describe_option(
     id: &'static str,
     label: &'static str,
@@ -398,9 +444,12 @@ fn describe_option(
         .with_activation(Activation::ApplyFindOption(option))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::shell) fn render_find_bar(
     state: FindBarState,
     input: Entity<SearchInput>,
+    replace_input: Entity<SearchInput>,
+    replace_refusal: Option<&'static str>,
     summary: &FindSummary,
     rects: Rects,
     theme: ThemeTokens,
@@ -456,7 +505,8 @@ pub(in crate::shell) fn render_find_bar(
         .on_action(cx.listener(ShellFrame::find_next_match))
         .on_action(cx.listener(ShellFrame::find_previous_match))
         .child(query_row)
-        .child(option_row);
+        .child(option_row)
+        .child(replace_row(replace_input, replace_refusal, theme, cx));
     for (_, label, reason) in DEFERRED {
         bar = bar.child(deferred_checkbox(label, reason, theme));
     }
@@ -481,6 +531,40 @@ pub(in crate::shell) fn render_find_bar(
                     .child(problem)
             }),
     )
+}
+
+fn replace_row(
+    input: Entity<SearchInput>,
+    refusal: Option<&'static str>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().w(px(200.0)).flex_none().child(input));
+    for (id, label, all) in REPLACE_BUTTONS {
+        let button = div()
+            .id(id)
+            .h(px(22.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .rounded_sm()
+            .text_xs();
+        row = row.child(match refusal {
+            Some(_) => button.text_color(theme.disabled_text).child(label),
+            None => button
+                .cursor_pointer()
+                .hover(move |style| style.bg(theme.hover))
+                .on_click(cx.listener(move |frame, _event, window, cx| {
+                    frame.run_activation(Activation::ReplaceText { all }, window, cx);
+                }))
+                .child(label),
+        });
+    }
+    row
 }
 
 fn glyph_button(
@@ -550,6 +634,32 @@ fn deferred_checkbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NO_REPLACE: ReplaceRow<'static> = ReplaceRow {
+        replacement: "",
+        refusal: None,
+    };
+
+    #[test]
+    fn the_replace_row_is_a_field_and_two_buttons_off_with_the_reason() {
+        let live = describe_replace(&NO_REPLACE);
+        let labels: Vec<_> = live.iter().map(|node| node.label.clone()).collect();
+        assert_eq!(labels, ["Replace With", "Replace", "Replace All"]);
+        assert_eq!(
+            live[2].activation,
+            Some(Activation::ReplaceText { all: true })
+        );
+        let off = describe_replace(&ReplaceRow {
+            replacement: "new",
+            refusal: Some("The document is protected"),
+        });
+        assert_eq!(off[0].value.as_deref(), Some("new"));
+        assert!(off[1].state.disabled && off[1].activation.is_none());
+        assert_eq!(
+            off[2].description.as_deref(),
+            Some("The document is protected")
+        );
+    }
 
     fn summary(matches: usize, current: Option<usize>, running: bool) -> FindSummary {
         FindSummary {
@@ -696,6 +806,7 @@ mod tests {
             FindBarState::default(),
             &summary(12, Some(3), false),
             "ink",
+            &NO_REPLACE,
             &Rects::default(),
         );
 
@@ -727,7 +838,13 @@ mod tests {
         state.apply(FindOption::CaseSensitive);
         state.apply(FindOption::Mode(MatchMode::AllWords));
 
-        let described = accessible(state, &summary(0, None, false), "ink", &Rects::default());
+        let described = accessible(
+            state,
+            &summary(0, None, false),
+            "ink",
+            &NO_REPLACE,
+            &Rects::default(),
+        );
 
         let case = described.find(&"find-match-case".into()).unwrap();
         assert_eq!(case.role, Role::CheckBox);
@@ -765,6 +882,7 @@ mod tests {
             FindBarState::default(),
             &summary(0, None, false),
             "",
+            &NO_REPLACE,
             &Rects::default(),
         );
 
@@ -781,7 +899,13 @@ mod tests {
     #[test]
     fn include_comments_is_a_live_checkbox_that_changes_the_search() {
         let mut state = FindBarState::default();
-        let described = accessible(state, &summary(0, None, false), "", &Rects::default());
+        let described = accessible(
+            state,
+            &summary(0, None, false),
+            "",
+            &NO_REPLACE,
+            &Rects::default(),
+        );
         let comments = described.find(&"find-include-comments".into()).unwrap();
         assert!(!comments.state.disabled);
         assert_eq!(comments.state.toggled, Some(false));
@@ -794,7 +918,13 @@ mod tests {
             "it changes the query"
         );
         assert!(state.options().include_comments);
-        let described = accessible(state, &summary(0, None, false), "", &Rects::default());
+        let described = accessible(
+            state,
+            &summary(0, None, false),
+            "",
+            &NO_REPLACE,
+            &Rects::default(),
+        );
         assert_eq!(
             described
                 .find(&"find-include-comments".into())
@@ -814,6 +944,7 @@ mod tests {
             FindBarState::default(),
             &summary(12, Some(3), true),
             "ink",
+            &NO_REPLACE,
             &Rects::default(),
         );
 
@@ -844,11 +975,18 @@ mod tests {
             FindBarState::default(),
             &summary(12, Some(3), true),
             "ink",
+            &NO_REPLACE,
             &Rects::default(),
         );
         let mut empty = summary(0, None, false);
         empty.has_query = false;
-        let uncounted = accessible(FindBarState::default(), &empty, "", &Rects::default());
+        let uncounted = accessible(
+            FindBarState::default(),
+            &empty,
+            "",
+            &NO_REPLACE,
+            &Rects::default(),
+        );
 
         assert_eq!(counted.children[1].label, "3 of 12");
         assert_eq!(uncounted.children[1].key, "find-count".into());
@@ -863,12 +1001,14 @@ mod tests {
             FindBarState::default(),
             &summary(0, None, false),
             "",
+            &NO_REPLACE,
             &Rects::default(),
         );
         let typed = accessible(
             FindBarState::default(),
             &summary(1, Some(1), false),
             "ink",
+            &NO_REPLACE,
             &Rects::default(),
         );
 
@@ -895,7 +1035,13 @@ mod tests {
         summary.failed_pages = 1;
         summary.first_failure = Some("page 9: content stream is not readable".to_owned());
 
-        let described = accessible(FindBarState::default(), &summary, "ink", &Rects::default());
+        let described = accessible(
+            FindBarState::default(),
+            &summary,
+            "ink",
+            &NO_REPLACE,
+            &Rects::default(),
+        );
 
         let progress = described.find(&"find-progress".into()).unwrap();
         assert_eq!(progress.role, Role::Label);

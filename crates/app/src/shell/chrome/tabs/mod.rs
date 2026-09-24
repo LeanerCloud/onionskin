@@ -26,6 +26,7 @@ mod page_grid;
 mod print;
 mod properties;
 mod redact;
+mod replace;
 mod send_pages;
 mod signature;
 mod skins;
@@ -1400,6 +1401,8 @@ impl Render for ShellFrame {
             });
             let find_state = self.find;
             let find_input = self.find_input.clone();
+            let replace_input = self.replace_input.clone();
+            let replace_refusal = self.replace_refusal(cx);
             let export_progress = self.export.export_job.as_ref().map(|job| {
                 (
                     export_progress_label(job),
@@ -1425,6 +1428,8 @@ impl Render for ShellFrame {
                     view.child(render_find_bar(
                         find_state,
                         find_input,
+                        replace_input,
+                        replace_refusal,
                         &summary,
                         rects.clone(),
                         theme,
@@ -1797,6 +1802,8 @@ mod tests {
     mod stamps;
     #[cfg(all(feature = "shell-test-support", feature = "tools-comment"))]
     mod summary;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]
+    mod text_edit;
 
     // Before the split this module reached its parent through `use super::*`,
     // and a glob import is never reported as unused however many of its names

@@ -552,7 +552,8 @@ fn field_node(
         | TextField::PropertiesKeywords
         | TextField::PropertiesCustomKey
         | TextField::PropertiesCustomValue
-        | TextField::AdvancedValue => accesskit::Role::TextInput,
+        | TextField::AdvancedValue
+        | TextField::Replace => accesskit::Role::TextInput,
         TextField::Search | TextField::Find | TextField::AdvancedQuery => {
             accesskit::Role::SearchInput
         }

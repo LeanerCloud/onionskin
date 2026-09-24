@@ -205,6 +205,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) tool_search: ToolSearchState,
     pub(super) find: FindBarState,
     pub(super) find_input: Entity<SearchInput>,
+    /// The find bar's Replace With.
+    pub(super) replace_input: Entity<SearchInput>,
     /// Commenting preferences' author name, as typed and not yet saved.
     pub(super) commenting_author: Entity<SearchInput>,
     /// The comment properties inspector's fields.
@@ -335,6 +337,14 @@ impl ShellFrame {
         // identities.
         let find_input =
             cx.new(|cx| SearchInput::with_placeholder(FIND_INPUT_ID, FIND_PLACEHOLDER, theme, cx));
+        let replace_input = cx.new(|cx| {
+            SearchInput::with_placeholder(
+                crate::shell::find_bar::REPLACE_INPUT_ID,
+                crate::shell::find_bar::REPLACE_PLACEHOLDER,
+                theme,
+                cx,
+            )
+        });
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
         let author = settings.preferences.commenting_author.clone();
@@ -414,6 +424,7 @@ impl ShellFrame {
             },
             find: FindBarState::with_options(settings.preferences.search),
             find_input,
+            replace_input,
             commenting_author,
             inspector,
             page_entry: PageEntryState {

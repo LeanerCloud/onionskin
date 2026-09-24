@@ -37,6 +37,8 @@ pub(in crate::shell) enum TextField {
     Search,
     /// The find bar's query.
     Find,
+    /// The find bar's Replace With.
+    Replace,
     /// The page number next to the page controls.
     Page,
     ExportFirst,
@@ -116,6 +118,10 @@ pub(in crate::shell) enum Activation {
     ToggleMainMenu,
     /// The global bar's Convert button, which opens its own panel.
     ToggleConvertMenu,
+    /// The find bar's Replace, or with `all`, Replace All.
+    ReplaceText {
+        all: bool,
+    },
     MainMenu(MenuCommand),
     ActivateTab(usize),
     TabCommand(TabCommand, usize),

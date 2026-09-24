@@ -153,6 +153,10 @@ impl ShellFrame {
                     self.find,
                     &summary,
                     self.find_input.read(cx).query(),
+                    &crate::shell::find_bar::ReplaceRow {
+                        replacement: self.replace_input.read(cx).query(),
+                        refusal: self.replace_refusal(cx),
+                    },
                     &self.a11y.rects,
                 ));
             }
@@ -492,6 +496,7 @@ impl ShellFrame {
             }
             Activation::Pane(action) => self.run_pane_action(action, cx),
             Activation::StepFind(direction) => self.step_find(direction, cx),
+            Activation::ReplaceText { all } => self.replace_text(all, cx),
             Activation::ApplyFindOption(option) => self.apply_find_option(option, cx),
             Activation::DismissFindBar => self.dismiss_find_bar(cx),
             Activation::SetHomeView(view) => self.set_home_view(view, cx),
@@ -658,6 +663,7 @@ impl ShellFrame {
         match field {
             TextField::Search => Some(&self.tool_search.search_input),
             TextField::Find => Some(&self.find_input),
+            TextField::Replace => Some(&self.replace_input),
             TextField::Page => Some(&self.page_entry.page_input),
             TextField::ExportFirst => self.export.dialog.as_ref().map(|dialog| &dialog.first),
             TextField::ExportLast => self.export.dialog.as_ref().map(|dialog| &dialog.last),
@@ -831,6 +837,7 @@ impl ShellFrame {
         [
             &self.tool_search.search_input,
             &self.find_input,
+            &self.replace_input,
             &self.page_entry.page_input,
         ]
         .into_iter()
