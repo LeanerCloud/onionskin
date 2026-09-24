@@ -172,6 +172,14 @@ fn icon_glyph(icon: &str) -> &'static str {
         "fill-line" => "╱",
         "fill-sign" => "✍",
         "redact" => "▇",
+        "form-text" => "▭",
+        "form-check-box" => "☑",
+        "form-radio" => "◉",
+        "form-list-box" => "☰",
+        "form-dropdown" => "▾",
+        "form-button" => "⊡",
+        "form-date" => "◷",
+        "form-signature" => "✒",
         _ => "?",
     }
 }
@@ -570,6 +578,8 @@ mod tests {
         assert_eq!(icon_glyph("snapshot"), "▣");
         assert_eq!(icon_glyph("fill-check"), "✓");
         assert_eq!(icon_glyph("fill-sign"), "✍");
+        assert_eq!(icon_glyph("form-check-box"), "☑");
+        assert_eq!(icon_glyph("form-signature"), "✒");
         assert_eq!(icon_glyph("redact"), "▇");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }

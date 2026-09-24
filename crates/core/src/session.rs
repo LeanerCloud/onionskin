@@ -377,6 +377,7 @@ pub struct Document {
     redaction_request: Option<ObjRef>,
     /// A form field a tool clicked, for the shell to fill.
     field_request: Option<FieldRequest>,
+    field_properties_request: Option<FieldRequest>,
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
@@ -465,6 +466,7 @@ impl Document {
             link_request: None,
             redaction_request: None,
             field_request: None,
+            field_properties_request: None,
             search_worker: None,
             search_snapshot: None,
             outline: None,
@@ -1516,6 +1518,16 @@ impl Document {
 
     pub fn take_field_request(&mut self) -> Option<FieldRequest> {
         self.field_request.take()
+    }
+
+    /// Ask the shell to open the Properties of the field a Prepare Form
+    /// tool chose.
+    pub fn request_field_properties(&mut self, request: FieldRequest) {
+        self.field_properties_request = Some(request);
+    }
+
+    pub fn take_field_properties_request(&mut self) -> Option<FieldRequest> {
+        self.field_properties_request.take()
     }
 
     /// Every link in the document as the session currently has it.

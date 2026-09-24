@@ -111,6 +111,8 @@ pub enum ToolCapability {
     /// Marks text and regions for redaction. The canvas context menu's
     /// Redact Text finds its tool through this.
     Redact,
+    /// Adds form fields and changes them: Prepare Form's tools.
+    PrepareForm,
 }
 
 impl ToolCapability {
@@ -130,7 +132,8 @@ impl ToolCapability {
             | ToolCapability::Stamp
             | ToolCapability::EditPages
             | ToolCapability::Link
-            | ToolCapability::Redact => true,
+            | ToolCapability::Redact
+            | ToolCapability::PrepareForm => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom

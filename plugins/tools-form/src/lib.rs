@@ -2,10 +2,13 @@
 //! streams, with calculation, validation and formatting driven by
 //! `scripting` so real-world forms compute the way Acrobat computes them.
 //!
+//! - [`field_tool`]: the tools that place fields and choose them for their
+//!   properties.
 //! - [`fill`]: committing a value, toggling a check box, Clear Form.
 //! - [`replay`]: a session recorded in Acrobat made again and compared,
 //!   guarantee test 7's harness.
 
+pub mod field_tool;
 pub mod fill;
 pub mod replay;
 
@@ -22,5 +25,9 @@ impl PluginManifest for FormToolsPlugin {
         "Prepare Form"
     }
 
-    fn register(&self, _registry: &mut PluginRegistry) {}
+    fn register(&self, registry: &mut PluginRegistry) {
+        for tool in field_tool::FieldTool::all() {
+            registry.register_tool(Box::new(tool));
+        }
+    }
 }

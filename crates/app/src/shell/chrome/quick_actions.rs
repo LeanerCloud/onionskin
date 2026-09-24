@@ -720,6 +720,7 @@ mod tests {
             ToolCapability::EditPages => &[ToolCapability::EditPages],
             ToolCapability::Link => &[ToolCapability::Link],
             ToolCapability::Redact => &[ToolCapability::Redact],
+            ToolCapability::PrepareForm => &[ToolCapability::PrepareForm],
         }
     }
 
