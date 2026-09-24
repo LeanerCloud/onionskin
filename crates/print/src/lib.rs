@@ -18,6 +18,8 @@ pub use backend::cups::{CupsBackend, Programs as CupsPrograms};
 pub use backend::file::{print_to_file, FileBackend};
 #[cfg(target_os = "macos")]
 pub use backend::macos::{printers, MacBackend};
+#[cfg(any(windows, onionskin_check_windows))]
+pub use backend::windows::WindowsBackend;
 pub use backend::{native_backend, PrintBackend, PrintError};
 pub use impose::{impose, PageSize};
 pub use job::{

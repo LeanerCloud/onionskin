@@ -16,6 +16,20 @@ objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 objc2-pdf-kit = "0.3"
 
+# The Windows backend. `onionskin_check_windows` also builds it on any host,
+# for `cargo check` only: windows-sys declares its functions on every
+# platform, so the Win32 calls type-check without a Windows target.
+[target.'cfg(any(windows, onionskin_check_windows))'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Printing",
+    "Win32_Storage_Xps",
+] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(onionskin_check_windows)"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 onionskin-corpus-testing.workspace = true

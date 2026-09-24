@@ -6,6 +6,7 @@ pub mod file;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod native;
+pub mod windows;
 
 use onionskin_core::protection::Refusal;
 
@@ -79,6 +80,8 @@ pub fn native_backend() -> Option<&'static str> {
         Some("macOS")
     } else if cfg!(unix) {
         Some("CUPS")
+    } else if cfg!(windows) {
+        Some("Windows")
     } else {
         None
     }
@@ -104,11 +107,13 @@ mod tests {
     }
 
     #[test]
-    fn macos_prints_natively_and_other_unixes_through_cups() {
+    fn each_platform_names_its_backend() {
         let expected = if cfg!(target_os = "macos") {
             Some("macOS")
         } else if cfg!(unix) {
             Some("CUPS")
+        } else if cfg!(windows) {
+            Some("Windows")
         } else {
             None
         };
