@@ -56,16 +56,12 @@ pub(crate) fn read(doc: &CosDocument, page_count: usize) -> Result<Vec<OutlineIt
         })
     })?;
 
-    let mut reader = Reader {
-        doc,
-        page_count,
-        pages: None,
-        walk: Walk::new(),
-    };
-    reader.siblings(&outlines, 0)
+    Reader::new(doc, page_count).siblings(&outlines, 0)
 }
 
-struct Reader<'a> {
+/// Resolves destinations to pages: a bookmark's, and a link's, which are
+/// written the same way.
+pub(crate) struct Reader<'a> {
     doc: &'a CosDocument,
     page_count: usize,
     /// Object number of each page, to its index in document order. Built at
@@ -76,7 +72,16 @@ struct Reader<'a> {
     walk: Walk,
 }
 
-impl Reader<'_> {
+impl<'a> Reader<'a> {
+    pub(crate) fn new(doc: &'a CosDocument, page_count: usize) -> Self {
+        Reader {
+            doc,
+            page_count,
+            pages: None,
+            walk: Walk::new(),
+        }
+    }
+
     /// The chain hanging off `parent`'s `/First`, following `/Next`.
     fn siblings(&mut self, parent: &Dict, depth: usize) -> Result<Vec<OutlineItem>> {
         if depth >= MAX_DEPTH {
@@ -100,7 +105,7 @@ impl Reader<'_> {
     /// The page an item goes to: its own `/Dest`, else the `/D` of a `/GoTo`
     /// action on `/A`. Anything else, including a `/GoToR` into another file,
     /// is no destination in this document.
-    fn destination(&mut self, item: &Dict) -> Result<Option<PageIndex>> {
+    pub(crate) fn destination(&mut self, item: &Dict) -> Result<Option<PageIndex>> {
         let target = match item.get(b"Dest") {
             Some(dest) => Some(self.doc.resolve(dest)?),
             None => self.action_destination(item)?,

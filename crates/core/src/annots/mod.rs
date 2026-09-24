@@ -7,7 +7,7 @@
 //! transaction, one undo entry.
 
 mod appearance;
-mod author;
+pub(crate) mod author;
 mod filter;
 mod model;
 pub mod properties;

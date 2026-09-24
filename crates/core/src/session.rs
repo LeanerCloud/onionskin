@@ -310,6 +310,17 @@ pub struct SnapshotRequest {
     pub region: PageRect,
 }
 
+/// What a tool asked the shell to do about a link.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LinkRequest {
+    /// Make a link over this rectangle: the shell asks where it goes.
+    Create(PageRect),
+    /// Change or delete this link: the shell opens its properties.
+    Edit(onionskin_cos::ObjRef),
+    /// Go where the link under this point goes, if there is one.
+    Follow(crate::PagePoint),
+}
+
 /// The immutable document state an export worker reopens away from the UI.
 pub struct ExportSnapshot {
     bytes: Arc<Vec<u8>>,
@@ -349,6 +360,7 @@ pub struct Document {
     selection: Selection,
     search: SearchState,
     snapshot: Option<SnapshotRequest>,
+    link_request: Option<LinkRequest>,
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
@@ -434,6 +446,7 @@ impl Document {
             selection: Selection::default(),
             search: SearchState::default(),
             snapshot: None,
+            link_request: None,
             search_worker: None,
             search_snapshot: None,
             outline: None,
@@ -1457,6 +1470,22 @@ impl Document {
 
     pub fn take_snapshot_request(&mut self) -> Option<SnapshotRequest> {
         self.snapshot.take()
+    }
+
+    /// Ask the shell to create, edit or follow a link. A request the shell
+    /// has not taken yet is replaced: the user meant the last gesture.
+    pub fn request_link(&mut self, request: LinkRequest) {
+        self.link_request = Some(request);
+    }
+
+    pub fn take_link_request(&mut self) -> Option<LinkRequest> {
+        self.link_request.take()
+    }
+
+    /// Every link in the document as the session currently has it.
+    pub fn links(&mut self) -> Result<Vec<crate::links::Link>> {
+        let page_count = self.page_count();
+        crate::links::read_links(self.structure()?, page_count)
     }
 
     pub fn search(&self) -> &SearchState {

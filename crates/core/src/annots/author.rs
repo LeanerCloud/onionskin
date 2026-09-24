@@ -319,7 +319,10 @@ fn civil_from_epoch(seconds: i64) -> (i64, u32, u32, u32, u32, u32) {
 
 /// The page's `/Annots` array and where it lives: either inline in the page
 /// dictionary, or in an object of its own that the page references.
-fn annots_array(tx: &Transaction<'_>, page: ObjRef) -> Result<Option<(AnnotsHolder, Vec<Object>)>> {
+pub(crate) fn annots_array(
+    tx: &Transaction<'_>,
+    page: ObjRef,
+) -> Result<Option<(AnnotsHolder, Vec<Object>)>> {
     let Some(state) = tx.object(page.number)? else {
         return Err(Error::Cos(onionskin_cos::Error::Unrecoverable {
             detail: format!("page object {} is not in the document", page.number),
@@ -346,7 +349,7 @@ fn annots_array(tx: &Transaction<'_>, page: ObjRef) -> Result<Option<(AnnotsHold
     }
 }
 
-enum AnnotsHolder {
+pub(crate) enum AnnotsHolder {
     /// The array is written in the page dictionary itself.
     Inline,
     /// The array is its own object, which is what a file with many annotations
@@ -356,7 +359,11 @@ enum AnnotsHolder {
     Indirect(ObjRef),
 }
 
-fn append_to_page_annots(tx: &mut Transaction<'_>, page: ObjRef, annotation: ObjRef) -> Result<()> {
+pub(crate) fn append_to_page_annots(
+    tx: &mut Transaction<'_>,
+    page: ObjRef,
+    annotation: ObjRef,
+) -> Result<()> {
     let Some((holder, mut items)) = annots_array(tx, page)? else {
         return Err(Error::Cos(onionskin_cos::Error::Unrecoverable {
             detail: format!("page object {}'s /Annots is not an array", page.number),
@@ -366,7 +373,7 @@ fn append_to_page_annots(tx: &mut Transaction<'_>, page: ObjRef, annotation: Obj
     write_annots(tx, page, holder, items)
 }
 
-fn write_annots(
+pub(crate) fn write_annots(
     tx: &mut Transaction<'_>,
     page: ObjRef,
     holder: AnnotsHolder,

@@ -73,3 +73,14 @@ pub fn attach_annotation(
 ) -> Result<(Maintenance, Option<i64>)> {
     maintain::attach_annotation(tx, structure, page, annotation)
 }
+
+/// Attach a `/Link` element for a link annotation, as
+/// [`attach_annotation`] does an `/Annot` one.
+pub(crate) fn attach_link(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    page: ObjRef,
+    link: ObjRef,
+) -> Result<(Maintenance, Option<i64>)> {
+    maintain::attach_annotation_as(tx, structure, page, link, "Link")
+}

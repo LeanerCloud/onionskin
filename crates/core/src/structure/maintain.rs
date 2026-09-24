@@ -414,6 +414,18 @@ pub(crate) fn attach_annotation(
     page: ObjRef,
     annotation: ObjRef,
 ) -> Result<(Maintenance, Option<i64>)> {
+    attach_annotation_as(tx, structure, page, annotation, "Annot")
+}
+
+/// The same, with the element's structure type `kind`: `/Link` for a link,
+/// which is what PDF/UA asks a link's element to be.
+pub(crate) fn attach_annotation_as(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    page: ObjRef,
+    annotation: ObjRef,
+    kind: &str,
+) -> Result<(Maintenance, Option<i64>)> {
     let Some(tree) = structure.tree() else {
         return Ok((Maintenance::Untagged, None));
     };
@@ -429,7 +441,7 @@ pub(crate) fn attach_annotation(
 
     let mut dict = Dict::new();
     dict.set(Name::new("Type"), Object::name("StructElem"));
-    dict.set(Name::new("S"), Object::name("Annot"));
+    dict.set(Name::new("S"), Object::name(kind));
     dict.set(Name::new("P"), Object::Ref(tree.root));
     dict.set(Name::new("Pg"), Object::Ref(page));
     dict.set(Name::new("K"), Object::Dict(object_reference));

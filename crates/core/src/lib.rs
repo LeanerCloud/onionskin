@@ -16,6 +16,7 @@ mod history;
 pub mod images;
 mod layers;
 mod layout;
+pub mod links;
 pub mod metadata;
 mod outline;
 mod page;
@@ -85,7 +86,8 @@ pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection, TextSpan};
 pub use session::{
-    Document, Error, ExportSnapshot, PageGeometryResponse, RenderView, Result, SnapshotRequest,
+    Document, Error, ExportSnapshot, LinkRequest, PageGeometryResponse, RenderView, Result,
+    SnapshotRequest,
 };
 pub use signatures::SignatureField;
 pub use structure::{
