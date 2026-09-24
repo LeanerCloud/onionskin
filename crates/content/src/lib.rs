@@ -51,6 +51,7 @@ mod page;
 pub mod redact;
 mod run;
 mod search;
+pub mod shapes;
 mod tokenizer;
 
 pub use error::{Error, Result, Warning};
@@ -92,6 +93,13 @@ pub fn extract_page(doc: &Document, index: PageIndex) -> Result<PageText> {
 /// page's geometry as well.
 pub fn extract(doc: &Document, page: &Page) -> Result<PageText> {
     interpret::page_text(doc, page)
+}
+
+/// Every path page `index` paints, with its points in page space: what
+/// form field detection looks for. See [`shapes`].
+pub fn page_shapes(doc: &Document, index: PageIndex) -> Result<Vec<shapes::Shape>> {
+    let page = page::page(doc, index)?;
+    interpret::page_shapes(doc, &page)
 }
 
 /// Rewrites page `index`'s content streams without what `areas` cover. See

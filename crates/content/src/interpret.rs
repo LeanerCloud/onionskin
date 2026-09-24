@@ -132,6 +132,22 @@ pub fn page_text(doc: &Document, page: &Page) -> Result<PageText> {
     Ok(interpreter.finish())
 }
 
+/// Every path one page paints, form XObjects included. See
+/// [`crate::shapes`].
+pub fn page_shapes(doc: &Document, page: &Page) -> Result<Vec<crate::shapes::Shape>> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
+    interpreter.shapes = Some(crate::shapes::Shapes::default());
+    let state = GState::new(page.base_ctm());
+    interpreter.run(&content, &page.resources, state, 0);
+    Ok(interpreter
+        .shapes
+        .take()
+        .map(|shapes| shapes.found)
+        .unwrap_or_default())
+}
+
 /// Rewrites one page's content streams with everything inside `areas`
 /// removed. See [`crate::redact`].
 pub fn redact_page(
@@ -179,6 +195,8 @@ struct Interpreter<'a> {
     stack: Vec<ObjRef>,
     /// Present while redacting: the areas, and what was taken out.
     redact: Option<Redacting>,
+    /// Present while collecting line art.
+    shapes: Option<crate::shapes::Shapes>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -200,6 +218,7 @@ impl<'a> Interpreter<'a> {
             fontless: 0,
             stack: Vec::new(),
             redact,
+            shapes: None,
         }
     }
 
@@ -316,6 +335,9 @@ impl<'a> Interpreter<'a> {
                         rewrite.as_mut().expect("redacting"),
                     ),
                 _ => {
+                    if let Some(shapes) = self.shapes.as_mut() {
+                        shapes.follow(&op, &state.ctm);
+                    }
                     self.state_operator(&op, resources, &mut state, &mut text);
                     Emit::Copy
                 }
