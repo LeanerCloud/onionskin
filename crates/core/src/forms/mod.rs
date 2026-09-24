@@ -215,6 +215,21 @@ impl Form {
             })
     }
 
+    /// What to tell the user about the form when the document opens: an
+    /// XFA form, which is not run (legal posture rule 5), filled as its
+    /// standard fields when it has them and not at all when it has none.
+    pub fn notice(&self) -> Option<&'static str> {
+        match (self.xfa, self.fields.is_empty()) {
+            (false, _) => None,
+            (true, true) => Some(
+                "This is an XFA form, which Onionskin does not show or fill: the pages are shown as they are drawn, read-only",
+            ),
+            (true, false) => Some(
+                "This form also has an XFA version, which Onionskin does not run: its standard fields are the ones filled",
+            ),
+        }
+    }
+
     /// Every visible widget in tab order: page by page, and on a page top to
     /// bottom then left to right, as Acrobat orders a page without `/Tabs`.
     pub fn tab_order(&self) -> Vec<(usize, usize)> {

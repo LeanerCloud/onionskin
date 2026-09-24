@@ -206,6 +206,16 @@ fn every_kind_of_field_is_read_with_what_it_inherits() {
         }
     ));
     assert_eq!(FieldKind::CheckBox.label(), "Check Box");
+    assert!(form
+        .notice()
+        .expect("XFA is said")
+        .contains("standard fields"));
+    let xfa_only = Form {
+        xfa: true,
+        ..Form::default()
+    };
+    assert!(xfa_only.notice().expect("said").contains("read-only"));
+    assert_eq!(Form::default().notice(), None);
 }
 
 #[test]
