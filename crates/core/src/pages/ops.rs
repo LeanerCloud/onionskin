@@ -328,7 +328,7 @@ pub fn set_page_labels(tx: &mut Transaction<'_>, ranges: &[LabelRange]) -> Resul
     )
 }
 
-fn check_indices(pages: &BTreeSet<usize>, count: usize) -> Result<()> {
+pub(super) fn check_indices(pages: &BTreeSet<usize>, count: usize) -> Result<()> {
     match pages.iter().find(|index| **index >= count) {
         Some(index) => Err(Error::NoSuchPage {
             page: *index,

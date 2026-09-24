@@ -29,6 +29,15 @@ pub enum Error {
         page: PageIndex,
         count: usize,
     },
+    /// A page box would leave the page narrower or shorter than
+    /// [`crate::pages::MIN_BOX_SIZE`]: the size it would have had.
+    PageBoxTooSmall {
+        page: PageIndex,
+        width: f64,
+        height: f64,
+    },
+    /// A margin that is negative or not a number.
+    InvalidMargin(f64),
     NoSuchAttachment {
         index: usize,
         count: usize,
@@ -117,6 +126,19 @@ impl fmt::Display for Error {
             ),
             Error::NoSuchPage { page, count } => {
                 write!(f, "page {page} is outside a {count}-page document")
+            }
+            Error::PageBoxTooSmall {
+                page,
+                width,
+                height,
+            } => write!(
+                f,
+                "these margins would leave page {} {width:.1} by {height:.1} points, \
+                 and a page needs at least a point each way",
+                page + 1
+            ),
+            Error::InvalidMargin(value) => {
+                write!(f, "a margin of {value} is not a distance")
             }
             Error::NoPageTree => {
                 write!(f, "the document has no indirect /Pages to rewrite")
@@ -207,6 +229,8 @@ impl std::error::Error for Error {
             | Error::RepeatedPage { .. }
             | Error::PageTreeTooLarge { .. }
             | Error::NoSuchPage { .. }
+            | Error::PageBoxTooSmall { .. }
+            | Error::InvalidMargin(_)
             | Error::NoSuchAttachment { .. }
             | Error::NoSuchLayer { .. }
             | Error::LayerLocked { .. }

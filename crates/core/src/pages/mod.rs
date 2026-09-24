@@ -48,6 +48,7 @@
 
 mod actions;
 mod assemble;
+mod boxes;
 mod destinations;
 mod fields;
 mod import;
@@ -65,6 +66,9 @@ mod thumbs;
 mod tree;
 
 pub use assemble::{Assembled, Assembly, Tagging, Untagged};
+pub use boxes::{
+    boxed, resized, set_media_size, set_page_box, shown_margins, Margins, PageBox, MIN_BOX_SIZE,
+};
 pub use import::{extract_pages, import_page_as_form, import_pages};
 pub(crate) use ops::{current_page_count, page_ref};
 pub use ops::{
