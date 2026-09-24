@@ -99,6 +99,7 @@ jobs:
         run: |
           cargo test -p onionskin-codecs-common --test roundtrip
           cargo test -p onionskin-content --test corpus
+          cargo test -p onionskin-content --test edit_text
           cargo test -p onionskin-content --test oracle
           cargo test -p onionskin-content --test placements
           cargo test -p onionskin-content --test redact

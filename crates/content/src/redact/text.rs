@@ -44,7 +44,7 @@ pub(crate) struct Spacing {
 impl Spacing {
     /// The `TJ` number that moves the pen as far as `glyph` did, or `None`
     /// when no number can: a zero size or scale.
-    fn skip(&self, glyph: &Placed) -> Option<f64> {
+    pub(crate) fn skip(&self, glyph: &Placed) -> Option<f64> {
         let word = if glyph.code.is_word_space() {
             self.word_spacing
         } else {
@@ -85,28 +85,92 @@ pub(crate) fn rewrite(
     if !placed.iter().any(|glyph| glyph.removed) {
         return Emit::Copy;
     }
+    rewrite_inserting(operator, operands, parts, placed, spacing, None)
+}
+
+/// New text drawn in place of a glyph: what text editing puts in the gap.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Insertion {
+    /// The glyph, by its index in `placed`, the text goes before.
+    pub(crate) before: usize,
+    /// The operators that draw it, starting at the pen.
+    pub(crate) draw: Vec<u8>,
+    /// How far they move the pen, as a `TJ` number (negative is forward).
+    pub(crate) advance: f64,
+}
+
+/// [`rewrite`], with `insertion` drawn where its glyph was. The pen is put
+/// back after it, so whatever the operator draws next lands where it did.
+pub(crate) fn rewrite_inserting(
+    operator: &[u8],
+    operands: &[Object],
+    parts: &[Show],
+    placed: &[Placed],
+    spacing: &Spacing,
+    insertion: Option<&Insertion>,
+) -> Emit {
     let exact = placed.iter().all(|glyph| glyph.advance.is_some())
         && placed.iter().all(|glyph| spacing.skip(glyph).is_some());
-    let mut items: Vec<Item> = Vec::new();
+    let mut before: Vec<Item> = Vec::new();
+    let mut after: Vec<Item> = Vec::new();
+    let mut glyph_index = 0usize;
+    let past = |at: usize| insertion.is_some_and(|insertion| at >= insertion.before);
     for (index, part) in parts.iter().enumerate() {
         match part {
-            Show::Adjust(amount) => push_adjust(&mut items, *amount),
+            Show::Adjust(amount) => {
+                let target = if past(glyph_index) {
+                    &mut after
+                } else {
+                    &mut before
+                };
+                push_adjust(target, *amount);
+            }
             Show::Text(bytes) => {
                 let mut at = 0usize;
                 for glyph in placed.iter().filter(|glyph| glyph.part == index) {
                     let end = (at + usize::from(glyph.code.len)).min(bytes.len());
-                    if glyph.removed || !exact {
-                        push_adjust(&mut items, spacing.skip(glyph).unwrap_or(0.0));
+                    let target = if past(glyph_index) {
+                        &mut after
                     } else {
-                        push_text(&mut items, &bytes[at..end]);
+                        &mut before
+                    };
+                    if glyph.removed || !exact {
+                        push_adjust(target, spacing.skip(glyph).unwrap_or(0.0));
+                    } else {
+                        push_text(target, &bytes[at..end]);
                     }
                     at = end;
+                    glyph_index += 1;
                 }
             }
         }
     }
     let mut out = prefix(operator, operands);
-    out.push(b'[');
+    match insertion {
+        None => out.extend(array(&before)),
+        Some(insertion) => {
+            if !before.is_empty() {
+                out.extend(array(&before));
+                out.push(b' ');
+            }
+            out.extend_from_slice(&insertion.draw);
+            out.push(b' ');
+            let mut rest = vec![Item::Adjust(-insertion.advance)];
+            for item in after {
+                match item {
+                    Item::Adjust(amount) => push_adjust(&mut rest, amount),
+                    Item::Text(bytes) => push_text(&mut rest, &bytes),
+                }
+            }
+            out.extend(array(&rest));
+        }
+    }
+    Emit::Replace(out)
+}
+
+/// `items` as a `TJ` operation.
+fn array(items: &[Item]) -> Vec<u8> {
+    let mut out = vec![b'['];
     for (index, item) in items.iter().enumerate() {
         if index > 0 {
             out.push(b' ');
@@ -117,7 +181,7 @@ pub(crate) fn rewrite(
         }
     }
     out.extend_from_slice(b"] TJ");
-    Emit::Replace(out)
+    out
 }
 
 /// A showing operator removed whole: `'` and `"` keep their line move.
@@ -172,7 +236,7 @@ fn push_text(items: &mut Vec<Item>, bytes: &[u8]) {
 }
 
 /// A string operand in hexadecimal, which no byte can break out of.
-fn hex(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn hex(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len() * 2 + 2);
     out.push(b'<');
     for byte in bytes {

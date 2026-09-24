@@ -28,7 +28,7 @@ pub(crate) mod text;
 use onionskin_cos::{Dict, Name, ObjRef};
 
 pub use geometry::{covers_glyph, touches, Area};
-pub(crate) use output::{named, taken_names, Emit, Output};
+pub(crate) use output::{named, number, taken_names, Emit, Output};
 pub(crate) use paths::{is_clip, is_construction, is_painting, PathBuffer};
 
 use crate::error::Warning;
@@ -121,6 +121,11 @@ pub(crate) struct Redacting {
     pub(crate) removed: Vec<Removed>,
     pub(crate) counts: Counts,
     pub(crate) names: u32,
+    /// When editing text: the glyphs that go, as `(run, glyph)`, in place
+    /// of the areas.
+    pub(crate) targets: Option<std::collections::BTreeSet<(usize, usize)>>,
+    /// When editing text: what is drawn in their place.
+    pub(crate) editing: Option<crate::edit_text::Editing>,
 }
 
 impl Redacting {
@@ -132,6 +137,8 @@ impl Redacting {
             removed: Vec::new(),
             counts: Counts::default(),
             names: 0,
+            targets: None,
+            editing: None,
         }
     }
 }

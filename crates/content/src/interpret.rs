@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use onionskin_cos::{Dict, Document, ObjRef, Object, Span};
+use onionskin_cos::{Dict, Document, Name, ObjRef, Object, Span};
 
 use crate::error::{Result, Warning};
 use crate::font::{self, Code, Font, FontId};
@@ -61,6 +61,9 @@ const VERTICAL_ORIGIN: f64 = 0.88;
 struct GState {
     ctm: Matrix,
     font: Option<Rc<Font>>,
+    /// The resource name `Tf` selected the font by, which text editing
+    /// selects it again with.
+    font_name: Option<Name>,
     size: f64,
     char_spacing: f64,
     word_spacing: f64,
@@ -76,6 +79,7 @@ impl GState {
         GState {
             ctm,
             font: None,
+            font_name: None,
             size: 0.0,
             char_spacing: 0.0,
             word_spacing: 0.0,
@@ -192,6 +196,46 @@ pub fn redact_page(
     })
 }
 
+/// Every character each font on `page` draws, and the code it draws it
+/// with: what text editing writes new text in.
+pub(crate) fn seen_codes(doc: &Document, page: &Page) -> Result<crate::edit_text::Seen> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
+    interpreter.seen = Some(BTreeMap::new());
+    interpreter.run(&content, &page.resources, GState::new(page.base_ctm()), 0);
+    Ok(interpreter.seen.take().unwrap_or_default())
+}
+
+/// `page`'s content with the `targets` glyphs taken out and each of
+/// `editing`'s lines drawn where its first was. See [`crate::edit_text`].
+pub(crate) fn edit_page(
+    doc: &Document,
+    page: &Page,
+    targets: std::collections::BTreeSet<(usize, usize)>,
+    editing: crate::edit_text::Editing,
+) -> Result<(Rewritten, crate::edit_text::Editing)> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut redacting = Redacting::new(&[]);
+    redacting.targets = Some(targets);
+    redacting.editing = Some(editing);
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, Some(redacting));
+    let rewritten = interpreter
+        .run(&content, &page.resources, GState::new(page.base_ctm()), 0)
+        .unwrap_or_else(|| Rewritten {
+            bytes: Vec::new(),
+            changed: false,
+            resources: Vec::new(),
+        });
+    let editing = interpreter
+        .redact
+        .take()
+        .and_then(|redact| redact.editing)
+        .expect("editing");
+    Ok((rewritten, editing))
+}
+
 struct Interpreter<'a> {
     doc: &'a Document,
     page: PageIndex,
@@ -211,6 +255,9 @@ struct Interpreter<'a> {
     shapes: Option<crate::shapes::Shapes>,
     /// Present while collecting where images are drawn.
     images: Option<Vec<crate::placements::ImagePlacement>>,
+    /// Present while collecting the codes each font draws each character
+    /// with, for text editing.
+    seen: Option<crate::edit_text::Seen>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -234,6 +281,7 @@ impl<'a> Interpreter<'a> {
             redact,
             shapes: None,
             images: None,
+            seen: None,
         }
     }
 
@@ -422,6 +470,7 @@ impl<'a> Interpreter<'a> {
                     }
                     if let Object::Name(name) = name {
                         state.font = self.font(resources, name.as_bytes());
+                        state.font_name = Some(name.clone());
                     }
                 }
             }
@@ -616,6 +665,7 @@ impl<'a> Interpreter<'a> {
             object.next_line(0.0, -leading);
         }
         let origin = object.tm.then(&state.ctm).apply(0.0, state.rise);
+        let ordinal = self.runs.len();
         let placed = self.show(content, op, &parts, state, object, marked);
         if self.redact.is_none() {
             return Emit::Copy;
@@ -633,7 +683,23 @@ impl<'a> Interpreter<'a> {
                         .is_some_and(|font| font.vertical)
                         .then_some(VERTICAL_ADVANCE),
                 };
-                redact_text::rewrite(operator, &op.operands, &parts, &placed, &spacing)
+                // Only an operator that drew a run is the run `ordinal`
+                // names: one that drew nothing pushed none.
+                let drew = self.runs.len() > ordinal;
+                match drew
+                    .then(|| self.insertion(ordinal, state, &spacing))
+                    .flatten()
+                {
+                    Some(insertion) => redact_text::rewrite_inserting(
+                        operator,
+                        &op.operands,
+                        &parts,
+                        &placed,
+                        &spacing,
+                        Some(&insertion),
+                    ),
+                    None => redact_text::rewrite(operator, &op.operands, &parts, &placed, &spacing),
+                }
             }
             // No font: where the glyphs fall is unknown, so an operator that
             // starts inside an area goes.
@@ -989,8 +1055,19 @@ impl<'a> Interpreter<'a> {
                             part: index,
                             code,
                             advance: declared,
-                            removed: self.take_glyph(&font, code, &quad),
+                            removed: self.take_glyph(
+                                &font,
+                                code,
+                                &quad,
+                                (self.runs.len(), glyphs.len()),
+                            ),
                         });
+                        if let (Some(seen), Some(text)) = (self.seen.as_mut(), font.unicode(code)) {
+                            let mut chars = text.chars();
+                            if let (Some(ch), None) = (chars.next(), chars.next()) {
+                                seen.entry(font.id).or_default().entry(ch).or_insert(code);
+                            }
+                        }
                         let mapping = match font.unicode(code) {
                             Some(t) if !t.is_empty() => {
                                 let start = out.len();
@@ -1072,9 +1149,39 @@ impl<'a> Interpreter<'a> {
         Some(placed)
     }
 
+    /// While editing text, what the showing operator that drew run
+    /// `ordinal` draws in place of the line's first glyph, if it drew it.
+    fn insertion(
+        &mut self,
+        ordinal: usize,
+        state: &GState,
+        spacing: &Spacing,
+    ) -> Option<redact_text::Insertion> {
+        let editing = self.redact.as_mut()?.editing.as_mut()?;
+        let index = editing
+            .lines
+            .iter()
+            .position(|line| line.first.0 == ordinal && line.outcome.is_none())?;
+        let (font, name) = (state.font.as_ref()?, state.font_name.as_ref()?);
+        let line = &editing.lines[index];
+        let drawn =
+            crate::edit_text::insertion(editing, &line.text, font, name, spacing, line.first.1);
+        let line = &mut editing.lines[index];
+        match drawn {
+            Ok((insertion, fallback)) => {
+                line.outcome = Some(Ok(fallback));
+                Some(insertion)
+            }
+            Err(undrawable) => {
+                line.outcome = Some(Err(undrawable));
+                None
+            }
+        }
+    }
+
     /// While redacting, whether the glyph at `quad` goes; if it does, it is
     /// recorded as taken.
-    fn take_glyph(&mut self, font: &Font, code: Code, quad: &PageQuad) -> bool {
+    fn take_glyph(&mut self, font: &Font, code: Code, quad: &PageQuad, at: (usize, usize)) -> bool {
         let Some(redact) = self.redact.as_mut() else {
             return false;
         };
@@ -1082,7 +1189,11 @@ impl<'a> Interpreter<'a> {
             redact.counts.hidden += 1;
             return true;
         }
-        if !covers_glyph(&redact.areas, quad) {
+        let taken = match &redact.targets {
+            Some(targets) => targets.contains(&at),
+            None => covers_glyph(&redact.areas, quad),
+        };
+        if !taken {
             return false;
         }
         redact.counts.glyphs += 1;

@@ -42,10 +42,12 @@
 //! # Ok(()) }
 //! ```
 
+pub mod edit_text;
 mod error;
 mod font;
 mod geometry;
 mod interpret;
+mod lines;
 mod matrix;
 mod page;
 pub mod placements;
@@ -62,6 +64,7 @@ pub use error::{Error, Result, Warning};
 /// of rules about UTF-16 byte order marks and PDFDoc encoding.
 pub use font::{encode_win_ansi, pdf_text_string, standard_text_width, Code, Font, FontId};
 pub use geometry::{PageIndex, PageQuad};
+pub use lines::{text_lines, LineGlyph, TextLine};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
 pub use run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};

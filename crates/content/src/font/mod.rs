@@ -95,6 +95,11 @@ pub struct Font {
     missing_width: Option<f64>,
     default_width: f64,
     embedded: Option<Embedded>,
+    /// Whether the font carries a program at all, parsed or not.
+    has_program: bool,
+    /// Whether `/BaseFont` named a subset (`ABCDEF+Name`), whose program
+    /// may lack any glyph the document never drew.
+    subset: bool,
     base14: Option<&'static tables::Base14>,
     symbolic: bool,
     /// The font really is ZapfDingbats, so `a1` through `a191` mean what the
@@ -246,6 +251,32 @@ impl Font {
         }
     }
 
+    /// A code this font draws `ch` with and that is certain to have a glyph,
+    /// found without having seen it drawn: a simple font's encoding, when
+    /// the font is not embedded (the reader supplies every glyph) or is
+    /// embedded whole. A subset, a composite font and a Type 3 font answer
+    /// only through the codes a page already drew with them.
+    pub fn code_for(&self, ch: char) -> Option<Code> {
+        if self.kind != Kind::Simple || (self.has_program && self.subset) {
+            return None;
+        }
+        (0..=255u32)
+            .map(|value| Code {
+                value,
+                cid: value,
+                len: 1,
+            })
+            .find(|code| {
+                let mut buffer = [0u8; 4];
+                self.unicode(*code).as_deref() == Some(ch.encode_utf8(&mut buffer))
+                    && self.displacement(*code).is_some()
+                    && self
+                        .embedded
+                        .as_ref()
+                        .is_none_or(|_| self.gid(*code).is_some())
+            })
+    }
+
     /// Top and bottom of the selection box in text space units.
     pub fn extents(&self) -> (f64, f64) {
         (self.ascent, self.descent)
@@ -266,7 +297,9 @@ impl Font {
 /// [`crate::Mapping::Unmapped`].
 pub fn load(doc: &Document, dict: &Dict, id: FontId, warnings: &mut Vec<Warning>) -> Font {
     let subtype = name_of(doc, dict, b"Subtype").unwrap_or_default();
-    let base_font = strip_subset_prefix(&name_of(doc, dict, b"BaseFont").unwrap_or_default());
+    let raw_name = name_of(doc, dict, b"BaseFont").unwrap_or_default();
+    let base_font = strip_subset_prefix(&raw_name);
+    let subset = base_font.len() != raw_name.len();
 
     let kind = match subtype.as_str() {
         "Type0" => Kind::Type0,
@@ -289,10 +322,9 @@ pub fn load(doc: &Document, dict: &Dict, id: FontId, warnings: &mut Vec<Warning>
     // ISO 32000-2 table 121: bit position 3, so the mask is 4.
     let symbolic = flags & 4 != 0 && flags & 32 == 0;
 
-    let embedded = descriptor
-        .as_ref()
-        .and_then(|d| font_program(doc, d))
-        .and_then(|data| Embedded::parse(&data));
+    let program = descriptor.as_ref().and_then(|d| font_program(doc, d));
+    let has_program = program.is_some();
+    let embedded = program.and_then(|data| Embedded::parse(&data));
 
     let base14 = tables::base14_metrics(&base_font);
     let dingbats =
@@ -365,6 +397,8 @@ pub fn load(doc: &Document, dict: &Dict, id: FontId, warnings: &mut Vec<Warning>
             .and_then(crate::tokenizer::number)
             .unwrap_or(1000.0),
         embedded,
+        has_program,
+        subset,
         base14,
         symbolic,
         dingbats,
