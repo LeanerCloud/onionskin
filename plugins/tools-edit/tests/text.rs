@@ -179,3 +179,31 @@ fn the_add_text_tool_asks_for_new_text_where_it_is_clicked() {
         }
     ));
 }
+
+#[test]
+fn a_line_and_new_text_take_a_style() {
+    use onionskin_tools_edit::text::{add_styled_text, edit_styled_line, TextStyle};
+    let mut doc = document();
+    let bold = TextStyle {
+        face: Some("Helvetica-Bold"),
+        size: Some(30.0),
+        fill: Some([0.8, 0.0, 0.0]),
+    };
+    edit_styled_line(&mut doc, 0, 0, "Draft page 1", "Draft page 1", bold)
+        .expect("the same words, restyled");
+    assert_eq!(doc.edit().history().undo_label(), Some("Edit Text"));
+    let lines = onionskin_core::text_edit::page_lines(doc.structure().expect("reads"), 0)
+        .expect("lines");
+    let quad = lines[0].glyphs[0].quad.corners;
+    assert!((quad[0].1 - quad[2].1).abs() > 24.0, "set at 30 pt");
+    add_styled_text(&mut doc, 0, (72.0, 300.0), "Signed", bold).expect("adds");
+    assert_eq!(
+        lines_of(&mut doc)[2],
+        "Signed",
+        "the new line is there in its own style"
+    );
+}
+
+fn lines_of(doc: &mut Document) -> Vec<String> {
+    lines(doc, 0)
+}

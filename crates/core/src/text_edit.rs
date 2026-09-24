@@ -268,18 +268,24 @@ pub fn write_page_edit(tx: &mut Transaction<'_>, edit: &PageEdit) -> Result<()> 
     )
 }
 
-/// The standard font new text is set in.
+/// The standard font new text is set in unless its style names another.
 const NEW_TEXT_FACE: &str = "Helvetica";
 
-/// Draw `text` on `page` as a new line in Helvetica at `size`, its
-/// baseline starting at `at`, after everything the page draws.
+/// The size new text is set at unless its style gives another.
+pub const NEW_TEXT_SIZE: f64 = 12.0;
+
+/// Draw `text` on `page` as a new line, its baseline starting at `at`,
+/// after everything the page draws: in `style`'s font, size and colour, or
+/// Helvetica 12 pt in black.
 pub fn add_text(
     tx: &mut Transaction<'_>,
     page: PageIndex,
     at: (f64, f64),
-    size: f64,
     text: &str,
+    style: &TextStyle,
 ) -> Result<()> {
+    let face = style.face.unwrap_or(NEW_TEXT_FACE);
+    let size = style.size.unwrap_or(NEW_TEXT_SIZE);
     let undrawable: String = text
         .chars()
         .filter(|ch| *ch != '?' && onionskin_content::encode_win_ansi(&ch.to_string()) == b"?")
@@ -296,13 +302,21 @@ pub fn add_text(
     let inherited = crate::pages::inherited_resources(tx, page_object)?;
     let mut resources = dict_of(tx, inherited.as_ref())?;
     let mut fonts = dict_of(tx, resources.get(b"Font"))?;
-    let name = Name::new(&format!("{}{NEW_TEXT_FACE}", free_prefix(&fonts)));
+    let name = Name::new(&format!("{}{face}", free_prefix(&fonts)));
     let number = tx.reserve();
-    tx.put_object(number, 0, Object::Dict(standard_font(NEW_TEXT_FACE)))?;
+    tx.put_object(number, 0, Object::Dict(standard_font(face)))?;
     fonts.set(name.clone(), Object::Ref(ObjRef::new(number, 0)));
     resources.set(Name::new("Font"), Object::Dict(fonts));
+    let fill = style.fill.map_or_else(String::new, |[r, g, b]| {
+        format!(
+            "{} {} {} rg ",
+            number_text(r),
+            number_text(g),
+            number_text(b)
+        )
+    });
     let mut content = format!(
-        "BT /{} {} Tf {} {} Td <",
+        "{fill}BT /{} {} Tf {} {} Td <",
         String::from_utf8_lossy(name.as_bytes()),
         number_text(size),
         number_text(at.0),

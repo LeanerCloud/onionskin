@@ -159,10 +159,19 @@ fn a_tool_asks_the_shell_to_edit_a_line_once() {
 
 #[test]
 fn new_text_is_drawn_after_the_page_in_a_standard_font() {
-    use onionskin_core::text_edit::add_text;
+    use onionskin_core::text_edit::{add_text, TextStyle};
     let bytes = tagged();
     let added = apply(&bytes, |tx, _| {
-        add_text(tx, 0, (72.0, 400.0), 18.0, "Added note €")
+        add_text(
+            tx,
+            0,
+            (72.0, 400.0),
+            "Added note €",
+            &TextStyle {
+                size: Some(18.0),
+                ..TextStyle::default()
+            },
+        )
     });
     assert_eq!(texts(&added, 0), ["Page 1", "Added note €"]);
     let doc = open(&added);
@@ -174,19 +183,30 @@ fn new_text_is_drawn_after_the_page_in_a_standard_font() {
         lines[1].bounds()
     );
     let again = apply(&added, |tx, _| {
-        add_text(tx, 0, (72.0, 300.0), 12.0, "Again")
+        add_text(
+            tx,
+            0,
+            (72.0, 300.0),
+            "Again",
+            &TextStyle {
+                face: Some("Times-Roman"),
+                fill: Some([1.0, 0.0, 0.0]),
+                ..TextStyle::default()
+            },
+        )
     });
     assert_eq!(texts(&again, 0), ["Page 1", "Added note €", "Again"]);
     assert_eq!(texts(&again, 1), ["Page 2"], "the inherited resources stay");
     let content = content_of(&again, 0);
     assert!(
-        content.contains("/OSF1_Helvetica 12 Tf"),
+        content.contains("/OSF1_Times-Roman 12 Tf"),
         "a name of its own: {content}"
     );
+    assert!(content.contains("1 0 0 rg BT"), "in red: {content}");
 
     for refused in ["日本", "   "] {
         let error = common::try_apply(&bytes, |tx, _| {
-            add_text(tx, 0, (72.0, 400.0), 12.0, refused)
+            add_text(tx, 0, (72.0, 400.0), refused, &TextStyle::default())
         })
         .expect_err("refused");
         assert!(error.to_string().contains("no"), "{error}");

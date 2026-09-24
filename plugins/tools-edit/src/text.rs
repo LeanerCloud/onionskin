@@ -7,8 +7,8 @@
 //! whatever has taken its place.
 
 use onionskin_core::text_edit::{
-    self, find_in_lines, page_lines, replace_matches, rewrite_lines, write_page_edit, LineMatch,
-    MatchOptions,
+    self, find_in_lines, page_lines, replace_matches, rewrite_styled_lines, write_page_edit,
+    LineMatch, MatchOptions,
 };
 use onionskin_core::{Document, PageIndex, TextLine};
 use onionskin_plugin_api::CommandError;
@@ -46,8 +46,21 @@ pub fn edit_line(
     was: &str,
     text: &str,
 ) -> Result<(), CommandError> {
+    edit_styled_line(doc, page, line, was, text, TextStyle::default())
+}
+
+/// [`edit_line`], setting the text in `style`'s font, size and colour
+/// where it gives them.
+pub fn edit_styled_line(
+    doc: &mut Document,
+    page: PageIndex,
+    line: usize,
+    was: &str,
+    text: &str,
+    style: TextStyle,
+) -> Result<(), CommandError> {
     const LABEL: &str = "Edit Text";
-    if text == was {
+    if text == was && style == TextStyle::default() {
         return Ok(());
     }
     let edit = {
@@ -57,31 +70,40 @@ pub fn edit_line(
             .get(line)
             .filter(|found| found.text == was)
             .ok_or_else(|| refused(LABEL, "the line has changed since it was chosen"))?;
-        rewrite_lines(structure, page, &[(found, text.to_owned())]).map_err(failed(LABEL))?
+        rewrite_styled_lines(structure, page, &[(found, text.to_owned(), style)])
+            .map_err(failed(LABEL))?
     };
     doc.edit_document(LABEL, |tx| write_page_edit(tx, &edit))
         .map_err(failed(LABEL))
 }
 
-/// The size new text is set at.
-pub const NEW_TEXT_SIZE: f64 = 12.0;
+pub use onionskin_core::text_edit::{TextStyle, NEW_TEXT_SIZE};
 
-/// Draw `text` as a new line on `page`, its baseline starting at `at`, as
-/// one undo step. Nothing typed adds nothing.
+/// Draw `text` as a new line on `page`, its baseline starting at `at`, in
+/// Helvetica 12 pt, as one undo step. Nothing typed adds nothing.
 pub fn add_text(
     doc: &mut Document,
     page: PageIndex,
     at: (f64, f64),
     text: &str,
 ) -> Result<(), CommandError> {
+    add_styled_text(doc, page, at, text, TextStyle::default())
+}
+
+/// [`add_text`] in `style`'s font, size and colour.
+pub fn add_styled_text(
+    doc: &mut Document,
+    page: PageIndex,
+    at: (f64, f64),
+    text: &str,
+    style: TextStyle,
+) -> Result<(), CommandError> {
     const LABEL: &str = "Add Text";
     if text.trim().is_empty() {
         return Ok(());
     }
-    doc.edit_document(LABEL, |tx| {
-        text_edit::add_text(tx, page, at, NEW_TEXT_SIZE, text)
-    })
-    .map_err(failed(LABEL))
+    doc.edit_document(LABEL, |tx| text_edit::add_text(tx, page, at, text, &style))
+        .map_err(failed(LABEL))
 }
 
 /// Every occurrence of `needle` in the document's text, line by line.
