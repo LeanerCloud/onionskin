@@ -1,12 +1,19 @@
 # Tagged PDF corpus (partially built)
 
-**Status, 2026-09-21.** M3's P4 added the first half: `derive.py`, which reads
+**Status, 2026-09-24.** M3's P4 added the first half: `derive.py`, which reads
 element counts and page-to-element mappings out of the already-fetched
 `external/verapdf/` set using pikepdf, and whose output is recorded as
 expectations in `crates/core/tests/structure.rs`. That is enough to grade the
-structure *reader*. The second half below, the vendored deep-structure
-documents with authored before-and-after expectations, is still not built and
-still waits on `tools-accessibility`'s checker for the reason step 4 gives.
+structure *reader*.
+
+M5 added `tools-accessibility`'s structure checker and turned guarantee test 8
+on without waiting for this directory: `plugins/tools-accessibility/tests/
+guarantee.rs` edits every tagged file in `external/verapdf/PDF_UA-*` and
+asserts the checker finds nothing new after each edit. That grades the edits
+against the files' own state, which needs no authored expectation. The second
+half below, the vendored deep-structure documents with authored
+before-and-after trees, is still not built: it would add "the tree is the
+right one", where the guarantee today proves "the tree is still whole".
 
 
 Guarantee test 8 in [`PLAN.md`](../../PLAN.md) says editing a tagged document

@@ -635,9 +635,11 @@ what-does-not-transfer section demands:
   in `text-engine` are still to come. Guarantee test 7 waits on the
   JS-forms corpus's values recorded in Acrobat. Spell check has landed:
   Edit > Check Spelling over the comments and text fields, with a user
-  dictionary, in US English (m5-spelling.md). The rest of M5 (changing
-  edited text's font, size and colour, and tagged-PDF maintenance
-  checking) is planned.
+  dictionary, in US English (m5-spelling.md). Tagged-PDF maintenance is
+  checked: `tools-accessibility`'s structure checker grades every edit,
+  and guarantee test 8 runs over the PDF/UA sets (m5-tag-integrity.md).
+  The rest of M5 (changing edited text's font, size and colour) is
+  planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

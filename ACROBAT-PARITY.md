@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 103 planned / 42 partial / 80 out-of-scope. 178 implemented.**
+**403 rows: 102 planned / 42 partial / 80 out-of-scope. 179 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -585,7 +585,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Set document language | planned | M6 | (judgment) |
 | Set document title | planned | M6 | (judgment) |
 | Table editor / table summary | planned | M6 | (judgment) |
-| Keep the structure tree valid through every edit | planned | M5 | Not a command but a property Acrobat is expected to hold: an accessible document stays accessible through editing. `core` owns the tree; guarantee test 8 enforces it from `tools-edit` onward. |
+| Keep the structure tree valid through every edit | implemented | M5 | Not a command but a property Acrobat is expected to hold: an accessible document stays accessible through editing. Guarantee test 8 runs: every edit that rewrites content or moves structure (Edit Text, Replace All, Add Text, Create Link, Rotate Page, Move Pages, Delete Page) is graded by `tools-accessibility`'s checker, which adds the tree-against-content checks to `core`'s invariant, over a tagged fixture and the 432 tagged PDF/UA conformance files; an edit may leave nothing the checker did not find before it. Three structure bugs it found in page removal and annotation tagging are fixed. Evidence: docs/evidence/m5-tag-integrity.md. |
 | Read Out Loud (from the accessibility toolset) | planned | M6 | Same feature as the View menu item. Acrobat's submenu: Activate Read Out Loud, Read This Page Only, Read To End of Document, Pause, Stop. |
 | Accessibility Setup Assistant | planned | post-1.0 | A preferences wizard; the underlying preferences ship with the shell. Reflow, which it configures, has its own row under Menus. |
 
