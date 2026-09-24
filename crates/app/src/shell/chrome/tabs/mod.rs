@@ -11,6 +11,7 @@ mod file;
 mod follow_link;
 mod forms;
 mod frame_state;
+mod images;
 mod inspector;
 mod line_weights;
 #[cfg(feature = "tools-edit")]
@@ -33,6 +34,7 @@ mod summary;
 mod windows;
 
 pub(in crate::shell) use self::forms::NO_FORMS;
+pub(in crate::shell) use self::images::NO_IMAGE_TOOL;
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::redact::{RedactCommand, NO_REDACT};
 pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
@@ -1738,6 +1740,12 @@ mod tests {
     mod file;
     #[cfg(all(feature = "shell-test-support", feature = "tools-form"))]
     mod forms;
+    #[cfg(all(
+        feature = "shell-test-support",
+        feature = "tools-edit",
+        feature = "codecs-common"
+    ))]
+    mod images;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
     #[cfg(feature = "shell-test-support")]

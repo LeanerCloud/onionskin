@@ -249,6 +249,10 @@ impl ShellFrame {
                 self.run_registry_command(page.id(), cx);
                 Ok(())
             }
+            MenuCommand::Image(image) => {
+                self.run_image_command(image, cx);
+                Ok(())
+            }
             MenuCommand::CloseTab => {
                 let active = self.active_index()?;
                 self.request_tab_command(TabCommand::Close, active, window, cx)

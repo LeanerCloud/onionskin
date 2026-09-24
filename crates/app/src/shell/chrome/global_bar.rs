@@ -2,6 +2,7 @@ use gpui::{Action, App, Menu, MenuItem, WindowHandle};
 use onionskin_core::{FitMode, PageLayoutMode};
 use onionskin_plugin_api::{CommandEffect, PluginRegistry, ToolCapability};
 
+use super::image_commands::ImageCommand;
 use super::quick_actions::QuickAction;
 use super::theme::{ShellViewAction, ShellViewState};
 use super::ShellFrame;
@@ -234,6 +235,8 @@ pub(in crate::shell) enum MenuCommand {
     Find,
     AdvancedSearch,
     Page(PageCommand),
+    /// The Edit menu's image entries, on the selected image.
+    Image(super::image_commands::ImageCommand),
     Preferences,
     PreviousView,
     NextView,
@@ -286,7 +289,7 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 13] = [
+const REGISTRY_BACKED: [MenuCommand; 17] = [
     MenuCommand::SelectAll,
     MenuCommand::DeselectAll,
     MenuCommand::Page(PageCommand::RotateClockwise),
@@ -300,6 +303,10 @@ const REGISTRY_BACKED: [MenuCommand; 13] = [
     MenuCommand::SummarizeComments,
     MenuCommand::ReduceFileSize,
     MenuCommand::CropPages,
+    MenuCommand::Image(ImageCommand::RotateClockwise),
+    MenuCommand::Image(ImageCommand::RotateCounterclockwise),
+    MenuCommand::Image(ImageCommand::FlipHorizontal),
+    MenuCommand::Image(ImageCommand::FlipVertical),
 ];
 
 /// Which of those commands this build's plugins registered, and what each
@@ -352,6 +359,9 @@ pub(in crate::shell) struct RegistryFacts {
     sign_tool: bool,
     /// Whether a tool marks for redaction, which the redaction entries need.
     redact_tool: bool,
+    /// Whether a tool selects images, which Replace Image and Save Image
+    /// As act on.
+    image_tool: bool,
     /// Why the active document may not be edited, from `core`. Carried with
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
@@ -380,6 +390,7 @@ impl RegistryFacts {
             stamp_tool: tool_with(registry, ToolCapability::Stamp).is_some(),
             sign_tool: tool_with(registry, ToolCapability::AddSignature).is_some(),
             redact_tool: tool_with(registry, ToolCapability::Redact).is_some(),
+            image_tool: tool_with(registry, ToolCapability::EditImages).is_some(),
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -773,6 +784,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain(mark_entries(state))
             .chain(link_entries(state))
             .chain(page_entries(state))
+            .chain(image_entries(state))
             .chain(stamp_entries(state))
             .chain(signature_entries(state))
             .chain(form_entries(state))
@@ -1037,6 +1049,39 @@ fn page_entries(state: MenuState) -> Vec<MenuEntry> {
             selected: false,
         })
         .collect()
+}
+
+/// The image entries: turning and flipping live as their registered
+/// commands are; replacing is an edit and saving reads the image out, each
+/// live with a tool that selects images.
+fn image_entries(state: MenuState) -> Vec<MenuEntry> {
+    ImageCommand::ALL
+        .into_iter()
+        .map(|image| {
+            let command = MenuCommand::Image(image);
+            let availability = if image.registry_id().is_some() {
+                registry_command(state, command)
+            } else {
+                shell_image_availability(state, image)
+            };
+            MenuEntry {
+                command,
+                label: image.label(),
+                availability,
+                selected: false,
+            }
+        })
+        .collect()
+}
+
+fn shell_image_availability(state: MenuState, image: ImageCommand) -> MenuAvailability {
+    let refusal = match (state.registry.image_tool, state.has_active_tab) {
+        (false, _) => Some(super::tabs::NO_IMAGE_TOOL),
+        (true, false) => Some("No document is open"),
+        (true, true) if image == ImageCommand::SaveAs => state.registry.read_out_refusal,
+        (true, true) => state.registry.edit_refusal,
+    };
+    refusal.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled)
 }
 
 /// File > Create's single-source entries. Both run a codec's import half,
@@ -1487,6 +1532,7 @@ impl MenuCommand {
             | Self::DeselectAll
             | Self::TakeSnapshot
             | Self::Page(_)
+            | Self::Image(_)
             | Self::Tools
             | Self::ManageTools
             | Self::AutoScroll
@@ -1561,6 +1607,7 @@ impl MenuCommand {
             | Self::DeselectAll
             | Self::TakeSnapshot
             | Self::Page(_)
+            | Self::Image(_)
             | Self::Tools
             | Self::ManageTools
             | Self::AutoScroll
@@ -1710,6 +1757,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::SelectAll
         | MenuCommand::DeselectAll
         | MenuCommand::Page(_)
+        | MenuCommand::Image(_)
         | MenuCommand::TakeSnapshot
         | MenuCommand::Find
         | MenuCommand::AdvancedSearch
@@ -1817,6 +1865,7 @@ mod tests {
             commands: RegisteredCommands::installed(|id| {
                 Some(
                     if id.starts_with("organize.")
+                        || id.starts_with("image.")
                         || id == onionskin_plugin_api::command_ids::CROP_PAGES
                     {
                         CommandEffect::Edits
@@ -1836,6 +1885,7 @@ mod tests {
             stamp_tool: true,
             sign_tool: true,
             redact_tool: true,
+            image_tool: true,
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -2287,6 +2337,12 @@ mod tests {
                 "Move Page Later",
                 "Delete Page",
                 "Number Pages From 1",
+                "Rotate Image Clockwise",
+                "Rotate Image Counterclockwise",
+                "Flip Image Horizontal",
+                "Flip Image Vertical",
+                "Replace Image…",
+                "Save Image As…",
                 "Stamps…",
                 "Paste Clipboard Image as Stamp",
                 "Add Signature…",

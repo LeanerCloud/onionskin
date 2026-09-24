@@ -201,8 +201,16 @@ impl ShellFrame {
         path: &Path,
         cx: &mut Context<Self>,
     ) {
+        let file = match self.tool_file(canvas.read(cx), index, path) {
+            Ok(file) => file,
+            Err(error) => {
+                self.notices.push(error);
+                cx.notify();
+                return;
+            }
+        };
         let taken = canvas.update(cx, |canvas, _| {
-            canvas.model.choose_tool(index, &path.to_string_lossy())
+            canvas.model.choose_tool(index, &file.to_string_lossy())
         });
         if !taken {
             self.notices

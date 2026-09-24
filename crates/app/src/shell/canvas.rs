@@ -852,6 +852,11 @@ impl CanvasModel {
         self.document.borrow().selection().text().cloned()
     }
 
+    /// The image the Edit Image tool selected, for Save Image As.
+    pub fn image_selection(&self) -> Option<onionskin_core::ImageSelection> {
+        self.document.borrow().selection().image().cloned()
+    }
+
     pub fn selection_text(&self) -> Option<String> {
         self.document
             .borrow()

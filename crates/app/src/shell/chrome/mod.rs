@@ -9,6 +9,7 @@ pub(in crate::shell) mod export_dialog;
 pub(in crate::shell) mod field_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;
+mod image_commands;
 pub(in crate::shell) mod inspector;
 #[cfg(feature = "tools-edit")]
 pub(in crate::shell) mod link_dialog;

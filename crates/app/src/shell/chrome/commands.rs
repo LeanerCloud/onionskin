@@ -68,6 +68,7 @@ impl MenuCommand {
         all.extend(onionskin_core::pages::MarkKind::ALL.map(MenuCommand::PageMarks));
         all.extend([false, true].map(|remove| MenuCommand::WebLinks { remove }));
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
+        all.extend(super::image_commands::ImageCommand::ALL.map(MenuCommand::Image));
         all.extend([
             MenuCommand::Stamps,
             MenuCommand::PasteStamp,
@@ -189,6 +190,7 @@ impl MenuCommand {
             Self::Find => "edit.find",
             Self::AdvancedSearch => "edit.advanced-search",
             Self::Page(page) => page.id(),
+            Self::Image(image) => image.id(),
             Self::Preferences => "edit.preferences",
             Self::PreviousView => "view.previous-view",
             Self::NextView => "view.next-view",
@@ -321,6 +323,7 @@ impl MenuCommand {
             | Self::DeselectAll
             | Self::TakeSnapshot
             | Self::Page(_)
+            | Self::Image(_)
             | Self::FirstPage
             | Self::PreviousPage
             | Self::NextPage
@@ -360,6 +363,7 @@ impl MenuCommand {
             | Self::CropPages
             | Self::SummarizeComments
             | Self::ReduceFileSize => Some(self.id()),
+            Self::Image(image) => image.registry_id(),
             _ => None,
         }
     }
