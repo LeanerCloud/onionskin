@@ -624,10 +624,13 @@ what-does-not-transfer section demands:
   fields, Clear Form, and the JavaScript preference. Preparing forms has
   landed: field tools for every kind but image, and the Properties dialog
   with Format, Validate and Calculate written as Acrobat writes them, and
-  Auto-Complete (Basic) with its entry list (m5-forms.md). Guarantee test
-  7 waits on the JS-forms corpus's values recorded in Acrobat. The rest of
-  M5 (image fields, auto-detect, text editing, spell check,
-  find-and-replace, images) is planned.
+  Auto-Complete (Basic) with its entry list, image fields, and Detect Form
+  Fields (m5-forms.md). Editing images has landed: the Edit Image tool
+  moves, resizes and deletes the selected image, the Edit menu turns,
+  flips, replaces and saves it, and the Add Image tool places a picture
+  (m5-images.md). Guarantee test 7 waits on the JS-forms corpus's values
+  recorded in Acrobat. The rest of M5 (text editing, spell check,
+  find-and-replace, tagged-PDF maintenance checking) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

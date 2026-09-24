@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 111 planned / 38 partial / 80 out-of-scope. 174 implemented.**
+**403 rows: 107 planned / 39 partial / 80 out-of-scope. 177 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -320,10 +320,10 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Reflowing text edit (text repours across the paragraph or page) | planned | post-1.0 | Named as a post-1.0 slot in the plan, and explicitly out of scope pre-1.0. |
 | Change font, size, colour, alignment, spacing of edited text | planned | M5 | The future command is constrained by what the embedded subset and its fsType bits permit. |
 | Add text (new text box) | planned | M5 | (judgment) |
-| Edit images and objects (move, resize, rotate, flip, crop, align) | planned | M5 | |
-| Replace image | planned | M5 | |
-| Add image | planned | M5 | |
-| Extract / save image | planned | M5 | (judgment) |
+| Edit images and objects (move, resize, rotate, flip, crop, align) | partial | M5 | Images only: the Edit Image tool selects the topmost image under a click, a drag moves it, a corner drag resizes it keeping its proportions, and Edit > Rotate Image Clockwise or Counterclockwise and Flip Image Horizontal or Vertical turn it about its centre. Each rewrites the one `Do` that drew it, so the same image drawn elsewhere stays. Crop, align and vector objects are missing. Evidence: docs/evidence/m5-images.md. |
+| Replace image | implemented | M5 | Edit > Replace Image…: a PNG, JPEG or TIFF, or a PDF's first page, fitted and centred in the selected image's frame. Evidence: docs/evidence/m5-images.md. |
+| Add image | implemented | M5 | The Add Image tool asks for a picture (as Replace Image) and places it at its own size on a click, or fitted in a dragged rectangle, drawn after the page and selected. Evidence: docs/evidence/m5-images.md. |
+| Extract / save image | implemented | M5 | Edit > Save Image As… writes the selected image as Export All Images does: a JPEG as its bytes, gray and RGB as PNG, CMYK as TIFF. Evidence: docs/evidence/m5-images.md. (judgment) |
 | Add or edit links | implemented | M5 | The Link tool: drag a rectangle for Create Link, or click a link for Link Properties, where it can also be deleted; the canvas context menu's Create Link links the selected text. A link goes to a page (fitted in the window), opens a web page, or opens a file; an action it does not write, such as JavaScript, is kept as it is. Appearance: visible or invisible rectangle, thickness, line style, colour, highlight. The Hand tool follows links. Evidence: docs/evidence/m5-links.md. |
 | Auto-create links from URLs | implemented | M5 | (judgment) Edit > Create Links from URLs: every `http://`, `https://` and `www.` address in the pages' text that has no link gets an invisible one. Evidence: docs/evidence/m5-links.md. |
 | Remove web links | implemented | M5 | (judgment) Edit > Remove Web Links removes every link to a web page and keeps links to pages and files. Evidence: docs/evidence/m5-links.md. |
