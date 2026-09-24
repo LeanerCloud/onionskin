@@ -1488,6 +1488,12 @@ impl Document {
         crate::links::read_links(self.structure()?, page_count)
     }
 
+    /// The redaction marks on every page, as the document has them now.
+    pub fn redactions(&mut self) -> Result<Vec<crate::redactions::RedactionMark>> {
+        let page_count = self.page_count();
+        crate::redactions::read_redactions(self.structure()?, page_count)
+    }
+
     pub fn search(&self) -> &SearchState {
         &self.search
     }

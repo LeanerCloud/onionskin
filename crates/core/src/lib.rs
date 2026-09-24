@@ -24,6 +24,7 @@ pub mod pages;
 mod preview;
 pub mod protection;
 mod recovery;
+pub mod redactions;
 mod render;
 mod save;
 mod search;
