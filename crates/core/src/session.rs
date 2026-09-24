@@ -373,6 +373,10 @@ pub struct Document {
     /// Bumped by every layer visibility change, so a second view's worker
     /// knows to take the new map (see [`RenderView`]).
     layer_epoch: u64,
+    /// Whether strokes are drawn one pixel wide (View > Show/Hide > Line
+    /// Weights off). A way of looking at the page, so it never reaches the
+    /// bytes, a save or an export.
+    hairline_strokes: bool,
 }
 
 impl Document {
@@ -421,6 +425,7 @@ impl Document {
             recovery: None,
             worker_state: (0, 0),
             layer_epoch: 0,
+            hairline_strokes: false,
         })
     }
 
@@ -1174,6 +1179,24 @@ impl Document {
         self.render.set_layer_visibility(overrides)?;
         self.layer_epoch += 1;
         Ok(true)
+    }
+
+    /// Draw strokes one device pixel wide from the next render on, or at
+    /// their own widths: View > Show/Hide > Line Weights, off and on. Returns
+    /// whether that changed anything, so a caller knows to drop its rasters.
+    /// Second views take it up on their next request.
+    pub fn set_hairline_strokes(&mut self, on: bool) -> Result<bool> {
+        if self.hairline_strokes == on {
+            return Ok(false);
+        }
+        self.render.set_hairline_strokes(on)?;
+        self.hairline_strokes = on;
+        Ok(true)
+    }
+
+    /// Whether strokes are drawn one pixel wide.
+    pub fn hairline_strokes(&self) -> bool {
+        self.hairline_strokes
     }
 
     /// Put every optional content group back to the visibility the file's

@@ -26,6 +26,8 @@ pub struct RenderView {
     pending_geometry: BTreeSet<PageIndex>,
     /// `(byte generation, edit epoch, layer epoch)` of what the worker holds.
     state: (u64, u64, u64),
+    /// Whether the worker draws hairline strokes.
+    hairline_strokes: bool,
 }
 
 impl std::fmt::Debug for RenderView {
@@ -44,8 +46,10 @@ impl Document {
             render: WorkerHandle::spawn(bytes)?,
             pending_geometry: BTreeSet::new(),
             state: self.view_state(),
+            hairline_strokes: false,
         };
         self.send_layers(&mut view)?;
+        self.send_hairline_strokes(&mut view)?;
         Ok(view)
     }
 
@@ -61,8 +65,18 @@ impl Document {
         Ok(())
     }
 
-    /// Hand the view the session's bytes and layers if it holds older ones.
+    fn send_hairline_strokes(&self, view: &mut RenderView) -> Result<()> {
+        if view.hairline_strokes != self.hairline_strokes {
+            view.render.set_hairline_strokes(self.hairline_strokes)?;
+            view.hairline_strokes = self.hairline_strokes;
+        }
+        Ok(())
+    }
+
+    /// Hand the view the session's bytes, layers and stroke width if it holds
+    /// older ones.
     fn sync_view(&mut self, view: &mut RenderView) -> Result<()> {
+        self.send_hairline_strokes(view)?;
         self.sync_epoch();
         let current = self.view_state();
         if current == view.state {

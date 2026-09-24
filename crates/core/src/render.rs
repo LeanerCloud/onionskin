@@ -158,6 +158,10 @@ enum Request {
     /// leave the untouched groups following the file while the pane showed
     /// something else.
     SetLayerVisibility(HashMap<ObjectIdentifier, bool>),
+    /// Draw strokes one device pixel wide (View > Show/Hide > Line Weights
+    /// off), or at their own widths. For what is on screen only: renders
+    /// answered on a caller's own channel are exports and keep their widths.
+    SetHairlineStrokes(bool),
     /// Render from different bytes from here on: the preview after an edit,
     /// the reopened file after a save, the truncated one after a revert.
     ///
@@ -355,6 +359,14 @@ impl WorkerHandle {
     ) -> Result<(), WorkerError> {
         self.requests
             .send(Request::SetLayerVisibility(overrides))
+            .map_err(|_| WorkerError::Stopped)
+    }
+
+    /// Draw every later interactive render and thumbnail with hairline
+    /// strokes, or with the page's own line widths.
+    pub(crate) fn set_hairline_strokes(&self, on: bool) -> Result<(), WorkerError> {
+        self.requests
+            .send(Request::SetHairlineStrokes(on))
             .map_err(|_| WorkerError::Stopped)
     }
 
@@ -690,7 +702,7 @@ fn handle_request(
             response,
         } => {
             let result = renderer
-                .render_page(page, zoom, options)
+                .render_page(page, zoom, &exported(options))
                 .map_err(WorkerError::Render);
             let _ = response.send(result);
             false
@@ -710,6 +722,10 @@ fn handle_request(
             options.layer_visibility = overrides;
             false
         }
+        Request::SetHairlineStrokes(on) => {
+            options.hairline_strokes = on;
+            false
+        }
         Request::SetBytes { bytes, response } => {
             // Ending the loop is how the session that borrows the old document
             // gets dropped; the thread body does the rebuild.
@@ -717,6 +733,15 @@ fn handle_request(
             true
         }
         Request::Shutdown => true,
+    }
+}
+
+/// The options an export renders with: the canvas's, less anything that only
+/// changes how the page looks on screen.
+fn exported(options: &RenderOptions) -> RenderOptions {
+    RenderOptions {
+        hairline_strokes: false,
+        ..options.clone()
     }
 }
 

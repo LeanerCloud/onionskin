@@ -537,3 +537,92 @@ fn an_edit_to_the_session_reaches_the_view() {
     );
     assert!(document.request_page_geometry_in(&mut view, 1).is_err());
 }
+
+/// A 200x100 page with a line 20 points wide across its middle.
+fn thick_line_pdf() -> Vec<u8> {
+    let content = b"0 G 20 w 20 50 m 180 50 l S\n";
+    let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+    stream.extend_from_slice(content);
+    stream.extend_from_slice(b"endstream");
+    pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R >>".to_vec(),
+        stream,
+    ])
+}
+
+/// How many pixels of the raster's middle column are not white.
+fn line_width_in_pixels(raster: &BaseRaster) -> usize {
+    let (width, height) = (raster.width() as usize, raster.height() as usize);
+    let x = width / 2;
+    (0..height)
+        .filter(|y| raster.rgba()[(y * width + x) * 4..][..4] != [255, 255, 255, 255])
+        .count()
+}
+
+/// The raster the primary queue answers `generation` with.
+fn rendered(document: &mut Document, generation: u64) -> BaseRaster {
+    document
+        .request_render(request(0, 1.0, generation), None)
+        .expect("queues");
+    collect(document, 2)
+        .into_iter()
+        .find_map(|response| match response {
+            RenderResponse::Raster { render, .. } => Some(render.raster),
+            _ => None,
+        })
+        .expect("a raster")
+}
+
+/// View > Show/Hide > Line Weights: off draws the 20-point line one pixel
+/// wide, on draws it at its width again, and only a change is reported.
+#[test]
+fn line_weights_off_draws_strokes_one_pixel_wide_until_turned_back_on() {
+    let mut document = Document::open_bytes(thick_line_pdf()).expect("opens");
+    assert_eq!(line_width_in_pixels(&rendered(&mut document, 1)), 20);
+    assert!(!document.hairline_strokes());
+
+    assert!(document.set_hairline_strokes(true).expect("sets"));
+    assert!(
+        !document.set_hairline_strokes(true).expect("sets"),
+        "no change"
+    );
+    assert!(document.hairline_strokes());
+    let thin = line_width_in_pixels(&rendered(&mut document, 2));
+    assert!((1..=2).contains(&thin), "{thin} pixels");
+
+    assert!(document.set_hairline_strokes(false).expect("sets"));
+    assert_eq!(line_width_in_pixels(&rendered(&mut document, 3)), 20);
+}
+
+/// An export renders through the same worker, and keeps the page's widths.
+#[test]
+fn an_export_render_keeps_its_line_weights() {
+    let mut document = Document::open_bytes(thick_line_pdf()).expect("opens");
+    document.set_hairline_strokes(true).expect("sets");
+    let exported = document.render_page_now(0, 1.0).expect("renders");
+    assert_eq!(line_width_in_pixels(&exported.raster), 20);
+}
+
+/// A window opened before the toggle takes it up with its next request.
+#[test]
+fn a_second_view_takes_up_line_weights() {
+    let mut document = Document::open_bytes(thick_line_pdf()).expect("opens");
+    let mut view = document.new_render_view().expect("a view");
+    document.set_hairline_strokes(true).expect("sets");
+    document
+        .request_render_in(&mut view, request(0, 1.0, 1), None)
+        .expect("the view queues");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let raster = loop {
+        match document.try_render_response_in(&mut view).expect("lives") {
+            Some(RenderResponse::Raster { render, .. }) => break render.raster,
+            Some(_) => {}
+            None if Instant::now() < deadline => std::thread::yield_now(),
+            None => panic!("the view's raster never arrived"),
+        }
+    };
+    let thin = line_width_in_pixels(&raster);
+    assert!((1..=2).contains(&thin), "{thin} pixels");
+}
