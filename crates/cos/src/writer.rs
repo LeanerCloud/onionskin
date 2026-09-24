@@ -10,6 +10,15 @@ use crate::error::{Error, Result};
 use crate::object::{Dict, Name, ObjRef, Object};
 use crate::parse;
 
+/// One object's bytes, as a file or a content stream carries it: for a
+/// caller that writes an operand, such as a marked-content property list,
+/// into a content stream it is rewriting.
+pub fn object_bytes(object: &Object) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_object(&mut out, object)?;
+    Ok(out)
+}
+
 pub(crate) fn write_object(out: &mut Vec<u8>, object: &Object) -> Result<()> {
     match object {
         Object::Null => out.extend_from_slice(b"null"),
@@ -252,9 +261,7 @@ mod tests {
     use crate::object::Stream;
 
     fn text(object: &Object) -> String {
-        let mut out = Vec::new();
-        write_object(&mut out, object).expect("writable");
-        String::from_utf8_lossy(&out).into_owned()
+        String::from_utf8_lossy(&object_bytes(object).expect("writable")).into_owned()
     }
 
     #[test]

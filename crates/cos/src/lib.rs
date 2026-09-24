@@ -73,4 +73,5 @@ pub use object::{
 };
 pub use repair::{Provenance, RepairReason, RepairReport};
 pub use source::{BytesSource, CountingSource, FileSource, ReadStats, Source};
+pub use writer::object_bytes;
 pub use xref::{Xref, XrefEntry};
