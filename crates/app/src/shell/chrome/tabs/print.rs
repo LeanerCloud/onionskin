@@ -213,7 +213,7 @@ impl ShellFrame {
         })
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     fn print_to_printer(&mut self, job: PrintJob, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.active() else {
             return;
@@ -238,9 +238,8 @@ impl ShellFrame {
             let bytes = document
                 .preview_bytes(job.comments)
                 .map_err(|error| error.to_string())?;
-            use onionskin_print::{impose, poster_preflight, MacBackend, PrintBackend};
-            let mut main_backend =
-                MacBackend::new(bytes, title.clone()).map_err(|error| error.to_string())?;
+            use onionskin_print::{impose, poster_preflight, PrintBackend};
+            let mut main_backend = printer_backend(bytes, title.clone())?;
             let main_sizes = main_backend
                 .page_sizes()
                 .map_err(|error| error.to_string())?;
@@ -248,11 +247,10 @@ impl ShellFrame {
             let mut appendix_backend = summary
                 .map(|summary| {
                     let appendix = onionskin_print::appendix_job(&job);
-                    let backend = MacBackend::new(
+                    let backend = printer_backend(
                         std::sync::Arc::new(summary),
                         format!("{title} - Comments"),
-                    )
-                    .map_err(|error| error.to_string())?;
+                    )?;
                     Ok::<_, String>((appendix, backend))
                 })
                 .transpose()?;
@@ -280,10 +278,13 @@ impl ShellFrame {
         self.finish_print(sent.map(|()| format!("Sent to {printer}")), cx);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     fn print_to_printer(&mut self, _job: PrintJob, cx: &mut Context<Self>) {
         self.finish_print(
-            Err("Printing to a printer on this platform arrives in M4; use Save as PDF".to_owned()),
+            Err(
+                "Printing to a printer is not available on this platform yet; use Save as PDF"
+                    .to_owned(),
+            ),
             cx,
         );
     }
@@ -330,9 +331,60 @@ fn platform_printers() -> Vec<String> {
     onionskin_print::printers()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_printers() -> Vec<String> {
+    onionskin_print::backend::cups::printers(&cups::programs())
+}
+
+#[cfg(not(unix))]
 fn platform_printers() -> Vec<String> {
     Vec::new()
+}
+
+/// The platform's printer: PDFKit on macOS.
+#[cfg(target_os = "macos")]
+fn printer_backend(
+    bytes: std::sync::Arc<Vec<u8>>,
+    title: String,
+) -> Result<onionskin_print::MacBackend, String> {
+    onionskin_print::MacBackend::new(bytes, title).map_err(|error| error.to_string())
+}
+
+/// The platform's printer: CUPS's `lp` on the other Unixes.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn printer_backend(
+    bytes: std::sync::Arc<Vec<u8>>,
+    title: String,
+) -> Result<onionskin_print::CupsBackend, String> {
+    onionskin_print::CupsBackend::new(bytes, title, cups::programs())
+        .map_err(|error| error.to_string())
+}
+
+/// Which `lp` and `lpstat` the app runs: the ones on `PATH`, or in tests
+/// stand-ins, so a test can print without a printer.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(super) mod cups {
+    use onionskin_print::CupsPrograms;
+
+    #[cfg(test)]
+    thread_local! {
+        static STAND_IN: std::cell::RefCell<Option<CupsPrograms>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(in crate::shell::chrome::tabs) fn programs() -> CupsPrograms {
+        #[cfg(test)]
+        if let Some(programs) = STAND_IN.with(|stand_in| stand_in.borrow().clone()) {
+            return programs;
+        }
+        CupsPrograms::default()
+    }
+
+    /// Run this thread's prints through `programs`.
+    #[cfg(test)]
+    pub(in crate::shell::chrome::tabs) fn stand_in(programs: CupsPrograms) {
+        STAND_IN.with(|stand_in| *stand_in.borrow_mut() = Some(programs));
+    }
 }
 
 /// `report.pdf` printed is `report (printed).pdf`.
@@ -359,7 +411,7 @@ mod tests {
     #[test]
     fn save_as_pdf_is_always_the_first_destination() {
         assert_eq!(destinations()[0], Destination::SaveAsPdf);
-        if cfg!(not(target_os = "macos")) {
+        if cfg!(not(unix)) {
             assert_eq!(destinations().len(), 1, "no printer without a backend");
         }
     }

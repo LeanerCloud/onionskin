@@ -1726,6 +1726,8 @@ mod tests {
     mod page_grid;
     #[cfg(feature = "shell-test-support")]
     mod print;
+    #[cfg(all(feature = "shell-test-support", unix, not(target_os = "macos")))]
+    mod print_cups;
     #[cfg(feature = "shell-test-support")]
     mod properties;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]

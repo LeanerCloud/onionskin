@@ -15,7 +15,7 @@ use crate::shell::chrome::summary_dialog::SummaryChoice;
 use crate::shell::context_menu::CanvasContextCommand;
 use crate::shell::dialog::ShellDialog;
 
-fn window_over(
+pub(super) fn window_over(
     seed: &str,
     cx: &mut TestAppContext,
 ) -> (
@@ -74,7 +74,11 @@ fn window_on(
     (dir, window, bindings)
 }
 
-fn act(window: gpui::WindowHandle<ShellFrame>, action: PrintAction, cx: &mut TestAppContext) {
+pub(super) fn act(
+    window: gpui::WindowHandle<ShellFrame>,
+    action: PrintAction,
+    cx: &mut TestAppContext,
+) {
     window
         .update(cx, |frame, window, cx| {
             frame.run_activation(Activation::Print(action), window, cx);
