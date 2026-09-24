@@ -8,33 +8,11 @@ use onionskin_core::links::{
     add_link, link_at, read_links, remove_link, remove_web_links, set_link, Highlight, LineStyle,
     Link, LinkLook, LinkTarget,
 };
-use onionskin_core::{check, read_structure, EditSession, Error, Structure, Transaction};
-use onionskin_cos::{BytesSource, Document as CosDocument, ObjRef, Object};
+use onionskin_core::{check, read_structure, Error};
+use onionskin_cos::{ObjRef, Object};
 
 mod common;
-use common::{flat, pdf, stream, tagged};
-
-fn open(bytes: &[u8]) -> CosDocument {
-    CosDocument::open(Box::new(BytesSource::new(bytes.to_vec()))).expect("the document opens")
-}
-
-fn apply<T>(
-    original: &[u8],
-    body: impl FnOnce(&mut Transaction<'_>, &Structure) -> onionskin_core::Result<T>,
-) -> onionskin_core::Result<(Vec<u8>, T)> {
-    let base = open(original);
-    let structure = read_structure(&base).expect("the structure reads");
-    let mut edit = EditSession::for_base(&base);
-    let value = edit.transact(&base, "Links", |tx| body(tx, &structure))?;
-    let mut bytes = original.to_vec();
-    if let Some(section) = base
-        .section_for(&edit.pending_edits(), &edit.trailer_edits())
-        .expect("the section builds")
-    {
-        bytes.extend_from_slice(&section);
-    }
-    Ok((bytes, value))
-}
+use common::{flat, open, pdf, stream, tagged, try_apply as apply};
 
 fn links(bytes: &[u8]) -> Vec<Link> {
     let document = open(bytes);

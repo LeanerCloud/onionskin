@@ -7,34 +7,10 @@ use onionskin_core::forms::{
     set_field_properties, set_field_value, unique_name, ChoiceOption, FieldKind, FieldProperties,
     FieldScripts, FieldValue, Form, KindOptions, NewField,
 };
-use onionskin_core::{EditSession, Structure, Transaction};
-use onionskin_cos::{BytesSource, Document as CosDocument, Object};
+use onionskin_cos::Object;
 
 mod common;
-use common::{pdf, stream};
-
-fn open(bytes: &[u8]) -> CosDocument {
-    CosDocument::open(Box::new(BytesSource::new(bytes.to_vec()))).expect("the document opens")
-}
-
-fn apply<T>(
-    original: &[u8],
-    body: impl FnOnce(&mut Transaction<'_>, &Structure) -> onionskin_core::Result<T>,
-) -> Vec<u8> {
-    let base = open(original);
-    let structure = onionskin_core::read_structure(&base).expect("the structure reads");
-    let mut edit = EditSession::for_base(&base);
-    edit.transact(&base, "Fill", |tx| body(tx, &structure))
-        .expect("the edit runs");
-    let mut bytes = original.to_vec();
-    if let Some(section) = base
-        .section_for(&edit.pending_edits(), &edit.trailer_edits())
-        .expect("the section builds")
-    {
-        bytes.extend_from_slice(&section);
-    }
-    bytes
-}
+use common::{apply, open, pdf, stream};
 
 fn form(bytes: &[u8]) -> Form {
     read_form(&open(bytes)).expect("the form reads")

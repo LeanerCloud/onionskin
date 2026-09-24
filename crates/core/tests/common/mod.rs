@@ -128,3 +128,43 @@ pub fn tagged() -> Vec<u8> {
     }
     pdf(&objects)
 }
+
+/// Parse `bytes` as they are, refusing anything that needs repair.
+pub fn open(bytes: &[u8]) -> onionskin_cos::Document {
+    onionskin_cos::Document::open(Box::new(onionskin_cos::BytesSource::new(bytes.to_vec())))
+        .expect("the document opens")
+}
+
+/// `original` with the edit `body` makes appended as an incremental
+/// section, and what `body` returned.
+pub fn try_apply<T>(
+    original: &[u8],
+    body: impl FnOnce(
+        &mut onionskin_core::Transaction<'_>,
+        &onionskin_core::Structure,
+    ) -> onionskin_core::Result<T>,
+) -> onionskin_core::Result<(Vec<u8>, T)> {
+    let base = open(original);
+    let structure = onionskin_core::read_structure(&base).expect("the structure reads");
+    let mut edit = onionskin_core::EditSession::for_base(&base);
+    let value = edit.transact(&base, "Edit", |tx| body(tx, &structure))?;
+    let mut bytes = original.to_vec();
+    if let Some(section) = base
+        .section_for(&edit.pending_edits(), &edit.trailer_edits())
+        .expect("the section builds")
+    {
+        bytes.extend_from_slice(&section);
+    }
+    Ok((bytes, value))
+}
+
+/// [`try_apply`] for an edit that must run.
+pub fn apply<T>(
+    original: &[u8],
+    body: impl FnOnce(
+        &mut onionskin_core::Transaction<'_>,
+        &onionskin_core::Structure,
+    ) -> onionskin_core::Result<T>,
+) -> Vec<u8> {
+    try_apply(original, body).expect("the edit runs").0
+}
