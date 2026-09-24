@@ -106,6 +106,11 @@ pub struct RenderOptions {
     /// means the file decides, which is what a viewer without a layers pane
     /// wants.
     pub layer_visibility: HashMap<ObjectIdentifier, bool>,
+    /// Draw every stroked path one device pixel wide, whatever its line
+    /// width: View > Show/Hide > Line Weights turned off. It changes what is
+    /// on screen only, so [`Document::render_page_svg`], an export, ignores
+    /// it. Off by default.
+    pub hairline_strokes: bool,
 }
 
 impl Default for RenderOptions {
@@ -113,6 +118,7 @@ impl Default for RenderOptions {
         Self {
             render_annotations: true,
             layer_visibility: HashMap::new(),
+            hairline_strokes: false,
         }
     }
 }
@@ -214,6 +220,7 @@ impl RenderSession<'_> {
                 }),
                 render_annotations: options.render_annotations,
                 ocg_overrides: Arc::new(options.layer_visibility.clone()),
+                hairline_strokes: options.hairline_strokes,
                 ..Default::default()
             },
             &RenderSettings {
