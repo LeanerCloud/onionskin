@@ -6,4 +6,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# What a page paints, for the tools to snap to.
+onionskin-content.workspace = true
+onionskin-core.workspace = true
 onionskin-plugin-api.workspace = true
+
+# The gestures are driven against real documents, and what they write is
+# read back from the pending objects.
+[dev-dependencies]
+onionskin-cos.workspace = true
