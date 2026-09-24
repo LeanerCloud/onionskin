@@ -372,6 +372,10 @@ impl ShellFrame {
                 self.run_clear_form(cx);
                 Ok(())
             }
+            MenuCommand::DetectFields => {
+                self.run_detect_fields(cx);
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]

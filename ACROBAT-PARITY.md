@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 112 planned / 37 partial / 80 out-of-scope. 174 implemented.**
+**403 rows: 111 planned / 38 partial / 80 out-of-scope. 174 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -469,7 +469,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Auto-detect form fields in an existing document | planned | M5 | |
+| Auto-detect form fields in an existing document | partial | M5 | Edit > Detect Form Fields, one undo step. It places a text field over a run of underscores, standing on a rule with nothing written on it, or inside an empty box of a line's height, and a check box on a small square box or a box character. Each field is named by the words just before it on its line, else numbered. Nothing is placed over an existing field. Rules, not Acrobat's trained detection: tables, comb boxes and fields with no line or box are not found. Evidence: docs/evidence/m5-forms.md. |
 | Text field | implemented | M5 | The Text Field tool: drag to draw one, or click to place one at Acrobat's size, numbered Text1, Text2. An AcroForm field with its appearance and, on a tagged document, a `/Form` structure element; the form dictionary is made if there is none. Evidence: docs/evidence/m5-forms.md. |
 | Check box | implemented | M5 | The Check Box tool, with its on and off appearances; its export value and checked-by-default are set in Properties. Evidence: docs/evidence/m5-forms.md. |
 | Radio button | implemented | M5 | The Radio Button tool makes a new group, and a button placed while one is selected joins its group, as Acrobat's Add Another Button does; each button's export value is its own. Evidence: docs/evidence/m5-forms.md. |

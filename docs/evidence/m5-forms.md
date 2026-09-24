@@ -45,8 +45,9 @@ hosted-CI run is claimed.
 - **To `partial`, with Auto-Complete:** Auto-Complete form entries. Basic
   and the entry list are offered; Advanced is not.
 - **To `implemented`, afterwards:** Image field.
-- **Still `planned`:** auto-detect form fields.
-- **Headline after every part:** 112 planned / 37 partial / 80
+- **To `partial`, afterwards:** Auto-detect form fields. It works by
+  rules, not by trained detection.
+- **Headline after every part:** 111 planned / 38 partial / 80
   out-of-scope, 174 implemented.
 
 ## Preparing forms: what the user gets
@@ -101,6 +102,21 @@ hosted-CI run is claimed.
   - The image becomes the button's `/MK /I` form XObject, drawn fitted and
     centred inside the frame, as one undo step.
   - A file no codec reads is said on the notice bar.
+- **Edit > Detect Form Fields.** Where a page is filled in, it places:
+  - a text field over a run of three or more underscores;
+  - a text field standing on a rule at least half an inch long with
+    nothing written on it (filled hairline rectangles count as rules);
+  - a text field inside an empty box of a line's height;
+  - a check box on a small square box, or on a `☐` or `□` character.
+
+  Each field is named by the words just before it on its line ("Name:"
+  names `Name`), else numbered as Acrobat numbers them.
+  - These are skipped: a rule with text on it (an underline), a rule
+    across the page with no label (a separator), and anything over an
+    existing field or over another place found.
+  - One undo step. The notice says how many fields were placed.
+  - Line art comes from a new `content` reading of the paths each page
+    paints, form XObjects included.
 - **One drag gesture.** The marquee and the click-or-drag threshold, written
   four times across the tool plugins, are one module in `plugin-api` now.
 
@@ -327,8 +343,9 @@ onionskin-app/shell-test-support` reports only the existing
 
 ## Not claimed
 
-- **Preparing a form.** These are still planned:
-  - auto-detecting fields;
+- **Preparing a form.** These are not done:
+  - detection by anything but the rules above (tables, comb boxes, and
+    fields with no line or box are not found);
   - auto-complete;
   - moving or resizing a field by dragging it, rather than through
     Position;

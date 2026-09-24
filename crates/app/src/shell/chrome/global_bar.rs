@@ -198,6 +198,8 @@ pub(in crate::shell) enum MenuCommand {
     },
     /// Clear Form: every field of the document's form back to its default.
     ClearForm,
+    /// Detect Form Fields: fields placed where the pages are filled in.
+    DetectFields,
     /// The redaction commands: marking pages, finding, properties, and
     /// writing a redacted or sanitized copy.
     Redact(super::tabs::RedactCommand),
@@ -773,7 +775,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain(signature_entries(state))
-            .chain([clear_form_entry(state)])
+            .chain(form_entries(state))
             .chain(redact_entries(state))
             .chain([MenuEntry {
                 command: MenuCommand::SummarizeComments,
@@ -971,9 +973,10 @@ fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
     })
 }
 
-/// Clear Form: live in a build that fills forms, on a document that may be
-/// edited. A document with no form says so when it is run.
-fn clear_form_entry(state: MenuState) -> MenuEntry {
+/// Clear Form and Detect Form Fields: live in a build that fills forms, on
+/// a document that may be edited. A document with no form, or nowhere to
+/// fill in, says so when they run.
+fn form_entries(state: MenuState) -> [MenuEntry; 2] {
     let availability = match (cfg!(feature = "tools-form"), state.has_active_tab) {
         (false, _) => MenuAvailability::Disabled(super::tabs::NO_FORMS),
         (true, false) => MenuAvailability::Disabled("No document is open"),
@@ -982,12 +985,16 @@ fn clear_form_entry(state: MenuState) -> MenuEntry {
             .edit_refusal
             .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
     };
-    MenuEntry {
-        command: MenuCommand::ClearForm,
-        label: "Clear Form",
+    [
+        (MenuCommand::ClearForm, "Clear Form"),
+        (MenuCommand::DetectFields, "Detect Form Fields"),
+    ]
+    .map(|(command, label)| MenuEntry {
+        command,
+        label,
         availability,
         selected: false,
-    }
+    })
 }
 
 /// The redaction entries: live when a tool marks for redaction and a
@@ -1458,6 +1465,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::Signature { .. }
             | Self::ClearForm
+            | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
@@ -1531,6 +1539,7 @@ impl MenuCommand {
             | Self::PasteStamp
             | Self::Signature { .. }
             | Self::ClearForm
+            | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
@@ -1748,6 +1757,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::PasteStamp
         | MenuCommand::Signature { .. }
         | MenuCommand::ClearForm
+        | MenuCommand::DetectFields
         | MenuCommand::Redact(_)
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
@@ -2282,6 +2292,7 @@ mod tests {
                 "Add Signature…",
                 "Add Initials…",
                 "Clear Form",
+                "Detect Form Fields",
                 "Mark Pages for Redaction…",
                 "Find Text & Redact…",
                 "Redaction Properties…",

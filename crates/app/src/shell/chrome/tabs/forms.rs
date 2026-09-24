@@ -79,6 +79,10 @@ impl ShellFrame {
         self.notices.push(NO_FORMS.to_owned());
         cx.notify();
     }
+
+    pub(super) fn run_detect_fields(&mut self, cx: &mut Context<Self>) {
+        self.run_clear_form(cx);
+    }
 }
 
 #[cfg(feature = "tools-form")]
@@ -102,6 +106,27 @@ impl ShellFrame {
                 .notices
                 .push(super::properties::sentence(&error.to_string())),
         }
+        cx.notify();
+    }
+
+    /// Detect Form Fields: a field wherever the pages are filled in, as
+    /// one undoable step, and a notice saying how many.
+    pub(super) fn run_detect_fields(&mut self, cx: &mut Context<Self>) {
+        let Some(canvas) = self.active_canvas().cloned() else {
+            return;
+        };
+        let result = canvas.update(cx, |canvas, cx| {
+            let result =
+                onionskin_tools_form::detect::detect_fields(&mut canvas.model.document_mut());
+            canvas.handle_change(Ok(true), cx);
+            result
+        });
+        self.notices.push(match result {
+            Ok(0) => "No places to fill in were found".to_owned(),
+            Ok(1) => "Placed 1 field where the pages are filled in".to_owned(),
+            Ok(count) => format!("Placed {count} fields where the pages are filled in"),
+            Err(error) => super::properties::sentence(&error.to_string()),
+        });
         cx.notify();
     }
 

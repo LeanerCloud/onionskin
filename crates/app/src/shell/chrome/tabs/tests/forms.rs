@@ -632,3 +632,48 @@ fn an_image_field_shows_the_image_chosen_for_it(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn detect_form_fields_places_fields_where_a_page_is_filled_in(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().expect("dir");
+    let content = "BT /F1 12 Tf 20 150 Td (Name: ________) Tj ET";
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_vec(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_vec(),
+    ]);
+    let window = window_on(data.path(), bytes, cx);
+    let cx = &mut visual(window, cx);
+    let detect = |cx: &mut VisualTestContext| {
+        window
+            .update(cx, |frame, window, cx| {
+                frame
+                    .run_main_menu_command(MenuCommand::DetectFields, window, cx)
+                    .expect("runs")
+            })
+            .unwrap();
+    };
+    detect(cx);
+    assert_eq!(
+        notices(window, cx).last().map(String::as_str),
+        Some("Placed 1 field where the pages are filled in")
+    );
+    assert_eq!(
+        value(window, "Name", cx),
+        FieldValue::None,
+        "named by its label"
+    );
+    detect(cx);
+    assert_eq!(
+        notices(window, cx).last().map(String::as_str),
+        Some("No places to fill in were found")
+    );
+}
