@@ -139,7 +139,7 @@ fn rewrite_kids_without(
         let kept: Vec<&Kid> = element
             .kids
             .iter()
-            .filter(|kid| keeps(kid, doomed, pages))
+            .filter(|kid| keeps(kid, element.page, doomed, pages))
             .collect();
         if kept.len() == element.kids.len() {
             continue;
@@ -158,7 +158,7 @@ fn rewrite_kids_without(
     let kept: Vec<&Kid> = tree
         .roots
         .iter()
-        .filter(|kid| keeps(kid, doomed, pages))
+        .filter(|kid| keeps(kid, None, doomed, pages))
         .collect();
     if kept.len() != tree.roots.len() {
         set_root_kids(tx, tree, &kept)?;
@@ -166,13 +166,22 @@ fn rewrite_kids_without(
     Ok(())
 }
 
-fn keeps(kid: &Kid, doomed: &BTreeSet<u32>, pages: &BTreeSet<u32>) -> bool {
+/// Whether `kid` of an element whose own `/Pg` is `own_page` survives
+/// removing `pages`. A bare MCID is marked content on the element's own
+/// page, so it goes exactly when that page goes; an element surviving on a
+/// page that stays keeps every one it had.
+fn keeps(
+    kid: &Kid,
+    own_page: Option<ObjRef>,
+    doomed: &BTreeSet<u32>,
+    pages: &BTreeSet<u32>,
+) -> bool {
     match kid {
         Kid::Element(number) => !doomed.contains(number),
         Kid::MarkedContent { page: Some(pg), .. } | Kid::Object { page: Some(pg), .. } => {
             !pages.contains(&pg.number)
         }
-        Kid::Mcid(_) => false,
+        Kid::Mcid(_) => own_page.is_none_or(|page| !pages.contains(&page.number)),
         Kid::MarkedContent { page: None, .. } | Kid::Object { page: None, .. } => true,
     }
 }

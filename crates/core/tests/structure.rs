@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use onionskin_core::{
-    attach_annotation, check, read_structure, reorder_pages, EditSession, Maintenance, Structure,
-    Violation,
+    attach_annotation, check, read_structure, reorder_pages, EditSession, Kid, Maintenance,
+    Structure, Violation,
 };
 use onionskin_corpus_testing::seed;
 use onionskin_cos::{BytesSource, Document as CosDocument, Name, ObjRef, Object};
@@ -184,6 +184,15 @@ fn the_hook_keeps_the_tree_consistent_through_a_page_removal() {
         report.is_clean(),
         "the hook has to leave the tree consistent: {:?}",
         report.violations
+    );
+    let surviving = structure
+        .tree()
+        .and_then(|tree| tree.elements.get(&6))
+        .expect("page 1's element stays");
+    assert_eq!(
+        surviving.kids,
+        [Kid::Mcid(0)],
+        "an element on a page that stays keeps its marked content"
     );
 }
 
