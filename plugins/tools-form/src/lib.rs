@@ -3,8 +3,11 @@
 //! `scripting` so real-world forms compute the way Acrobat computes them.
 //!
 //! - [`fill`]: committing a value, toggling a check box, Clear Form.
+//! - [`replay`]: a session recorded in Acrobat made again and compared,
+//!   guarantee test 7's harness.
 
 pub mod fill;
+pub mod replay;
 
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 

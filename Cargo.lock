@@ -4673,6 +4673,7 @@ dependencies = [
  "onionskin-cos",
  "onionskin-plugin-api",
  "onionskin-scripting",
+ "serde_json",
 ]
 
 [[package]]

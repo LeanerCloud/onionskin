@@ -10,3 +10,4 @@ onionskin-core.workspace = true
 onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
 onionskin-scripting.workspace = true
+serde_json.workspace = true

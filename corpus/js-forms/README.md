@@ -76,3 +76,38 @@ For each PDF, load it, replay `<stem>.scenario.json` through Onionskin's forms
 engine, and assert the resulting field values, formatted display values and
 validation outcomes match `<stem>.expected.json` exactly. A field marked
 version-dependent passes if it matches any recorded Acrobat version.
+
+The harness exists: `plugins/tools-form/src/replay.rs`, run over this set by
+`plugins/tools-form/tests/guarantee.rs`, which stays ignored until the first
+file lands. The two files it reads:
+
+```json
+[
+  {"field": "price", "action": "enter", "value": "1234.5"},
+  {"field": "agree", "action": "check", "value": "Yes"},
+  {"field": "state", "action": "choose", "value": "CA"}
+]
+```
+
+`<stem>.scenario.json`: `enter` and `blur` commit typed text, `check` clicks
+the check box or radio button whose on state is `value`, and `choose` picks a
+dropdown or list box option by its export value.
+
+```json
+{
+  "acrobat": "Acrobat Pro 2025.001, macOS 15",
+  "fields": {
+    "total": {"value": "2469", "display": "$2,469.00"},
+    "agree": {"value": "Yes"},
+    "ambiguous": {"value": ["10", "12"]}
+  },
+  "alerts": ["The value entered must be greater than or equal to 0 and less than or equal to 130."]
+}
+```
+
+`<stem>.expected.json`: each field's `value` as the console's
+`this.getField(name).valueAsString` reads it (an unchecked button is `Off`) and
+its `display`, the formatted text on the page; either may be left out, and a
+list is the versions' disagreeing values. `alerts` is every `app.alert` in
+order; left out, alerts are not compared. The replay proves itself on a form of
+its own in `plugins/tools-form/tests/replay.rs`.

@@ -446,10 +446,16 @@ fn every_corpus_suite_is_rerun_with_the_corpus_required() {
 /// Guarantee 7, forms compute: every file in the JS-forms corpus set
 /// fills the way Acrobat fills it - computed fields recalculate, formats
 /// apply, validation fires - against Acrobat-produced expected values.
+///
+/// Scripting and filling landed in M5, and the harness that replays a
+/// recorded session is `plugins/tools-form/tests/guarantee.rs`, proved on a
+/// form of our own in `replay.rs` there. The corpus it replays does not
+/// exist yet: its expected values can only be recorded in a licensed
+/// Acrobat (`corpus/js-forms/README.md`).
 #[test]
-#[ignore = "lands with scripting and tools-form in M5"]
+#[ignore = "M5: waits on the JS-forms corpus's values recorded in Acrobat"]
 fn js_form_fields_compute_the_way_acrobat_computes_them() {
-    unimplemented!("needs scripting live and the JS-forms corpus")
+    unimplemented!("needs the JS-forms corpus recorded in Acrobat")
 }
 
 /// Guarantee 8, tag integrity: editing a tagged corpus document leaves
