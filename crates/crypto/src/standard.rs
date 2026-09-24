@@ -4,9 +4,10 @@
 use std::collections::BTreeMap;
 
 use crate::algorithms::{
-    file_key_r2_to_r4, file_key_r5_r6, object_key, owner_password_matches, user_password_matches,
-    KeyInputs,
+    file_key_r2_to_r4, file_key_r5_r6, object_key, owner_file_key, owner_password_matches,
+    padded_user_password, unpadded, user_password_matches, KeyInputs,
 };
+use crate::encrypt::{encrypt, key_for};
 use crate::filters::{decrypt, Method};
 use crate::Error;
 
@@ -27,6 +28,8 @@ pub struct EncryptDict {
     /// `/OE` and `/UE`, `/R` 5 and 6 only.
     pub oe: Vec<u8>,
     pub ue: Vec<u8>,
+    /// `/Perms`, `/R` 6: the permissions encrypted under the file key.
+    pub perms: Vec<u8>,
     pub p: i32,
     /// `/Length` in bits. Absent means 40.
     pub length: Option<u32>,
@@ -40,15 +43,50 @@ pub struct EncryptDict {
 }
 
 /// The permission bits of `/P`, the ones a user interface names.
-///
-/// **Read, not enforced.** M3 disables editing on every encrypted document,
-/// which is stricter than any bit here, and gates nothing else by them;
-/// enforcement lands with the write path at M6. They are decoded so the
-/// measurement table and the open-time notice can say what the file asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Permissions(pub i32);
 
 impl Permissions {
+    /// Bit 3.
+    pub const PRINT: i32 = 1 << 2;
+    /// Bit 4.
+    pub const MODIFY: i32 = 1 << 3;
+    /// Bit 5.
+    pub const EXTRACT: i32 = 1 << 4;
+    /// Bit 6.
+    pub const ANNOTATE: i32 = 1 << 5;
+    /// Bit 9.
+    pub const FILL_FORMS: i32 = 1 << 8;
+    /// Bit 10.
+    pub const ACCESSIBILITY: i32 = 1 << 9;
+    /// Bit 11.
+    pub const ASSEMBLE: i32 = 1 << 10;
+    /// Bit 12.
+    pub const PRINT_HIGH: i32 = 1 << 11;
+    /// Bits 7, 8 and 13 to 32, which ISO 32000 has a writer set.
+    pub const RESERVED: i32 = !0xF3F;
+    /// Everything allowed.
+    pub const ALL: Permissions = Permissions(!0b11);
+
+    /// Bits 9: fill in form fields and sign, even without bit 6.
+    pub fn fill_forms(self) -> bool {
+        self.bit(9)
+    }
+    /// Bit 10: extract text and graphics for accessibility.
+    pub fn accessibility(self) -> bool {
+        self.bit(10)
+    }
+    /// Bit 11: insert, rotate and delete pages, and make bookmarks and
+    /// thumbnails, even without bit 4.
+    pub fn assemble(self) -> bool {
+        self.bit(11)
+    }
+    /// Bit 12: print at full quality. Without it, with bit 3, printing is
+    /// low resolution.
+    pub fn print_high(self) -> bool {
+        self.bit(12)
+    }
+
     /// Bit 3: print.
     pub fn print(self) -> bool {
         self.bit(3)
@@ -71,6 +109,15 @@ impl Permissions {
     }
 }
 
+/// Which password opened a document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// The user password, or none: the permissions apply.
+    User,
+    /// The owner password: every permission is granted.
+    Owner,
+}
+
 /// A validated handler, ready to decrypt.
 #[derive(Clone, Debug)]
 pub struct SecurityHandler {
@@ -85,17 +132,16 @@ pub struct SecurityHandler {
 impl SecurityHandler {
     /// Validate `password` as the user password and derive the file key.
     ///
-    /// M3 only ever passes an empty password: it opens the class Acrobat opens
-    /// without prompting and refuses the rest. The parameter is here so the
-    /// refusal can be tested - a handler that opens a password-protected file
-    /// with an empty password is the permissive bug that has to be ruled out.
+    /// A document that opens with the empty password is one Acrobat opens
+    /// without asking. A handler that opens a password-protected file with
+    /// the empty password is the permissive bug the tests rule out.
     pub fn open(dict: &EncryptDict, file_id: &[u8], password: &[u8]) -> Result<Self, Error> {
         if dict.filter != b"Standard" {
             return Err(Error::Unsupported(
                 "a security handler other than /Standard",
             ));
         }
-        let (streams, strings) = methods(dict)?;
+        methods(dict)?;
 
         let file_key = match dict.r {
             2..=4 => {
@@ -121,6 +167,43 @@ impl SecurityHandler {
             _ => return Err(Error::Unsupported("a /R outside 2 to 6")),
         };
 
+        Self::from_key(dict, file_key)
+    }
+
+    /// Open with `password`, as the owner when it is the owner password and
+    /// as a user otherwise. An owner is granted every permission.
+    pub fn open_with(
+        dict: &EncryptDict,
+        file_id: &[u8],
+        password: &[u8],
+    ) -> Result<(Self, Access), Error> {
+        let length = match dict.r {
+            2 => 5,
+            _ => (dict.length.unwrap_or(40) / 8).clamp(5, 16) as usize,
+        };
+        let inputs = KeyInputs {
+            password,
+            owner: &dict.o,
+            permissions: dict.p,
+            file_id,
+            revision: dict.r,
+            length,
+            encrypt_metadata: dict.encrypt_metadata,
+        };
+        if dict.filter == b"Standard" {
+            if let Some(key) = owner_file_key(&inputs, &dict.u, &dict.oe) {
+                let mut handler = Self::from_key(dict, key)?;
+                handler.permissions = Permissions::ALL;
+                return Ok((handler, Access::Owner));
+            }
+        }
+        Self::open(dict, file_id, password).map(|handler| (handler, Access::User))
+    }
+
+    /// A handler for a file key already derived: the one a document is
+    /// being encrypted with.
+    pub(crate) fn from_key(dict: &EncryptDict, file_key: Vec<u8>) -> Result<Self, Error> {
+        let (streams, strings) = methods(dict)?;
         Ok(SecurityHandler {
             file_key,
             revision: dict.r,
@@ -135,8 +218,49 @@ impl SecurityHandler {
         self.permissions
     }
 
+    /// Encrypt a string belonging to object `number`, with `iv` for AES.
+    /// Like decryption, not for strings inside an object stream.
+    pub fn encrypt_string(
+        &self,
+        number: u32,
+        generation: u16,
+        data: &[u8],
+        iv: [u8; 16],
+    ) -> Vec<u8> {
+        let key = key_for(self.strings, &self.file_key, number, generation);
+        encrypt(self.strings, &key, data, iv)
+    }
+
+    /// Encrypt a stream's data, after its filters are applied. The XMP
+    /// metadata stream stays in the clear when `/EncryptMetadata` is false.
+    pub fn encrypt_stream(
+        &self,
+        number: u32,
+        generation: u16,
+        data: &[u8],
+        iv: [u8; 16],
+        is_metadata: bool,
+    ) -> Vec<u8> {
+        if is_metadata && !self.encrypt_metadata {
+            return data.to_vec();
+        }
+        let key = key_for(self.streams, &self.file_key, number, generation);
+        encrypt(self.streams, &key, data, iv)
+    }
+
     pub fn revision(&self) -> u8 {
         self.revision
+    }
+
+    /// How streams are encrypted, which is what a document's encryption
+    /// level is named by.
+    pub fn stream_method(&self) -> Method {
+        self.streams
+    }
+
+    /// Whether the XMP metadata is encrypted.
+    pub fn encrypts_metadata(&self) -> bool {
+        self.encrypt_metadata
     }
 
     /// Decrypt a string belonging to object `number`.
@@ -190,6 +314,35 @@ impl SecurityHandler {
         };
         decrypt(method, &key, data)
     }
+}
+
+/// For `/R` 2 to 4: the user password that `owner_password` unlocks, for a
+/// reader that opens documents with the user password only. `None` when it
+/// is not the owner password, and for `/R` 5 and 6, whose owner password
+/// every reader takes as it is.
+pub fn user_password_from_owner(
+    dict: &EncryptDict,
+    file_id: &[u8],
+    owner_password: &[u8],
+) -> Option<Vec<u8>> {
+    if !(2..=4).contains(&dict.r) {
+        return None;
+    }
+    let length = match dict.r {
+        2 => 5,
+        _ => (dict.length.unwrap_or(40) / 8).clamp(5, 16) as usize,
+    };
+    let inputs = KeyInputs {
+        password: owner_password,
+        owner: &dict.o,
+        permissions: dict.p,
+        file_id,
+        revision: dict.r,
+        length,
+        encrypt_metadata: dict.encrypt_metadata,
+    };
+    owner_file_key(&inputs, &dict.u, &[])?;
+    padded_user_password(&inputs).map(|padded| unpadded(&padded).to_vec())
 }
 
 /// Whether `password` is the owner password, for the measurement table.

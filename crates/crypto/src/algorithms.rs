@@ -155,8 +155,7 @@ pub(crate) fn file_key_r5_r6(
 
 /// Algorithms 7 and 12: whether `password` is the owner password.
 ///
-/// Only the measurement asks: M3 opens with the user password and never
-/// escalates. Algorithm 7 (`/R` 2-4) recovers the padded user password from
+/// Algorithm 7 (`/R` 2-4) recovers the padded user password from
 /// `/O` with a key derived from the owner password, then checks it as a user
 /// password. Algorithm 12 (`/R` 5-6) hashes the owner password with `/O`'s
 /// validation salt **and the whole of `/U`**, which is the one place the user
@@ -164,6 +163,17 @@ pub(crate) fn file_key_r5_r6(
 ///
 /// `inputs.password` is the candidate owner password; `user` is `/U`.
 pub(crate) fn owner_password_matches(inputs: &KeyInputs<'_>, user: &[u8]) -> bool {
+    owner_file_key(inputs, user, &[]).is_some()
+}
+
+/// The file key, when `inputs.password` is the owner password: what opening
+/// a document as its owner needs. `owner_encrypted` is `/OE`, for `/R` 5 and
+/// 6; the file key of `/R` 2 to 4 comes from the user password `/O` holds.
+pub(crate) fn owner_file_key(
+    inputs: &KeyInputs<'_>,
+    user: &[u8],
+    owner_encrypted: &[u8],
+) -> Option<Vec<u8>> {
     let KeyInputs {
         password,
         owner,
@@ -175,25 +185,7 @@ pub(crate) fn owner_password_matches(inputs: &KeyInputs<'_>, user: &[u8]) -> boo
     } = *inputs;
     match revision {
         2..=4 => {
-            let mut key = Md5::digest(padded(password)).to_vec();
-            if revision >= 3 {
-                for _ in 0..50 {
-                    key = Md5::digest(&key[..length]).to_vec();
-                }
-            }
-            key.truncate(if revision == 2 { 5 } else { length });
-            if owner.len() < 32 {
-                return false;
-            }
-            let mut recovered = owner[..32].to_vec();
-            if revision == 2 {
-                rc4_in_place(&key, &mut recovered);
-            } else {
-                for round in (0u8..=19).rev() {
-                    let step: Vec<u8> = key.iter().map(|byte| byte ^ round).collect();
-                    rc4_in_place(&step, &mut recovered);
-                }
-            }
+            let recovered = padded_user_password(inputs)?;
             let file_key = file_key_r2_to_r4(&KeyInputs {
                 password: &recovered,
                 owner,
@@ -203,18 +195,73 @@ pub(crate) fn owner_password_matches(inputs: &KeyInputs<'_>, user: &[u8]) -> boo
                 length: if revision == 2 { 5 } else { length },
                 encrypt_metadata,
             });
-            user_password_matches(&file_key, user, file_id, revision)
+            user_password_matches(&file_key, user, file_id, revision).then_some(file_key)
         }
         5 | 6 => {
-            if owner.len() < 40 || user.len() < 48 {
-                return false;
+            if owner.len() < 48 || user.len() < 48 {
+                return None;
             }
             let password = &password[..password.len().min(127)];
             let check = hash_for(revision, password, &owner[32..40], &user[..48]);
-            check[..] == owner[..32]
+            if check[..] != owner[..32] {
+                return None;
+            }
+            if owner_encrypted.len() < 32 {
+                // Validated, but with nothing to unwrap: the measurement's
+                // question, which needs no key.
+                return Some(Vec::new());
+            }
+            let intermediate = hash_for(revision, password, &owner[40..48], &user[..48]);
+            let mut key = owner_encrypted[..32].to_vec();
+            cbc::Decryptor::<aes::Aes256>::new(intermediate[..32].into(), &[0u8; 16].into())
+                .decrypt_padded_mut::<NoPadding>(&mut key)
+                .ok()?;
+            Some(key)
         }
-        _ => false,
+        _ => None,
     }
+}
+
+/// Algorithm 7, steps a to f: the padded user password `/O` holds, under
+/// keys made from `inputs.password` as the owner password. Whether it is the
+/// owner password is only known once the user password is checked.
+pub(crate) fn padded_user_password(inputs: &KeyInputs<'_>) -> Option<Vec<u8>> {
+    let KeyInputs {
+        password,
+        owner,
+        revision,
+        length,
+        ..
+    } = *inputs;
+    let mut key = Md5::digest(padded(password)).to_vec();
+    if revision >= 3 {
+        for _ in 0..50 {
+            key = Md5::digest(&key[..length]).to_vec();
+        }
+    }
+    key.truncate(if revision == 2 { 5 } else { length });
+    if owner.len() < 32 {
+        return None;
+    }
+    let mut recovered = owner[..32].to_vec();
+    if revision == 2 {
+        rc4_in_place(&key, &mut recovered);
+    } else {
+        for round in (0u8..=19).rev() {
+            let step: Vec<u8> = key.iter().map(|byte| byte ^ round).collect();
+            rc4_in_place(&step, &mut recovered);
+        }
+    }
+    Some(recovered)
+}
+
+/// A padded password without its padding: the longest prefix whose rest
+/// is the start of [`PAD`].
+pub(crate) fn unpadded(padded: &[u8]) -> &[u8] {
+    let length = (0..=padded.len())
+        .find(|&at| padded[at..] == PAD[..padded.len() - at])
+        .unwrap_or(padded.len());
+    &padded[..length]
 }
 
 /// The hash `/R` 5 or `/R` 6 uses, chosen by revision rather than by guessing.
@@ -282,7 +329,7 @@ pub(crate) fn hash_r6(password: &[u8], salt: &[u8], user: &[u8]) -> Vec<u8> {
 }
 
 /// A password padded or truncated to 32 bytes with [`PAD`].
-fn padded(password: &[u8]) -> [u8; 32] {
+pub(crate) fn padded(password: &[u8]) -> [u8; 32] {
     let mut out = PAD;
     let length = password.len().min(32);
     out[..length].copy_from_slice(&password[..length]);

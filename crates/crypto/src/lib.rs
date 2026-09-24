@@ -3,23 +3,28 @@
 //! means encrypting new objects with the existing key material, so this
 //! is a kernel concern from the start rather than a late addition.
 //!
-//! # What exists at M3: the standard security handler, read side
+//! # The standard security handler
 //!
-//! `/V` 1, 2, 4 and 5; `/R` 2 through 6; RC4, AES-128 and AES-256; crypt
-//! filters; `/EncryptMetadata`. Enough to open every document Acrobat opens
-//! without asking for a password, and to refuse - with a typed error - every
-//! document that needs one.
+//! **Read side:** `/V` 1, 2, 4 and 5; `/R` 2 through 6; RC4, AES-128 and
+//! AES-256; crypt filters; `/EncryptMetadata`; opening with the user or the
+//! owner password.
 //!
-//! **Write side is M6.** Nothing here encrypts, which is why `cos` refuses to
-//! emit a section into an encrypted document at all rather than emitting one
-//! in plaintext under a trailer that still names `/Encrypt`.
+//! **Write side:** Acrobat's two levels, 128-bit and 256-bit AES, from a
+//! user password, an owner password and the permissions ([`protect`]), and
+//! a handler that encrypts strings and streams with the key a document
+//! already has, so a section appended to it is encrypted as the rest is.
 
 mod algorithms;
+mod encrypt;
 mod filters;
 mod standard;
 
+pub use encrypt::{protect, system_random, Protection, Random, Strength};
 pub use filters::Method;
-pub use standard::{validates_owner_password, EncryptDict, Permissions, SecurityHandler};
+pub use standard::{
+    user_password_from_owner, validates_owner_password, Access, EncryptDict, Permissions,
+    SecurityHandler,
+};
 
 use std::fmt;
 

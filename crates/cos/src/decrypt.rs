@@ -115,6 +115,7 @@ pub(crate) fn read_dict(dict: &Dict) -> EncryptDict {
         u: bytes(b"U"),
         oe: bytes(b"OE"),
         ue: bytes(b"UE"),
+        perms: bytes(b"Perms"),
         // `/P` is a signed 32-bit integer in the file, written as a negative
         // number whenever the high bits are set, which they always are.
         p: integer(b"P").unwrap_or(0) as i32,

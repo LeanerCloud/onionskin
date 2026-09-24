@@ -4549,6 +4549,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
+ "getrandom 0.3.4",
  "md-5",
  "rc4",
  "sha2 0.10.9",

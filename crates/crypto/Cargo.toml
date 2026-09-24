@@ -5,13 +5,15 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# ISO 32000's standard security handler, read side. Every primitive comes from
+# ISO 32000's standard security handler, read and write sides. Every primitive comes from
 # a RustCrypto crate rather than from this repository: the handler's job is to
 # key them correctly, which is where PDF decryption actually goes wrong, and a
 # hand-written cipher would be one more thing to get wrong underneath it.
 [dependencies]
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
+# The file key, salts and IVs a document is encrypted with.
+getrandom = "0.3"
 md-5 = "0.10"
 rc4 = "0.1"
 sha2 = "0.10"
