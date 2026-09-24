@@ -593,6 +593,9 @@ what-does-not-transfer section demands:
   server that M4 used to carry moved to post-1.0 (decided 2026-09-21): it is
   Onionskin-only surface, not Acrobat parity, and nothing before 1.0 depends
   on it.
+  Status (2026-09-24): in progress. Booklet, poster/tile, the CUPS backend
+  and View > Show/Hide > Line Weights have landed (docs/evidence/m4-*.md);
+  the Windows backend is the row left.
 - **M5 - Forms, text edit, redaction.** `tools-fill-sign` and `tools-form`
   with `scripting` live (guarantee test 7: forms compute like Acrobat),
   including form auto-complete and the JS-disable preference; `tools-edit`

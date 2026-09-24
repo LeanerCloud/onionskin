@@ -9,6 +9,7 @@ mod export_selection;
 mod file;
 mod frame_state;
 mod inspector;
+mod line_weights;
 mod manage_tools;
 mod menu;
 mod organize;
@@ -1712,6 +1713,8 @@ mod tests {
     mod file;
     #[cfg(feature = "shell-test-support")]
     mod input_values;
+    #[cfg(feature = "shell-test-support")]
+    mod line_weights;
     #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
     mod manage_tools;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
@@ -2204,7 +2207,9 @@ mod tests {
     ) -> (gpui::WindowHandle<ShellFrame>, Vec<crate::keymap::Binding>) {
         let settings = ShellSettings::load(paths, &crate::build_registry());
         let bindings = settings.bindings.clone();
-        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System);
+        // As `run` builds it: the check mark starts from the saved setting.
+        let shell_view = ShellViewState::new(gpui::WindowAppearance::Dark, ThemePreference::System)
+            .with_line_weights(settings.preferences.line_weights);
         let theme = shell_view.tokens();
         let window = cx.add_window(move |window, cx| {
             let tabs = tabs

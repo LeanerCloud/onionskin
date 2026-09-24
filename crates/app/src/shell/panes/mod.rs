@@ -355,7 +355,7 @@ impl NavigationPanesState {
     }
 
     /// Drop every thumbnail picture, keeping the scroll position.
-    fn invalidate_thumbnails(&mut self) {
+    pub(in crate::shell) fn invalidate_thumbnails(&mut self) {
         self.thumbnails.invalidate_images();
     }
 }

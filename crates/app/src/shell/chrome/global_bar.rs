@@ -255,12 +255,6 @@ pub(in crate::shell) enum MenuCommand {
     KeyboardShortcuts,
 }
 
-/// Why Line Weights is off. Acrobat's toggle draws every stroke at one
-/// hairline width, which needs an option in the renderer this build's
-/// renderer does not have; the row moved to M4 with it (M3 P22).
-pub(super) const LINE_WEIGHTS_REASON: &str =
-    "Line Weights arrive in M4 with the renderer's constant-hairline option";
-
 /// What the Take a Snapshot entry says when no installed tool carries the
 /// capability, and what the frame says if one disappears between the menu
 /// being built and the entry being chosen.
@@ -1220,8 +1214,8 @@ fn view_menu_entries(
         entry(
             MenuCommand::LineWeights,
             "Line Weights",
-            Disabled(LINE_WEIGHTS_REASON),
-            false,
+            Enabled,
+            shell_view.line_weights(),
         ),
         entry(
             MenuCommand::ThemeSystem,
@@ -1605,8 +1599,8 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::NewWindow
         | MenuCommand::Minimize
         | MenuCommand::ZoomWindow
-        | MenuCommand::BringAllToFront => Some(Box::new(RunCommand { command })),
-        MenuCommand::LineWeights => None,
+        | MenuCommand::BringAllToFront
+        | MenuCommand::LineWeights => Some(Box::new(RunCommand { command })),
     }
 }
 
@@ -1796,23 +1790,22 @@ mod tests {
         );
     }
 
+    /// Line Weights was the last main-menu entry greyed out until a later
+    /// milestone. None may name one now, with or without a document open.
     #[test]
-    fn every_deferred_entry_names_its_own_delivery_stage() {
-        let disabled: Vec<_> = main_menu_schema(menu_state(2, None))
+    fn no_menu_entry_is_deferred_to_a_milestone() {
+        let deferred: Vec<_> = [menu_state(2, None), menu_state(1, Some(view()))]
             .into_iter()
+            .flat_map(main_menu_schema)
             .flat_map(|section| section.entries)
-            .filter(|entry| matches!(entry.command, MenuCommand::LineWeights))
             .filter_map(|entry| entry.availability.reason())
+            .filter(|reason| {
+                ["M3", "M4", "M5", "M6", "post-1.0"]
+                    .iter()
+                    .any(|stage| reason.contains(stage))
+            })
             .collect();
-
-        assert!(!disabled.is_empty());
-        // Line Weights moved to M4 with the renderer option it needs.
-        assert!(
-            disabled
-                .iter()
-                .all(|reason| reason.contains("M3") || reason.contains("M4")),
-            "{disabled:?}"
-        );
+        assert!(deferred.is_empty(), "{deferred:?}");
     }
 
     /// What P11 delivered. Each of these was a menu entry that named this
@@ -2479,30 +2472,30 @@ mod tests {
         }
     }
 
+    /// Line Weights is a live, checked toggle: its check mark is the
+    /// preference, and the native menu has a route that runs it.
     #[test]
-    fn line_weights_is_disabled_naming_m4_and_has_no_action_route() {
-        let entry = view_entries(Some(view()))
+    fn line_weights_is_a_checked_toggle_that_runs() {
+        let entry_with = |on: bool| {
+            view_menu_entries(
+                Some(view()),
+                ShellViewState::new(WindowAppearance::Dark, ThemePreference::System)
+                    .with_line_weights(on),
+                [true; QuickAction::ALL.len()],
+                true,
+                true,
+            )
             .into_iter()
             .find(|entry| entry.command == MenuCommand::LineWeights)
-            .unwrap();
+            .expect("a Line Weights entry")
+        };
 
-        assert_eq!(
-            entry.availability,
-            MenuAvailability::Disabled(LINE_WEIGHTS_REASON)
-        );
-        assert!(LINE_WEIGHTS_REASON.contains("M4"));
-        assert_eq!(entry.command.view_action(view()), None);
-        assert_eq!(entry.command.shell_view_action(), None);
-        assert!(native_action(entry.command).is_none());
-        match native_menu_item(entry) {
-            MenuItem::Action { name, action, .. } => {
-                assert_eq!(
-                    name.as_ref(),
-                    format!("Line Weights ({LINE_WEIGHTS_REASON})")
-                );
-                assert!(action.partial_eq(&UnavailableCommand));
-            }
-            _ => panic!("a deferred entry still emits an action item"),
-        }
+        let on = entry_with(true);
+        assert_eq!(on.availability, MenuAvailability::Enabled);
+        assert!(on.selected, "on by default, as Acrobat's is");
+        assert!(!entry_with(false).selected);
+        assert!(native_action(MenuCommand::LineWeights).is_some());
+        assert_eq!(on.command.view_action(view()), None);
+        assert_eq!(on.command.shell_view_action(), None);
     }
 }

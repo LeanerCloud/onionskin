@@ -37,7 +37,6 @@ pub(in crate::shell::chrome) enum TabError {
         index: usize,
         count: usize,
     },
-    CommandUnavailable,
     /// The menus grey this command out right now, and a keystroke reaches
     /// the same commands the menus do.
     Unavailable(&'static str),
@@ -49,7 +48,6 @@ impl fmt::Display for TabError {
             Self::OutOfRange { index, count } => {
                 write!(f, "tab {index} is outside a {count}-tab window")
             }
-            Self::CommandUnavailable => write!(f, "menu command is not available yet"),
             Self::Unavailable(reason) => write!(f, "{reason}"),
         }
     }

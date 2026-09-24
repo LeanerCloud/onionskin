@@ -430,6 +430,8 @@ pub struct CanvasModel {
     /// This window's own render queue when it is not the document's first
     /// window. `None` renders through the session's primary queue.
     view: Option<onionskin_core::RenderView>,
+    /// Whether the pixels this canvas holds were drawn with hairline strokes.
+    hairline_strokes: bool,
     /// Where autosave writes, kept so a Revert can hand it to the document
     /// it reopens.
     recovery: Option<onionskin_core::RecoveryStore>,
@@ -546,7 +548,7 @@ impl CanvasModel {
         mut registry: PluginRegistry,
         size: ViewSize,
     ) -> Result<Self, CanvasError> {
-        let (viewport, active_tool, status, laid_out_at) = {
+        let (viewport, active_tool, status, laid_out_at, hairline_strokes) = {
             let mut file = document.borrow_mut();
             if file.page_count() == 0 {
                 return Err(CanvasError::EmptyDocument);
@@ -572,11 +574,13 @@ impl CanvasModel {
                 .protection_notice()
                 .map(|message| CanvasStatus::Notice { message });
             let laid_out_at = (file.byte_generation(), file.edit().epoch());
-            (viewport, active_tool, status, laid_out_at)
+            let hairline_strokes = file.hairline_strokes();
+            (viewport, active_tool, status, laid_out_at, hairline_strokes)
         };
         Ok(Self {
             document,
             view,
+            hairline_strokes,
             laid_out_at,
             find_seen_at: laid_out_at,
             recovery: None,
@@ -1023,6 +1027,27 @@ impl CanvasModel {
         // what makes the answers already in flight, which were rendered with
         // the old options, be dropped rather than painted.
         self.signature = None;
+    }
+
+    /// Draw strokes one pixel wide (`on`) or at their own widths: View >
+    /// Show/Hide > Line Weights, off and on. The session's render queues all
+    /// take it; this canvas drops the pixels it drew the other way. Tracked
+    /// per canvas rather than read from the session, because the first of
+    /// two windows to hear of the change sets the session's flag and the
+    /// second still has to redraw.
+    pub fn set_hairline_strokes(&mut self, on: bool) -> Result<bool, CanvasError> {
+        if self.hairline_strokes == on {
+            return Ok(false);
+        }
+        self.document.borrow_mut().set_hairline_strokes(on)?;
+        self.hairline_strokes = on;
+        self.invalidate_rendered_pixels();
+        Ok(true)
+    }
+
+    /// Whether this canvas draws strokes one pixel wide.
+    pub fn hairline_strokes(&self) -> bool {
+        self.hairline_strokes
     }
 
     /// Put every optional content group back to the visibility the file's

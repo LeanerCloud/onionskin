@@ -242,6 +242,7 @@ pub(in crate::shell) fn apply_page_display(
     model: &mut CanvasModel,
     preferences: &Preferences,
 ) -> Result<(), CanvasError> {
+    model.set_hairline_strokes(!preferences.line_weights)?;
     model.set_layout_mode(preferences.layout)?;
     match preferences.zoom.fit() {
         Some(fit) => model.fit(fit)?,
@@ -937,7 +938,8 @@ where
         .detach();
 
         let shell_view_state =
-            ShellViewState::new(cx.window_appearance(), settings.preferences.theme);
+            ShellViewState::new(cx.window_appearance(), settings.preferences.theme)
+                .with_line_weights(settings.preferences.line_weights);
         let theme = shell_view_state.tokens();
         let menu_state = MenuState::new(
             prepared.len(),

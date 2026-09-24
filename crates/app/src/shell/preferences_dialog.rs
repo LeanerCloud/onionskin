@@ -4,8 +4,8 @@
 //! (see [`crate::preferences`]). Every row is a choice among named values or
 //! a switch, and every one of them takes effect where the user can see it:
 //! the theme repaints the window, the recents length shortens the list,
-//! Page Display decides how the next document opens, Search seeds the find
-//! bar's options.
+//! Page Display decides how the next document opens and whether every open
+//! one draws its line weights, Search seeds the find bar's options.
 
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
@@ -31,6 +31,7 @@ pub(in crate::shell) enum PreferenceChange {
     RecentDocuments(usize),
     Layout(PageLayoutMode),
     Zoom(ZoomPreference),
+    LineWeights(bool),
     SearchCaseSensitive(bool),
     SearchWholeWord(bool),
     SearchMode(MatchMode),
@@ -122,6 +123,10 @@ pub(in crate::shell) fn category_rows(
                         )
                     })
                     .collect(),
+            },
+            PreferenceRow {
+                label: "Use line weights",
+                choices: switch(preferences.line_weights, PreferenceChange::LineWeights),
             },
         ],
         PreferenceCategory::Search => vec![
@@ -478,6 +483,32 @@ mod tests {
             selected.change,
             PreferenceChange::Theme(ThemePreference::Dark)
         );
+    }
+
+    /// Page Display's Line Weights switch shows the setting in force and
+    /// changes it, as the View menu's entry does.
+    #[test]
+    fn page_display_offers_line_weights_as_a_switch() {
+        let off = Preferences {
+            line_weights: false,
+            ..Preferences::default()
+        };
+        let rows = category_rows(&off, PreferenceCategory::PageDisplay);
+        let row = rows
+            .iter()
+            .find(|row| row.label == "Use line weights")
+            .expect("a Line Weights row");
+        let selected: Vec<_> = row
+            .choices
+            .iter()
+            .filter(|choice| choice.selected)
+            .map(|choice| (choice.label.as_str(), choice.change))
+            .collect();
+        assert_eq!(selected, [("Off", PreferenceChange::LineWeights(false))]);
+        assert!(row
+            .choices
+            .iter()
+            .any(|choice| choice.change == PreferenceChange::LineWeights(true)));
     }
 
     /// A chosen value is a background colour and nothing else on screen, so

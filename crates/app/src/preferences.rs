@@ -159,6 +159,10 @@ pub struct Preferences {
     /// Page Display.
     pub layout: PageLayoutMode,
     pub zoom: ZoomPreference,
+    /// Page Display: "Use line weights". Off draws every stroke one pixel
+    /// wide on screen; printing and export keep the page's own widths. The
+    /// View menu's Line Weights sets the same thing.
+    pub line_weights: bool,
     /// Search: what the find bar starts with.
     pub search: SearchOptions,
     /// Commenting: the name comments are signed with. `None` until the user
@@ -182,6 +186,7 @@ impl Default for Preferences {
             // measured in.
             layout: PageLayoutMode::SinglePageContinuous,
             zoom: ZoomPreference::default(),
+            line_weights: true,
             search: SearchOptions::default(),
             commenting_author: None,
             comment_defaults: BTreeMap::new(),
@@ -359,6 +364,7 @@ impl Preferences {
         file.insert("recent_documents".into(), self.recent_documents.into());
         file.insert("page_layout".into(), layout_key(self.layout).into());
         file.insert("zoom".into(), self.zoom.key().into());
+        file.insert("line_weights".into(), self.line_weights.into());
         file.insert(
             "search_case_sensitive".into(),
             self.search.case_sensitive.into(),
@@ -407,6 +413,7 @@ fn apply(
         "search_mode" => preferences.search.mode = named(path, setting, value, MODES, parse_mode)?,
         "search_case_sensitive" => preferences.search.case_sensitive = flag(path, setting, value)?,
         "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
+        "line_weights" => preferences.line_weights = flag(path, setting, value)?,
         "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
         "commenting_author" => preferences.commenting_author = author(path, setting, value)?,
         "comment_defaults" => {
@@ -736,6 +743,7 @@ mod tests {
             recent_documents: 3,
             layout: PageLayoutMode::TwoPage,
             zoom: ZoomPreference::ActualSize,
+            line_weights: false,
             search: SearchOptions {
                 case_sensitive: true,
                 whole_word: true,

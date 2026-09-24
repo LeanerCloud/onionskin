@@ -407,7 +407,10 @@ impl ShellFrame {
                 bring_all_to_front(window, cx);
                 Ok(())
             }
-            MenuCommand::LineWeights => Err(TabError::CommandUnavailable),
+            MenuCommand::LineWeights => {
+                self.toggle_line_weights(cx);
+                Ok(())
+            }
         }
     }
 

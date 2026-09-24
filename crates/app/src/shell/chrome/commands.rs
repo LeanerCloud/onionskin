@@ -7,9 +7,10 @@
 //!
 //! Two rules about what carries a default keystroke:
 //!
-//! - A command that this milestone cannot run (New Window, Line Weights)
-//!   carries none. A keystroke that reports "lands in M3" is worse than no
-//!   keystroke.
+//! - A command that this milestone cannot run carries none. A keystroke
+//!   that reports "lands in M3" is worse than no keystroke. None is left;
+//!   New Window and Line Weights, the last two, run now and still carry
+//!   none because Acrobat's default for either is not settled here.
 //! - A command the registry runs (Select All, Deselect All) carries none
 //!   here either: its keystroke comes from the plugin that registers it, so
 //!   the two cannot disagree and the keymap cannot see the same id twice.

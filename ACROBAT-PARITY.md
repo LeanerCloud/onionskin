@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 155 planned / 29 partial / 80 out-of-scope. 139 implemented.**
+**403 rows: 154 planned / 29 partial / 80 out-of-scope. 140 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -253,7 +253,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Show/Hide > Navigation Panes | implemented | M2 | Show/hide, the button strip, and activated pane bodies are live with rendered-bounds coverage. Evidence: M2-PANES and B3.1. |
 | View > Show/Hide > Toolbar Items / Page Controls | implemented | M2 | Quick actions and page controls can be shown or hidden. Evidence: M2-SHELL. |
 | View > Show/Hide > Rulers, Grid, Guides, Snap to Grid | planned | M6 | Grouped with `tools-measure`, as Acrobat groups grids/guides with measuring. |
-| View > Show/Hide > Line Weights | planned | M4 | Moved from M2 in plan review, then from M3 by P22: the correct semantics are every stroke at one constant hairline width when off, not a width floor, and that needs an option in the hayro fork that has not landed. The menu entry stays, disabled, naming M4. Evidence: docs/evidence/m3-p22-shell-rows.md. |
+| View > Show/Hide > Line Weights | implemented | M4 | Off draws every stroked path one device pixel wide at any zoom; on draws the page's own widths. A persisted Page Display preference ("Use line weights"), as Acrobat's is, so the View menu's check mark, the Preferences dialog and every window follow one setting. Screen only: printing, export and SVG export keep the widths. Stroked text keeps its width. Needs the hayro fork's InterpreterSettings::hairline_strokes (fork commit 257a9e33). Evidence: docs/evidence/m4-line-weights.md. |
 | View > Page Navigation (First/Previous/Next/Last, Page..., Previous/Next View) | implemented | M2 | All named navigation paths are live. Evidence: M2-SHELL. |
 | View > Display Theme (System Theme, Light grey, Dark grey) | implemented | M2 | System, light, and dark themes cover the live shell surfaces. Evidence: M2-SHELL. |
 | View > Read Mode | implemented | M2 | Hides global/tab bars, the tool rail, panes, and quick actions while retaining page controls; Escape restores the normal view. Evidence: M2-VIEW-ZOOM. |

@@ -37,6 +37,9 @@ pub(in crate::shell) struct ShellViewState {
     read_mode: bool,
     navigation_pane_visible: bool,
     page_controls_visible: bool,
+    /// View > Show/Hide > Line Weights: the preference as this window last
+    /// heard it, for the menu's check mark.
+    line_weights: bool,
 }
 
 impl ShellViewState {
@@ -51,7 +54,14 @@ impl ShellViewState {
             read_mode: false,
             navigation_pane_visible: true,
             page_controls_visible: true,
+            line_weights: true,
         }
+    }
+
+    /// The same state, with Line Weights as the preferences have it.
+    pub(in crate::shell) fn with_line_weights(mut self, on: bool) -> Self {
+        self.line_weights = on;
+        self
     }
 
     pub(super) fn theme(self) -> ThemePreference {
@@ -80,6 +90,18 @@ impl ShellViewState {
 
     pub(super) fn page_controls_visible(self) -> bool {
         self.page_controls_visible
+    }
+
+    pub(super) fn line_weights(self) -> bool {
+        self.line_weights
+    }
+
+    pub(super) fn set_line_weights(&mut self, on: bool) -> bool {
+        if self.line_weights == on {
+            return false;
+        }
+        self.line_weights = on;
+        true
     }
 
     pub(super) fn set_system_appearance(&mut self, appearance: WindowAppearance) -> bool {
