@@ -145,3 +145,8 @@ shell-test-support = ["shell", "gpui/test-support"]
 a11y-probe = ["shell", "dep:objc2"]
 shell-spike = ["shell"]
 a11y-spike = ["shell", "dep:objc2"]
+
+[lints.rust]
+# `onionskin_check_windows` builds the Windows print path on any host, for
+# `cargo check` only; see crates/print/Cargo.toml.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(onionskin_check_windows)"] }

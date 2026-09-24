@@ -213,7 +213,7 @@ impl ShellFrame {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn print_to_printer(&mut self, job: PrintJob, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.active() else {
             return;
@@ -278,7 +278,7 @@ impl ShellFrame {
         self.finish_print(sent.map(|()| format!("Sent to {printer}")), cx);
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn print_to_printer(&mut self, _job: PrintJob, cx: &mut Context<Self>) {
         self.finish_print(
             Err(
@@ -331,14 +331,28 @@ fn platform_printers() -> Vec<String> {
     onionskin_print::printers()
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), not(onionskin_check_windows)))]
 fn platform_printers() -> Vec<String> {
     onionskin_print::backend::cups::printers(&cups::programs())
 }
 
-#[cfg(not(unix))]
+#[cfg(any(windows, onionskin_check_windows))]
+fn platform_printers() -> Vec<String> {
+    onionskin_print::backend::windows::printers()
+}
+
+#[cfg(not(any(unix, windows)))]
 fn platform_printers() -> Vec<String> {
     Vec::new()
+}
+
+/// The platform's printer: GDI on Windows.
+#[cfg(any(windows, onionskin_check_windows))]
+fn printer_backend(
+    bytes: std::sync::Arc<Vec<u8>>,
+    title: String,
+) -> Result<onionskin_print::WindowsBackend, String> {
+    onionskin_print::WindowsBackend::new(bytes, title).map_err(|error| error.to_string())
 }
 
 /// The platform's printer: PDFKit on macOS.
@@ -351,7 +365,7 @@ fn printer_backend(
 }
 
 /// The platform's printer: CUPS's `lp` on the other Unixes.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), not(onionskin_check_windows)))]
 fn printer_backend(
     bytes: std::sync::Arc<Vec<u8>>,
     title: String,
@@ -362,7 +376,7 @@ fn printer_backend(
 
 /// Which `lp` and `lpstat` the app runs: the ones on `PATH`, or in tests
 /// stand-ins, so a test can print without a printer.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), not(onionskin_check_windows)))]
 pub(super) mod cups {
     use onionskin_print::CupsPrograms;
 
@@ -411,7 +425,7 @@ mod tests {
     #[test]
     fn save_as_pdf_is_always_the_first_destination() {
         assert_eq!(destinations()[0], Destination::SaveAsPdf);
-        if cfg!(not(unix)) {
+        if cfg!(not(any(unix, windows))) {
             assert_eq!(destinations().len(), 1, "no printer without a backend");
         }
     }

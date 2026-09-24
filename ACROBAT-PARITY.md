@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 154 planned / 29 partial / 80 out-of-scope. 140 implemented.**
+**403 rows: 153 planned / 30 partial / 80 out-of-scope. 140 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -636,7 +636,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 |---|---|---|---|
 | Print dialog | implemented | M3 | Decision 13: `crates/print` is our own pipeline. Printer, copies and collation, Pages to Print, Page Sizing & Handling, Multiple Pages per Sheet, orientation, paper, Comments & Forms, duplex, Print as Image and a preview drawn from the same sheets the backend prints. Save as PDF on every platform; printers through the macOS backend, whose manual run is pending (docs/evidence/m3-p16-macos-print.md). Evidence: docs/evidence/m3-p17-print-dialog.md. |
 | Print on Linux (CUPS) | implemented | M4 | The file backend's sheets piped to `lp`, with paper, copies, collation, sides, printer and title as `lp` options and `print-scaling=none`; the Print dialog lists `lpstat -e`'s printers. Summarize Comments sends the summary as a second job. Run through a real CUPS 2.4 scheduler and filter chain to a capturing backend; no paper printer was used. Evidence: docs/evidence/m4-cups.md. |
-| Print on Windows | planned | M4 | |
+| Print on Windows | partial | M4 | The file backend's sheets rendered by our renderer, at the printer's resolution up to 300 dpi, and drawn through GDI (`StretchDIBits`), with paper, orientation, copies, collation and duplex in the printer's `DEVMODEW`; the Print dialog lists the spooler's printers. Partial because it has never run on Windows: the `DEVMODEW` mapping, rendering and placement are tested on Linux, and the Win32 calls are type-checked and clippy-checked there against `windows-sys`, whose constants the mapping is checked against at compile time. Needs a Windows run. Evidence: docs/evidence/m4-windows-print.md. |
 | Page range and subset (all, current, custom, odd/even) | implemented | M3 | All, Current page, typed ranges like 2-4, 7 (a backwards range is refused, not reversed), odd or even, and Reverse pages. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Page sizing and handling: Fit, Actual size, Shrink oversized, Custom scale | implemented | M3 | Fit fits to the paper, not a printer's printable area. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |
 | Multiple pages per sheet (N-up) | implemented | M3 | 1, 2, 4, 6, 9 or 16 a sheet, Acrobat's four orders, and page borders. Evidence: docs/evidence/m3-p15-print-to-file.md, docs/evidence/m3-p17-print-dialog.md. |

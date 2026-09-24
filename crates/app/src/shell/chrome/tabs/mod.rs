@@ -1729,7 +1729,12 @@ mod tests {
     mod page_grid;
     #[cfg(feature = "shell-test-support")]
     mod print;
-    #[cfg(all(feature = "shell-test-support", unix, not(target_os = "macos")))]
+    #[cfg(all(
+        feature = "shell-test-support",
+        unix,
+        not(target_os = "macos"),
+        not(onionskin_check_windows)
+    ))]
     mod print_cups;
     #[cfg(feature = "shell-test-support")]
     mod properties;
