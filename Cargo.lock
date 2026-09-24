@@ -4279,6 +4279,10 @@ dependencies = [
 name = "onionskin-tools-fill-sign"
 version = "0.1.0"
 dependencies = [
+ "onionskin-content",
+ "onionskin-core",
+ "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
 ]
 
