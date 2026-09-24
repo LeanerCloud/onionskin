@@ -13,7 +13,10 @@
 
 mod cmap;
 mod embedded;
+mod standard;
 mod tables;
+
+pub use standard::{encode_win_ansi, standard_text_width};
 
 use std::collections::BTreeMap;
 
