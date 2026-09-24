@@ -21,6 +21,7 @@ mod bookmarks;
 mod comments;
 mod layers;
 mod results;
+mod security;
 pub(in crate::shell) mod signatures;
 mod thumbnails;
 
@@ -71,18 +72,20 @@ pub(in crate::shell) enum NavigationPane {
     Attachments,
     Layers,
     Signatures,
+    SecuritySettings,
     SearchResults,
     Comments,
 }
 
 impl NavigationPane {
     /// Acrobat's order down the navigation strip.
-    pub(in crate::shell) const ALL: [Self; 7] = [
+    pub(in crate::shell) const ALL: [Self; 8] = [
         Self::Thumbnails,
         Self::Bookmarks,
         Self::Attachments,
         Self::Layers,
         Self::Signatures,
+        Self::SecuritySettings,
         Self::SearchResults,
         Self::Comments,
     ];
@@ -94,6 +97,7 @@ impl NavigationPane {
             Self::Attachments => "Attachments",
             Self::Layers => "Layers",
             Self::Signatures => "Signatures",
+            Self::SecuritySettings => "Security Settings",
             Self::SearchResults => "Search Results",
             Self::Comments => "Comments",
         }
@@ -106,9 +110,16 @@ impl NavigationPane {
             Self::Attachments => "⏚",
             Self::Layers => "◧",
             Self::Signatures => "✎",
+            Self::SecuritySettings => "⚿",
             Self::SearchResults => "⌕",
             Self::Comments => "❝",
         }
+    }
+
+    /// Whether the strip offers this pane: Security Settings only on a
+    /// secured document, as in Acrobat.
+    fn shown(self, secured: bool) -> bool {
+        self != Self::SecuritySettings || secured
     }
 
     fn element_id(self) -> &'static str {
@@ -118,6 +129,7 @@ impl NavigationPane {
             Self::Attachments => "pane-attachments",
             Self::Layers => "pane-layers",
             Self::Signatures => "pane-signatures",
+            Self::SecuritySettings => "pane-security-settings",
             Self::SearchResults => "pane-search-results",
             Self::Comments => "pane-comments",
         }
@@ -139,6 +151,7 @@ enum PaneContent {
     Attachments(Result<Vec<Attachment>, String>),
     Layers(Result<Vec<Layer>, String>),
     Signatures(Result<Vec<signatures::SignatureRow>, String>),
+    Security(security::SecurityRows),
     Comments(Result<Vec<ReadAnnotation>, String>),
 }
 
@@ -391,6 +404,7 @@ fn read(
             NavigationPane::Attachments => PaneContent::Attachments(Ok(Vec::new())),
             NavigationPane::Layers => PaneContent::Layers(Ok(Vec::new())),
             NavigationPane::Signatures => PaneContent::Signatures(Ok(Vec::new())),
+            NavigationPane::SecuritySettings => PaneContent::Security(Vec::new()),
             NavigationPane::Comments => PaneContent::Comments(Ok(Vec::new())),
         };
     };
@@ -403,6 +417,12 @@ fn read(
         NavigationPane::Layers => PaneContent::Layers(message(canvas.model.layers())),
         NavigationPane::Signatures => {
             PaneContent::Signatures(message(canvas.model.signatures(trust)))
+        }
+        NavigationPane::SecuritySettings => {
+            PaneContent::Security(super::chrome::properties_dialog::security_rows(
+                &canvas.model.security_facts(),
+                canvas.model.security_refusal(),
+            ))
         }
         NavigationPane::Comments => PaneContent::Comments(message(canvas.model.annotations())),
     }
@@ -526,6 +546,12 @@ fn navigate(
     state.feedback = failure;
 }
 
+/// Whether the active document is secured, which is what shows the
+/// Security Settings pane's button.
+fn is_secured(canvas: Option<&Entity<Canvas>>, cx: &gpui::App) -> bool {
+    canvas.is_some_and(|canvas| canvas.read(cx).model.security_facts().level.is_some())
+}
+
 /// What the navigation column tells a screen reader.
 ///
 /// Built from the same state, and in the same order, as
@@ -542,6 +568,7 @@ pub(in crate::shell) fn accessible(
         .with_children(
             NavigationPane::ALL
                 .into_iter()
+                .filter(|pane| pane.shown(is_secured(canvas, cx)))
                 .map(|pane| {
                     // The strip draws only `pane.icon()`, which a screen
                     // reader reads as punctuation, so the name is the label.
@@ -603,6 +630,9 @@ fn accessible_body(
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::accessible(items.as_deref())
         }
+        (NavigationPane::SecuritySettings, Some(PaneContent::Security(rows))) => {
+            security::accessible(rows)
+        }
         (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
             let (reads, author) = comment_reads(canvas, cx);
             let is_read = |comment: &ReadAnnotation| reads.is_read(comment, author.as_deref());
@@ -650,7 +680,11 @@ pub(in crate::shell) fn render_navigation_panes(
         .gap_1()
         .bg(theme.surface)
         .text_color(theme.text);
-    for pane in NavigationPane::ALL {
+    let secured = is_secured(canvas, cx);
+    for pane in NavigationPane::ALL
+        .into_iter()
+        .filter(|pane| pane.shown(secured))
+    {
         let active = state.active == Some(pane);
         strip = strip.child(
             div()
@@ -765,6 +799,9 @@ fn render_body(
         }
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::render(items.as_deref(), theme, cx)
+        }
+        (NavigationPane::SecuritySettings, Some(PaneContent::Security(rows))) => {
+            security::render(rows, theme, cx)
         }
         (NavigationPane::Comments, Some(PaneContent::Comments(items))) => {
             let (reads, author) = comment_reads(canvas, cx);
@@ -933,7 +970,7 @@ mod tests {
     /// dropping one.
     #[test]
     fn every_named_pane_has_a_button_a_label_and_its_own_element_id() {
-        assert_eq!(NavigationPane::ALL.len(), 7);
+        assert_eq!(NavigationPane::ALL.len(), 8);
 
         let mut ids: Vec<&str> = NavigationPane::ALL
             .iter()
@@ -941,7 +978,7 @@ mod tests {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 7, "two panes share an element id");
+        assert_eq!(ids.len(), 8, "two panes share an element id");
 
         for pane in NavigationPane::ALL {
             assert!(!pane.label().is_empty());
@@ -1454,8 +1491,13 @@ mod tests {
                 let strip = described
                     .find(&"navigation-pane-strip".into())
                     .expect("the strip is described");
-                assert_eq!(strip.children.len(), NavigationPane::ALL.len());
-                for (button, pane) in strip.children.iter().zip(NavigationPane::ALL) {
+                // A plain document: every pane but Security Settings.
+                let shown: Vec<_> = NavigationPane::ALL
+                    .into_iter()
+                    .filter(|pane| pane.shown(false))
+                    .collect();
+                assert_eq!(strip.children.len(), shown.len());
+                for (button, pane) in strip.children.iter().zip(shown) {
                     assert_eq!(button.key, gpui::ElementId::from(pane.element_id()));
                     assert_eq!(button.label, pane.label());
                     assert_ne!(button.label, pane.icon(), "the glyph is not a name");
@@ -1557,7 +1599,10 @@ mod tests {
 
                 assert_eq!(described.children.len(), 1);
                 assert!(described.find(&"navigation-pane-body".into()).is_none());
-                for pane in NavigationPane::ALL {
+                for pane in NavigationPane::ALL
+                    .into_iter()
+                    .filter(|pane| pane.shown(false))
+                {
                     let button = described
                         .find(&pane.element_id().into())
                         .unwrap_or_else(|| panic!("{} is described", pane.element_id()));

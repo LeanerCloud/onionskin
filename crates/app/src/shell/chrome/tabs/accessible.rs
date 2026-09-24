@@ -537,6 +537,7 @@ impl ShellFrame {
             Activation::Password(action) => self.run_password_action(action, window, cx),
             Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
+            Activation::ShowPermissionDetails => self.show_permission_details(window, cx),
             Activation::ShowSignatureProperties(index) => {
                 self.show_signature_properties(index, window, cx)
             }

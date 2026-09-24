@@ -3,9 +3,11 @@
 //! and the entries that say why they are off.
 
 use super::*;
+use crate::shell::chrome::accessible::Activation;
 use crate::shell::chrome::password_dialog::PasswordAction;
 use crate::shell::chrome::protect_dialog::{Changes, ProtectAction};
 use crate::shell::chrome::SearchInput;
+use crate::shell::dialog::ShellDialog;
 
 fn fixture(name: &str) -> PathBuf {
     onionskin_corpus_testing::encrypted_fixture(name)
@@ -183,6 +185,65 @@ fn a_user_cannot_change_the_security_a_permissions_password_set(cx: &mut TestApp
             frame.open_protect_dialog(window, cx);
             assert!(frame.protect_dialog().is_none());
             assert_eq!(frame.notices.last().map(String::as_str), Some(reason));
+        })
+        .unwrap();
+}
+
+/// The labels under `prefix` in the accessibility tree.
+fn labels_under(
+    window: gpui::WindowHandle<ShellFrame>,
+    prefix: &str,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    window
+        .update(cx, |frame, window, cx| {
+            frame
+                .accessible(window, cx)
+                .walk()
+                .filter(|element| format!("{:?}", element.key).contains(prefix))
+                .map(|element| element.label.clone())
+                .collect()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn the_security_settings_pane_shows_only_on_a_secured_document(cx: &mut TestAppContext) {
+    use crate::shell::panes::{NavigationPane, PaneAction};
+    let (plain, _) = bound_window(&["hello.pdf"], cx);
+    assert!(labels_under(plain, "pane-security-settings", cx).is_empty());
+
+    let bytes = std::fs::read(fixture("r6-aes-256-print-only.pdf")).expect("reads");
+    let (window, _) = bound_window_from_bytes(vec![("restricted.pdf", bytes)], cx);
+    assert_eq!(
+        labels_under(window, "pane-security-settings", cx),
+        ["Security Settings"]
+    );
+    window
+        .update(cx, |frame, _, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::SecuritySettings), cx)
+        })
+        .unwrap();
+    let rows = labels_under(window, "security-", cx);
+    assert!(
+        rows.iter()
+            .any(|row| row == "Security Method: Password Security"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == "Encryption Level: 256-bit AES"),
+        "{rows:?}"
+    );
+
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_activation(Activation::ShowPermissionDetails, window, cx);
+            assert_eq!(frame.dialog, Some(ShellDialog::Properties));
+            assert_eq!(
+                frame.properties.as_ref().map(|state| state.tab),
+                Some(crate::shell::chrome::properties_dialog::PropertiesTab::Security)
+            );
         })
         .unwrap();
 }

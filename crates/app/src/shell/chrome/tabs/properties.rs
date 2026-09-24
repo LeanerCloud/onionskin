@@ -21,6 +21,16 @@ use crate::shell::panes::PaneAction;
 const NOT_SET: &str = "—";
 
 impl ShellFrame {
+    /// The Security Settings pane's Permission Details: Document
+    /// Properties, on its Security tab.
+    pub(super) fn show_permission_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_properties_dialog(window, cx);
+        if let Some(state) = self.properties.as_mut() {
+            state.tab = PropertiesTab::Security;
+        }
+        cx.notify();
+    }
+
     pub(super) fn open_properties_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, canvas)) = self
             .tabs
