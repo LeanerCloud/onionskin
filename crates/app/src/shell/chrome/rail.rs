@@ -163,6 +163,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "dynamic-zoom" => "⇕",
         "snapshot" => "▣",
         "crop" => "⌗",
+        "link" => "∞",
         _ => "?",
     }
 }

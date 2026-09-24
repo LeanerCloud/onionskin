@@ -13,10 +13,14 @@ use onionskin_plugin_api::{Command, CommandEffect, CommandPlugin, PluginManifest
 
 mod crop;
 mod crop_tool;
+mod link_tool;
+pub mod links;
 pub mod marks;
+mod marquee;
 
 pub use crop::{crop_pages, crop_to_content, crop_to_rect, white_margins, CropPages};
 pub use crop_tool::CropTool;
+pub use link_tool::LinkTool;
 
 pub struct EditToolsPlugin;
 
@@ -32,6 +36,7 @@ impl PluginManifest for EditToolsPlugin {
     fn register(&self, registry: &mut PluginRegistry) {
         registry.register_commands(self);
         registry.register_tool(Box::new(CropTool::new()));
+        registry.register_tool(Box::new(LinkTool::new()));
     }
 }
 

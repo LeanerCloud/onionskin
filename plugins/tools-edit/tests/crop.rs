@@ -88,7 +88,7 @@ fn the_plugin_registers_crop_as_an_edit() {
     assert_eq!(ids, [CROP_PAGES]);
     assert_eq!(registry.commands()[0].effect, CommandEffect::Edits);
     let tools: Vec<_> = registry.tools().map(|tool| tool.id()).collect();
-    assert_eq!(tools, ["crop-pages"], "and the tool that draws a crop");
+    assert_eq!(tools, ["crop-pages", "link"], "and the tools that draw");
     assert_eq!(EditToolsPlugin.id(), "onionskin.tools-edit");
     assert_eq!(EditToolsPlugin.name(), "Edit PDF");
 

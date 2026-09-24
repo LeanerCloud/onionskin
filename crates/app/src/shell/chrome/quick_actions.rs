@@ -718,6 +718,7 @@ mod tests {
             ToolCapability::ChoosesFile => &[ToolCapability::ChoosesFile],
             ToolCapability::Stamp => &[ToolCapability::Stamp],
             ToolCapability::EditPages => &[ToolCapability::EditPages],
+            ToolCapability::Link => &[ToolCapability::Link],
         }
     }
 

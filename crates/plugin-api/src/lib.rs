@@ -104,6 +104,9 @@ pub enum ToolCapability {
     /// Changes the pages themselves, such as their boxes: the Crop Pages
     /// tool.
     EditPages,
+    /// Makes and changes links. The canvas context menu's Create Link finds
+    /// its tool through this.
+    Link,
 }
 
 impl ToolCapability {
@@ -121,7 +124,8 @@ impl ToolCapability {
             | ToolCapability::FillTextFields
             | ToolCapability::AddSignature
             | ToolCapability::Stamp
-            | ToolCapability::EditPages => true,
+            | ToolCapability::EditPages
+            | ToolCapability::Link => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom
