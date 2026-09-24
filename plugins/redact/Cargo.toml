@@ -6,4 +6,16 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+onionskin-content.workspace = true
+onionskin-core.workspace = true
+onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
+# An image under a redaction is decoded, painted out and written again; a
+# JPEG has to be decoded to be painted.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Search and redact's patterns: phone numbers, e-mail addresses and the rest.
+regex = "1"
+
+[dev-dependencies]
+onionskin-corpus-testing.workspace = true
+tempfile.workspace = true

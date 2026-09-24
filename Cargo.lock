@@ -4217,7 +4217,14 @@ dependencies = [
 name = "onionskin-redact"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "onionskin-content",
+ "onionskin-core",
+ "onionskin-corpus-testing",
+ "onionskin-cos",
  "onionskin-plugin-api",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]

@@ -155,10 +155,44 @@ fn an_edit_appends_one_incremental_section_that_truncates_away() {
 /// Guarantee 3, redaction: after redacting text T, the verifier extracts
 /// all text and images from the output and finds no trace of T, and a raw
 /// byte scan finds no trace of the original object bytes.
+///
+/// Proved in `plugins/redact/tests/guarantee.rs`, which drives the plugin
+/// the way the shell does: every occurrence found, marked and applied, on
+/// the seeds and on a page that draws T every way a content stream can.
+/// What this owns is that the suite is still there, still live, still
+/// asserts each clause, and is still reached by CI.
 #[test]
-#[ignore = "lands with the redact plugin and its verifier in M5"]
 fn redacted_content_survives_neither_extraction_nor_a_byte_scan() {
-    unimplemented!("needs the redact plugin's verifier")
+    let suite = enforcing_suite_at(
+        "plugins/redact/tests",
+        "guarantee.rs",
+        3,
+        &[
+            "a_word_on_the_seeds_is_gone_after_redaction",
+            "a_word_however_it_is_drawn_is_gone_after_redaction",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "the verifier must pass the redacted file",
+            "the built-in verifier's verdict is no longer asserted",
+        ),
+        (
+            "the redacted word must not be extracted from the output",
+            "the output's text is no longer extracted and searched for T",
+        ),
+        (
+            "the redacted word's bytes must not be in the output",
+            "the output's streams and bytes are no longer searched for T",
+        ),
+        (
+            "the original content stream bytes must not be in the output",
+            "the raw byte scan for the original objects is gone",
+        ),
+    ] {
+        suite.asserts(marker, missing);
+    }
+    assert_ci_reaches("plugins/redact");
 }
 
 /// Guarantee 4, signature preservation: annotating a signed corpus file
