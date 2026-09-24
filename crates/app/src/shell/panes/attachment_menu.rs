@@ -49,6 +49,11 @@ fn entries(state: &NavigationPanesState) -> Vec<(&'static str, MenuAvailability,
             activation.unwrap_or(Activation::Pane(PaneAction::DismissMenus)),
         ));
     }
+    entries.push((
+        "Search Attachments…",
+        MenuAvailability::Enabled,
+        Activation::Pane(PaneAction::Attachment(AttachmentAction::Search)),
+    ));
     entries
 }
 

@@ -249,6 +249,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) pending_link: Option<onionskin_core::LinkRequest>,
     /// The Trust Manager's prompt, while it asks.
     pub(super) web_link: Option<crate::shell::chrome::web_link_dialog::WebLinkPrompt>,
+    /// Edit Description's attachment and text.
+    pub(super) description: Option<crate::shell::chrome::description_dialog::DescriptionState>,
     /// Layer Properties' layer and settings.
     pub(super) layer_properties:
         Option<crate::shell::chrome::layer_properties_dialog::LayerPropertiesState>,
@@ -490,6 +492,7 @@ impl ShellFrame {
             web_link: None,
             signature_properties: None,
             layer_properties: None,
+            description: None,
             #[cfg(feature = "tools-edit")]
             link_dialog: None,
             #[cfg(feature = "tools-fill-sign")]

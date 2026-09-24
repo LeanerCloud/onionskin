@@ -5,11 +5,13 @@
 //! history, save, and shell integration land in later milestones.
 
 mod annots;
+mod attachment_description;
 mod attachment_search;
 mod attachments;
 mod autoscroll;
 mod edit;
 pub mod embedded;
+pub use attachment_description::set_attachment_description;
 mod file;
 pub mod forms;
 mod generations;

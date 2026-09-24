@@ -1,5 +1,6 @@
 mod accessible;
 mod advanced_search;
+mod attachment_commands;
 mod auto_scroll;
 mod context;
 mod create;

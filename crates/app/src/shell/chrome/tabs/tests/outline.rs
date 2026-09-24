@@ -265,8 +265,18 @@ fn an_attachment_is_added_listed_and_deleted_from_the_pane(cx: &mut TestAppConte
                 .iter()
                 .map(|entry| entry.label.as_str())
                 .collect();
-            assert_eq!(labels, ["Add Attachment…", "Open", "Save", "Delete"]);
-            let delete = menu.children[3].activation.clone().expect("Delete runs");
+            assert_eq!(
+                labels,
+                [
+                    "Add Attachment…",
+                    "Open",
+                    "Save",
+                    "Edit Description…",
+                    "Delete",
+                    "Search Attachments…"
+                ]
+            );
+            let delete = menu.children[4].activation.clone().expect("Delete runs");
             frame.run_activation(delete, window, cx);
 
             let tree = frame.accessible(window, cx);
@@ -404,4 +414,123 @@ fn placing_a_text_comment_opens_a_field_and_the_typed_text_is_its_text(cx: &mut 
             })
             .unwrap();
     }
+}
+
+/// Open a PDF attachment in a tab of its own; anything else is refused.
+#[gpui::test]
+fn a_pdf_attachment_opens_in_a_tab_and_another_file_does_not(cx: &mut TestAppContext) {
+    let (window, _) = bound_window_from_bytes(
+        vec![
+            ("annexed.pdf", crate::shell::fixtures::attached_pdf_pdf()),
+            ("notes.pdf", crate::shell::fixtures::attachment_pdf()),
+        ],
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_activation(Activation::ActivateTab(0), window, cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(AttachmentAction::Open(0))),
+                window,
+                cx,
+            );
+            assert_eq!(frame.tabs.tabs().len(), 3, "the annex opened");
+            let opened = frame.tabs.active().expect("a tab").source.clone();
+            assert!(opened.ends_with("annex.pdf"), "{}", opened.display());
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            let notes = frame
+                .tabs
+                .tabs()
+                .iter()
+                .position(|tab| tab.source.ends_with("notes.pdf"))
+                .expect("the second document is open");
+            frame.run_activation(Activation::ActivateTab(notes), window, cx);
+            // The pane stays open across the switch; read this document.
+            assert_eq!(frame.navigation.active(), Some(NavigationPane::Attachments));
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            frame.navigation.reread(&canvas, cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(AttachmentAction::Open(0))),
+                window,
+                cx,
+            );
+            assert_eq!(frame.tabs.tabs().len(), 3, "a text file does not open");
+            assert_eq!(
+                frame.notices.last().map(String::as_str),
+                Some(crate::shell::chrome::tabs::attachment_commands::NOT_A_PDF)
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn edit_description_rewrites_what_the_pane_shows(cx: &mut TestAppContext) {
+    use crate::shell::chrome::description_dialog::DescriptionAction;
+    let (window, _) = bound_window_from_bytes(
+        vec![("notes.pdf", crate::shell::fixtures::attachment_pdf())],
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(AttachmentAction::EditDescription(0))),
+                window,
+                cx,
+            );
+            assert_eq!(frame.dialog, Some(ShellDialog::AttachmentDescription));
+            let input = frame
+                .text_field(TextField::AttachmentDescription)
+                .expect("the field")
+                .clone();
+            assert_eq!(input.read(cx).query(), "Reviewer notes");
+            input.update(cx, |input, cx| {
+                input.set_query("Final notes".to_owned(), cx)
+            });
+            frame.run_activation(
+                Activation::Description(DescriptionAction::Submit),
+                window,
+                cx,
+            );
+            assert_eq!(frame.dialog, None);
+            assert_eq!(
+                frame
+                    .navigation
+                    .attachment(0)
+                    .and_then(|a| a.description.clone()),
+                Some("Final notes".to_owned())
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn search_attachments_opens_advanced_search_over_them(cx: &mut TestAppContext) {
+    let (window, _) = bound_window_from_bytes(
+        vec![("notes.pdf", crate::shell::fixtures::attachment_pdf())],
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(AttachmentAction::Search)),
+                window,
+                cx,
+            );
+            assert_eq!(frame.dialog, Some(ShellDialog::AdvancedSearch));
+            assert!(
+                frame
+                    .advanced_search_dialog()
+                    .expect("open")
+                    .form
+                    .include_attachments
+            );
+        })
+        .unwrap();
 }

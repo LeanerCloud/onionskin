@@ -544,6 +544,7 @@ fn field_node(
         | TextField::PrintPages
         | TextField::BookmarkTitle
         | TextField::LayerName
+        | TextField::AttachmentDescription
         | TextField::CommentDraft
         | TextField::CommentingAuthor
         | TextField::InspectorAuthor

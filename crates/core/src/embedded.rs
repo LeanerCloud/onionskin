@@ -180,7 +180,7 @@ fn remove_comments(tx: &mut Transaction<'_>, stream: u32) -> Result<usize> {
 }
 
 /// Whether the file specification `spec` embeds object `stream`.
-fn embeds(tx: &Transaction<'_>, spec: &Object, stream: u32) -> Result<bool> {
+pub(crate) fn embeds(tx: &Transaction<'_>, spec: &Object, stream: u32) -> Result<bool> {
     let Some(Object::Dict(spec)) = resolve(tx, Some(spec))? else {
         return Ok(false);
     };
@@ -196,7 +196,10 @@ fn embeds(tx: &Transaction<'_>, spec: &Object, stream: u32) -> Result<bool> {
 }
 
 /// The attachments name tree, read whole.
-fn read_entries(tx: &Transaction<'_>, entries: &mut Vec<(Vec<u8>, Object)>) -> Result<()> {
+pub(crate) fn read_entries(
+    tx: &Transaction<'_>,
+    entries: &mut Vec<(Vec<u8>, Object)>,
+) -> Result<()> {
     let catalog_ref = tx
         .trailer_value(b"Root")
         .and_then(|root| root.as_reference())
@@ -214,7 +217,7 @@ fn read_entries(tx: &Transaction<'_>, entries: &mut Vec<(Vec<u8>, Object)>) -> R
 /// Read the attachments name tree whole, let `change` edit its entries, and
 /// write it back as one sorted leaf. A tree built of `/Kids` is flattened in
 /// the process, which changes its shape and nothing it resolves to.
-fn rewrite_attachments(
+pub(crate) fn rewrite_attachments(
     tx: &mut Transaction<'_>,
     change: impl FnOnce(&mut Vec<(Vec<u8>, Object)>) -> Result<()>,
 ) -> Result<()> {

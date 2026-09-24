@@ -335,6 +335,14 @@ impl NavigationPanesState {
         }
     }
 
+    /// One listed attachment, as the pane read it.
+    pub(in crate::shell) fn attachment(&self, index: usize) -> Option<&onionskin_core::Attachment> {
+        match self.content.as_ref()? {
+            PaneContent::Attachments(Ok(items)) => items.get(index),
+            _ => None,
+        }
+    }
+
     /// The name a save dialog should suggest for one listed attachment.
     fn attachment_file_name(&self, index: usize) -> Option<String> {
         match self.content.as_ref()? {

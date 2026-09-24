@@ -474,6 +474,18 @@ impl ShellFrame {
             Activation::Pane(PaneAction::Attachment(AttachmentAction::Add)) => {
                 self.prompt_for_attachment(cx);
             }
+            Activation::Pane(PaneAction::Attachment(AttachmentAction::Open(index))) => {
+                self.run_pane_action(PaneAction::DismissMenus, cx);
+                self.open_attachment(index, cx);
+            }
+            Activation::Pane(PaneAction::Attachment(AttachmentAction::EditDescription(index))) => {
+                self.run_pane_action(PaneAction::DismissMenus, cx);
+                self.open_description_dialog(index, window, cx);
+            }
+            Activation::Pane(PaneAction::Attachment(AttachmentAction::Search)) => {
+                self.run_pane_action(PaneAction::DismissMenus, cx);
+                self.search_attachments(window, cx);
+            }
             Activation::Pane(PaneAction::Comment(
                 action @ (CommentAction::Edit | CommentAction::Reply),
             )) => {
@@ -537,6 +549,7 @@ impl ShellFrame {
             Activation::Password(action) => self.run_password_action(action, window, cx),
             Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
+            Activation::Description(_) => self.submit_description(window, cx),
             Activation::LayerProperties(action) => {
                 self.run_layer_properties_action(action, window, cx)
             }
@@ -722,6 +735,9 @@ impl ShellFrame {
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
             TextField::ZoomPercent => Some(&self.page_entry.zoom_input),
             TextField::LayerName => self.layer_properties.as_ref().map(|dialog| &dialog.name),
+            TextField::AttachmentDescription => {
+                self.description.as_ref().map(|dialog| &dialog.text)
+            }
             TextField::CommentDraft => self.navigation.comment_draft(),
             TextField::CommentingAuthor => Some(&self.commenting_author),
             TextField::InspectorAuthor => Some(&self.inspector.author),
@@ -868,6 +884,7 @@ impl ShellFrame {
                 TextField::CommentingAuthor,
                 TextField::ZoomPercent,
                 TextField::LayerName,
+                TextField::AttachmentDescription,
             ])
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)

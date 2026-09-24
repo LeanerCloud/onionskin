@@ -103,6 +103,7 @@ impl ShellFrame {
         self.web_link = None;
         self.signature_properties = None;
         self.layer_properties = None;
+        self.description = None;
         #[cfg(feature = "tools-edit")]
         {
             self.marks = None;

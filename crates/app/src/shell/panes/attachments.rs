@@ -38,28 +38,32 @@ const NO_ATTACHMENTS: &str = "This document has no attachments.";
 pub(in crate::shell) enum AttachmentCommand {
     Open,
     Save,
+    EditDescription,
     Delete,
 }
 
 impl AttachmentCommand {
-    pub(in crate::shell) const ALL: [Self; 3] = [Self::Open, Self::Save, Self::Delete];
+    pub(in crate::shell) const ALL: [Self; 4] =
+        [Self::Open, Self::Save, Self::EditDescription, Self::Delete];
 
     pub(in crate::shell) fn label(self) -> &'static str {
         match self {
             Self::Open => "Open",
             Self::Save => "Save",
+            Self::EditDescription => "Edit Description…",
             Self::Delete => "Delete",
         }
     }
 
-    /// Delete changes the document, so a document that may not be edited
-    /// disables it with its reason.
+    /// Delete and Edit Description change the document, so a document that
+    /// may not be edited disables them with its reason.
     pub(in crate::shell) fn availability(self, refusal: Option<&'static str>) -> MenuAvailability {
         match (self, refusal) {
-            (Self::Save, _) | (Self::Delete, None) => MenuAvailability::Enabled,
-            (Self::Delete, Some(reason)) => MenuAvailability::Disabled(reason),
-            (Self::Open, _) => {
-                MenuAvailability::Disabled("Available in M5 with the attachment trust list")
+            (Self::Open | Self::Save, _) | (Self::Delete | Self::EditDescription, None) => {
+                MenuAvailability::Enabled
+            }
+            (Self::Delete | Self::EditDescription, Some(reason)) => {
+                MenuAvailability::Disabled(reason)
             }
         }
     }
@@ -67,8 +71,15 @@ impl AttachmentCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::shell) enum AttachmentAction {
+    /// Open a PDF attachment in a tab of its own. The frame's, which opens
+    /// documents.
+    Open(usize),
     Save(usize),
+    /// Edit Description, a dialog and so the frame's.
+    EditDescription(usize),
     Delete(usize),
+    /// Search Attachments: Advanced Search over the PDF attachments.
+    Search,
     /// Ask for a file and attach it to the document. The frame's, because it
     /// opens a file dialog.
     Add,
@@ -105,7 +116,8 @@ pub(super) fn command_activation(index: usize, command: AttachmentCommand) -> Op
     let action = match command {
         AttachmentCommand::Save => AttachmentAction::Save(index),
         AttachmentCommand::Delete => AttachmentAction::Delete(index),
-        AttachmentCommand::Open => return None,
+        AttachmentCommand::Open => AttachmentAction::Open(index),
+        AttachmentCommand::EditDescription => AttachmentAction::EditDescription(index),
     };
     Some(Activation::Pane(PaneAction::Attachment(action)))
 }
@@ -205,8 +217,12 @@ pub(super) fn run(
             state.attachments_menu = Some(super::attachment_menu::AttachmentsMenu { row, at });
             return;
         }
-        // Run by the frame, which asks for the file.
-        AttachmentAction::Add => return,
+        // Run by the frame, which asks for the file, opens documents and
+        // dialogs.
+        AttachmentAction::Add
+        | AttachmentAction::Open(_)
+        | AttachmentAction::EditDescription(_)
+        | AttachmentAction::Search => return,
     };
     let Some(canvas) = canvas.cloned() else {
         return;
@@ -487,7 +503,7 @@ mod tests {
     /// and says which milestone brings it, because opening an embedded file
     /// hands document content to the operating system.
     #[test]
-    fn save_is_live_and_open_is_disabled_naming_the_milestone() {
+    fn open_and_save_are_live_and_the_edits_follow_the_documents_permissions() {
         assert!(AttachmentCommand::Save.availability(None).is_enabled());
         assert!(AttachmentCommand::Delete.availability(None).is_enabled());
         assert_eq!(
@@ -498,10 +514,15 @@ mod tests {
             "a document that may not be edited cannot lose an attachment"
         );
 
-        let open = AttachmentCommand::Open.availability(None);
-        assert!(!open.is_enabled());
-        let reason = open.reason().expect("a disabled command says why");
-        assert!(reason.contains("M5"), "said {reason:?}");
+        assert!(AttachmentCommand::Open
+            .availability(Some("Encrypted"))
+            .is_enabled());
+        assert_eq!(
+            AttachmentCommand::EditDescription
+                .availability(Some("Encrypted"))
+                .reason(),
+            Some("Encrypted")
+        );
     }
 
     /// The dialog is offered the last path component, so an attachment named
@@ -647,10 +668,13 @@ mod tests {
             .iter()
             .find(|button| button.label == AttachmentCommand::Open.label())
             .expect("every row lists Open");
-        assert!(open.state.disabled);
+        assert!(!open.state.disabled);
         assert_eq!(
-            open.activation, None,
-            "a listed command that cannot run yet runs nothing"
+            open.activation,
+            Some(Activation::Pane(PaneAction::Attachment(
+                AttachmentAction::Open(0)
+            ))),
+            "Open opens the attachment it was drawn beside"
         );
     }
 
