@@ -88,8 +88,8 @@ pub use save::{SaveOutcome, WrittenButNotReloaded};
 pub use search::{PageFailure, SearchMatch, SearchState, SearchWorkerError};
 pub use selection::{Selection, TextSelection, TextSpan};
 pub use session::{
-    Document, Error, ExportSnapshot, LinkRequest, PageGeometryResponse, RenderView, Result,
-    SnapshotRequest,
+    Document, Error, ExportSnapshot, FieldRequest, LinkRequest, PageGeometryResponse, RenderView,
+    Result, SnapshotRequest,
 };
 pub use signatures::SignatureField;
 pub use structure::{

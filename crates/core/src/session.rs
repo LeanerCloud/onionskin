@@ -321,6 +321,17 @@ pub enum LinkRequest {
     Follow(crate::PagePoint),
 }
 
+/// A form field a tool clicked, for the shell to fill: open a text field's
+/// editor, toggle a check box, choose from a list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRequest {
+    pub field: ObjRef,
+    pub widget: ObjRef,
+    pub page: PageIndex,
+    /// Where on the page, for a list box's row.
+    pub point: (f64, f64),
+}
+
 /// The immutable document state an export worker reopens away from the UI.
 pub struct ExportSnapshot {
     bytes: Arc<Vec<u8>>,
@@ -364,6 +375,8 @@ pub struct Document {
     /// A redaction mark the Redact tool clicked, for the shell to open its
     /// properties.
     redaction_request: Option<ObjRef>,
+    /// A form field a tool clicked, for the shell to fill.
+    field_request: Option<FieldRequest>,
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
@@ -451,6 +464,7 @@ impl Document {
             snapshot: None,
             link_request: None,
             redaction_request: None,
+            field_request: None,
             search_worker: None,
             search_snapshot: None,
             outline: None,
@@ -1493,6 +1507,15 @@ impl Document {
 
     pub fn take_redaction_request(&mut self) -> Option<ObjRef> {
         self.redaction_request.take()
+    }
+
+    /// Ask the shell to fill the form field a tool clicked.
+    pub fn request_field(&mut self, request: FieldRequest) {
+        self.field_request = Some(request);
+    }
+
+    pub fn take_field_request(&mut self) -> Option<FieldRequest> {
+        self.field_request.take()
     }
 
     /// Every link in the document as the session currently has it.

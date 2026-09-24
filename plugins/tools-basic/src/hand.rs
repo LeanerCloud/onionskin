@@ -1,7 +1,8 @@
-//! The hand tool: drag the page under the cursor, or click a link to follow
-//! it.
+//! The hand tool: drag the page under the cursor, click a form field to fill
+//! it, or click a link to follow it.
 
-use onionskin_core::{LinkRequest, PagePoint, ViewPoint};
+use onionskin_core::forms::FieldKind;
+use onionskin_core::{Document, FieldRequest, LinkRequest, PagePoint, ViewPoint};
 use onionskin_plugin_api::{PointerInput, ToolCtx, ToolPlugin};
 
 /// How far, in viewport pixels, the pointer may move between press and
@@ -66,7 +67,7 @@ impl ToolPlugin for HandTool {
     }
 
     fn hint(&self) -> Option<&'static str> {
-        Some("Drag the page to scroll it. Click a link to follow it.")
+        Some("Drag the page to scroll it. Click a form field to fill it, or a link to follow it.")
     }
 
     fn icon(&self) -> &'static str {
@@ -93,7 +94,10 @@ impl ToolPlugin for HandTool {
         self.drag_to(ctx, input.at);
         let clicked = self.pressed_at.take().is_some() && !self.dragged;
         if clicked && self.anchor.is_some() {
-            ctx.doc.request_link(LinkRequest::Follow(input.at));
+            match field_at(ctx.doc, input.at) {
+                Some(request) => ctx.doc.request_field(request),
+                None => ctx.doc.request_link(LinkRequest::Follow(input.at)),
+            }
         }
         self.anchor = None;
     }
@@ -107,4 +111,18 @@ impl ToolPlugin for HandTool {
         self.anchor = None;
         self.pressed_at = None;
     }
+}
+
+/// The fillable form field under `at`: not read-only, and not a signature
+/// field unless the shell is to say what signing needs.
+fn field_at(doc: &mut Document, at: PagePoint) -> Option<FieldRequest> {
+    let form = doc.form().ok()?;
+    let (field, widget) = form.field_at(at.page, (at.x, at.y))?;
+    let fillable = !field.flags.read_only || matches!(field.kind, FieldKind::Signature);
+    fillable.then_some(FieldRequest {
+        field: field.objref,
+        widget: widget.objref,
+        page: at.page,
+        point: (at.x, at.y),
+    })
 }

@@ -481,6 +481,63 @@ fn a_hand_click_asks_to_follow_a_link_and_a_drag_does_not() {
     assert_eq!(fixture.doc.take_link_request(), None);
 }
 
+/// A click on a form field asks the shell to fill it instead; a read-only
+/// field is followed through as if it were not there.
+#[test]
+fn a_hand_click_on_a_form_field_asks_to_fill_it() {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [4 0 R 5 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [10 10 110 30] >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (fixed) /Ff 1 /Rect [10 50 110 70] >>",
+    ];
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, body) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+    for offset in offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    let mut doc = Document::open_bytes(bytes).expect("opens");
+    let mut viewport = Viewport::new(1, VIEWPORT, 12.0).expect("viewport is valid");
+    viewport
+        .measure_page(doc.page_geometry(0).expect("measures").clone())
+        .expect("measurable");
+    viewport.fit(FitMode::Page).expect("fits");
+    let mut fixture = Fixture { doc, viewport };
+    let mut tool = HandTool::new();
+    let on_field = PagePoint {
+        page: 0,
+        x: 50.0,
+        y: 20.0,
+    };
+    click(&mut fixture, &mut tool, on_field, Modifiers::default());
+    let request = fixture.doc.take_field_request().expect("a field request");
+    assert_eq!(
+        (request.field.number, request.widget.number, request.page),
+        (4, 4, 0)
+    );
+    assert_eq!(request.point, (50.0, 20.0));
+    assert_eq!(fixture.doc.take_link_request(), None);
+
+    let read_only = PagePoint {
+        page: 0,
+        x: 50.0,
+        y: 60.0,
+    };
+    click(&mut fixture, &mut tool, read_only, Modifiers::default());
+    assert_eq!(fixture.doc.take_field_request(), None);
+    assert!(fixture.doc.take_link_request().is_some());
+}
+
 #[test]
 fn every_tool_survives_a_page_with_no_text() {
     let mut fixture = Fixture::open("minimal.pdf");
