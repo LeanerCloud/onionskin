@@ -11,6 +11,7 @@ mod autoscroll;
 mod edit;
 pub mod embedded;
 mod file;
+pub mod forms;
 mod generations;
 mod history;
 pub mod images;

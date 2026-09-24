@@ -1501,6 +1501,11 @@ impl Document {
         crate::links::read_links(self.structure()?, page_count)
     }
 
+    /// The form: every field, as the document has it now.
+    pub fn form(&mut self) -> Result<crate::forms::Form> {
+        crate::forms::read_form(self.structure()?)
+    }
+
     /// The redaction marks on every page, as the document has them now.
     pub fn redactions(&mut self) -> Result<Vec<crate::redactions::RedactionMark>> {
         let page_count = self.page_count();
