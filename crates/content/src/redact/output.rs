@@ -14,6 +14,9 @@ pub(crate) enum Emit {
     Copy,
     /// Written as these bytes instead.
     Replace(Vec<u8>),
+    /// Written as these bytes, which say what the original did: a held path
+    /// written back whole.
+    Same(Vec<u8>),
     /// Removed.
     Drop,
     /// Held back until a later operation decides it: a path under
@@ -63,6 +66,7 @@ impl Output {
                 self.changed = true;
                 bytes
             }
+            Emit::Same(bytes) => bytes,
             Emit::Drop => {
                 self.changed = true;
                 return None;

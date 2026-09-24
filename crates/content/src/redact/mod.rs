@@ -14,7 +14,9 @@
 //!   rewritten the same way and renamed ([`NewResource::Form`],
 //!   [`NewResource::GState`]);
 //! - an `/ActualText`, `/Alt` or `/E` on a marked-content sequence that lost
-//!   a glyph, since it would otherwise still spell the text.
+//!   a glyph, since it would otherwise still spell the text;
+//! - everything drawn in a hidden layer, when the caller names the layers
+//!   (removing hidden information).
 //!
 //! What is not done here is writing any of it: the caller owns the file.
 
@@ -25,8 +27,7 @@ pub(crate) mod text;
 
 use onionskin_cos::{Dict, Name, ObjRef};
 
-pub use geometry::Area;
-pub(crate) use geometry::{covers_glyph, touches};
+pub use geometry::{covers_glyph, touches, Area};
 pub(crate) use output::{named, taken_names, Emit, Output};
 pub(crate) use paths::{is_clip, is_construction, is_painting, PathBuffer};
 
@@ -92,6 +93,9 @@ pub struct Counts {
     /// Showing operators with no font, removed because they start inside an
     /// area: where their glyphs fall is unknown.
     pub fontless: usize,
+    /// Glyphs and painting operators removed because they were in a hidden
+    /// layer.
+    pub hidden: usize,
 }
 
 /// A page's redaction.
@@ -110,6 +114,10 @@ pub struct PageRedaction {
 /// What the interpreter keeps while it redacts.
 pub(crate) struct Redacting {
     pub(crate) areas: Vec<Area>,
+    /// Optional content groups whose content goes wherever it is.
+    pub(crate) hidden: Vec<ObjRef>,
+    /// How many open marked-content sequences are in a hidden layer.
+    pub(crate) hiding: usize,
     pub(crate) removed: Vec<Removed>,
     pub(crate) counts: Counts,
     pub(crate) names: u32,
@@ -119,6 +127,8 @@ impl Redacting {
     pub(crate) fn new(areas: &[Area]) -> Redacting {
         Redacting {
             areas: areas.to_vec(),
+            hidden: Vec::new(),
+            hiding: 0,
             removed: Vec::new(),
             counts: Counts::default(),
             names: 0,

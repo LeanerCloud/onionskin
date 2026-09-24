@@ -5,7 +5,8 @@ mod common;
 
 use common::{one_page, open_bytes, stream};
 use onionskin_content::redact::{Area, NewResource, PageRedaction};
-use onionskin_content::{extract_page, redact_page, PageText};
+use onionskin_content::{extract_page, redact_page, redact_page_with_hidden, PageText};
+use onionskin_cos::ObjRef;
 
 const FONT: &str = "<< /Font << /F1 5 0 R >> >>";
 
@@ -294,4 +295,53 @@ fn a_soft_mask_group_that_drew_text_is_rewritten() {
     assert_eq!(group.number, 6);
     assert!(!String::from_utf8_lossy(&content.bytes).contains("Masked"));
     assert!(!String::from_utf8_lossy(&redaction.content.bytes).contains("/GS0 gs"));
+}
+
+#[test]
+fn a_hidden_layer_draws_nothing_and_the_text_after_it_stays_put() {
+    let resources = "<< /Font << /F1 5 0 R >> /Properties << /OC1 6 0 R /MC0 7 0 R >> \
+                     /XObject << /Im0 8 0 R /Im1 9 0 R >> >>";
+    let extra = [
+        helvetica(),
+        b"<< /Type /OCG /Name (Draft) >>".to_vec(),
+        b"<< /Type /OCMD /OCGs [6 0 R] >>".to_vec(),
+        stream(
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+            &[0],
+        ),
+        stream(
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /OC 6 0 R",
+            &[0],
+        ),
+    ];
+    let content = "BT /F1 10 Tf 10 100 Td /OC /OC1 BDC (Hidden ) Tj /Span BMC (more) Tj EMC EMC (Shown) Tj ET \
+                   /OC /MC0 BDC 0 0 10 10 re f /Im0 Do 0 0 1 1 re W n EMC /Im1 Do /Im0 Do";
+    let doc = open_bytes(one_page(content, resources, &extra));
+    let before = extract_page(&doc, 0).expect("extracts");
+    let redaction = redact_page_with_hidden(&doc, 0, &[], &[ObjRef::new(6, 0)]).expect("redacts");
+    assert_eq!(
+        redaction.counts.hidden,
+        11 + 4,
+        "the glyphs and each painting operator"
+    );
+    let after = reread(&redaction, resources, &extra);
+    let text = text_of(&after);
+    assert!(!text.contains("Hidden") && !text.contains("more"), "{text}");
+    assert!((first_x(&after, "Shown") - first_x(&before, "Shown")).abs() < 1e-6);
+    let bytes = String::from_utf8(redaction.content.bytes).expect("ascii");
+    assert_eq!(
+        bytes.matches(" Do").count(),
+        1,
+        "only the last image, which is shown: {bytes}"
+    );
+    assert!(
+        !bytes.contains("re\nf") && !bytes.contains("W\nn"),
+        "{bytes}"
+    );
+
+    let shown = redact_page(&doc, 0, &[]).expect("redacts");
+    assert!(
+        !shown.content.changed,
+        "with no layer named, nothing is hidden"
+    );
 }

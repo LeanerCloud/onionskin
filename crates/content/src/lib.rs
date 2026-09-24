@@ -102,7 +102,19 @@ pub fn redact_page(
     areas: &[redact::Area],
 ) -> Result<redact::PageRedaction> {
     let page = page::page(doc, index)?;
-    interpret::redact_page(doc, &page, areas)
+    interpret::redact_page(doc, &page, areas, &[])
+}
+
+/// The same, also removing everything drawn in the optional content groups
+/// `hidden`.
+pub fn redact_page_with_hidden(
+    doc: &Document,
+    index: PageIndex,
+    areas: &[redact::Area],
+    hidden: &[onionskin_cos::ObjRef],
+) -> Result<redact::PageRedaction> {
+    let page = page::page(doc, index)?;
+    interpret::redact_page(doc, &page, areas, hidden)
 }
 
 /// The page's content streams, decoded and concatenated, with each part's

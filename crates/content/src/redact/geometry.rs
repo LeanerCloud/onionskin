@@ -3,7 +3,7 @@
 
 use crate::PageQuad;
 
-pub(crate) type Point = (f64, f64);
+pub type Point = (f64, f64);
 
 /// How much of a glyph's box has to be covered before the glyph goes. Text
 /// marked for redaction covers its glyphs whole; a neighbour kerned into the
@@ -59,7 +59,7 @@ impl Area {
 
 /// Whether a glyph with this quad is redacted: enough of its box is covered,
 /// or, for a glyph with no width, its origin is.
-pub(crate) fn covers_glyph(areas: &[Area], quad: &PageQuad) -> bool {
+pub fn covers_glyph(areas: &[Area], quad: &PageQuad) -> bool {
     let polygon = Area::quad(quad).polygon;
     let whole = polygon_area(&polygon);
     if whole < 1e-9 {
@@ -72,7 +72,7 @@ pub(crate) fn covers_glyph(areas: &[Area], quad: &PageQuad) -> bool {
 
 /// Whether anything of `polygon` is inside an area: an image or a form
 /// touched at all has to be looked into.
-pub(crate) fn touches(areas: &[Area], polygon: &[Point]) -> bool {
+pub fn touches(areas: &[Area], polygon: &[Point]) -> bool {
     let (x0, y0, x1, y1) = bounds(polygon);
     areas.iter().any(|area| {
         let (ax0, ay0, ax1, ay1) = area.bounds();

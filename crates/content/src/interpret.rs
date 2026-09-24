@@ -134,10 +134,17 @@ pub fn page_text(doc: &Document, page: &Page) -> Result<PageText> {
 
 /// Rewrites one page's content streams with everything inside `areas`
 /// removed. See [`crate::redact`].
-pub fn redact_page(doc: &Document, page: &Page, areas: &[Area]) -> Result<PageRedaction> {
+pub fn redact_page(
+    doc: &Document,
+    page: &Page,
+    areas: &[Area],
+    hidden: &[ObjRef],
+) -> Result<PageRedaction> {
     let mut warnings = Vec::new();
     let content = page::content(doc, page, &mut warnings)?;
-    let mut interpreter = Interpreter::new(doc, page.index, warnings, Some(Redacting::new(areas)));
+    let mut redacting = Redacting::new(areas);
+    redacting.hidden = hidden.to_vec();
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, Some(redacting));
     let state = GState::new(page.base_ctm());
     let rewritten = interpreter
         .run(&content, &page.resources, state, 0)
@@ -206,6 +213,7 @@ impl<'a> Interpreter<'a> {
         self.redact.as_ref().map_or(0, |redact| {
             let counts = redact.counts;
             counts.glyphs
+                + counts.hidden
                 + counts.paths
                 + counts.images
                 + counts.forms
@@ -261,8 +269,14 @@ impl<'a> Interpreter<'a> {
             .is_some()
             .then(|| Rewrite::new(taken_names(self.doc, resources)));
 
+        // Hidden-layer depth belongs to the stream that opened it.
+        let outer_hiding = self
+            .redact
+            .as_mut()
+            .map(|redact| std::mem::take(&mut redact.hiding));
         while let Some(op) = lexer.next_operation() {
             let before = self.removed_so_far();
+            let hidden = self.hiding();
             let emit = match op.operator.as_bytes() {
                 b"q" => {
                     if saved.len() < MAX_GSTACK {
@@ -287,11 +301,11 @@ impl<'a> Interpreter<'a> {
                 b"gs" => self.ext_gstate(&op, resources, &mut state, depth, rewrite.as_mut()),
                 b"BDC" | b"BMC" if marked.len() < MAX_MARKED => {
                     marked.push(self.sequence(&op, resources));
-                    Emit::Copy
+                    self.open_sequence(&op, resources)
                 }
                 b"EMC" => {
                     marked.pop();
-                    Emit::Copy
+                    self.close_sequence()
                 }
                 operator if rewrite.is_some() && redacted_operator(operator) => self
                     .redact_operation(
@@ -306,6 +320,7 @@ impl<'a> Interpreter<'a> {
                     Emit::Copy
                 }
             };
+            let emit = self.hide(hidden, op.operator.as_bytes(), emit);
             if let Some(rewrite) = rewrite.as_mut() {
                 let original = &content.bytes[op.span.start as usize..op.span.end as usize];
                 let spelling = self.spelling(&op, resources);
@@ -316,6 +331,9 @@ impl<'a> Interpreter<'a> {
             }
         }
         self.warnings.append(&mut lexer.warnings);
+        if let (Some(redact), Some(outer)) = (self.redact.as_mut(), outer_hiding) {
+            redact.hiding = outer;
+        }
         rewrite.map(Rewrite::finish)
     }
 
@@ -395,6 +413,92 @@ impl<'a> Interpreter<'a> {
             // Extraction has no use for it and skipping it is not an error.
             _ => {}
         }
+    }
+
+    /// How deep in hidden-layer content the stream is, while redacting.
+    fn hiding(&self) -> bool {
+        self.redact.as_ref().is_some_and(|redact| redact.hiding > 0)
+    }
+
+    /// A marked-content sequence opening: inside a hidden layer every
+    /// sequence nests deeper, and an `/OC` naming a hidden layer starts one.
+    /// A sequence in a hidden layer is not written: nothing is left in it to
+    /// mark, and the layer it names is going.
+    fn open_sequence(&mut self, op: &Operation, resources: &Dict) -> Emit {
+        let starts = self.hiding() || self.names_hidden_layer(op, resources);
+        match self.redact.as_mut() {
+            Some(redact) if starts => {
+                redact.hiding += 1;
+                Emit::Drop
+            }
+            _ => Emit::Copy,
+        }
+    }
+
+    fn close_sequence(&mut self) -> Emit {
+        match self.redact.as_mut() {
+            Some(redact) if redact.hiding > 0 => {
+                redact.hiding -= 1;
+                Emit::Drop
+            }
+            _ => Emit::Copy,
+        }
+    }
+
+    fn names_hidden_layer(&self, op: &Operation, resources: &Dict) -> bool {
+        let Some(redact) = self.redact.as_ref() else {
+            return false;
+        };
+        if redact.hidden.is_empty() {
+            return false;
+        }
+        let Some([Object::Name(tag), Object::Name(name)]) = op.tail(2) else {
+            return false;
+        };
+        if tag.as_bytes() != b"OC" {
+            return false;
+        }
+        self.lookup_entry(resources, b"Properties", name.as_bytes())
+            .is_some_and(|entry| self.is_hidden(&entry))
+    }
+
+    /// Whether an `/OC` value is a hidden layer, or a membership dictionary
+    /// all of whose layers are hidden.
+    fn is_hidden(&self, entry: &Object) -> bool {
+        let Some(redact) = self.redact.as_ref() else {
+            return false;
+        };
+        if let Some(objref) = entry.as_reference() {
+            if redact.hidden.contains(&objref) {
+                return true;
+            }
+        }
+        let Ok(Object::Dict(membership)) = self.doc.resolve(entry) else {
+            return false;
+        };
+        let layers: Vec<ObjRef> = match membership.get(b"OCGs") {
+            Some(Object::Ref(objref)) => vec![*objref],
+            Some(Object::Array(items)) => items.iter().filter_map(Object::as_reference).collect(),
+            _ => Vec::new(),
+        };
+        !layers.is_empty() && layers.iter().all(|layer| redact.hidden.contains(layer))
+    }
+
+    /// Inside a hidden layer nothing is drawn: every painting operator goes,
+    /// while the state operators stay so what follows is placed as before.
+    /// Text is already stepped over by [`Self::take_glyph`].
+    fn hide(&mut self, hidden: bool, operator: &[u8], emit: Emit) -> Emit {
+        if !hidden {
+            return emit;
+        }
+        let paints = is_painting(operator) || matches!(operator, b"Do" | b"BI" | b"sh");
+        if !paints || emit == Emit::Drop {
+            return emit;
+        }
+        if let Some(redact) = self.redact.as_mut() {
+            redact.counts.hidden += 1;
+        }
+        Emit::Drop
     }
 
     /// While redacting, an operator that is not text, an XObject or marked
@@ -534,6 +638,16 @@ impl<'a> Interpreter<'a> {
         let Some(stream) = stream else {
             return Emit::Copy;
         };
+        if stream
+            .dict
+            .get(b"OC")
+            .is_some_and(|layer| self.is_hidden(layer))
+        {
+            if let Some(redact) = self.redact.as_mut() {
+                redact.counts.hidden += 1;
+            }
+            return Emit::Drop;
+        }
         if subtype(&stream.dict).as_deref() == Some(b"Image".as_slice()) {
             if !touches(self.areas(), &unit_square(&state.ctm)) {
                 return Emit::Copy;
@@ -889,6 +1003,10 @@ impl<'a> Interpreter<'a> {
         let Some(redact) = self.redact.as_mut() else {
             return false;
         };
+        if redact.hiding > 0 {
+            redact.counts.hidden += 1;
+            return true;
+        }
         if !covers_glyph(&redact.areas, quad) {
             return false;
         }

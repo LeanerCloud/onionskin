@@ -87,7 +87,7 @@ impl PathBuffer {
             bytes.push(b'\n');
         }
         bytes.extend_from_slice(original);
-        (Emit::Replace(bytes), false)
+        (Emit::Same(bytes), false)
     }
 
     /// A path left unpainted when something else came along, written back
@@ -162,7 +162,7 @@ mod tests {
         build(&mut buffer, b"10 10 m 150 10 l h", &Matrix::IDENTITY);
         assert_eq!(
             buffer.paint(b"S", &areas()),
-            (Emit::Replace(b"10 10 m\n150 10 l\nh\nS".to_vec()), false)
+            (Emit::Same(b"10 10 m\n150 10 l\nh\nS".to_vec()), false)
         );
         // The CTM carries a small path out of the area.
         build(
