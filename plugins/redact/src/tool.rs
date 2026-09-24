@@ -9,7 +9,9 @@
 use onionskin_core::redactions::RedactionLook;
 use onionskin_core::textselect::select_between;
 use onionskin_core::{Document, PagePoint, PageQuad, PageRect, Viewport};
-use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
+use onionskin_plugin_api::{
+    Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
+};
 
 use crate::mark::{mark_region, mark_text};
 
@@ -39,11 +41,6 @@ pub struct RedactTool {
 impl RedactTool {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// The look new marks take.
-    pub fn set_look(&mut self, look: RedactionLook) {
-        self.look = look;
     }
 
     fn follow(&mut self, doc: &mut Document, viewport: &Viewport, at: PagePoint) {
@@ -129,6 +126,14 @@ impl ToolPlugin for RedactTool {
 
     fn capabilities(&self) -> &'static [ToolCapability] {
         &[ToolCapability::Redact]
+    }
+
+    fn configure(&mut self, environment: &ToolEnvironment) {
+        self.look = environment
+            .redaction
+            .as_ref()
+            .map(crate::look::look_of)
+            .unwrap_or_default();
     }
 
     fn on_pointer_down(&mut self, ctx: &mut ToolCtx, input: PointerInput) {

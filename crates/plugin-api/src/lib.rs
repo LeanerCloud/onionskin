@@ -173,6 +173,32 @@ pub struct ToolEnvironment {
     /// its `/Subtype` ("Square", "Highlight"): Acrobat's "Make Current
     /// Properties Default". A kind with no entry keeps the tool's own look.
     pub comment_defaults: std::collections::BTreeMap<String, CommentDefault>,
+    /// The look new redaction marks take, as Redaction Properties last set
+    /// it; `None` for the redaction tool's own default.
+    pub redaction: Option<RedactionDefault>,
+}
+
+/// How a redaction mark looks, as a preference: whole numbers, so the file
+/// round-trips exactly, as [`CommentDefault`] does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedactionDefault {
+    /// The area's fill once applied; `None` leaves it empty.
+    pub fill: Option<[u8; 3]>,
+    /// The mark's outline before it is applied.
+    pub outline: [u8; 3],
+    pub overlay: Option<OverlayDefault>,
+}
+
+/// Text written over a redacted area.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayDefault {
+    pub text: String,
+    /// In tenths of a point; `0` fits the text to the area.
+    pub size_tenths: u32,
+    pub color: [u8; 3],
+    /// `0` left, `1` centre, `2` right: `/Q`.
+    pub align: u8,
+    pub repeat: bool,
 }
 
 /// One kind of comment's default look. Whole numbers, so a preference file

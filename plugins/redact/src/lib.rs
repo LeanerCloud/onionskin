@@ -16,6 +16,7 @@
 mod apply;
 pub mod codes;
 pub mod find;
+pub mod look;
 pub mod mark;
 mod tool;
 mod verify;
@@ -117,7 +118,10 @@ mod tests {
             RedactError::TooMuchText { page: 2 }.to_string(),
             "page 3 has more text than can be checked, so it was not redacted"
         );
-        assert_eq!(RedactError::NotAStream(7).to_string(), "object 7 is not a stream");
+        assert_eq!(
+            RedactError::NotAStream(7).to_string(),
+            "object 7 is not a stream"
+        );
         let failed = RedactError::NotVerified(vec!["one".into(), "two".into()]).to_string();
         assert!(failed.ends_with("one; two"), "{failed}");
         let cos = RedactError::from(onionskin_cos::Error::Unrecoverable {

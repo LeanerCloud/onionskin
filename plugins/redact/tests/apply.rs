@@ -348,17 +348,42 @@ fn a_jpeg_and_a_soft_mask_under_a_mark_are_painted_out() {
 
     let out = reopen(&applied.bytes);
     let page = out.page(0).expect("page");
-    let resources = page.dict.get(b"Resources").and_then(Object::as_dict).expect("resources");
-    let xobjects = out.resolve(resources.get(b"XObject").expect("xobjects")).expect("resolves");
-    let (_, copy) = xobjects.as_dict().expect("dict").iter().next().expect("one image").clone();
-    let copy = out.get(copy.as_reference().expect("a reference").number).expect("copy").object;
+    let resources = page
+        .dict
+        .get(b"Resources")
+        .and_then(Object::as_dict)
+        .expect("resources");
+    let xobjects = out
+        .resolve(resources.get(b"XObject").expect("xobjects"))
+        .expect("resolves");
+    let (_, copy) = xobjects
+        .as_dict()
+        .expect("dict")
+        .iter()
+        .next()
+        .expect("one image")
+        .clone();
+    let copy = out
+        .get(copy.as_reference().expect("a reference").number)
+        .expect("copy")
+        .object;
     let copy = copy.as_stream().expect("a stream");
     let (_, _, _, ImageData::Samples(samples)) = decode_image(&out, copy).expect("decodes") else {
         panic!("samples");
     };
-    assert_eq!(&samples[..3], &[255, 0, 0], "the covered pixels take the red fill");
+    assert_eq!(
+        &samples[..3],
+        &[255, 0, 0],
+        "the covered pixels take the red fill"
+    );
     let mask = out
-        .get(copy.dict.get(b"SMask").and_then(Object::as_reference).expect("a mask").number)
+        .get(
+            copy.dict
+                .get(b"SMask")
+                .and_then(Object::as_reference)
+                .expect("a mask")
+                .number,
+        )
         .expect("mask")
         .object;
     let (_, _, _, ImageData::Samples(alpha)) =
@@ -366,7 +391,11 @@ fn a_jpeg_and_a_soft_mask_under_a_mark_are_painted_out() {
     else {
         panic!("samples");
     };
-    assert_eq!((alpha[0], alpha[7]), (255, 0), "the fill shows where it covers");
+    assert_eq!(
+        (alpha[0], alpha[7]),
+        (255, 0),
+        "the fill shows where it covers"
+    );
 }
 
 #[test]
@@ -387,8 +416,20 @@ fn an_image_that_cannot_be_decoded_is_not_drawn_under_a_mark() {
         image,
     ];
     let mut doc = open(pdf(&objects));
-    mark_region(&mut doc, 0, [0.0, 0.0, 10.0, 10.0], &RedactionLook::default()).expect("marks");
+    mark_region(
+        &mut doc,
+        0,
+        [0.0, 0.0, 10.0, 10.0],
+        &RedactionLook::default(),
+    )
+    .expect("marks");
     let applied = apply_redactions(&mut doc).expect("applies");
-    assert!(!contains(&applied.bytes, b"not a jpx"), "the original is gone");
-    assert_eq!(applied.verification.images_checked, 0, "a blank form stands in");
+    assert!(
+        !contains(&applied.bytes, b"not a jpx"),
+        "the original is gone"
+    );
+    assert_eq!(
+        applied.verification.images_checked, 0,
+        "a blank form stands in"
+    );
 }

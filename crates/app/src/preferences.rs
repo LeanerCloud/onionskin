@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 use onionskin_core::{FitMode, MatchMode, PageLayoutMode, SearchOptions};
 pub use onionskin_plugin_api::CommentDefault;
 
+mod redaction;
+
 /// How the shell picks light or dark. `System` follows the window's
 /// appearance, which is what makes it the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -219,6 +221,9 @@ pub struct Preferences {
     pub web_links: WebLinks,
     /// Trust Manager: the sites whose links open without asking, by host.
     pub trusted_sites: BTreeSet<String>,
+    /// Redaction Properties: the look new marks take. `None` for the
+    /// redaction tool's own.
+    pub redaction: Option<onionskin_plugin_api::RedactionDefault>,
 }
 
 impl Default for Preferences {
@@ -237,6 +242,7 @@ impl Default for Preferences {
             hidden_tools: BTreeSet::new(),
             web_links: WebLinks::default(),
             trusted_sites: BTreeSet::new(),
+            redaction: None,
         }
     }
 }
@@ -441,6 +447,9 @@ impl Preferences {
                 self.trusted_sites.iter().cloned().collect(),
             );
         }
+        if let Some(redaction) = &self.redaction {
+            file.insert("redaction".into(), redaction::json(redaction));
+        }
         carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
@@ -471,6 +480,12 @@ fn apply(
         "line_weights" => preferences.line_weights = flag(path, setting, value)?,
         "recent_documents" => preferences.recent_documents = count(path, setting, value)?,
         "commenting_author" => preferences.commenting_author = author(path, setting, value)?,
+        "redaction" => {
+            preferences.redaction = Some(
+                redaction::parse(value)
+                    .ok_or_else(|| unknown_value(path, setting, value, redaction::REDACTION))?,
+            );
+        }
         "comment_defaults" => {
             preferences.comment_defaults = comment_defaults(value)
                 .ok_or_else(|| unknown_value(path, setting, value, DEFAULTS))?;
@@ -823,6 +838,11 @@ mod tests {
             hidden_tools: BTreeSet::from(["tool.highlight".to_owned(), "tool.ink".to_owned()]),
             web_links: WebLinks::Block,
             trusted_sites: BTreeSet::from(["example.com".to_owned()]),
+            redaction: Some(onionskin_plugin_api::RedactionDefault {
+                fill: Some([0, 0, 0]),
+                outline: [255, 0, 0],
+                overlay: None,
+            }),
         };
 
         written.save(&path).expect("preferences save");
@@ -830,6 +850,14 @@ mod tests {
 
         assert!(errors.is_empty());
         assert_eq!(read, written);
+    }
+
+    #[test]
+    fn a_malformed_redaction_default_is_named_and_ignored() {
+        let (preferences, errors) = parse(r#"{"redaction": {"fill": "black"}}"#);
+        assert_eq!(preferences.redaction, None);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("\"outline\""), "{}", errors[0]);
     }
 
     #[test]

@@ -106,7 +106,10 @@ fn a_drag_across_text_marks_that_text() {
         }),
         ..RedactionLook::default()
     };
-    tool.set_look(look.clone());
+    tool.configure(&onionskin_plugin_api::ToolEnvironment {
+        redaction: Some(onionskin_redact::look::default_of(&look)),
+        ..Default::default()
+    });
     let mut ctx = fixture.ctx();
     tool.on_pointer_down(&mut ctx, input(from.0, from.1));
     tool.on_pointer_move(&mut ctx, input(to.0, to.1));

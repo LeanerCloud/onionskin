@@ -141,6 +141,7 @@ impl ShellSettings {
         onionskin_plugin_api::ToolEnvironment {
             author: self.preferences.commenting_author.clone(),
             comment_defaults: self.preferences.comment_defaults.clone(),
+            redaction: self.preferences.redaction.clone(),
             data_dir: self.paths.data.clone(),
         }
     }

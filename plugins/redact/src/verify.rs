@@ -365,7 +365,10 @@ mod tests {
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R \
              /Resources << /Font << /F1 5 0 R >> >> /Annots [6 0 R] /Metadata 5 0 R >>"
                 .to_owned(),
-            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
             "<< /Type /Annot /Subtype /Redact /Rect [0 0 1 1] >>".to_owned(),
         ];
@@ -381,7 +384,8 @@ mod tests {
             out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         }
         out.extend_from_slice(
-            format!("trailer\n<< /Size 7 /Root 1 0 R /Info 5 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+            format!("trailer\n<< /Size 7 /Root 1 0 R /Info 5 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
         );
         out
     }
@@ -407,7 +411,10 @@ mod tests {
             "action that still runs",
         ] {
             assert!(
-                found.problems.iter().any(|problem| problem.contains(expected)),
+                found
+                    .problems
+                    .iter()
+                    .any(|problem| problem.contains(expected)),
                 "{expected}: {:?}",
                 found.problems
             );
