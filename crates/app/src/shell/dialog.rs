@@ -211,6 +211,7 @@ pub(in crate::shell) fn accessible(
         ShellDialog::Preferences(category) => vec![super::preferences_dialog::accessible(
             frame.preferences(),
             frame.autocomplete_entries(),
+            frame.trusted_certificates(),
             category,
             Some(frame.commenting_author_input().read(cx).accessible(
                 super::preferences_dialog::AUTHOR_LABEL,

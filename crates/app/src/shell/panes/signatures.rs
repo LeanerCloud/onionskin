@@ -1,44 +1,74 @@
 //! The signatures pane: each signature field, and what validating it found.
 //!
 //! A row leads with the verdict: valid, invalid or unknown, with the
-//! reason. The signer's identity is not checked against trusted
-//! certificates yet, so a valid signature says its signer is unknown rather
-//! than being called valid outright, as Acrobat says when it does not trust
-//! a certificate. Activating a row opens its properties.
+//! reason, and then whether the signer is who their certificate says,
+//! judged against the certificates the user trusts in Preferences >
+//! Signatures. A signature whose signer chains to none of them is valid
+//! with its signer unknown, as Acrobat says. Activating a row opens its
+//! properties.
+
+use std::time::SystemTime;
 
 use accesskit::Role;
 use gpui::{
     div, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _,
 };
-use onionskin_core::signatures::{Validation, Verdict};
+use onionskin_core::signatures::{
+    identity, identity_sentence, Identity, TrustAnchor, Validation, Verdict, VerificationTime,
+};
 use onionskin_core::SignatureField;
 
 use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{ShellFrame, ThemeTokens};
-use super::{empty_message, error_message, list};
+use super::{empty_message, error_message, list, PaneAction};
 
 /// Said once at the foot of the pane.
 pub(in crate::shell) const VALIDATION_NOTE: &str =
-    "Signers' identities are not checked against trusted certificates yet.";
+    "Signers are identified by the certificates trusted in Preferences > Signatures.";
 
 /// Said where the list would be when the document has no signature fields.
 const NO_SIGNATURES: &str = "This document has no signature fields.";
+
+/// What signers are judged by: the Signatures preferences and the trusted
+/// certificates.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::shell) struct SignatureTrust {
+    pub(in crate::shell) anchors: Vec<TrustAnchor>,
+    pub(in crate::shell) time: VerificationTime,
+    pub(in crate::shell) verify_on_open: bool,
+}
+
+impl Default for SignatureTrust {
+    /// The preferences' own defaults, with nothing trusted.
+    fn default() -> Self {
+        Self {
+            anchors: Vec::new(),
+            time: VerificationTime::Current,
+            verify_on_open: true,
+        }
+    }
+}
 
 /// One signature field and, when it is signed, its validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::shell) struct SignatureRow {
     pub(in crate::shell) field: SignatureField,
-    /// `None` for an unsigned field, or when validating failed as a whole.
+    /// `None` for an unsigned field, when validating failed as a whole, or
+    /// when nothing has asked for it yet.
     pub(in crate::shell) validation: Option<Validation>,
+    /// Whether the signer is trusted, for a validated signature.
+    pub(in crate::shell) identity: Option<Identity>,
 }
 
-/// Pair each field with its validation, by field name. A field nothing
-/// validated keeps `None`.
+/// Pair each field with its validation, by field name, and judge each
+/// signer by `trust`. A field nothing validated keeps `None`.
 pub(in crate::shell) fn rows(
     fields: Vec<SignatureField>,
     mut validations: Vec<Validation>,
+    trust: &SignatureTrust,
 ) -> Vec<SignatureRow> {
+    let now = SystemTime::now();
     fields
         .into_iter()
         .map(|field| {
@@ -46,7 +76,14 @@ pub(in crate::shell) fn rows(
                 .iter()
                 .position(|found| found.field == field.name)
                 .map(|at| validations.swap_remove(at));
-            SignatureRow { field, validation }
+            let identity = validation
+                .as_ref()
+                .map(|validation| identity(validation, &trust.anchors, trust.time, now));
+            SignatureRow {
+                field,
+                validation,
+                identity,
+            }
         })
         .collect()
 }
@@ -59,15 +96,22 @@ pub(in crate::shell) fn status(row: &SignatureRow) -> String {
     let Some(validation) = &row.validation else {
         return "Signed, not checked".to_owned();
     };
-    let verdict = match &validation.verdict {
-        Verdict::Valid if validation.changes.is_empty() => "Valid, signer unknown",
-        Verdict::Valid => "Valid, changed after signing, signer unknown",
-        Verdict::Invalid(_) => "Invalid",
-        Verdict::Unknown(_) => "Validity unknown",
+    let mut verdict = match &validation.verdict {
+        Verdict::Valid if validation.changes.is_empty() => "Valid".to_owned(),
+        Verdict::Valid => "Valid, changed after signing".to_owned(),
+        Verdict::Invalid(_) => "Invalid".to_owned(),
+        Verdict::Unknown(_) => "Validity unknown".to_owned(),
     };
+    if validation.verdict == Verdict::Valid {
+        match &row.identity {
+            Some(Identity::Valid { .. }) => {}
+            Some(Identity::Invalid(_)) => verdict.push_str(", signer's identity invalid"),
+            Some(Identity::Unknown(_)) | None => verdict.push_str(", signer unknown"),
+        }
+    }
     let mut status = match validation.certification {
         Some(_) => format!("Certified: {verdict}"),
-        None => verdict.to_owned(),
+        None => verdict,
     };
     if validation.is_weak() {
         status.push_str(" (SHA-1, weak)");
@@ -81,7 +125,10 @@ pub(in crate::shell) fn status(row: &SignatureRow) -> String {
 /// VALID" into `/Reason`, and unlabelled it would read as this pane's.
 pub(in crate::shell) fn detail(row: &SignatureRow) -> String {
     if let Some(validation) = &row.validation {
-        return format!("{} The signer's identity is unknown.", validation.summary());
+        return match &row.identity {
+            Some(identity) => format!("{} {}", validation.summary(), identity_sentence(identity)),
+            None => validation.summary(),
+        };
     }
     let field = &row.field;
     let mut parts = Vec::new();
@@ -121,6 +168,15 @@ fn activation(index: usize, row: &SignatureRow) -> Option<Activation> {
         .then_some(Activation::ShowSignatureProperties(index))
 }
 
+/// Whether Validate All has something to do: a signed field not checked.
+fn unchecked(items: &[SignatureRow]) -> bool {
+    items
+        .iter()
+        .any(|row| row.field.signed && row.validation.is_none())
+}
+
+const VALIDATE_ALL: &str = "Validate All";
+
 /// What the signatures pane tells a screen reader.
 pub(super) fn accessible(items: Result<&[SignatureRow], &String>) -> Vec<Element> {
     let items = match items {
@@ -153,6 +209,12 @@ pub(super) fn accessible(items: Result<&[SignatureRow], &String>) -> Vec<Element
             }
         })
         .collect();
+    if unchecked(items) {
+        rows.push(
+            Element::new("signature-validate-all", Role::Button, VALIDATE_ALL)
+                .with_activation(Activation::Pane(PaneAction::ValidateSignatures)),
+        );
+    }
     rows.push(Element::new(
         "signature-validation-note",
         Role::Label,
@@ -207,6 +269,27 @@ pub(super) fn render(
         }
         body = body.child(line);
     }
+    if unchecked(items) {
+        body = body.child(
+            div()
+                .id("signature-validate-all")
+                .mx_2()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .text_sm()
+                .cursor_pointer()
+                .hover(move |button| button.bg(theme.subtle_hover))
+                .on_click(cx.listener(|frame, _event, window, cx| {
+                    frame.run_activation(
+                        Activation::Pane(PaneAction::ValidateSignatures),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(VALIDATE_ALL),
+        );
+    }
     body.child(
         div()
             .px_2()
@@ -237,6 +320,7 @@ mod tests {
         SignatureRow {
             field: field(signed),
             validation: None,
+            identity: None,
         }
     }
 
@@ -258,6 +342,7 @@ mod tests {
                 ..field(true)
             },
             validation: None,
+            identity: None,
         };
         assert!(detail(&hostile).contains("Reason: Verified: signature VALID"));
         assert_eq!(activation(0, &hostile), None, "nothing to show");
@@ -280,6 +365,7 @@ mod tests {
                 ..field(false)
             },
             validation: None,
+            identity: None,
         };
         let described = accessible(Ok(std::slice::from_ref(&unnamed)));
         assert_eq!(described[0].children[0].label, "(unnamed field)");

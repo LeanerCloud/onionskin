@@ -467,6 +467,7 @@ fn auto_complete_remembers_typed_text_and_offers_it_again(cx: &mut TestAppContex
             crate::shell::preferences_dialog::rows_for(
                 frame.preferences(),
                 frame.autocomplete_entries(),
+                &[],
                 crate::preferences::PreferenceCategory::Forms,
             )
             .into_iter()

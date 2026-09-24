@@ -120,6 +120,8 @@ pub(in crate::shell) struct ShellSettings {
     pub(in crate::shell) recents: Recents,
     /// Forms Auto-Complete's remembered entries.
     pub(in crate::shell) autocomplete: crate::autocomplete::EntryList,
+    /// The certificates trusted to identify signers.
+    pub(in crate::shell) trusted: crate::trusted_certificates::TrustedCertificates,
     /// What the app's own registry answers, for the menus to consult when no
     /// document is open and there is no tab's registry to ask.
     pub(in crate::shell) registry: RegistryFacts,
@@ -137,9 +139,19 @@ impl ShellSettings {
             preferences: self.preferences.clone(),
             recents: self.recents.clone(),
             autocomplete: self.autocomplete.clone(),
+            trusted: self.trusted.clone(),
             registry: self.registry,
             bindings: self.bindings.clone(),
             notices: Vec::new(),
+        }
+    }
+
+    /// What the Signatures pane judges signers by.
+    pub(in crate::shell) fn signature_trust(&self) -> panes::signatures::SignatureTrust {
+        panes::signatures::SignatureTrust {
+            anchors: self.trusted.anchors().to_vec(),
+            time: self.preferences.verification_time,
+            verify_on_open: self.preferences.verify_on_open,
         }
     }
 
@@ -178,6 +190,10 @@ impl ShellSettings {
         let (autocomplete, autocomplete_error) =
             crate::autocomplete::EntryList::load(paths.autocomplete.as_deref());
         notices.extend(autocomplete_error);
+        let (trusted, trusted_error) = crate::trusted_certificates::TrustedCertificates::load(
+            paths.trusted_certificates.as_deref(),
+        );
+        notices.extend(trusted_error);
 
         let defaults = command_defaults(
             registry
@@ -196,6 +212,7 @@ impl ShellSettings {
             preferences,
             recents,
             autocomplete,
+            trusted,
             registry: RegistryFacts::of(registry),
             bindings,
             notices,

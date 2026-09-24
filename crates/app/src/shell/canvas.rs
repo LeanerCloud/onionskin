@@ -436,6 +436,9 @@ pub struct CanvasModel {
     view: Option<onionskin_core::RenderView>,
     /// Whether the pixels this canvas holds were drawn with hairline strokes.
     hairline_strokes: bool,
+    /// Whether Validate All asked for this document's signatures to be
+    /// checked, when the preferences do not check them on opening.
+    signatures_requested: bool,
     /// Where autosave writes, kept so a Revert can hand it to the document
     /// it reopens.
     recovery: Option<onionskin_core::RecoveryStore>,
@@ -589,6 +592,7 @@ impl CanvasModel {
             document,
             view,
             hairline_strokes,
+            signatures_requested: false,
             laid_out_at,
             find_seen_at: laid_out_at,
             recovery: None,
@@ -1008,16 +1012,27 @@ impl CanvasModel {
         Ok(self.document.borrow_mut().attachment_bytes(index)?)
     }
 
-    /// The signature fields, each with what validating it found. A
-    /// document whose signatures cannot be validated as a whole still lists
-    /// its fields, each marked not checked.
+    /// The signature fields, each with what validating it found and
+    /// whether its signer is trusted, by `trust`. Unchecked until asked
+    /// when `trust` does not check on opening. A document whose signatures
+    /// cannot be validated as a whole still lists its fields, unchecked.
     pub(in crate::shell) fn signatures(
         &mut self,
+        trust: &super::panes::signatures::SignatureTrust,
     ) -> Result<Vec<super::panes::signatures::SignatureRow>, CanvasError> {
         let mut document = self.document.borrow_mut();
         let fields = document.signatures()?.to_vec();
-        let validations = document.validate_signatures().unwrap_or_default();
-        Ok(super::panes::signatures::rows(fields, validations))
+        let validations = if trust.verify_on_open || self.signatures_requested {
+            document.validate_signatures().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(super::panes::signatures::rows(fields, validations, trust))
+    }
+
+    /// Validate All: check this document's signatures from now on.
+    pub(in crate::shell) fn request_signature_validation(&mut self) {
+        self.signatures_requested = true;
     }
 
     /// The document as the signature on `field` signed it, when the field

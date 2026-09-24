@@ -18,9 +18,10 @@ use super::chrome::accessible::{Activation, Element};
 use super::chrome::{ShellFrame, ThemeTokens};
 use crate::a11y::State as A11yState;
 use crate::preferences::{
-    layout_label, PreferenceCategory, Preferences, ThemePreference, WebLinks, ZoomPreference,
-    MAX_RECENT_DOCUMENTS,
+    layout_label, PreferenceCategory, Preferences, ThemePreference, VerificationTime, WebLinks,
+    ZoomPreference, MAX_RECENT_DOCUMENTS,
 };
+use onionskin_core::signatures::TrustAnchor;
 use onionskin_core::{MatchMode, PageLayoutMode};
 
 /// A setting the dialog changed. The frame applies it, saves it and repaints;
@@ -54,6 +55,21 @@ pub(in crate::shell) enum PreferenceChange {
     ForgetSite(usize),
     /// Keep always allowing it: the choice in force, which changes nothing.
     KeepSite(usize),
+    /// Signatures: "Verify signatures when the document is opened".
+    VerifyOnOpen(bool),
+    /// Signatures: "Verify signatures using".
+    VerificationTime(VerificationTime),
+    /// Signatures: choose a certificate file to trust.
+    AddTrustedCertificate,
+    /// Signatures: trust the certificate at this index for approval
+    /// signatures, or with `certified` for certified documents, the other
+    /// way.
+    ToggleTrust {
+        index: usize,
+        certified: bool,
+    },
+    /// Signatures: stop trusting the certificate at this index.
+    RemoveTrusted(usize),
 }
 
 /// The rows of one category: a title, the choices, and which is in force.
@@ -170,6 +186,25 @@ pub(in crate::shell) fn category_rows(
                 ),
             },
         ],
+        PreferenceCategory::Signatures => vec![
+            PreferenceRow {
+                label: "Verify signatures when the document is opened".to_owned(),
+                choices: switch(preferences.verify_on_open, PreferenceChange::VerifyOnOpen),
+            },
+            PreferenceRow {
+                label: "Verify signatures using".to_owned(),
+                choices: VERIFICATION_TIMES
+                    .into_iter()
+                    .map(|(label, time)| {
+                        choice(
+                            label.to_owned(),
+                            PreferenceChange::VerificationTime(time),
+                            preferences.verification_time == time,
+                        )
+                    })
+                    .collect(),
+            },
+        ],
         PreferenceCategory::JavaScript => vec![PreferenceRow {
             label: "Enable Acrobat JavaScript".to_owned(),
             choices: switch(preferences.javascript, PreferenceChange::JavaScript),
@@ -281,6 +316,59 @@ const MODES: [(&str, MatchMode); 3] = [
     ("All Of The Words", MatchMode::AllWords),
 ];
 
+/// Acrobat's wording for the two times offered. Its third, the secure time
+/// in a signature's timestamp, waits on timestamps being verified.
+const VERIFICATION_TIMES: [(&str, VerificationTime); 2] = [
+    ("Current time", VerificationTime::Current),
+    (
+        "Time at which the signature was created",
+        VerificationTime::Creation,
+    ),
+];
+
+/// Preferences > Signatures' trusted certificates: a count with Add
+/// Certificate, then each certificate with what it is trusted for.
+fn trusted_rows(trusted: &[TrustAnchor]) -> Vec<PreferenceRow> {
+    let heading = PreferenceRow {
+        label: match trusted.len() {
+            0 => "No trusted certificates".to_owned(),
+            1 => "1 trusted certificate".to_owned(),
+            count => format!("{count} trusted certificates"),
+        },
+        choices: vec![PreferenceChoice {
+            label: "Add Certificate...".to_owned(),
+            change: PreferenceChange::AddTrustedCertificate,
+            selected: false,
+        }],
+    };
+    let certificates = trusted.iter().enumerate().map(|(index, anchor)| {
+        let certificate = &anchor.certificate;
+        let toggle = |label: &str, certified: bool, selected: bool| PreferenceChoice {
+            label: label.to_owned(),
+            change: PreferenceChange::ToggleTrust { index, certified },
+            selected,
+        };
+        PreferenceRow {
+            label: format!(
+                "{}, issued by {}, expires {}",
+                certificate.display_name(),
+                certificate.issuer,
+                certificate.not_after
+            ),
+            choices: vec![
+                toggle("Signed documents", false, anchor.for_signatures),
+                toggle("Certified documents", true, anchor.for_certified),
+                PreferenceChoice {
+                    label: "Remove".to_owned(),
+                    change: PreferenceChange::RemoveTrusted(index),
+                    selected: false,
+                },
+            ],
+        }
+    });
+    std::iter::once(heading).chain(certificates).collect()
+}
+
 /// Commenting's setting: the name every comment is signed with. Acrobat
 /// calls it the author name under Commenting and Identity.
 pub(in crate::shell) const AUTHOR_LABEL: &str = "Author name";
@@ -304,9 +392,13 @@ fn choice_id(row: usize, choice: usize) -> gpui::ElementId {
 pub(in crate::shell) fn rows_for(
     preferences: &Preferences,
     entries: &[String],
+    trusted: &[TrustAnchor],
     category: PreferenceCategory,
 ) -> Vec<PreferenceRow> {
     let mut rows = category_rows(preferences, category);
+    if category == PreferenceCategory::Signatures {
+        rows.extend(trusted_rows(trusted));
+    }
     if category == PreferenceCategory::Forms {
         rows.push(PreferenceRow {
             label: match entries.len() {
@@ -347,6 +439,7 @@ pub(in crate::shell) fn rows_for(
 pub(in crate::shell) fn accessible(
     preferences: &Preferences,
     entries: &[String],
+    trusted: &[TrustAnchor],
     category: PreferenceCategory,
     author_field: Option<Element>,
 ) -> Element {
@@ -374,7 +467,7 @@ pub(in crate::shell) fn accessible(
                 .with_activation(Activation::SaveCommentingAuthor),
         );
     }
-    for (index, row) in rows_for(preferences, entries, category)
+    for (index, row) in rows_for(preferences, entries, trusted, category)
         .into_iter()
         .enumerate()
     {
@@ -429,9 +522,14 @@ pub(in crate::shell) fn render_preferences(
         settings = settings.child(render_author_field(frame, theme, cx));
     }
     let entries = frame.autocomplete_entries();
-    for (index, row) in rows_for(frame.preferences(), entries, category)
-        .into_iter()
-        .enumerate()
+    for (index, row) in rows_for(
+        frame.preferences(),
+        entries,
+        frame.trusted_certificates(),
+        category,
+    )
+    .into_iter()
+    .enumerate()
     {
         let mut choices = div().flex().flex_wrap().gap_2();
         for (choice_index, choice) in row.choices.into_iter().enumerate() {
@@ -553,7 +651,7 @@ mod tests {
             let rows = category_rows(&preferences, category);
             if category == PreferenceCategory::Commenting {
                 // Its setting is the typed author name, not a choice.
-                let described = accessible(&preferences, &[], category, None);
+                let described = accessible(&preferences, &[], &[], category, None);
                 assert!(described.find(&AUTHOR_SAVE_ID.into()).is_some());
                 continue;
             }
@@ -640,7 +738,7 @@ mod tests {
     #[test]
     fn forms_offers_auto_complete_and_lists_what_it_remembers() {
         let preferences = Preferences::default();
-        let none = rows_for(&preferences, &[], PreferenceCategory::Forms);
+        let none = rows_for(&preferences, &[], &[], PreferenceCategory::Forms);
         let labels: Vec<&str> = none.iter().map(|row| row.label.as_str()).collect();
         assert_eq!(
             labels,
@@ -660,17 +758,17 @@ mod tests {
         assert!(none[1].choices.iter().any(|choice| choice.selected
             && choice.change == PreferenceChange::AutoCompleteNumbers(false)));
         let entries = ["Ada".to_owned(), "Alan".to_owned()];
-        let two = rows_for(&preferences, &entries, PreferenceCategory::Forms);
+        let two = rows_for(&preferences, &entries, &[], PreferenceCategory::Forms);
         assert_eq!(two[2].label, "2 entries remembered");
         assert_eq!(two[2].choices[0].change, PreferenceChange::ClearEntries);
         assert_eq!(two[4].label, "Alan");
         assert_eq!(two[4].choices[1].change, PreferenceChange::ForgetEntry(1));
         assert_eq!(
-            rows_for(&preferences, &entries[..1], PreferenceCategory::Forms)[2].label,
+            rows_for(&preferences, &entries[..1], &[], PreferenceCategory::Forms)[2].label,
             "1 entry remembered"
         );
         assert_eq!(
-            rows_for(&preferences, &entries, PreferenceCategory::General).len(),
+            rows_for(&preferences, &entries, &[], PreferenceCategory::General).len(),
             1,
             "entries are Forms' alone"
         );
@@ -724,7 +822,7 @@ mod tests {
             ..Preferences::default()
         };
 
-        let described = accessible(&preferences, &[], PreferenceCategory::General, None);
+        let described = accessible(&preferences, &[], &[], PreferenceCategory::General, None);
 
         let row = described.find(&("preference-row", 0usize).into()).unwrap();
         assert_eq!(row.role, Role::RadioGroup);
@@ -759,7 +857,13 @@ mod tests {
     fn every_described_choice_is_keyed_as_the_button_it_describes() {
         let preferences = Preferences::default();
 
-        let described = accessible(&preferences, &[], PreferenceCategory::PageDisplay, None);
+        let described = accessible(
+            &preferences,
+            &[],
+            &[],
+            PreferenceCategory::PageDisplay,
+            None,
+        );
 
         for (index, row) in category_rows(&preferences, PreferenceCategory::PageDisplay)
             .into_iter()
@@ -779,6 +883,7 @@ mod tests {
     fn the_category_list_says_which_category_is_showing() {
         let described = accessible(
             &Preferences::default(),
+            &[],
             &[],
             PreferenceCategory::Search,
             None,

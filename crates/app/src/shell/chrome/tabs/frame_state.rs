@@ -449,7 +449,7 @@ impl ShellFrame {
             rail_state: RailState::default(),
             quick_actions_state: QuickActionsState::default(),
             side_panel_state: SidePanelState::default(),
-            navigation: NavigationPanesState::default(),
+            navigation: NavigationPanesState::with_signature_trust(settings.signature_trust()),
             settings,
             notices,
             dialog: None,

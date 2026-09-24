@@ -157,6 +157,8 @@ pub(in crate::shell) enum PaneAction {
     Bookmark(BookmarkAction),
     Thumbnail(ThumbnailAction),
     Comment(CommentAction),
+    /// The Signatures pane's Validate All.
+    ValidateSignatures,
     /// Put away whichever pane-local menu is open.
     DismissMenus,
 }
@@ -190,9 +192,24 @@ pub(in crate::shell) struct NavigationPanesState {
     /// many thumbnail rows are on screen. Set by the frame, which is the
     /// only thing that knows it.
     body_height: f32,
+    /// What the Signatures pane judges signers by.
+    signature_trust: signatures::SignatureTrust,
 }
 
 impl NavigationPanesState {
+    /// A closed column that will judge signers by `trust`.
+    pub(in crate::shell) fn with_signature_trust(trust: signatures::SignatureTrust) -> Self {
+        Self {
+            signature_trust: trust,
+            ..Self::default()
+        }
+    }
+
+    /// Judge signers by `trust` from now on. The caller rereads the pane.
+    pub(in crate::shell) fn set_signature_trust(&mut self, trust: signatures::SignatureTrust) {
+        self.signature_trust = trust;
+    }
+
     /// The column's width, which the document view has to give up.
     pub(in crate::shell) fn width(&self) -> Pixels {
         px(if self.active.is_some() {
@@ -257,7 +274,7 @@ impl NavigationPanesState {
         self.edit_refusal = canvas
             .as_ref()
             .and_then(|canvas| canvas.model.edit_refusal());
-        self.content = Some(read(pane, canvas));
+        self.content = Some(read(pane, canvas, &self.signature_trust));
     }
 
     fn close(&mut self) {
@@ -279,7 +296,8 @@ impl NavigationPanesState {
         let Some(pane) = self.active else {
             return;
         };
-        self.content = Some(canvas.update(cx, |canvas, _cx| read(pane, Some(canvas))));
+        let trust = &self.signature_trust;
+        self.content = Some(canvas.update(cx, |canvas, _cx| read(pane, Some(canvas), trust)));
     }
 
     /// The layers the pane is showing, or nothing when another pane is open
@@ -359,7 +377,11 @@ impl NavigationPanesState {
 }
 
 /// Read what a pane shows, once, when it opens.
-fn read(pane: NavigationPane, canvas: Option<&mut Canvas>) -> PaneContent {
+fn read(
+    pane: NavigationPane,
+    canvas: Option<&mut Canvas>,
+    trust: &signatures::SignatureTrust,
+) -> PaneContent {
     let Some(canvas) = canvas else {
         // No document, so nothing to read. Every pane draws its empty state
         // from an empty list rather than from a missing one.
@@ -379,7 +401,9 @@ fn read(pane: NavigationPane, canvas: Option<&mut Canvas>) -> PaneContent {
             PaneContent::Attachments(message(canvas.model.attachments()))
         }
         NavigationPane::Layers => PaneContent::Layers(message(canvas.model.layers())),
-        NavigationPane::Signatures => PaneContent::Signatures(message(canvas.model.signatures())),
+        NavigationPane::Signatures => {
+            PaneContent::Signatures(message(canvas.model.signatures(trust)))
+        }
         NavigationPane::Comments => PaneContent::Comments(message(canvas.model.annotations())),
     }
 }
@@ -439,6 +463,12 @@ pub(in crate::shell) fn apply(
         PaneAction::Bookmark(action) => bookmark_edit::run(state, canvas, action, cx),
         PaneAction::Thumbnail(action) => thumbnails::run(state, canvas, action, cx),
         PaneAction::Comment(action) => comments::run(state, canvas, action, cx),
+        PaneAction::ValidateSignatures => {
+            if let Some(canvas) = canvas {
+                canvas.update(cx, |canvas, _| canvas.model.request_signature_validation());
+                state.reread(canvas, cx);
+            }
+        }
     }
     cx.notify();
 }
@@ -1601,15 +1631,20 @@ mod tests {
     #[test]
     fn the_live_panes_hold_nothing_and_the_reading_panes_hold_a_list() {
         for pane in [NavigationPane::Thumbnails, NavigationPane::SearchResults] {
-            assert_eq!(read(pane, None), PaneContent::Live, "{}", pane.label());
+            assert_eq!(
+                read(pane, None, &Default::default()),
+                PaneContent::Live,
+                "{}",
+                pane.label()
+            );
         }
 
         assert_eq!(
-            read(NavigationPane::Bookmarks, None),
+            read(NavigationPane::Bookmarks, None, &Default::default()),
             PaneContent::Bookmarks(Ok(Vec::new()))
         );
         assert_eq!(
-            read(NavigationPane::Layers, None),
+            read(NavigationPane::Layers, None, &Default::default()),
             PaneContent::Layers(Ok(Vec::new()))
         );
     }

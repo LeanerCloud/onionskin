@@ -126,12 +126,13 @@ pub enum PreferenceCategory {
     JavaScript,
     PageDisplay,
     Search,
+    Signatures,
     TrustManager,
 }
 
 impl PreferenceCategory {
     /// Acrobat's order, which is alphabetical.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Commenting,
         Self::Documents,
         Self::Forms,
@@ -139,6 +140,7 @@ impl PreferenceCategory {
         Self::JavaScript,
         Self::PageDisplay,
         Self::Search,
+        Self::Signatures,
         Self::TrustManager,
     ];
 
@@ -151,6 +153,7 @@ impl PreferenceCategory {
             Self::JavaScript => "JavaScript",
             Self::PageDisplay => "Page Display",
             Self::Search => "Search",
+            Self::Signatures => "Signatures",
             Self::TrustManager => "Trust Manager",
         }
     }
@@ -191,6 +194,24 @@ impl WebLinks {
 
 fn parse_web_links(value: &str) -> Option<WebLinks> {
     WebLinks::ALL.into_iter().find(|links| links.key() == value)
+}
+
+/// Signatures: which time a signer's certificates are judged at.
+pub use onionskin_core::signatures::VerificationTime;
+
+const VERIFICATION_TIMES: &str = "\"current\", \"creation\"";
+
+pub fn verification_time_key(time: VerificationTime) -> &'static str {
+    match time {
+        VerificationTime::Current => "current",
+        VerificationTime::Creation => "creation",
+    }
+}
+
+fn parse_verification_time(value: &str) -> Option<VerificationTime> {
+    [VerificationTime::Current, VerificationTime::Creation]
+        .into_iter()
+        .find(|time| verification_time_key(*time) == value)
 }
 
 /// The largest recents list the Documents category offers. Acrobat's own
@@ -239,6 +260,12 @@ pub struct Preferences {
     /// Forms: "Remember numerical data". Off by default, so a number
     /// typed into a form, which may be an account's, is not kept.
     pub autocomplete_numbers: bool,
+    /// Signatures: "Verify signatures when the document is opened". Off,
+    /// the Signatures pane lists fields unchecked until Validate All.
+    pub verify_on_open: bool,
+    /// Signatures: "Verify signatures using" the current time or the time
+    /// the signature says it was created.
+    pub verification_time: VerificationTime,
 }
 
 impl Default for Preferences {
@@ -261,6 +288,8 @@ impl Default for Preferences {
             javascript: true,
             autocomplete: true,
             autocomplete_numbers: false,
+            verify_on_open: true,
+            verification_time: VerificationTime::Current,
         }
     }
 }
@@ -465,6 +494,14 @@ impl Preferences {
             );
         }
         file.insert("web_links".into(), self.web_links.key().into());
+        file.insert(
+            "verify_signatures_on_open".into(),
+            self.verify_on_open.into(),
+        );
+        file.insert(
+            "signature_verification_time".into(),
+            verification_time_key(self.verification_time).into(),
+        );
         if !self.trusted_sites.is_empty() {
             file.insert(
                 "trusted_sites".into(),
@@ -522,6 +559,16 @@ fn apply(
         "hidden_tools" => {
             preferences.hidden_tools =
                 tool_ids(value).ok_or_else(|| unknown_value(path, setting, value, TOOL_IDS))?;
+        }
+        "verify_signatures_on_open" => preferences.verify_on_open = flag(path, setting, value)?,
+        "signature_verification_time" => {
+            preferences.verification_time = named(
+                path,
+                setting,
+                value,
+                VERIFICATION_TIMES,
+                parse_verification_time,
+            )?;
         }
         "web_links" => {
             preferences.web_links = named(path, setting, value, WEB_LINKS, parse_web_links)?;
@@ -874,6 +921,8 @@ mod tests {
             }),
             javascript: false,
             autocomplete: false,
+            verify_on_open: false,
+            verification_time: VerificationTime::Creation,
             autocomplete_numbers: true,
         };
 
@@ -1139,6 +1188,7 @@ mod tests {
                 "JavaScript",
                 "Page Display",
                 "Search",
+                "Signatures",
                 "Trust Manager"
             ]
         );

@@ -186,6 +186,32 @@ impl ShellFrame {
                 }
             }
             PreferenceChange::KeepSite(_) => return,
+            PreferenceChange::VerifyOnOpen(on) => preferences.verify_on_open = on,
+            PreferenceChange::VerificationTime(time) => preferences.verification_time = time,
+            PreferenceChange::AddTrustedCertificate => {
+                self.prompt_for_trusted_certificate(cx);
+                return;
+            }
+            PreferenceChange::ToggleTrust { index, certified } => {
+                if self.settings.trusted.toggle(index, certified) {
+                    self.save_trusted_certificates();
+                }
+                self.apply_signature_trust(cx);
+                return;
+            }
+            PreferenceChange::RemoveTrusted(index) => {
+                if self.settings.trusted.remove(index) {
+                    self.save_trusted_certificates();
+                }
+                self.apply_signature_trust(cx);
+                return;
+            }
+        }
+        if matches!(
+            change,
+            PreferenceChange::VerifyOnOpen(_) | PreferenceChange::VerificationTime(_)
+        ) {
+            self.apply_signature_trust(cx);
         }
         if let Some(path) = self.settings.paths.preferences.as_deref() {
             if let Err(error) = self.settings.preferences.save(path) {

@@ -19,6 +19,8 @@ pub const PREFERENCES_FILE: &str = "preferences.json";
 pub const RECENTS_FILE: &str = "recents.json";
 /// Forms Auto-Complete's remembered entries.
 pub const AUTOCOMPLETE_FILE: &str = "autocomplete.json";
+/// The certificates the user trusts to identify signers.
+pub const TRUSTED_CERTIFICATES_FILE: &str = "trusted-certificates.json";
 /// The folder beside the settings files that tools keep their own files in.
 pub const DATA_DIR: &str = "data";
 /// Autosave's recovery files, one per open document with unsaved edits.
@@ -71,6 +73,8 @@ pub struct ConfigPaths {
     pub recents: Option<PathBuf>,
     /// Forms Auto-Complete's entries.
     pub autocomplete: Option<PathBuf>,
+    /// The certificates trusted to identify signers.
+    pub trusted_certificates: Option<PathBuf>,
     /// Where tools keep files of their own - the custom stamp library - as
     /// opposed to the settings files above.
     pub data: Option<PathBuf>,
@@ -106,6 +110,7 @@ impl ConfigPaths {
             preferences: Some(dir.join(PREFERENCES_FILE)),
             recents: Some(dir.join(RECENTS_FILE)),
             autocomplete: Some(dir.join(AUTOCOMPLETE_FILE)),
+            trusted_certificates: Some(dir.join(TRUSTED_CERTIFICATES_FILE)),
             data: Some(dir.join(DATA_DIR)),
             recovery: Some(dir.join(RECOVERY_DIR)),
             home: home_dir(),

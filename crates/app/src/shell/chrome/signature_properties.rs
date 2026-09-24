@@ -7,16 +7,18 @@ use gpui::{
     div, Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _,
 };
-use onionskin_core::signatures::{Coverage, Validation};
+use onionskin_core::signatures::{identity_sentence, Coverage, Identity, Validation};
 
 use super::accessible::{Activation, Element};
 use super::{ShellFrame, ThemeTokens};
-use crate::shell::panes::signatures::{status, SignatureRow, VALIDATION_NOTE};
+use crate::shell::panes::signatures::{status, SignatureRow};
 
 /// What the dialog's buttons do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum SignaturePropertiesAction {
     ViewSignedVersion,
+    /// Trust the signer's certificate for approval signatures.
+    AddToTrusted,
     Close,
 }
 
@@ -126,8 +128,35 @@ pub(in crate::shell) fn facts(row: &SignatureRow) -> Vec<Fact> {
             .into_iter()
             .filter_map(|(label, value)| value.clone().map(|value| (label, value))),
     );
-    facts.push(("Identity", VALIDATION_NOTE.to_owned()));
+    facts.extend(identity_facts(row));
     facts
+}
+
+/// Whether the signer is trusted, and through which certificates.
+fn identity_facts(row: &SignatureRow) -> Vec<Fact> {
+    let Some(identity) = &row.identity else {
+        return Vec::new();
+    };
+    let mut facts = vec![("Identity", identity_sentence(identity))];
+    if let Identity::Valid { path } = identity {
+        let names: Vec<_> = path
+            .iter()
+            .map(|certificate| certificate.display_name())
+            .collect();
+        facts.push(("Trusted through", names.join(" > ")));
+    }
+    facts
+}
+
+/// Whether Add to Trusted Certificates has a certificate to add: the
+/// signer's, when their identity is not already valid.
+pub(in crate::shell) fn can_add_to_trusted(row: &SignatureRow) -> bool {
+    let signer = row
+        .validation
+        .as_ref()
+        .and_then(|validation| validation.check.as_ref().ok())
+        .and_then(|check| check.signer.as_ref());
+    signer.is_some() && !matches!(row.identity, Some(Identity::Valid { .. }))
 }
 
 /// What a certification level allows, as Acrobat words it.
@@ -156,6 +185,13 @@ fn buttons(row: &SignatureRow) -> Vec<(&'static str, &'static str, SignatureProp
             "signature-properties-view",
             "View Signed Version",
             SignaturePropertiesAction::ViewSignedVersion,
+        ));
+    }
+    if can_add_to_trusted(row) {
+        buttons.push((
+            "signature-properties-trust",
+            "Add to Trusted Certificates",
+            SignaturePropertiesAction::AddToTrusted,
         ));
     }
     buttons.push((
@@ -252,6 +288,7 @@ mod tests {
                 disallowed: Default::default(),
                 verdict: Verdict::Unknown("no signer info".to_owned()),
             }),
+            identity: Some(Identity::Unknown("nothing is trusted".to_owned())),
         }
     }
 
@@ -308,12 +345,20 @@ mod tests {
         );
         assert_eq!(find("Reason (as written)"), Some("Approved"));
         assert_eq!(find("Changes after signing"), Some("None"));
-        assert_eq!(find("Identity"), Some(VALIDATION_NOTE));
+        assert_eq!(
+            find("Identity"),
+            Some("The signer's identity is unknown: nothing is trusted.")
+        );
+        assert!(
+            !can_add_to_trusted(&row(Coverage::WholeFile)),
+            "no signer to add"
+        );
         assert_eq!(certification(1), "No changes allowed");
         assert!(certification(3).contains("commenting"));
 
         let unsigned = SignatureRow {
             validation: None,
+            identity: None,
             ..row(Coverage::WholeFile)
         };
         assert_eq!(facts(&unsigned).len(), 2, "field and status only");

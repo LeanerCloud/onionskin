@@ -13,6 +13,7 @@ pub mod preferences;
 pub mod recents;
 #[cfg(feature = "shell")]
 pub mod shell;
+pub mod trusted_certificates;
 
 /// Assemble the first-party plugin set. Every entry sits behind its own
 /// cargo feature: with `--no-default-features` this returns an empty
