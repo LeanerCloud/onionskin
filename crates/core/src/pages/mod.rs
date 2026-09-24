@@ -55,6 +55,7 @@ mod import;
 mod inherit;
 mod labels;
 mod links;
+mod marks;
 mod ops;
 mod outline;
 mod print_form;
@@ -70,6 +71,10 @@ pub use boxes::{
     boxed, resized, set_media_size, set_page_box, shown_margins, Margins, PageBox, MIN_BOX_SIZE,
 };
 pub use import::{extract_pages, import_page_as_form, import_pages};
+pub use marks::{
+    add_page_marks, mark_settings, marked_pages, page_marks, remove_page_marks, shown, MarkKind,
+    PageMark, ShownSpace,
+};
 pub(crate) use ops::{current_page_count, page_ref};
 pub use ops::{
     delete_pages, insert_blank_pages, insert_pages_from, move_pages, page_count,

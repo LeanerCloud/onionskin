@@ -237,7 +237,7 @@ fn unturn(shown: Margins, rotate: i32) -> Margins {
 
 /// The page's media box, lower-left corner first; US Letter if it has none
 /// a reader could use.
-fn media_box(object: Option<Object>) -> [f64; 4] {
+pub(super) fn media_box(object: Option<Object>) -> [f64; 4] {
     let Some(Object::Array(values)) = object else {
         return US_LETTER;
     };
@@ -250,7 +250,7 @@ fn media_box(object: Option<Object>) -> [f64; 4] {
 
 /// The page's rotation, one of the four right angles; anything else is a
 /// producer bug every reader treats as none.
-fn rotation(object: Option<Object>) -> i32 {
+pub(super) fn rotation(object: Option<Object>) -> i32 {
     let degrees = object.as_ref().and_then(number).unwrap_or(0.0).round() as i64;
     let turned = degrees.rem_euclid(360) as i32;
     if turned % 90 == 0 {
