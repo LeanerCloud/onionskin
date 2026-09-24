@@ -38,11 +38,11 @@ fn document() -> Vec<u8> {
         format!("<< /Type /Annot /Subtype /Widget /P 3 0 R {rest} >>").into_bytes()
     };
     pdf(&[
-        b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R 6 0 R 8 0 R] \
+        b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R 6 0 R 8 0 R 9 0 R] \
            /DA (/Helv 10 Tf 0 g) >> >>"
             .to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200] >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R 6 0 R 8 0 R] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R 6 0 R 8 0 R 9 0 R] >>".to_vec(),
         widget(
             "/FT /Tx /T (qty) /Rect [10 150 110 170] /AA << /K << /S /JavaScript \
              /JS (AFNumber_Keystroke\\(0, 0, 0, 0, \"\", true\\);) >> >>",
@@ -52,6 +52,7 @@ fn document() -> Vec<u8> {
         b"<< /Type /XObject /Subtype /Form /BBox [0 0 12 12] /Length 0 >>\nstream\n\nendstream"
             .to_vec(),
         widget("/FT /Tx /T (name) /Rect [10 50 110 70]"),
+        widget("/FT /Btn /Ff 65536 /T (photo_af_image) /Rect [150 60 250 130]"),
     ])
 }
 
@@ -118,6 +119,7 @@ const QTY: [f64; 4] = [10.0, 150.0, 110.0, 170.0];
 const COLOUR: [f64; 4] = [150.0, 150.0, 250.0, 170.0];
 const AGREE: [f64; 4] = [10.0, 100.0, 22.0, 112.0];
 const NAME: [f64; 4] = [10.0, 50.0, 110.0, 70.0];
+const PHOTO: [f64; 4] = [150.0, 60.0, 250.0, 130.0];
 
 fn value(
     window: gpui::WindowHandle<ShellFrame>,
@@ -529,6 +531,104 @@ fn auto_complete_off_offers_nothing_and_clear_all_forgets_everything(cx: &mut Te
             );
             frame.change_preference(PreferenceChange::ClearEntries, cx);
             assert!(frame.autocomplete_entries().is_empty());
+        })
+        .unwrap();
+}
+
+/// The raw normal appearance of `name`'s widget.
+fn appearance(
+    window: gpui::WindowHandle<ShellFrame>,
+    name: &str,
+    cx: &mut VisualTestContext,
+) -> String {
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            canvas.update(cx, |canvas, _| {
+                let mut doc = canvas.model.document_mut();
+                let widget = doc
+                    .form()
+                    .expect("reads")
+                    .field(name)
+                    .expect("the field")
+                    .widgets[0]
+                    .objref;
+                let cos = doc.structure().expect("structure");
+                let dict = cos.get(widget.number).expect("widget").object;
+                let Some(normal) = dict
+                    .as_dict()
+                    .and_then(|dict| dict.get(b"AP"))
+                    .and_then(|ap| cos.resolve(ap).ok())
+                    .and_then(|ap| ap.as_dict().and_then(|ap| ap.get(b"N")).cloned())
+                    .and_then(|normal| cos.resolve(&normal).ok())
+                else {
+                    return String::new();
+                };
+                String::from_utf8_lossy(&normal.as_stream().expect("a stream").raw).into_owned()
+            })
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn an_image_field_shows_the_image_chosen_for_it(cx: &mut TestAppContext) {
+    use image::ImageEncoder as _;
+    let data = tempfile::tempdir().expect("dir");
+    let window = window(data.path(), cx);
+    let cx = &mut visual(window, cx);
+    // The click asks the platform for a file, which the test platform
+    // cannot show, so the model is asked what the click answers.
+    let asked = window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            canvas.update(cx, |canvas, _| {
+                canvas
+                    .model
+                    .document_mut()
+                    .request_field(onionskin_core::FieldRequest {
+                        field: onionskin_core::ObjRef::new(9, 0),
+                        widget: onionskin_core::ObjRef::new(9, 0),
+                        page: 0,
+                        point: (200.0, 100.0),
+                    });
+                canvas.model.answer_field_request().expect("answers")
+            })
+        })
+        .unwrap()
+        .expect("a prompt");
+    assert_eq!(asked.entry, crate::shell::canvas::Entry::Image);
+
+    let path = data.path().join("face.png");
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&[0, 90, 180, 255], 2, 2, image::ExtendedColorType::L8)
+        .expect("encodes");
+    std::fs::write(&path, png).expect("writes");
+    let prompt = asked;
+    assert_eq!(prompt.rect, PHOTO);
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            canvas.update(cx, |canvas, cx| {
+                canvas.take_image_file(&prompt, None, cx);
+                canvas.take_image_file(&prompt, Some(path.clone()), cx);
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(appearance(window, "photo_af_image", cx).contains("/Img Do"));
+    assert!(notices(window, cx).is_empty());
+
+    window
+        .update(cx, |frame, _, cx| {
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            canvas.update(cx, |canvas, cx| {
+                canvas.take_image_file(&prompt, Some(path.with_file_name("gone.png")), cx);
+                assert!(
+                    canvas.model.status().is_some(),
+                    "an unreadable file is said"
+                );
+            });
         })
         .unwrap();
 }

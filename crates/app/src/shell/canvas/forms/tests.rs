@@ -15,7 +15,8 @@ fn js(script: &str) -> String {
 /// 4 qty (number), 5 agree (check box), 6 size (radio, kids 7 and 8),
 /// 9 pets (multiple choice list box), 10 colour (editable dropdown),
 /// 11 print (button), 12 sign (signature), 13 locked (read-only text),
-/// 14 age (validated 0 to 130), 15 an appearance for the buttons.
+/// 14 age (validated 0 to 130), 15 an appearance for the buttons, 16 an
+/// image field.
 fn document() -> Vec<u8> {
     let number = format!(
         "/AA << /K {} >>",
@@ -30,11 +31,11 @@ fn document() -> Vec<u8> {
     };
     let objects = vec![
         b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R 6 0 R 9 0 R 10 0 R \
-           11 0 R 12 0 R 13 0 R 14 0 R] /DA (/Helv 10 Tf 0 g) >> >>"
+           11 0 R 12 0 R 13 0 R 14 0 R 16 0 R] /DA (/Helv 10 Tf 0 g) >> >>"
             .to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>".to_vec(),
         b"<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R \
-           12 0 R 13 0 R 14 0 R] >>"
+           12 0 R 13 0 R 14 0 R 16 0 R] >>"
             .to_vec(),
         widget(&format!("/FT /Tx /T (qty) /Rect [10 700 110 720] {number}")),
         widget("/FT /Btn /T (agree) /Rect [10 670 22 682] /AP << /N << /Yes 15 0 R /Off 15 0 R >> >> /AS /Off"),
@@ -49,6 +50,7 @@ fn document() -> Vec<u8> {
         widget(&format!("/FT /Tx /T (age) /Rect [10 380 110 400] {age}")),
         b"<< /Type /XObject /Subtype /Form /BBox [0 0 12 12] /Length 0 >>\nstream\n\nendstream"
             .to_vec(),
+        widget("/FT /Btn /Ff 65536 /T (photo_af_image) /Rect [300 700 400 780] /MK << /TP 1 >>"),
     ];
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::new();
@@ -388,4 +390,42 @@ fn auto_complete_offers_what_was_typed_but_not_into_a_password() {
         model.take_typed().is_empty(),
         "a dropdown's choice is not typed text"
     );
+}
+
+/// A one-page PDF, the form an image arrives in.
+fn picture() -> Vec<u8> {
+    b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 20 10] >>\nendobj\n\
+3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n\
+trailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        .to_vec()
+}
+
+#[test]
+fn an_image_field_asks_for_an_image_and_shows_it() {
+    let mut model = model();
+    let prompt = click(&mut model, 16, 16, (350.0, 740.0)).expect("asks for an image");
+    assert_eq!(prompt.entry, Entry::Image);
+    assert!(!prompt.entry.typed());
+    assert_eq!(prompt.entry.initial_text(), "");
+    assert_eq!(prompt.entry.value_for("x"), FieldValue::None);
+    assert!(model.suggestions(&prompt.entry, "a").is_empty());
+    assert!(model.set_field_image(&prompt, picture()));
+    assert!(model.take_form_notices().is_empty());
+    assert_eq!(
+        model.document_mut().edit().history().undo_label(),
+        Some("Set Image")
+    );
+    assert!(!model.set_field_image(&prompt, b"GIF89a".to_vec()));
+    assert_eq!(
+        model.take_form_notices(),
+        ["That file is not an image Onionskin reads"],
+        "no codec here reads it"
+    );
+    let wrong = FieldPrompt {
+        field: object(4),
+        ..prompt
+    };
+    assert!(!model.set_field_image(&wrong, picture()));
+    assert!(model.take_form_notices()[0].starts_with("Set Image"));
 }

@@ -41,6 +41,7 @@ fn kind_label(entry: &Entry) -> &'static str {
         Entry::Text { password: true, .. } => "password",
         Entry::Text { .. } => "text field",
         Entry::Choose { .. } => "dropdown",
+        Entry::Image => "image field",
     }
 }
 
@@ -72,6 +73,7 @@ impl Canvas {
     /// away, or open its editor.
     pub(super) fn answer_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.model.answer_field_request() {
+            Ok(Some(prompt)) if prompt.entry == Entry::Image => self.prompt_for_image(prompt, cx),
             Ok(Some(prompt)) => self.open_field_editor(prompt, window, cx),
             Ok(None) => {}
             Err(error) => self.record_error(error, cx),
@@ -112,6 +114,49 @@ impl Canvas {
             _typing: typing,
         });
         cx.notify();
+    }
+
+    /// Ask for the image an image field shows, as Acrobat does on its
+    /// click.
+    fn prompt_for_image(&mut self, prompt: FieldPrompt, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose Image".into()),
+        });
+        cx.spawn(async move |canvas, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            canvas
+                .update(cx, |canvas, cx| {
+                    canvas.take_image_file(&prompt, paths.into_iter().next(), cx);
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// What the image prompt chose, shown on the field.
+    pub(in crate::shell) fn take_image_file(
+        &mut self,
+        prompt: &FieldPrompt,
+        path: Option<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = path else {
+            return;
+        };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                self.model.set_field_image(prompt, bytes);
+            }
+            Err(error) => {
+                self.record_error(format!("{} could not be read: {error}", path.display()), cx)
+            }
+        }
+        self.handle_change(Ok(true), cx);
     }
 
     /// Commit what the editor holds. `true` when the field took it, or
@@ -222,7 +267,7 @@ impl Canvas {
                 Entry::Choose { options, .. } => {
                     options.get(index).map(|option| option.export.clone())
                 }
-                Entry::Text { .. } => None,
+                Entry::Text { .. } | Entry::Image => None,
             });
         if let Some(export) = export {
             self.choose_field_option(export, cx);

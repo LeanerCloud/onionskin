@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 113 planned / 37 partial / 80 out-of-scope. 173 implemented.**
+**403 rows: 112 planned / 37 partial / 80 out-of-scope. 174 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -476,7 +476,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | List box | implemented | M5 | The List Box tool; items, export values, order, the default and multiple selection are set in Properties. Evidence: docs/evidence/m5-forms.md. |
 | Dropdown (combo box) | implemented | M5 | The Dropdown tool; items as for a list box, and whether custom text may be typed. Evidence: docs/evidence/m5-forms.md. |
 | Button (push button) | partial | M5 | The Button tool places a grey button whose label is set in Properties. Its actions are neither set nor run, and icons are not offered. Evidence: docs/evidence/m5-forms.md. |
-| Image field | planned | M5 | |
+| Image field | implemented | M5 | The Image Field tool places a button named Image1_af_image, icon only, with the click action Acrobat's image field runs. Clicking it with the Hand tool asks for an image (any the Create entries import, or a PDF's first page), shown fitted and centred as one undo step. Evidence: docs/evidence/m5-forms.md. |
 | Date field | implemented | M5 | The Date Field tool places a text field formatted and checked as `mm/dd/yyyy`, numbered Date1, with the format changeable on the Format tab. Evidence: docs/evidence/m5-forms.md. |
 | Digital signature field | implemented | M5 | The Signature Field tool places an empty `/Sig` field. Signing it is M6. Evidence: docs/evidence/m5-forms.md. |
 | Barcode field | planned | post-1.0 | Barcode form fields are a named post-1.0 slot. |

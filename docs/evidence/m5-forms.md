@@ -44,9 +44,10 @@ hosted-CI run is claimed.
     and editing the calculation order are not offered.
 - **To `partial`, with Auto-Complete:** Auto-Complete form entries. Basic
   and the entry list are offered; Advanced is not.
-- **Still `planned`:** image field and auto-detect form fields.
-- **Headline after every part:** 113 planned / 37 partial / 80
-  out-of-scope, 173 implemented.
+- **To `implemented`, afterwards:** Image field.
+- **Still `planned`:** auto-detect form fields.
+- **Headline after every part:** 112 planned / 37 partial / 80
+  out-of-scope, 174 implemented.
 
 ## Preparing forms: what the user gets
 
@@ -91,6 +92,15 @@ hosted-CI run is claimed.
     leaves.
   - Changing a check box's export value renames its on state and draws its
     appearances again.
+- **Image fields.** The Image Field tool places a button named as Acrobat
+  names them (Image1_af_image), icon only. It carries the click action
+  Acrobat's image field runs, `event.target.buttonImportIcon()`, so it works
+  in Acrobat as well.
+  - With the Hand tool, a click asks for an image file. A PDF's first page
+    works too, and so does any image the Create entries import.
+  - The image becomes the button's `/MK /I` form XObject, drawn fitted and
+    centred inside the frame, as one undo step.
+  - A file no codec reads is said on the notice bar.
 - **One drag gesture.** The marquee and the click-or-drag threshold, written
   four times across the tool plugins, are one module in `plugin-api` now.
 
@@ -318,7 +328,6 @@ onionskin-app/shell-test-support` reports only the existing
 ## Not claimed
 
 - **Preparing a form.** These are still planned:
-  - image fields;
   - auto-detecting fields;
   - auto-complete;
   - moving or resizing a field by dragging it, rather than through

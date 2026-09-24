@@ -66,6 +66,9 @@ pub enum Entry {
         chosen: Option<String>,
         editable: bool,
     },
+    /// An image field: the image to show is a file to choose, not an
+    /// editor.
+    Image,
 }
 
 impl Entry {
@@ -87,6 +90,7 @@ impl Entry {
                 .as_deref()
                 .map(|export| display_of(options, export))
                 .unwrap_or_default(),
+            Entry::Image => String::new(),
         }
     }
 
@@ -105,6 +109,7 @@ impl Entry {
                     .map_or(text, |option| option.export.as_str());
                 FieldValue::Chosen(vec![export.to_owned()])
             }
+            Entry::Image => FieldValue::None,
         }
     }
 }
@@ -149,6 +154,14 @@ fn prompt(field: &Field, widget: &Widget) -> Option<FieldPrompt> {
         rect: widget.rect,
         name: field.name.clone(),
         entry,
+    })
+}
+
+/// A reason as a notice says it: a sentence, capitalised.
+fn sentence(reason: &str) -> String {
+    let mut chars = reason.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
     })
 }
 
@@ -219,6 +232,41 @@ impl CanvasModel {
         }
     }
 
+    /// Show the image in file `bytes` on image field `prompt`: a PDF as it
+    /// is, any other image through the codec that reads it. `false`, with a
+    /// notice, when it cannot be shown.
+    pub fn set_field_image(&mut self, prompt: &FieldPrompt, bytes: Vec<u8>) -> bool {
+        let document = if bytes.starts_with(b"%PDF") {
+            Ok(bytes)
+        } else {
+            self.registry()
+                .codecs()
+                .find(|codec| codec.imports() && codec.reads(&bytes))
+                .ok_or_else(|| "That file is not an image Onionskin reads".to_owned())
+                .and_then(|codec| {
+                    codec
+                        .import(&bytes)
+                        .map_err(|error| sentence(&error.to_string()))
+                })
+        };
+        let written = document.and_then(|document| {
+            onionskin_tools_form::prepare::set_image(
+                &mut self.document_mut(),
+                prompt.field,
+                prompt.widget,
+                document,
+            )
+            .map_err(|error| sentence(&error.to_string()))
+        });
+        match written {
+            Ok(()) => true,
+            Err(notice) => {
+                self.forms.notices.push(notice);
+                false
+            }
+        }
+    }
+
     /// Text typed into fields and kept since the frame last asked.
     pub fn take_typed(&mut self) -> Vec<String> {
         std::mem::take(&mut self.forms.typed)
@@ -269,6 +317,16 @@ impl CanvasModel {
         else {
             return Ok(None);
         };
+        if field.is_image() && !field.flags.read_only {
+            return Ok(widget.page.map(|page| FieldPrompt {
+                field: field.objref,
+                widget: widget.objref,
+                page,
+                rect: widget.rect,
+                name: field.name.clone(),
+                entry: Entry::Image,
+            }));
+        }
         if let Some(notice) = refusal(field) {
             self.forms.notices.push(notice);
             return Ok(None);
