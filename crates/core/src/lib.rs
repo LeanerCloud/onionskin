@@ -36,6 +36,7 @@ mod signatures;
 mod structure;
 #[cfg(test)]
 mod testpdf;
+pub mod text_edit;
 pub mod textselect;
 mod viewport;
 
@@ -66,7 +67,9 @@ pub use layout::{
     ViewRotation, ViewSize,
 };
 pub use onionskin_content::placements::ImagePlacement;
-pub use onionskin_content::{Glyph, Mapping, MatchMode, PageText, SearchOptions, TextRun};
+pub use onionskin_content::{
+    Glyph, LineGlyph, Mapping, MatchMode, PageText, SearchOptions, TextLine, TextRun,
+};
 /// Re-exported because a [`Layer`] is named by the object its dictionary
 /// lives in, and the shell has to be able to name one back.
 pub use onionskin_cos::{ObjRef, Provenance};
