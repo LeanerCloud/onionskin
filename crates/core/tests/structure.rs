@@ -453,3 +453,69 @@ fn pdf(objects: &[Vec<u8>]) -> Vec<u8> {
     out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
     out
 }
+
+/// A document element with no page of its own, over a paragraph on each of
+/// two pages. Deleting page 1 keeps the document element, ranked by the
+/// page that stays, with page 2's paragraph and its marked content.
+#[test]
+fn deleting_a_page_keeps_an_element_that_spans_it_and_a_page_that_stays() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << >> /StructParents 0 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << >> /StructParents 1 >>".to_vec(),
+        b"<< /Type /StructTreeRoot /K [6 0 R] /ParentTree << /Nums [0 [7 0 R] 1 [8 0 R]] >> /ParentTreeNextKey 2 >>".to_vec(),
+        b"<< /Type /StructElem /S /Document /P 5 0 R /K [7 0 R 8 0 R] >>".to_vec(),
+        b"<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 >>".to_vec(),
+        b"<< /Type /StructElem /S /P /P 6 0 R /Pg 4 0 R /K 0 >>".to_vec(),
+    ]);
+    let mut doc = onionskin_core::Document::open_bytes(bytes).expect("opens");
+    doc.edit_annotations("Delete Pages", |tx, structure| {
+        onionskin_core::pages::delete_pages(tx, structure, &[0]).map(|_| ())
+    })
+    .expect("deletes");
+    let after = doc.structure().expect("reads");
+    let structure = read_structure(after).expect("the tree reads");
+    let tree = structure.tree().expect("still tagged");
+    assert_eq!(tree.roots, [Kid::Element(6)], "the document element stays");
+    assert_eq!(tree.elements[&6].kids, [Kid::Element(8)]);
+    assert_eq!(tree.elements[&8].kids, [Kid::Mcid(0)]);
+    let report = check(after, &structure, 1).expect("the invariant runs");
+    assert!(report.is_clean(), "{:?}", report.violations);
+}
+
+/// A section on page 1 holding a paragraph on each page. Deleting page 1
+/// keeps the section for the paragraph on page 2, and drops the page it no
+/// longer has.
+#[test]
+fn a_parent_on_a_deleted_page_stays_for_a_child_that_does() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << >> /StructParents 0 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << >> /StructParents 1 >>".to_vec(),
+        b"<< /Type /StructTreeRoot /K [6 0 R] /ParentTree << /Nums [0 [7 0 R] 1 [8 0 R]] >> /ParentTreeNextKey 2 >>".to_vec(),
+        b"<< /Type /StructElem /S /Sect /P 5 0 R /Pg 3 0 R /K [7 0 R 8 0 R] >>".to_vec(),
+        b"<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 >>".to_vec(),
+        b"<< /Type /StructElem /S /P /P 6 0 R /Pg 4 0 R /K 0 >>".to_vec(),
+    ]);
+    let mut doc = onionskin_core::Document::open_bytes(bytes).expect("opens");
+    doc.edit_annotations("Delete Pages", |tx, structure| {
+        onionskin_core::pages::delete_pages(tx, structure, &[0]).map(|_| ())
+    })
+    .expect("deletes");
+    let after = doc.structure().expect("reads");
+    let structure = read_structure(after).expect("the tree reads");
+    let tree = structure.tree().expect("still tagged");
+    assert_eq!(tree.roots, [Kid::Element(6)]);
+    assert_eq!(
+        tree.elements[&6].kids,
+        [Kid::Element(8)],
+        "page 1's paragraph goes"
+    );
+    assert_eq!(tree.elements[&6].page, None, "the section's page went");
+    let report = check(after, &structure, 1).expect("the invariant runs");
+    assert!(report.is_clean(), "{:?}", report.violations);
+}

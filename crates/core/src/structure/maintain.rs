@@ -103,25 +103,36 @@ pub(crate) fn remove_pages(
 }
 
 /// Elements whose surviving content is entirely on the removed pages.
+///
+/// Worked out to a fixed point, children first: a parent on a removed page
+/// goes only once every child element it has has gone too, because a child
+/// that stays has to stay reachable from the root.
 fn elements_on_pages(tree: &StructureTree, pages: &BTreeSet<u32>) -> BTreeSet<u32> {
     let mut doomed = BTreeSet::new();
-    for (number, element) in &tree.elements {
-        let own_page = element.page.is_some_and(|pg| pages.contains(&pg.number));
-        let kids_elsewhere = element.kids.iter().any(|kid| match kid {
-            Kid::MarkedContent { page: Some(pg), .. } | Kid::Object { page: Some(pg), .. } => {
-                !pages.contains(&pg.number)
+    loop {
+        let before = doomed.len();
+        for (number, element) in &tree.elements {
+            if doomed.contains(number) {
+                continue;
             }
-            // A child element is judged on its own account, so a parent is not
-            // kept alive by one.
-            Kid::Element(_) => false,
-            Kid::Mcid(_) => false,
-            Kid::MarkedContent { page: None, .. } | Kid::Object { page: None, .. } => false,
-        });
-        if own_page && !kids_elsewhere {
-            doomed.insert(*number);
+            let own_page = element.page.is_some_and(|pg| pages.contains(&pg.number));
+            let kids_elsewhere = element.kids.iter().any(|kid| match kid {
+                Kid::MarkedContent { page: Some(pg), .. } | Kid::Object { page: Some(pg), .. } => {
+                    !pages.contains(&pg.number)
+                }
+                Kid::Element(child) => tree.elements.contains_key(child) && !doomed.contains(child),
+                // Marked content on the element's own page.
+                Kid::Mcid(_) => false,
+                Kid::MarkedContent { page: None, .. } | Kid::Object { page: None, .. } => false,
+            });
+            if own_page && !kids_elsewhere {
+                doomed.insert(*number);
+            }
+        }
+        if doomed.len() == before {
+            return doomed;
         }
     }
-    doomed
 }
 
 /// Drop removed elements and page-bound kids from every surviving element's
@@ -141,7 +152,10 @@ fn rewrite_kids_without(
             .iter()
             .filter(|kid| keeps(kid, element.page, doomed, pages))
             .collect();
-        if kept.len() == element.kids.len() {
+        // An element kept for a child on a page that stays no longer has
+        // its own page to name.
+        let page_gone = element.page.is_some_and(|pg| pages.contains(&pg.number));
+        if kept.len() == element.kids.len() && !page_gone {
             continue;
         }
         let Some(state) = tx.object(*number)? else {
@@ -152,6 +166,9 @@ fn rewrite_kids_without(
         };
         let mut dict = dict.clone();
         dict.set(Name::new("K"), kids_array(&kept, tree));
+        if page_gone {
+            dict.remove(b"Pg");
+        }
         tx.put_object(*number, state.generation, Object::Dict(dict))?;
     }
 
@@ -345,16 +362,20 @@ pub(crate) fn reorder_pages(
         position.insert(page.number, index);
     }
 
-    // A kid on a page that is not in the order sits on a removed page: its
-    // element was emptied by the removal, and carrying it over from the tree
-    // as it was before would put it back in the reading order.
+    // A kid whose subtree sits only on pages not in the order sits on
+    // removed pages: its elements were emptied by the removal, and carrying
+    // it over from the tree as it was before would put it back in the
+    // reading order. One that spans a removed page and a surviving one is
+    // ranked by the first surviving page it names.
     let mut keyed: Vec<(usize, usize, &Kid)> = tree
         .roots
         .iter()
         .enumerate()
         .filter_map(|(original, kid)| {
-            let rank = match page_of(kid, tree) {
-                Some(page) => *position.get(&page.number)?,
+            let mut named_any = false;
+            let rank = match first_page(kid, tree, &position, &mut named_any) {
+                Some(page) => position[&page.number],
+                None if named_any => return None,
                 None => usize::MAX,
             };
             Some((rank, original, kid))
@@ -375,27 +396,43 @@ pub(crate) fn reorder_pages(
     Ok(Maintenance::Changed)
 }
 
-/// The page a root kid's subtree sits on: its own if it names one, else the
-/// first page any descendant names.
-fn page_of(kid: &Kid, tree: &StructureTree) -> Option<ObjRef> {
+/// The first page in `position` a root kid's subtree names: its own if it
+/// names one, else the first a descendant names. `named_any` is set when
+/// the subtree names a page at all, surviving or not.
+fn first_page(
+    kid: &Kid,
+    tree: &StructureTree,
+    position: &BTreeMap<u32, usize>,
+    named_any: &mut bool,
+) -> Option<ObjRef> {
+    let mut survives = |page: &Option<ObjRef>| {
+        let page = (*page)?;
+        *named_any = true;
+        position.contains_key(&page.number).then_some(page)
+    };
     match kid {
-        Kid::MarkedContent { page, .. } | Kid::Object { page, .. } => *page,
+        Kid::MarkedContent { page, .. } | Kid::Object { page, .. } => survives(page),
         Kid::Mcid(_) => None,
-        Kid::Element(number) => descendant_page(tree, *number, 0),
+        Kid::Element(number) => descendant_page(tree, *number, 0, &mut survives),
     }
 }
 
-fn descendant_page(tree: &StructureTree, number: u32, depth: usize) -> Option<ObjRef> {
+fn descendant_page(
+    tree: &StructureTree,
+    number: u32,
+    depth: usize,
+    survives: &mut impl FnMut(&Option<ObjRef>) -> Option<ObjRef>,
+) -> Option<ObjRef> {
     if depth > 64 {
         return None;
     }
     let element = tree.elements.get(&number)?;
-    if let Some(page) = element.page {
+    if let Some(page) = survives(&element.page) {
         return Some(page);
     }
     element.kids.iter().find_map(|kid| match kid {
-        Kid::MarkedContent { page, .. } | Kid::Object { page, .. } => *page,
-        Kid::Element(child) => descendant_page(tree, *child, depth + 1),
+        Kid::MarkedContent { page, .. } | Kid::Object { page, .. } => survives(page),
+        Kid::Element(child) => descendant_page(tree, *child, depth + 1, survives),
         Kid::Mcid(_) => None,
     })
 }
