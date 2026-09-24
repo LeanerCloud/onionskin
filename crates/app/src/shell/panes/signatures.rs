@@ -81,7 +81,7 @@ pub(in crate::shell) fn status(row: &SignatureRow) -> String {
 /// VALID" into `/Reason`, and unlabelled it would read as this pane's.
 pub(in crate::shell) fn detail(row: &SignatureRow) -> String {
     if let Some(validation) = &row.validation {
-        return validation.summary();
+        return format!("{} The signer's identity is unknown.", validation.summary());
     }
     let field = &row.field;
     let mut parts = Vec::new();

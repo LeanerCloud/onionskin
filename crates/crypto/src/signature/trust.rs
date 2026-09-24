@@ -52,6 +52,14 @@ pub enum Identity {
     Invalid(String),
 }
 
+/// `at` as RFC 3339 in UTC, the form `Certificate` writes its dates in, so
+/// the two compare as strings.
+pub fn rfc3339(at: std::time::SystemTime) -> String {
+    der::DateTime::from_system_time(at)
+        .map(|at| at.to_string())
+        .unwrap_or_else(|_| "9999-12-31T23:59:59Z".to_owned())
+}
+
 /// The signer's identity, at `at` (RFC 3339, as `Certificate` writes its
 /// dates), given the certificates the signature carries and the trusted
 /// ones.

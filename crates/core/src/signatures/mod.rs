@@ -6,9 +6,13 @@
 //! after it.
 
 mod changes;
+mod identity;
 mod validate;
 
 pub use changes::Change;
+pub use identity::{identity, identity_sentence, VerificationTime};
+pub use onionskin_crypto::signature::trust::{Identity, TrustAnchor};
+pub use onionskin_crypto::signature::Certificate;
 pub(crate) use validate::validate;
 pub use validate::{Coverage, Validation, Verdict};
 

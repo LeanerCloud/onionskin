@@ -33,10 +33,7 @@ fn every_algorithm_is_valid_over_the_whole_file() {
             validation.summary().contains("has not been modified"),
             "{name}"
         );
-        assert!(
-            validation.summary().contains("identity is unknown"),
-            "{name}"
-        );
+        assert!(!validation.summary().contains("identity"), "{name}");
     }
     assert_eq!(validate("certified-p1.pdf")[0].certification, Some(1));
     assert_eq!(validate("certified-p2.pdf")[0].certification, Some(2));
@@ -171,4 +168,62 @@ fn pdfsig_agrees(path: &std::path::Path, valid: bool) {
         valid,
         "{text}"
     );
+}
+
+fn test_ca(for_certified: bool) -> onionskin_core::signatures::TrustAnchor {
+    let pem = std::fs::read(signed_fixture("test-ca.pem")).expect("the test CA reads");
+    onionskin_core::signatures::TrustAnchor {
+        certificate: onionskin_core::signatures::Certificate::from_file_bytes(&pem).remove(0),
+        for_signatures: true,
+        for_certified,
+    }
+}
+
+#[test]
+fn a_signer_is_trusted_once_their_ca_is() {
+    use onionskin_core::signatures::{identity, identity_sentence, Identity, VerificationTime};
+    let now = std::time::SystemTime::now();
+    let approval = &validate("rsa-sha256.pdf")[0];
+
+    let unknown = identity(approval, &[], VerificationTime::Current, now);
+    assert!(matches!(unknown, Identity::Unknown(_)));
+    assert!(identity_sentence(&unknown).starts_with("The signer's identity is unknown: "));
+
+    let trusted = identity(approval, &[test_ca(false)], VerificationTime::Current, now);
+    let Identity::Valid { path } = &trusted else {
+        panic!("the test CA issued the signer: {trusted:?}")
+    };
+    assert_eq!(path[0].display_name(), "Ada Signer");
+    assert_eq!(
+        identity_sentence(&trusted),
+        "The signer's identity is valid."
+    );
+
+    // The signer's own clock: the certificates were valid when it signed.
+    let at_creation = identity(approval, &[test_ca(false)], VerificationTime::Creation, now);
+    assert!(matches!(at_creation, Identity::Valid { .. }));
+
+    // Long after every certificate expired.
+    let later = now + std::time::Duration::from_secs(60 * 60 * 24 * 365 * 20);
+    let expired = identity(
+        approval,
+        &[test_ca(false)],
+        VerificationTime::Current,
+        later,
+    );
+    assert!(
+        matches!(&expired, Identity::Invalid(reason) if reason.contains("expired")),
+        "{expired:?}"
+    );
+
+    // A certification needs a certificate trusted for certified documents.
+    let certified = &validate("certified-p2.pdf")[0];
+    assert!(matches!(
+        identity(certified, &[test_ca(false)], VerificationTime::Current, now),
+        Identity::Unknown(_)
+    ));
+    assert!(matches!(
+        identity(certified, &[test_ca(true)], VerificationTime::Current, now),
+        Identity::Valid { .. }
+    ));
 }

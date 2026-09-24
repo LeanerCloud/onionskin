@@ -4,9 +4,8 @@
 //! whether a certification signature allows those changes.
 //!
 //! **Identity is not decided here.** Whether the signer is who they say is
-//! a question for the user's trusted certificates; until it is asked, a
-//! valid signature's identity is unknown, and the report says so rather
-//! than calling it valid outright.
+//! a question for the user's trusted certificates, which [`super::identity`]
+//! asks.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -80,10 +79,10 @@ impl Validation {
             );
         match &self.verdict {
             Verdict::Valid if self.changes.is_empty() => format!(
-                "Signed by {signer}. The document has not been modified since this signature was applied. The signer's identity is unknown."
+                "Signed by {signer}. The document has not been modified since this signature was applied."
             ),
             Verdict::Valid => format!(
-                "Signed by {signer}. The document was changed after this signature was applied ({}); the signed version is unchanged. The signer's identity is unknown.",
+                "Signed by {signer}. The document was changed after this signature was applied ({}); the signed version is unchanged.",
                 labels(&self.changes)
             ),
             Verdict::Invalid(why) => format!("Signed by {signer}. The signature is invalid: {why}."),
