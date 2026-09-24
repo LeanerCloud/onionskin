@@ -2,40 +2,22 @@
 //! replacing and deleting the selected one, the Edit Image tool's moves
 //! and resizes, the Add Image tool, and the commands the Edit menu runs.
 
-use onionskin_core::{Document, FitMode, Modifiers, PagePoint, ViewSize, Viewport};
+mod common;
+
+use common::{content, pdf, Page};
+use onionskin_core::{Document, Modifiers, PagePoint};
 use onionskin_plugin_api::command_ids::{
     FLIP_IMAGE_HORIZONTAL, FLIP_IMAGE_VERTICAL, ROTATE_IMAGE_CLOCKWISE,
     ROTATE_IMAGE_COUNTERCLOCKWISE,
 };
 use onionskin_plugin_api::{
-    CommandCtx, EditVerb, PluginManifest, PluginRegistry, PointerInput, ToolCapability, ToolCtx,
-    ToolPlugin,
+    CommandCtx, EditVerb, PluginManifest, PluginRegistry, PointerInput, ToolCapability, ToolPlugin,
 };
 use onionskin_tools_edit::images::{
     add_image, delete_selected, flip_selected, picture_size, replace_selected, rotate_selected,
     select_image_at, selected,
 };
 use onionskin_tools_edit::{AddImageTool, EditImageTool, EditToolsPlugin};
-
-fn pdf(objects: &[Vec<u8>]) -> Vec<u8> {
-    let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
-    let mut offsets = Vec::new();
-    for (index, body) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
-        out.extend_from_slice(body);
-        out.extend_from_slice(b"\nendobj\n");
-    }
-    let xref = out.len();
-    let size = objects.len() + 1;
-    out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
-    for offset in offsets {
-        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
-    out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
-    out
-}
 
 fn image() -> Vec<u8> {
     let mut out = b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
@@ -44,10 +26,6 @@ fn image() -> Vec<u8> {
     out.push(0x80);
     out.extend_from_slice(b"\nendstream");
     out
-}
-
-fn content(text: &str) -> Vec<u8> {
-    format!("<< /Length {} >>\nstream\n{text}\nendstream", text.len()).into_bytes()
 }
 
 /// A Letter page drawing the image 100 by 50 at (100, 600).
@@ -151,53 +129,9 @@ fn an_image_is_added_fitted_and_selected() {
     assert!(add_image(&mut doc, rect, Vec::new()).is_err());
 }
 
-struct Page {
-    doc: Document,
-    viewport: Viewport,
-}
-
-impl Page {
-    fn new() -> Self {
-        let mut doc = document();
-        let mut viewport = Viewport::new(
-            1,
-            ViewSize {
-                width: 800.0,
-                height: 600.0,
-            },
-            12.0,
-        )
-        .expect("viewport");
-        viewport
-            .measure_page(doc.page_geometry(0).expect("measures").clone())
-            .expect("measurable");
-        viewport.fit(FitMode::Page).expect("fits");
-        Page { doc, viewport }
-    }
-
-    fn ctx(&mut self) -> ToolCtx<'_> {
-        ToolCtx {
-            doc: &mut self.doc,
-            viewport: &mut self.viewport,
-        }
-    }
-
-    fn drag(&mut self, tool: &mut dyn ToolPlugin, from: (f64, f64), to: (f64, f64)) {
-        let at = |(x, y)| PointerInput {
-            at: PagePoint { page: 0, x, y },
-            pressure: 1.0,
-            modifiers: Modifiers::default(),
-            clicks: 1,
-        };
-        tool.on_pointer_down(&mut self.ctx(), at(from));
-        tool.on_pointer_move(&mut self.ctx(), at(to));
-        tool.on_pointer_up(&mut self.ctx(), at(to));
-    }
-}
-
 #[test]
 fn the_edit_image_tool_selects_moves_and_resizes() {
-    let mut page = Page::new();
+    let mut page = Page::new(document());
     let mut tool = EditImageTool::new();
     assert_eq!(tool.capabilities(), [ToolCapability::EditImages]);
     assert!(tool.hint().is_some() && tool.claims(EditVerb::Delete));
@@ -243,7 +177,7 @@ fn the_edit_image_tool_selects_moves_and_resizes() {
 
 #[test]
 fn a_selection_is_let_go_by_escape_and_by_another_tool() {
-    let mut page = Page::new();
+    let mut page = Page::new(document());
     let mut tool = EditImageTool::new();
     page.drag(&mut tool, (150.0, 625.0), (150.0, 625.0));
     tool.on_cancel(&mut page.ctx());
@@ -276,7 +210,7 @@ fn the_add_image_tool_places_the_picture_it_was_given() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("picture.pdf");
     std::fs::write(&path, picture()).expect("writes");
-    let mut page = Page::new();
+    let mut page = Page::new(document());
     let mut tool = AddImageTool::new();
     assert!(tool.capabilities().contains(&ToolCapability::PlacesImage));
     assert!(!tool.choose("/no/such/file.pdf"));

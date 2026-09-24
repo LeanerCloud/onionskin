@@ -2,6 +2,9 @@
 //! Link dialog and the Edit menu call, and Create Links from URLs on real
 //! text.
 
+mod common;
+
+use common::pdf;
 use onionskin_core::links::{Highlight, LineStyle, LinkLook, LinkTarget};
 use onionskin_core::{
     Document, FitMode, LinkRequest, Modifiers, PagePoint, PageRect, ViewSize, Viewport,
@@ -13,26 +16,6 @@ use onionskin_tools_edit::links::{
     create_link, create_links_from_urls, delete_link, edit_link, find_link, remove_web_links,
 };
 use onionskin_tools_edit::{EditToolsPlugin, LinkTool};
-
-fn pdf(objects: &[Vec<u8>]) -> Vec<u8> {
-    let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
-    let mut offsets = Vec::new();
-    for (index, body) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
-        out.extend_from_slice(body);
-        out.extend_from_slice(b"\nendobj\n");
-    }
-    let xref = out.len();
-    let size = objects.len() + 1;
-    out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
-    for offset in offsets {
-        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
-    out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
-    out
-}
 
 /// Two Letter pages; the first says `text` in Helvetica at (72, 700).
 fn document(text: &str) -> Document {

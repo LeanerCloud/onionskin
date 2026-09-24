@@ -3,6 +3,9 @@
 //! extracts and the pixels the renderer draws, and each one's Update and
 //! Remove.
 
+mod common;
+
+use common::pdf;
 use std::sync::Arc;
 
 use onionskin_core::pages::{Margins, MarkKind};
@@ -16,26 +19,6 @@ use onionskin_tools_edit::marks::{
 };
 
 /// A classic-xref PDF whose object `n` is `objects[n - 1]`.
-fn pdf(objects: &[Vec<u8>]) -> Vec<u8> {
-    let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
-    let mut offsets = Vec::new();
-    for (index, body) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
-        out.extend_from_slice(body);
-        out.extend_from_slice(b"\nendobj\n");
-    }
-    let xref = out.len();
-    let size = objects.len() + 1;
-    out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
-    for offset in offsets {
-        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(format!("trailer\n<< /Size {size} /Root 1 0 R >>\n").as_bytes());
-    out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
-    out
-}
-
 fn stream(data: &str) -> Vec<u8> {
     format!("<< /Length {} >>\nstream\n{data}\nendstream", data.len()).into_bytes()
 }
