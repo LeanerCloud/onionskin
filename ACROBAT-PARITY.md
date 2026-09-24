@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 102 planned / 42 partial / 80 out-of-scope. 179 implemented.**
+**403 rows: 101 planned / 43 partial / 80 out-of-scope. 179 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -318,8 +318,8 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 |---|---|---|---|
 | Edit text (line-level) | partial | M5 | The Edit Text tool (and the canvas context menu's Edit Text) opens a text box over the clicked line; Enter rewrites it as one undo step, the new text drawn from where the line began in the line's own font and graphics state, the rest of the page unmoved. The line's font is used when the page already drew every character with it, or its encoding can when it is not a subset; otherwise a standard font of the same family, weight and slant. Missing: system-font matching and embedding (`text-engine`) and so fsType enforcement, characters outside WinAnsi when the line's font cannot draw them, text inside form XObjects, and the line's other fonts (the whole line takes its first glyph's font). Evidence: docs/evidence/m5-text-editing.md. |
 | Reflowing text edit (text repours across the paragraph or page) | planned | post-1.0 | Named as a post-1.0 slot in the plan, and explicitly out of scope pre-1.0. |
-| Change font, size, colour, alignment, spacing of edited text | planned | M5 | The future command is constrained by what the embedded subset and its fsType bits permit. |
-| Add text (new text box) | partial | M5 | The Add Text tool: a click opens an empty text box there, and Enter draws what was typed as a line in Helvetica 12 pt, as one undo step. Choosing the font, size or colour, and a box that wraps, are missing. Evidence: docs/evidence/m5-text-editing.md. (judgment) |
+| Change font, size, colour, alignment, spacing of edited text | partial | M5 | The line editor (Edit Text and Add Text) offers a font among the standard ones (Helvetica, Times and Courier, with bold), a size and a colour, each defaulting to what the line has; the text is drawn with them switched in and the line's own put back, as one undo step. Alignment and spacing are missing, and so is a font that is not standard, which waits on `text-engine`'s embedding and its fsType check. Evidence: docs/evidence/m5-text-editing.md. |
+| Add text (new text box) | partial | M5 | The Add Text tool: a click opens an empty text box there, with the line editor's font, size and colour lists, and Enter draws what was typed as a line (Helvetica 12 pt in black unless picked otherwise), as one undo step. A box that wraps, and fonts beyond the standard ones, are missing. Evidence: docs/evidence/m5-text-editing.md. (judgment) |
 | Edit images and objects (move, resize, rotate, flip, crop, align) | partial | M5 | Images only: the Edit Image tool selects the topmost image under a click, a drag moves it, a corner drag resizes it keeping its proportions, and Edit > Rotate Image Clockwise or Counterclockwise and Flip Image Horizontal or Vertical turn it about its centre. Each rewrites the one `Do` that drew it, so the same image drawn elsewhere stays. Crop, align and vector objects are missing. Evidence: docs/evidence/m5-images.md. |
 | Replace image | implemented | M5 | Edit > Replace Image…: a PNG, JPEG or TIFF, or a PDF's first page, fitted and centred in the selected image's frame. Evidence: docs/evidence/m5-images.md. |
 | Add image | implemented | M5 | The Add Image tool asks for a picture (as Replace Image) and places it at its own size on a click, or fitted in a dragged rectangle, drawn after the page and selected. Evidence: docs/evidence/m5-images.md. |

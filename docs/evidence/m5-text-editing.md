@@ -6,12 +6,16 @@ hosted-CI run is claimed.
 ## Rows
 
 - **To `implemented`:** Find toolbar > Replace text.
-- **To `partial`:** Edit text (line-level); Add text (new text box).
+- **To `partial`:** Edit text (line-level); Add text (new text box);
+  Change font, size, colour, alignment, spacing of edited text (see
+  "Font, size and colour" below).
 - **Also changed:** the page canvas context menu row. Its Edit Text now
   chooses the Edit Text tool. The row stays `partial`, because Copy With
   Formatting is still disabled.
 - **Headline:** 104 planned / 41 partial / 80 out-of-scope, 178
-  implemented. `acrobat_parity_headline_matches_every_inventory_row`
+  implemented when this was first written. It is 101 planned / 43
+  partial / 179 implemented after the font, size and colour row, with
+  Check Spelling and tag integrity landed in between. `acrobat_parity_headline_matches_every_inventory_row`
   passes.
 
 ## What the user gets
@@ -187,6 +191,59 @@ The following report only the existing `a11y::Shared::record` warning:
 
 `cargo fmt --all --check` is clean.
 
+## Font, size and colour
+
+Added later the same day. The change moves the "Change font, size, colour"
+row to `partial`, and adds font, size and colour to Add Text.
+
+- **What the user gets.** Under the line editor's text box are three short
+  lists:
+  - Font: Same font, Helvetica, Helvetica Bold, Times, Times Bold and
+    Courier;
+  - Size: Same size, 8, 10, 12, 14, 18 and 24;
+  - Colour: Same colour, Black, Red, Blue, Green and Grey.
+
+  The first of each keeps what the line has. For Add Text, the first
+  entries mean Helvetica 12 pt in black. The line, or the new text, is set
+  in what is picked. To a screen reader each list is a radio group whose
+  entries pick themselves.
+- **How it works.**
+  - `LineEdit` carries a `TextStyle`. The new text is drawn with `rg` and
+    `Tf` switched in, and then the line's font, size and fill colour are
+    put back.
+  - The interpreter keeps the operators that set the fill as written (a
+    colour space with its colour, or a device colour), so the rest of the
+    text object draws as it did.
+  - The pen goes back by the new text's width at its own size, in units of
+    the line's size.
+  - `core` has `rewrite_styled_lines` and a styled `add_text`. `tools-edit`
+    has `edit_styled_line` and `add_styled_text`.
+- **Runs.**
+  - `content --test edit_text`: 8 pass. The 2 new tests cover:
+    - a standard font, size and colour switched in and back, with the next
+      line's size and place unmoved;
+    - a new size in the line's own font, where the word after it in the
+      same `TJ` does not move and a colour space and its colour are put
+      back.
+  - `core --test text_edit`: 8 pass, 1 new: a styled rewrite written and
+    read back. Add Text in Times and red is also asserted.
+  - `tools-edit --test text`: 5 pass, 1 new: a restyled line and styled new
+    text.
+  - App, on a real window: the lists are in the tree, three picks are made
+    through it, and the line is kept at 24 pt.
+- **Coverage.**
+
+  | File | Lines covered |
+  | --- | --- |
+  | `content/edit_text.rs` | 119 of 124 |
+  | `core/text_edit.rs` | 166 of 169 |
+  | `tools-edit/text.rs` | 54 of 54 |
+  | `tools-edit/text_tool.rs` | 52 of 54 |
+- **Not claimed.**
+  - Alignment and spacing.
+  - Any font but the standard ones. That waits on `text-engine`'s
+    embedding and its fsType check.
+
 ## Not claimed
 
 - **System fonts and fsType.** `text-engine` is still empty. Nothing is
@@ -199,5 +256,5 @@ The following report only the existing `a11y::Shared::record` warning:
   is never wrapped. This is the next row, as the plan says.
 - **Text in forms.** Text drawn inside a form XObject (headers stamped by
   some producers, for example) is refused.
-- **Add Text's look.** It is always Helvetica 12 pt, in black. Choosing the font, size or colour is the "Change font, size,
-  colour" row, which is still planned.
+- **Add Text's look.** It is Helvetica 12 pt in black unless the line
+  editor's lists pick otherwise (see "Font, size and colour").

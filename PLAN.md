@@ -638,8 +638,10 @@ what-does-not-transfer section demands:
   dictionary, in US English (m5-spelling.md). Tagged-PDF maintenance is
   checked: `tools-accessibility`'s structure checker grades every edit,
   and guarantee test 8 runs over the PDF/UA sets (m5-tag-integrity.md).
-  The rest of M5 (changing edited text's font, size and colour) is
-  planned.
+  Edited and added text can be set in a standard font, size and colour
+  (m5-text-editing.md). No M5 row is still planned; what remains is the
+  partial rows' named gaps, above all `text-engine`'s system fonts and
+  fsType enforcement, and guarantee test 7's Acrobat-recorded values.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping
