@@ -48,6 +48,7 @@ mod geometry;
 mod interpret;
 mod matrix;
 mod page;
+pub mod placements;
 pub mod redact;
 mod run;
 mod search;
@@ -93,6 +94,13 @@ pub fn extract_page(doc: &Document, index: PageIndex) -> Result<PageText> {
 /// page's geometry as well.
 pub fn extract(doc: &Document, page: &Page) -> Result<PageText> {
     interpret::page_text(doc, page)
+}
+
+/// Every image page `index` draws, and where: what saving, replacing and
+/// moving an image start from. See [`placements`].
+pub fn page_images(doc: &Document, index: PageIndex) -> Result<Vec<placements::ImagePlacement>> {
+    let page = page::page(doc, index)?;
+    interpret::page_images(doc, &page)
 }
 
 /// Every path page `index` paints, with its points in page space: what

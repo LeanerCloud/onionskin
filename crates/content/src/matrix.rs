@@ -54,6 +54,29 @@ impl Matrix {
         )
     }
 
+    /// The transform that undoes this one, when there is one: `None` for a
+    /// matrix that flattens the plane to a line or a point.
+    pub fn inverse(&self) -> Option<Matrix> {
+        let determinant = self.a * self.d - self.b * self.c;
+        if determinant.abs() < 1e-12 || !determinant.is_finite() {
+            return None;
+        }
+        let (a, b, c, d) = (
+            self.d / determinant,
+            -self.b / determinant,
+            -self.c / determinant,
+            self.a / determinant,
+        );
+        Some(Matrix::new(
+            a,
+            b,
+            c,
+            d,
+            -(self.e * a + self.f * c),
+            -(self.e * b + self.f * d),
+        ))
+    }
+
     /// Length of the transformed unit x vector: how much one text-space unit
     /// spans on the page. Used to compare glyph gaps against the font size
     /// without caring how the text got rotated.

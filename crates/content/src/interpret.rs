@@ -132,6 +132,18 @@ pub fn page_text(doc: &Document, page: &Page) -> Result<PageText> {
     Ok(interpreter.finish())
 }
 
+/// Every image one page draws, form XObjects included, in drawing order.
+/// See [`crate::placements`].
+pub fn page_images(doc: &Document, page: &Page) -> Result<Vec<crate::placements::ImagePlacement>> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
+    interpreter.images = Some(Vec::new());
+    let state = GState::new(page.base_ctm());
+    interpreter.run(&content, &page.resources, state, 0);
+    Ok(interpreter.images.take().unwrap_or_default())
+}
+
 /// Every path one page paints, form XObjects included. See
 /// [`crate::shapes`].
 pub fn page_shapes(doc: &Document, page: &Page) -> Result<Vec<crate::shapes::Shape>> {
@@ -197,6 +209,8 @@ struct Interpreter<'a> {
     redact: Option<Redacting>,
     /// Present while collecting line art.
     shapes: Option<crate::shapes::Shapes>,
+    /// Present while collecting where images are drawn.
+    images: Option<Vec<crate::placements::ImagePlacement>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -219,6 +233,7 @@ impl<'a> Interpreter<'a> {
             stack: Vec::new(),
             redact,
             shapes: None,
+            images: None,
         }
     }
 
@@ -316,7 +331,10 @@ impl<'a> Interpreter<'a> {
                 b"Tj" | b"TJ" | b"'" | b"\"" => {
                     self.show_operator(content, &op, &mut state, &mut text, &mut marked)
                 }
-                b"Do" => self.do_xobject(&op, resources, &state, depth, rewrite.as_mut()),
+                b"Do" => {
+                    self.place_image(content, &op, resources, &state);
+                    self.do_xobject(&op, resources, &state, depth, rewrite.as_mut())
+                }
                 b"gs" => self.ext_gstate(&op, resources, &mut state, depth, rewrite.as_mut()),
                 b"BDC" | b"BMC" if marked.len() < MAX_MARKED => {
                     marked.push(self.sequence(&op, resources));
@@ -706,6 +724,41 @@ impl<'a> Interpreter<'a> {
                 Emit::Drop
             }
             None => Emit::Copy,
+        }
+    }
+
+    /// While collecting images: the image a `Do` draws, and where.
+    fn place_image(&mut self, content: &Content, op: &Operation, resources: &Dict, state: &GState) {
+        if self.images.is_none() {
+            return;
+        }
+        let Some(Object::Name(name)) = op.operands.last() else {
+            return;
+        };
+        let Some(image) = self
+            .lookup_entry(resources, b"XObject", name.as_bytes())
+            .and_then(|entry| entry.as_reference())
+        else {
+            return;
+        };
+        let is_image = self
+            .doc
+            .get(image.number)
+            .ok()
+            .and_then(|parsed| parsed.object.as_stream().map(|s| subtype(&s.dict)))
+            .flatten()
+            .is_some_and(|kind| kind == b"Image");
+        if !is_image {
+            return;
+        }
+        let placement = crate::placements::ImagePlacement {
+            image,
+            name: String::from_utf8_lossy(name.as_bytes()).into_owned(),
+            ctm: state.ctm,
+            provenance: provenance(content, op.span).map(|(found, _)| found),
+        };
+        if let Some(images) = self.images.as_mut() {
+            images.push(placement);
         }
     }
 
