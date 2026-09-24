@@ -196,11 +196,40 @@ fn redacted_content_survives_neither_extraction_nor_a_byte_scan() {
 }
 
 /// Guarantee 4, signature preservation: annotating a signed corpus file
-/// leaves its signature valid, and the UI and MCP report it as valid.
+/// leaves its signature valid, and the UI reports it as valid.
+///
+/// Proved in `crates/app/tests/signature_guarantee.rs`, which drives the
+/// Sticky Note tool over pyHanko's signed fixtures, saves, and validates
+/// with our validator and with poppler's `pdfsig`. The MCP half of the
+/// sentence lands with the MCP server, which is post-1.0.
 #[test]
-#[ignore = "lands with crypto signature verification in M6"]
 fn annotating_a_signed_document_keeps_its_signature_valid() {
-    unimplemented!("needs crypto verification and a signed corpus file")
+    let suite = enforcing_suite_at(
+        "crates/app/tests",
+        "signature_guarantee.rs",
+        4,
+        &[
+            "a_note_saved_on_a_signed_document_leaves_every_approval_signature_valid",
+            "a_note_breaks_a_certification_that_does_not_allow_comments",
+        ],
+    );
+    for (marker, missing) in [
+        (
+            "the signed bytes must survive the note untouched",
+            "the signed bytes are no longer compared after the save",
+        ),
+        (
+            "every approval signature must stay valid after a note",
+            "our validator's verdict is no longer asserted",
+        ),
+        (
+            "pdfsig must agree on",
+            "the independent validator is no longer consulted",
+        ),
+    ] {
+        suite.asserts(marker, missing);
+    }
+    assert_ci_reaches("crates/app");
 }
 
 /// Guarantee 6, repair: every file in the malformed corpus set opens;

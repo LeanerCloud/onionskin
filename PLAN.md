@@ -655,7 +655,11 @@ what-does-not-transfer section demands:
   landed: documents open with either password, permissions are enforced
   by kind of change, allowed changes are saved encrypted, and File >
   Protect Using Password and Remove Security set and lift 128-bit or
-  256-bit AES protection (m6-security.md). The remaining work is planned
+  256-bit AES protection (m6-security.md). Signature validation has
+  landed: the Signatures pane leads each field with its verdict, Signature
+  Properties lists what was found and opens the signed version, and
+  guarantee test 4 holds for approval signatures, checked against pdfsig
+  (m6-signature-validation.md). Trust in the signer is next. The remaining work is planned
   package by package in `docs/plans-remaining.md`.
 - **Post-1.0.** The MCP server (`crates/mcp`): sessions, `describe`,
   generic invokers over the registry and `render` returning inline PNG, with

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 89 planned / 44 partial / 80 out-of-scope. 190 implemented.**
+**403 rows: 86 planned / 44 partial / 80 out-of-scope. 193 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
@@ -275,7 +275,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Attachments: add and delete file attachments | implemented | M3 | Add Attachment… and per-row Delete in the pane; delete also removes file-attachment comments carrying the stream. Distinct from attach-as-comment. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Bookmarks pane context menu (New Bookmark, Rename, Delete, Set Bookmark Destination, Wrap Long Bookmarks, Properties, New Bookmarks From Structure) | partial | M3 | New, Rename, Set Destination, Nest, Move Out and Delete are live and disabled with the document's reason when it may not be edited. Wrap Long Bookmarks and Properties are not offered; New Bookmarks From Structure follows at M6. Counted once per the context-menu carve-out. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Attachments pane context menu (Open, Save, Add, Delete, Edit Description, Search Attachments) | partial | M3 | Add, Save and Delete are live; Open stays disabled until M5's trust list, and Edit Description and Search Attachments are not offered. Counted once for the whole menu. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
-| Signatures pane | partial | M2 | Signature listing, the M2 status surface, and rendered pane body bounds are implemented; cryptographic validation remains M6. Evidence: M2-PANES and B3.1. |
+| Signatures pane | implemented | M2 | Each signature field with its verdict (valid, changed after signing, invalid, unknown, not signed), certification and weak-hash marks, and a summary; a signed row opens Signature Properties. Signers' identities are not yet checked against trusted certificates, and the pane says so. Evidence: M2-PANES, B3.1, docs/evidence/m6-signature-validation.md. |
 | Comments pane (list, sort, filter, reply, status) | implemented | M3 | Lists every comment the edited document holds, with replies, status and checkmark; follows edits made anywhere. Sits in the left column for now. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | implemented | M3 | Reply, Edit Text, Set Status, Check, Mark as Read/Unread, Delete, Properties and Make Current Properties Default. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
@@ -528,9 +528,9 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Validate an existing signature | planned | M6 | Guarantee test 4. |
-| Signature properties and validation report | planned | M6 | |
-| Preserve signature validity across edits | planned | M6 | Structural: incremental update is the only legal way to annotate a signed PDF, and it is the default save path. |
+| Validate an existing signature | partial | M6 | Integrity, the signer's key (RSA, RSA-PSS, ECDSA P-256/P-384, SHA-1 flagged weak), the revision covered, the changes made after it and DocMDP are checked, agreeing with pdfsig. Trust in the signer waits on trusted identities; timestamps are detected, not verified. Evidence: docs/evidence/m6-signature-validation.md. |
+| Signature properties and validation report | implemented | M6 | Signature Properties: signer and certificate, algorithms, signing time, timestamp presence, certification level, revision covered, changes after signing, and View Signed Version. Evidence: docs/evidence/m6-signature-validation.md. |
+| Preserve signature validity across edits | implemented | M6 | Saves append a section and never touch signed bytes; a note keeps approval signatures valid (guarantee test 4, checked with pdfsig). Evidence: docs/evidence/m6-signature-validation.md. |
 | Digitally sign with a certificate | planned | M6 | PAdES signing. |
 | Certify a document (visible or invisible) | planned | M6 | (judgment) |
 | Manage digital IDs | planned | M6 | Platform keystores: Keychain, CNG, PKCS#11. |
