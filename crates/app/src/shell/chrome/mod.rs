@@ -5,6 +5,8 @@ pub(in crate::shell) mod combine_dialog;
 mod commands;
 pub(in crate::shell) mod crop_dialog;
 pub(in crate::shell) mod export_dialog;
+#[cfg(feature = "tools-form")]
+pub(in crate::shell) mod field_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;
 pub(in crate::shell) mod inspector;

@@ -574,6 +574,10 @@ fn field_node(
         TextField::Redact(_) => accesskit::Role::TextInput,
         #[cfg(feature = "tools-form")]
         TextField::FormField => accesskit::Role::TextInput,
+        #[cfg(feature = "tools-form")]
+        TextField::Field(field) if field.numeric() => accesskit::Role::NumberInput,
+        #[cfg(feature = "tools-form")]
+        TextField::Field(_) => accesskit::Role::TextInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)

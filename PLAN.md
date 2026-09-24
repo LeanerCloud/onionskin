@@ -621,10 +621,13 @@ what-does-not-transfer section demands:
   Acrobat forms API subset on Boa, sandboxed, and the Hand tool fills
   text fields, dropdowns, list boxes, check boxes and radio buttons with
   their keystroke, validate, calculate and format scripts, Tab between
-  fields, Clear Form, and the JavaScript preference (m5-forms.md).
-  Guarantee test 7 waits on the JS-forms corpus's values recorded in
-  Acrobat. The rest of M5 (preparing forms, auto-complete, text editing,
-  spell check, find-and-replace, images) is planned.
+  fields, Clear Form, and the JavaScript preference. Preparing forms has
+  landed: field tools for every kind but image, and the Properties dialog
+  with Format, Validate and Calculate written as Acrobat writes them
+  (m5-forms.md). Guarantee test 7 waits on the JS-forms corpus's values
+  recorded in Acrobat. The rest of M5 (image fields, auto-detect,
+  auto-complete, text editing, spell check, find-and-replace, images) is
+  planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

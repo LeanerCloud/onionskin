@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 124 planned / 33 partial / 80 out-of-scope. 166 implemented.**
+**403 rows: 114 planned / 36 partial / 80 out-of-scope. 173 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -470,18 +470,18 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
 | Auto-detect form fields in an existing document | planned | M5 | |
-| Text field | planned | M5 | `tools-form` AcroForm fields with appearance streams. |
-| Check box | planned | M5 | |
-| Radio button | planned | M5 | |
-| List box | planned | M5 | |
-| Dropdown (combo box) | planned | M5 | |
-| Button (push button) | planned | M5 | |
+| Text field | implemented | M5 | The Text Field tool: drag to draw one, or click to place one at Acrobat's size, numbered Text1, Text2. An AcroForm field with its appearance and, on a tagged document, a `/Form` structure element; the form dictionary is made if there is none. Evidence: docs/evidence/m5-forms.md. |
+| Check box | implemented | M5 | The Check Box tool, with its on and off appearances; its export value and checked-by-default are set in Properties. Evidence: docs/evidence/m5-forms.md. |
+| Radio button | implemented | M5 | The Radio Button tool makes a new group, and a button placed while one is selected joins its group, as Acrobat's Add Another Button does; each button's export value is its own. Evidence: docs/evidence/m5-forms.md. |
+| List box | implemented | M5 | The List Box tool; items, export values, order, the default and multiple selection are set in Properties. Evidence: docs/evidence/m5-forms.md. |
+| Dropdown (combo box) | implemented | M5 | The Dropdown tool; items as for a list box, and whether custom text may be typed. Evidence: docs/evidence/m5-forms.md. |
+| Button (push button) | partial | M5 | The Button tool places a grey button whose label is set in Properties. Its actions are neither set nor run, and icons are not offered. Evidence: docs/evidence/m5-forms.md. |
 | Image field | planned | M5 | |
-| Date field | planned | M5 | |
-| Digital signature field | planned | M5 | Field at M5; signing at M6. |
+| Date field | implemented | M5 | The Date Field tool places a text field formatted and checked as `mm/dd/yyyy`, numbered Date1, with the format changeable on the Format tab. Evidence: docs/evidence/m5-forms.md. |
+| Digital signature field | implemented | M5 | The Signature Field tool places an empty `/Sig` field. Signing it is M6. Evidence: docs/evidence/m5-forms.md. |
 | Barcode field | planned | post-1.0 | Barcode form fields are a named post-1.0 slot. |
-| Field properties: General, Appearance, Position, Options, Actions | planned | M5 | |
-| Field properties: Format, Validate, Calculate | planned | M5 | A form's own Format, Keystroke, Validate and Calculate scripts run when it is filled (see Fill in a form), on `scripting` (Boa): the `AF` number, percent, date, time, special and range functions, `AFSimple_Calculate`, `event`, `getField`, `util.printf`/`printd`/`scand` and `app.alert`. Setting them in a field's properties has not shipped. |
+| Field properties: General, Appearance, Position, Options, Actions | partial | M5 | Double-click a field with a field tool, or Enter with it selected: General (name, tooltip, hidden, read-only, required), Appearance (border, fill and text colour from a short list, font size), Position (left, bottom, width, height in points) and each kind's Options. The Actions tab is not offered, the font is always Helvetica, and the border's width and style are fixed. Delete Field is in the dialog and on Edit > Delete. Evidence: docs/evidence/m5-forms.md. |
+| Field properties: Format, Validate, Calculate | partial | M5 | For text fields and dropdowns: Number, Percentage, Date, Time, Special and Custom formats; a range or a custom validation; the sum, product, average, minimum or maximum of named fields, or a custom calculation. Each is written as the `AF` call Acrobat writes and read back the same, and a field that gains a calculation joins the calculation order. Simplified field notation and editing the calculation order are not offered. The scripts run when the form is filled (see Fill in a form). Evidence: docs/evidence/m5-forms.md. |
 | Tab order / form field navigation | partial | M5 | While a field is being filled, Tab and Shift-Tab commit it and move to the next or previous text field or dropdown, page by page, top to bottom then left to right, going round. The page's `/Tabs` order and setting a tab order when preparing a form are not honoured yet, and Tab does not stop on check boxes, radio buttons or list boxes. Evidence: docs/evidence/m5-forms.md. |
 | Fill in a form (as an end user) | partial | M5 | The Hand tool fills AcroForm fields where they are: a text box over a text field (masked for a password, capped at its length), a dropdown's options (typed text too when it is editable), a list box row by click (turned over in a multiple choice), check boxes and radio buttons toggled. A value goes through the field's Keystroke and Validate scripts, which can refuse it with their alert on the notice bar; calculations follow in the form's order, formats draw the result, and it is one undo step. A script outside the forms subset is named in a notice, not silently skipped. Buttons and signature fields say why a click does nothing. Guarantee test 7 is not run: the JS-forms corpus waits on values recorded in Acrobat (`corpus/js-forms/README.md`). Evidence: docs/evidence/m5-forms.md. |
 | Clear form | implemented | M5 | Edit > Clear Form puts every field back to its default (`/DV`), with new appearances, as one undo step; on a document without fields it says so. Offered in the Edit menu rather than Prepare Form's More menu, since filling is where a form is cleared. (judgment) Evidence: docs/evidence/m5-forms.md. |

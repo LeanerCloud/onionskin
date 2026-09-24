@@ -620,6 +620,8 @@ impl ShellFrame {
         self.collect_redaction_request(cx);
         #[cfg(feature = "tools-form")]
         self.collect_form_notices(cx);
+        #[cfg(feature = "tools-form")]
+        self.collect_field_request(cx);
         self.follow_document_edits(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
@@ -1294,6 +1296,8 @@ impl Render for ShellFrame {
         // Likewise a link the Hand or Link tool asked about.
         self.run_pending_link(window, cx);
         self.run_pending_redaction(window, cx);
+        #[cfg(feature = "tools-form")]
+        self.run_pending_field(window, cx);
         let theme = self.shell_view_state.tokens();
         let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
@@ -1754,6 +1758,8 @@ mod tests {
     mod outline;
     #[cfg(feature = "shell-test-support")]
     mod page_grid;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-form"))]
+    mod prepare_form;
     #[cfg(feature = "shell-test-support")]
     mod print;
     #[cfg(all(

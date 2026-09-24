@@ -1,9 +1,9 @@
-# M5 verification: filling forms, and their scripts
+# M5 verification: filling and preparing forms, and their scripts
 
 Date: 2026-09-24. Linux x86-64, stable toolchain. No macOS, Windows or
 hosted-CI run is claimed.
 
-## Rows
+## Filling forms: rows
 
 - **To `implemented`:**
   - Clear form (Toolset: Prepare a form);
@@ -21,11 +21,79 @@ hosted-CI run is claimed.
     shipped.
   - Document-level JavaScript beyond the forms API stays `out-of-scope`. A
     notice now names a field whose script cannot run.
-- **Headline:** 124 planned / 33 partial / 80 out-of-scope, 166
-  implemented. `acrobat_parity_headline_matches_every_inventory_row`
-  passes.
+- **Headline after filling:** 124 planned / 33 partial / 80 out-of-scope,
+  166 implemented. `acrobat_parity_headline_matches_every_inventory_row`
+  passes at each step.
 
-## What the user gets
+## Preparing forms: rows
+
+- **To `implemented`** (Toolset: Prepare a form):
+  - Text field;
+  - Check box;
+  - Radio button;
+  - List box;
+  - Dropdown;
+  - Date field;
+  - Digital signature field (the field; signing is M6).
+- **To `partial`:**
+  - Button (push button). Its actions are neither set nor run.
+  - Field properties: General, Appearance, Position, Options, Actions. There
+    is no Actions tab, Helvetica is the only font, and the border's width
+    and style are fixed.
+  - Field properties: Format, Validate, Calculate. Simplified field notation
+    and editing the calculation order are not offered.
+- **Still `planned`:** image field, auto-detect form fields, and
+  auto-complete.
+- **Headline after both parts:** 114 planned / 36 partial / 80
+  out-of-scope, 173 implemented.
+
+## Preparing forms: what the user gets
+
+- **Field tools.** One tool for each kind of field, sharing a rail slot:
+  Text Field, Check Box, Radio Button, List Box, Dropdown, Button, Date
+  Field and Signature Field.
+  - Drag to draw a field, or click to place one at Acrobat's usual size,
+    hanging from the click.
+  - Fields are numbered as Acrobat numbers them: Text1, Check Box1, Group1.
+  - A radio button placed while another is selected joins its group.
+  - Every field is outlined while a field tool is chosen, so one with no
+    border can be found.
+  - A click selects a field. A double click, or Enter, opens its
+    Properties. Edit > Delete takes it away.
+  - Each is one undo step, labelled Add Text Field, Delete Field and so on.
+- **Properties.** The dialog is titled per kind, as Acrobat titles it
+  ("Text Field Properties"), and its tabs are:
+  - **General:** name, tooltip, hidden, read-only, required.
+  - **Appearance:** border, fill and text colour, font size.
+  - **Position:** left, bottom, width and height in points.
+  - **Options,** for each kind:
+    - a text field's alignment, default value, limit of characters,
+      multi-line, password and comb;
+    - a check box's or radio button's export value and whether it is on by
+      default, and whether clicking the chosen radio button leaves it
+      chosen;
+    - a list's or dropdown's items, with export values, order, default,
+      custom text or multiple selection;
+    - a button's label.
+  - **Format, Validate and Calculate,** for text fields and dropdowns, each
+    choice written as the `AF` call Acrobat writes.
+  - A name that is empty, dotted or already taken is refused in the
+    dialog, and so is a size under a point or a number that is not one. A
+    field that went away says so.
+- **Written as Acrobat writes.**
+  - A new field is a field merged with its widget, on the page and in
+    `/AcroForm /Fields`, with its appearance.
+  - On a tagged document it gets a `/Form` structure element.
+  - The form dictionary is made when there is none, with Helvetica and
+    ZapfDingbats in `/DR`.
+  - A field that gains a calculation joins `/CO`, and one that loses it
+    leaves.
+  - Changing a check box's export value renames its on state and draws its
+    appearances again.
+- **One drag gesture.** The marquee and the click-or-drag threshold, written
+  four times across the tool plugins, are one module in `plugin-api` now.
+
+## Filling forms: what the user gets
 
 - **Filling with the Hand tool.** A click on a field fills it where it is.
   - **A text field** opens a text box over the widget. A password field is
@@ -190,8 +258,13 @@ onionskin-app/shell-test-support` reports only the existing
 
 ## Not claimed
 
-- **Preparing a form.** Field tools, field properties, auto-detect and
-  auto-complete are still planned.
+- **Preparing a form.** These are still planned:
+  - image fields;
+  - auto-detecting fields;
+  - auto-complete;
+  - moving or resizing a field by dragging it, rather than through
+    Position;
+  - setting a tab order.
 - **Guarantee test 7.** See above.
 - **Button actions and form submission.** A push button says it does not run
   its action. Submit and reset actions, and JavaScript beyond field events,

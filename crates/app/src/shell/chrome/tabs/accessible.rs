@@ -516,6 +516,8 @@ impl ShellFrame {
             Activation::Redact(action) => self.run_redact_action(action, window, cx),
             #[cfg(feature = "tools-form")]
             Activation::FormOption(index) => self.choose_form_option(index, cx),
+            #[cfg(feature = "tools-form")]
+            Activation::Field(action) => self.run_field_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -735,6 +737,11 @@ impl ShellFrame {
             // The canvas holds it, not the frame; see `focusable_field`.
             #[cfg(feature = "tools-form")]
             TextField::FormField => None,
+            #[cfg(feature = "tools-form")]
+            TextField::Field(field) => self
+                .field_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -915,7 +922,8 @@ fn mark_text_fields() -> Vec<TextField> {
         not(any(
             feature = "tools-edit",
             feature = "tools-fill-sign",
-            feature = "redact"
+            feature = "redact",
+            feature = "tools-form"
         )),
         allow(unused_mut)
     )]
@@ -929,6 +937,8 @@ fn mark_text_fields() -> Vec<TextField> {
     fields.extend(crate::shell::chrome::signature_dialog::text_fields());
     #[cfg(feature = "redact")]
     fields.extend(crate::shell::chrome::redact_dialog::text_fields());
+    #[cfg(feature = "tools-form")]
+    fields.extend(crate::shell::chrome::field_dialog::text_fields());
     fields
 }
 

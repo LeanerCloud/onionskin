@@ -115,6 +115,10 @@ impl ShellFrame {
         {
             self.redact = None;
         }
+        #[cfg(feature = "tools-form")]
+        {
+            self.field_dialog = None;
+        }
         self.send_pages = None;
         self.unsaved = None;
         self.recover = None;

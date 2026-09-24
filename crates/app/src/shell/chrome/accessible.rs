@@ -100,6 +100,9 @@ pub(in crate::shell) enum TextField {
     /// The text box over a form field being filled on the canvas.
     #[cfg(feature = "tools-form")]
     FormField,
+    /// A form field's Properties dialog's fields.
+    #[cfg(feature = "tools-form")]
+    Field(crate::shell::chrome::field_dialog::FieldInput),
 }
 
 /// What activating an accessible element does.
@@ -172,6 +175,9 @@ pub(in crate::shell) enum Activation {
     /// Pick this option of the dropdown being filled on the canvas.
     #[cfg(feature = "tools-form")]
     FormOption(usize),
+    /// A form field's Properties dialog.
+    #[cfg(feature = "tools-form")]
+    Field(crate::shell::chrome::field_dialog::FieldAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

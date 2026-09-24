@@ -71,6 +71,9 @@ pub(in crate::shell) enum ShellDialog {
     Signature {
         initials: bool,
     },
+    /// A form field's Properties.
+    #[cfg(feature = "tools-form")]
+    FieldProperties(super::chrome::field_dialog::Shape),
     /// Organize Pages' Copy To and Move To Document.
     SendPages {
         moving: bool,
@@ -103,6 +106,8 @@ impl ShellDialog {
             Self::WebLink => "Open Web Link",
             #[cfg(feature = "redact")]
             Self::Redact(panel) => panel.title(),
+            #[cfg(feature = "tools-form")]
+            Self::FieldProperties(shape) => shape.title(),
             Self::Signature { initials: false } => "Add Signature",
             Self::Signature { initials: true } => "Add Initials",
             Self::SendPages { moving: true } => "Move Pages To",
@@ -249,6 +254,13 @@ pub(in crate::shell) fn accessible(
             frame
                 .redact_dialog()
                 .expect("the redaction dialog has state"),
+            cx,
+        ),
+        #[cfg(feature = "tools-form")]
+        ShellDialog::FieldProperties(_) => super::chrome::field_dialog::accessible(
+            frame
+                .field_dialog()
+                .expect("the properties dialog has state"),
             cx,
         ),
         #[cfg(feature = "tools-fill-sign")]
@@ -486,6 +498,16 @@ pub(in crate::shell) fn render_dialog(
             frame
                 .redact_dialog()
                 .expect("the redaction dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        #[cfg(feature = "tools-form")]
+        ShellDialog::FieldProperties(_) => super::chrome::field_dialog::render(
+            frame
+                .field_dialog()
+                .expect("the properties dialog has state"),
             focused,
             theme,
             cx,

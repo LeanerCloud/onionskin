@@ -252,6 +252,12 @@ pub(in crate::shell) struct ShellFrame {
     /// A redaction mark the Redact tool clicked, for the next render to open.
     #[cfg(feature = "redact")]
     pub(super) pending_redaction: Option<onionskin_core::ObjRef>,
+    /// A form field's Properties, while open.
+    #[cfg(feature = "tools-form")]
+    pub(super) field_dialog: Option<crate::shell::chrome::field_dialog::FieldDialogState>,
+    /// A field a Prepare Form tool asked Properties for, for the next render.
+    #[cfg(feature = "tools-form")]
+    pub(super) pending_field: Option<onionskin_core::FieldRequest>,
     /// Add Signature or Add Initials, while it is open.
     #[cfg(feature = "tools-fill-sign")]
     pub(super) signature: Option<crate::shell::chrome::signature_dialog::SignatureDialogState>,
@@ -450,6 +456,10 @@ impl ShellFrame {
             redact: None,
             #[cfg(feature = "redact")]
             pending_redaction: None,
+            #[cfg(feature = "tools-form")]
+            field_dialog: None,
+            #[cfg(feature = "tools-form")]
+            pending_field: None,
             send_pages: None,
             page_setup: Default::default(),
             unsaved: None,
