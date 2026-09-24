@@ -31,6 +31,10 @@ pub const INSERT_BLANK_PAGE: &str = "organize.insert-blank-page";
 pub const MOVE_PAGE_EARLIER: &str = "organize.move-page-earlier";
 pub const MOVE_PAGE_LATER: &str = "organize.move-page-later";
 pub const RESET_PAGE_NUMBERING: &str = "organize.reset-page-numbering";
+/// Crop Pages, M5 `tools-edit`. The command crops the page on screen to what
+/// it draws (Acrobat's Remove White Margins); the menu entries, live when it
+/// is, open the dialog that takes margins, a box and a page range.
+pub const CROP_PAGES: &str = "edit.crop-pages";
 /// Summarize the open document's comments into a new file beside it. P10.
 /// The Edit menu's Summarize Comments entry asks for it, and opens the dialog
 /// that offers both layouts.

@@ -101,6 +101,9 @@ pub enum ToolCapability {
     /// Places stamps. The Stamps dialog lists its choices and the Paste
     /// Clipboard Image as Stamp entry chooses one for it.
     Stamp,
+    /// Changes the pages themselves, such as their boxes: the Crop Pages
+    /// tool.
+    EditPages,
 }
 
 impl ToolCapability {
@@ -117,7 +120,8 @@ impl ToolCapability {
             | ToolCapability::Draw
             | ToolCapability::FillTextFields
             | ToolCapability::AddSignature
-            | ToolCapability::Stamp => true,
+            | ToolCapability::Stamp
+            | ToolCapability::EditPages => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom

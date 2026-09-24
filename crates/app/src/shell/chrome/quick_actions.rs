@@ -717,6 +717,7 @@ mod tests {
             ToolCapability::DynamicZoom => &[ToolCapability::DynamicZoom],
             ToolCapability::ChoosesFile => &[ToolCapability::ChoosesFile],
             ToolCapability::Stamp => &[ToolCapability::Stamp],
+            ToolCapability::EditPages => &[ToolCapability::EditPages],
         }
     }
 
