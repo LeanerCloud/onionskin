@@ -49,6 +49,8 @@ mod inline_text;
 pub mod input;
 #[cfg(feature = "tools-edit")]
 mod line_editor;
+#[cfg(feature = "tools-edit")]
+mod line_style;
 mod organize;
 mod panes;
 mod preferences_dialog;

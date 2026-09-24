@@ -527,6 +527,12 @@ impl ShellFrame {
             Activation::Field(action) => self.run_field_action(action, window, cx),
             #[cfg(feature = "spelling")]
             Activation::Spelling(action) => self.run_spelling_action(action, cx),
+            #[cfg(feature = "tools-edit")]
+            Activation::LineStyle(choice) => {
+                if let Some(canvas) = self.active_canvas().cloned() {
+                    canvas.update(cx, |canvas, cx| canvas.choose_line_style(choice, cx));
+                }
+            }
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),

@@ -778,16 +778,17 @@ impl CanvasModel {
         &mut self,
         request: &onionskin_core::TextEditRequest,
         text: &str,
+        style: onionskin_core::text_edit::TextStyle,
     ) -> Result<bool, CanvasError> {
+        use onionskin_tools_edit::text::{add_styled_text, edit_styled_line};
         self.edit_pages(|doc| match request.line {
-            Some(line) => {
-                onionskin_tools_edit::text::edit_line(doc, request.page, line, &request.text, text)
-            }
-            None => onionskin_tools_edit::text::add_text(
+            Some(line) => edit_styled_line(doc, request.page, line, &request.text, text, style),
+            None => add_styled_text(
                 doc,
                 request.page,
                 (request.bounds[0], request.bounds[1]),
                 text,
+                style,
             ),
         })?;
         Ok(true)

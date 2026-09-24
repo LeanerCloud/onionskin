@@ -238,3 +238,48 @@ fn the_add_text_tool_draws_what_is_typed_where_it_was_clicked(cx: &mut TestAppCo
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn the_line_editor_sets_the_line_in_the_font_size_and_colour_picked(cx: &mut TestAppContext) {
+    use crate::shell::line_style::{StyleChoice, StyleList};
+
+    let (_dir, window) = text_window(cx);
+    click_line(window, SECOND_LINE, cx);
+    window
+        .update(cx, |frame, window, cx| {
+            let described = frame.accessible(window, cx);
+            for label in ["Font", "Size", "Colour", "Times Bold", "24", "Red"] {
+                assert!(has_label(&described, label), "{label} is offered");
+            }
+            for (list, index) in [
+                (StyleList::Font, 4),
+                (StyleList::Size, 6),
+                (StyleList::Colour, 2),
+            ] {
+                frame.run_activation(
+                    Activation::LineStyle(StyleChoice { list, index }),
+                    window,
+                    cx,
+                );
+            }
+            let canvas = frame.active_canvas().expect("a tab").clone();
+            let picked = canvas
+                .read(cx)
+                .line_editor
+                .as_ref()
+                .expect("open")
+                .picked
+                .style();
+            assert_eq!(picked.face, Some("Times-Bold"));
+            canvas.update(cx, |canvas, cx| canvas.commit_line_editor(cx));
+            assert_eq!(lines(frame, cx)[1], "The draft is final.");
+            let canvas = canvas.read(cx);
+            let mut document = canvas.model.document_mut();
+            let found =
+                onionskin_core::text_edit::page_lines(document.structure().expect("reads"), 0)
+                    .expect("lines");
+            let quad = found[1].glyphs[0].quad.corners;
+            assert!((quad[0].1 - quad[2].1).abs() > 20.0, "set at 24 pt");
+        })
+        .unwrap();
+}

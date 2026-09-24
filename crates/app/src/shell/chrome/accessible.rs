@@ -196,6 +196,9 @@ pub(in crate::shell) enum Activation {
     /// Check Spelling.
     #[cfg(feature = "spelling")]
     Spelling(crate::shell::chrome::spelling_dialog::SpellingAction),
+    /// A font, size or colour picked in the line editor on the canvas.
+    #[cfg(feature = "tools-edit")]
+    LineStyle(crate::shell::line_style::StyleChoice),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

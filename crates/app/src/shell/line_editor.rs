@@ -12,11 +12,16 @@ use gpui::{
     IntoElement, KeyBinding, MouseButton, ParentElement as _, Styled as _, Window,
 };
 
+use accesskit::Role;
+use gpui::prelude::FluentBuilder as _;
+use gpui::StatefulInteractiveElement as _;
 use onionskin_core::{TextEditRequest, ViewRect, ViewSize};
 
-use super::chrome::accessible::{Element as A11yElement, Rects, TextField};
+use super::chrome::accessible::{Activation, Element as A11yElement, Rects, TextField};
 use super::chrome::{SearchInput, ThemeTokens};
+use super::line_style::{Picked, StyleChoice, StyleList};
 use super::Canvas;
+use crate::a11y::State as A11yState;
 
 actions!(onionskin_line_editor, [CommitLine, CancelLine]);
 
@@ -32,10 +37,12 @@ pub(in crate::shell) fn install_keybindings(cx: &mut gpui::App) {
     ]);
 }
 
-/// The open editor: the line it edits and its text box.
+/// The open editor: the line it edits, its text box, and the font, size
+/// and colour picked for it.
 pub(super) struct LineEditor {
     pub(super) request: TextEditRequest,
     pub(super) input: Entity<SearchInput>,
+    pub(super) picked: Picked,
 }
 
 impl Canvas {
@@ -53,7 +60,11 @@ impl Canvas {
             input
         });
         window.focus(&input.read(cx).focus_handle(cx));
-        self.line_editor = Some(LineEditor { request, input });
+        self.line_editor = Some(LineEditor {
+            request,
+            input,
+            picked: Picked::default(),
+        });
         cx.notify();
     }
 
@@ -63,13 +74,27 @@ impl Canvas {
             return;
         };
         let typed = editor.input.read(cx).query().to_owned();
-        let result = self.model.edit_text_line(&editor.request, &typed);
+        let result = self
+            .model
+            .edit_text_line(&editor.request, &typed, editor.picked.style());
         self.handle_change(result, cx);
     }
 
     /// Leave the line as it was.
     pub(super) fn cancel_line_editor(&mut self, cx: &mut Context<Self>) {
         if self.line_editor.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Pick a font, size or colour for the line being edited.
+    pub(in crate::shell) fn choose_line_style(
+        &mut self,
+        choice: StyleChoice,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = self.line_editor.as_mut() {
+            editor.picked.pick(choice);
             cx.notify();
         }
     }
@@ -96,7 +121,7 @@ impl Canvas {
                 };
                 Rects::view_rect(rect, self.model.canvas_origin(), scale)
             });
-        Some(node)
+        Some(node.with_children(style_nodes(editor.picked)))
     }
 
     /// The editor, over the line in canvas coordinates.
@@ -131,7 +156,82 @@ impl Canvas {
                 .bg(theme.raised)
                 .border_1()
                 .border_color(theme.selected)
-                .child(editor.input.clone()),
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(editor.input.clone())
+                .children(StyleList::ALL.map(|list| style_row(list, editor.picked, theme, cx))),
         )
     }
+}
+
+fn chip_id(choice: StyleChoice) -> (&'static str, usize) {
+    let list = match choice.list {
+        StyleList::Font => "line-style-font",
+        StyleList::Size => "line-style-size",
+        StyleList::Colour => "line-style-colour",
+    };
+    (list, choice.index)
+}
+
+/// The three lists to a screen reader: each entry a radio button that
+/// picks itself.
+fn style_nodes(picked: Picked) -> Vec<A11yElement> {
+    StyleList::ALL
+        .into_iter()
+        .map(|list| {
+            A11yElement::new(
+                chip_id(StyleChoice {
+                    list,
+                    index: usize::MAX,
+                })
+                .0,
+                Role::RadioGroup,
+                list.label(),
+            )
+            .with_children(
+                list.names()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        let choice = StyleChoice { list, index };
+                        A11yElement::new(chip_id(choice), Role::RadioButton, name)
+                            .with_state(A11yState::selected(picked.is_picked(choice)))
+                            .with_activation(Activation::LineStyle(choice))
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn style_row(
+    list: StyleList,
+    picked: Picked,
+    theme: ThemeTokens,
+    cx: &mut Context<Canvas>,
+) -> gpui::Div {
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .gap_1()
+        .text_xs()
+        .child(div().text_color(theme.muted_text).child(list.label()));
+    for (index, name) in list.names().into_iter().enumerate() {
+        let choice = StyleChoice { list, index };
+        row = row.child(
+            div()
+                .id(chip_id(choice))
+                .px_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .when(picked.is_picked(choice), |chip| chip.bg(theme.selected))
+                .hover(move |chip| chip.bg(theme.hover))
+                .on_click(cx.listener(move |canvas, _, _, cx| {
+                    canvas.choose_line_style(choice, cx);
+                }))
+                .child(name),
+        );
+    }
+    row
 }
