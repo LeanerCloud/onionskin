@@ -633,9 +633,11 @@ what-does-not-transfer section demands:
   the Add Text tool draws a new line, and the find bar replaces one match
   or all of them (m5-text-editing.md); system-font matching and embedding
   in `text-engine` are still to come. Guarantee test 7 waits on the
-  JS-forms corpus's values recorded in Acrobat. The rest of M5 (spell
-  check, changing edited text's font, size and colour, and tagged-PDF
-  maintenance checking) is planned.
+  JS-forms corpus's values recorded in Acrobat. Spell check has landed:
+  Edit > Check Spelling over the comments and text fields, with a user
+  dictionary, in US English (m5-spelling.md). The rest of M5 (changing
+  edited text's font, size and colour, and tagged-PDF maintenance
+  checking) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

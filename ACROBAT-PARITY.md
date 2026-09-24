@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 104 planned / 41 partial / 80 out-of-scope. 178 implemented.**
+**403 rows: 103 planned / 42 partial / 80 out-of-scope. 178 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -231,7 +231,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Advanced Search > include attachments | implemented | M3 | Edit > Advanced Search's Include PDF Attachments searches attached PDFs two levels deep, as Acrobat does, and lists each hit with the attachment path and page; one that cannot be read is named and its siblings are still searched. Clicking a hit does not open the attachment yet. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Advanced Search > document-property criteria (author, dates, keywords, metadata) | implemented | M3 | One criterion over Title, Author, Subject, Keywords, Creator, Producer, Date Created or Date Modified, read from both `/Info` and XMP; a document that does not meet it is not searched. Acrobat allows several criteria lines; this offers one. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Edit > Advanced Search across multiple PDFs / a folder / an index | planned | post-1.0 | Needs the multi-document index; single-document search ships first. Boolean Query and Proximity are multi-document options in Acrobat and land here, not on the single-document row. |
-| Edit > Check Spelling (in comments and form fields) | planned | M5 | Spell check is named in the plan's M5 list. |
+| Edit > Check Spelling (in comments and form fields) | partial | M5 | Edit > Check Spelling… goes word by word through every comment's text and every text field's value (passwords excepted), in page order: the passage with the word marked, suggestions, Change To, Ignore, Ignore All, Add to Dictionary (kept for every document) and Change, each change one undo step. One dictionary, US English (SCOWL); other languages and checking while typing are missing. Evidence: docs/evidence/m5-spelling.md. |
 | Edit > Look Up Selected Word | planned | post-1.0 | Platform dictionary only; the web lookup Acrobat uses is out of scope. |
 | Edit > Preferences | implemented | M2 | Opens the live persisted preference subset. Evidence: M2-PREFS. |
 | View > Rotate View | implemented | M2 | View-only rotation is live and remains distinct from page mutation. Evidence: M2-SHELL. |
