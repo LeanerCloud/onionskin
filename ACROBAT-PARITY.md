@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 114 planned / 36 partial / 80 out-of-scope. 173 implemented.**
+**403 rows: 113 planned / 37 partial / 80 out-of-scope. 173 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -485,7 +485,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Tab order / form field navigation | partial | M5 | While a field is being filled, Tab and Shift-Tab commit it and move to the next or previous text field or dropdown, page by page, top to bottom then left to right, going round. The page's `/Tabs` order and setting a tab order when preparing a form are not honoured yet, and Tab does not stop on check boxes, radio buttons or list boxes. Evidence: docs/evidence/m5-forms.md. |
 | Fill in a form (as an end user) | partial | M5 | The Hand tool fills AcroForm fields where they are: a text box over a text field (masked for a password, capped at its length), a dropdown's options (typed text too when it is editable), a list box row by click (turned over in a multiple choice), check boxes and radio buttons toggled. A value goes through the field's Keystroke and Validate scripts, which can refuse it with their alert on the notice bar; calculations follow in the form's order, formats draw the result, and it is one undo step. A script outside the forms subset is named in a notice, not silently skipped. Buttons and signature fields say why a click does nothing. Guarantee test 7 is not run: the JS-forms corpus waits on values recorded in Acrobat (`corpus/js-forms/README.md`). Evidence: docs/evidence/m5-forms.md. |
 | Clear form | implemented | M5 | Edit > Clear Form puts every field back to its default (`/DV`), with new appearances, as one undo step; on a document without fields it says so. Offered in the Edit menu rather than Prepare Form's More menu, since filling is where a form is cleared. (judgment) Evidence: docs/evidence/m5-forms.md. |
-| Auto-Complete form entries (Off / Basic / Advanced, plus the editable entry list) | planned | M5 | Named in the plan's M5 list. It stays local, which is exactly why the stored entry list has to be inspectable and clearable. |
+| Auto-Complete form entries (Off / Basic / Advanced, plus the editable entry list) | partial | M5 | Preferences > Forms: Auto-Complete Off or Basic (on by default), Remember numerical data (off by default, so a number that may be an account's is not kept (judgment)), and the entry list, each entry removable and Clear All. What is typed into a text field and kept is remembered, never a password; typing offers the entries that start the same, most recent first, pickable by pointer or screen reader. Local only, owner-only `autocomplete.json`. Advanced, which fills the likeliest entry in as it is typed, is not offered. Evidence: docs/evidence/m5-forms.md. |
 | Import / export form data (FDF, XFDF, XML) | planned | post-1.0 | XFDF is a named post-1.0 slot. |
 | Distribute a form (email or internal server) | out-of-scope | - | A distribution and response-collection workflow, cloud- and server-tethered. |
 | Track forms / Forms Tracker / collect responses | out-of-scope | - | A cloud- and server-tethered response-collection workflow; it only exists once a form has been distributed. |

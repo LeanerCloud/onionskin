@@ -341,7 +341,7 @@ impl ShellFrame {
             },
         )
         .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
-        model.configure_tools(&self.settings.tool_environment());
+        self.settings.configure(&mut model);
         let repaired = repair_notice(&source, &model.provenance());
         if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
         {

@@ -47,7 +47,6 @@ impl ShellFrame {
                 return;
             }
         };
-        let environment = self.settings.tool_environment();
         let settings = self.settings.for_new_window();
         let shell_view_state = self.shell_view_state;
         let theme = shell_view_state.tokens();
@@ -74,7 +73,7 @@ impl ShellFrame {
             },
             move |window, cx| {
                 let mut model = model;
-                model.configure_tools(&environment);
+                settings.configure(&mut model);
                 let canvas = cx.new(|_| Canvas::new(model, theme));
                 cx.new(|cx| {
                     ShellFrame::new(

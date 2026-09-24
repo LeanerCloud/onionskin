@@ -47,10 +47,9 @@ impl ShellFrame {
     /// Hand every open tab's tools the settings they are configured from, so
     /// a change applies to the next comment anywhere.
     pub(in crate::shell) fn apply_tool_environment(&mut self, cx: &mut Context<Self>) {
-        let environment = self.settings.tool_environment();
         for tab in self.tabs.tabs() {
             tab.canvas
-                .update(cx, |canvas, _| canvas.model.configure_tools(&environment));
+                .update(cx, |canvas, _| self.settings.configure(&mut canvas.model));
         }
     }
 
@@ -158,6 +157,16 @@ impl ShellFrame {
             PreferenceChange::JavaScript(on) => {
                 preferences.javascript = on;
                 self.apply_tool_environment(cx);
+            }
+            PreferenceChange::AutoComplete(on) => {
+                preferences.autocomplete = on;
+                self.apply_tool_environment(cx);
+            }
+            PreferenceChange::AutoCompleteNumbers(on) => preferences.autocomplete_numbers = on,
+            PreferenceChange::KeepEntry(_) => return,
+            PreferenceChange::ForgetEntry(_) | PreferenceChange::ClearEntries => {
+                self.change_entries(change, cx);
+                return;
             }
             PreferenceChange::SearchCaseSensitive(on) => preferences.search.case_sensitive = on,
             PreferenceChange::SearchWholeWord(on) => preferences.search.whole_word = on,

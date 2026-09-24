@@ -517,6 +517,8 @@ impl ShellFrame {
             #[cfg(feature = "tools-form")]
             Activation::FormOption(index) => self.choose_form_option(index, cx),
             #[cfg(feature = "tools-form")]
+            Activation::FormSuggestion(index) => self.pick_form_suggestion(index, cx),
+            #[cfg(feature = "tools-form")]
             Activation::Field(action) => self.run_field_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),

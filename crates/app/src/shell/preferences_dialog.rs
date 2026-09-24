@@ -34,6 +34,16 @@ pub(in crate::shell) enum PreferenceChange {
     LineWeights(bool),
     /// JavaScript: whether a form's scripts run.
     JavaScript(bool),
+    /// Forms: Auto-Complete on (Basic) or off.
+    AutoComplete(bool),
+    /// Forms: "Remember numerical data".
+    AutoCompleteNumbers(bool),
+    /// Forms: take the remembered entry at this index out of the list.
+    ForgetEntry(usize),
+    /// Keep it: the choice in force, which changes nothing.
+    KeepEntry(usize),
+    /// Forms: forget every remembered entry.
+    ClearEntries,
     SearchCaseSensitive(bool),
     SearchWholeWord(bool),
     SearchMode(MatchMode),
@@ -136,6 +146,28 @@ pub(in crate::shell) fn category_rows(
             PreferenceRow {
                 label: "Use line weights".to_owned(),
                 choices: switch(preferences.line_weights, PreferenceChange::LineWeights),
+            },
+        ],
+        PreferenceCategory::Forms => vec![
+            PreferenceRow {
+                label: "Auto-Complete".to_owned(),
+                choices: [("Off", false), ("Basic", true)]
+                    .into_iter()
+                    .map(|(label, on)| {
+                        choice(
+                            label.to_owned(),
+                            PreferenceChange::AutoComplete(on),
+                            preferences.autocomplete == on,
+                        )
+                    })
+                    .collect(),
+            },
+            PreferenceRow {
+                label: "Remember numerical data".to_owned(),
+                choices: switch(
+                    preferences.autocomplete_numbers,
+                    PreferenceChange::AutoCompleteNumbers,
+                ),
             },
         ],
         PreferenceCategory::JavaScript => vec![PreferenceRow {
@@ -267,8 +299,54 @@ fn choice_id(row: usize, choice: usize) -> gpui::ElementId {
 ///
 /// A chosen category and a chosen value are a background colour on screen and
 /// nothing else, so the selected state is the whole point of these nodes.
+/// A category's rows, with Forms' remembered entries after its settings,
+/// each of which can be removed, and a row to remove them all.
+pub(in crate::shell) fn rows_for(
+    preferences: &Preferences,
+    entries: &[String],
+    category: PreferenceCategory,
+) -> Vec<PreferenceRow> {
+    let mut rows = category_rows(preferences, category);
+    if category == PreferenceCategory::Forms {
+        rows.push(PreferenceRow {
+            label: match entries.len() {
+                0 => "No entries remembered".to_owned(),
+                1 => "1 entry remembered".to_owned(),
+                count => format!("{count} entries remembered"),
+            },
+            choices: vec![PreferenceChoice {
+                label: "Clear All".to_owned(),
+                change: PreferenceChange::ClearEntries,
+                selected: false,
+            }],
+        });
+        rows.extend(
+            entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| PreferenceRow {
+                    label: entry.clone(),
+                    choices: vec![
+                        PreferenceChoice {
+                            label: "Keep".to_owned(),
+                            change: PreferenceChange::KeepEntry(index),
+                            selected: true,
+                        },
+                        PreferenceChoice {
+                            label: "Remove".to_owned(),
+                            change: PreferenceChange::ForgetEntry(index),
+                            selected: false,
+                        },
+                    ],
+                }),
+        );
+    }
+    rows
+}
+
 pub(in crate::shell) fn accessible(
     preferences: &Preferences,
+    entries: &[String],
     category: PreferenceCategory,
     author_field: Option<Element>,
 ) -> Element {
@@ -296,7 +374,10 @@ pub(in crate::shell) fn accessible(
                 .with_activation(Activation::SaveCommentingAuthor),
         );
     }
-    for (index, row) in category_rows(preferences, category).into_iter().enumerate() {
+    for (index, row) in rows_for(preferences, entries, category)
+        .into_iter()
+        .enumerate()
+    {
         described = described.child(
             Element::new(("preference-row", index), Role::RadioGroup, row.label).with_children(
                 row.choices
@@ -347,7 +428,8 @@ pub(in crate::shell) fn render_preferences(
     if category == PreferenceCategory::Commenting {
         settings = settings.child(render_author_field(frame, theme, cx));
     }
-    for (index, row) in category_rows(frame.preferences(), category)
+    let entries = frame.autocomplete_entries();
+    for (index, row) in rows_for(frame.preferences(), entries, category)
         .into_iter()
         .enumerate()
     {
@@ -471,7 +553,7 @@ mod tests {
             let rows = category_rows(&preferences, category);
             if category == PreferenceCategory::Commenting {
                 // Its setting is the typed author name, not a choice.
-                let described = accessible(&preferences, category, None);
+                let described = accessible(&preferences, &[], category, None);
                 assert!(described.find(&AUTHOR_SAVE_ID.into()).is_some());
                 continue;
             }
@@ -556,6 +638,45 @@ mod tests {
     /// Page Display's Line Weights switch shows the setting in force and
     /// changes it, as the View menu's entry does.
     #[test]
+    fn forms_offers_auto_complete_and_lists_what_it_remembers() {
+        let preferences = Preferences::default();
+        let none = rows_for(&preferences, &[], PreferenceCategory::Forms);
+        let labels: Vec<&str> = none.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Auto-Complete",
+                "Remember numerical data",
+                "No entries remembered"
+            ]
+        );
+        let on: Vec<_> = none[0]
+            .choices
+            .iter()
+            .filter(|choice| choice.selected)
+            .map(|choice| choice.label.as_str())
+            .collect();
+        assert_eq!(on, ["Basic"]);
+        assert!(none[1].choices.iter().any(|choice| choice.selected
+            && choice.change == PreferenceChange::AutoCompleteNumbers(false)));
+        let entries = ["Ada".to_owned(), "Alan".to_owned()];
+        let two = rows_for(&preferences, &entries, PreferenceCategory::Forms);
+        assert_eq!(two[2].label, "2 entries remembered");
+        assert_eq!(two[2].choices[0].change, PreferenceChange::ClearEntries);
+        assert_eq!(two[4].label, "Alan");
+        assert_eq!(two[4].choices[1].change, PreferenceChange::ForgetEntry(1));
+        assert_eq!(
+            rows_for(&preferences, &entries[..1], PreferenceCategory::Forms)[2].label,
+            "1 entry remembered"
+        );
+        assert_eq!(
+            rows_for(&preferences, &entries, PreferenceCategory::General).len(),
+            1,
+            "entries are Forms' alone"
+        );
+    }
+
+    #[test]
     fn javascript_is_a_switch_that_starts_on() {
         let rows = category_rows(&Preferences::default(), PreferenceCategory::JavaScript);
         assert_eq!(rows.len(), 1);
@@ -603,7 +724,7 @@ mod tests {
             ..Preferences::default()
         };
 
-        let described = accessible(&preferences, PreferenceCategory::General, None);
+        let described = accessible(&preferences, &[], PreferenceCategory::General, None);
 
         let row = described.find(&("preference-row", 0usize).into()).unwrap();
         assert_eq!(row.role, Role::RadioGroup);
@@ -638,7 +759,7 @@ mod tests {
     fn every_described_choice_is_keyed_as_the_button_it_describes() {
         let preferences = Preferences::default();
 
-        let described = accessible(&preferences, PreferenceCategory::PageDisplay, None);
+        let described = accessible(&preferences, &[], PreferenceCategory::PageDisplay, None);
 
         for (index, row) in category_rows(&preferences, PreferenceCategory::PageDisplay)
             .into_iter()
@@ -656,7 +777,12 @@ mod tests {
 
     #[test]
     fn the_category_list_says_which_category_is_showing() {
-        let described = accessible(&Preferences::default(), PreferenceCategory::Search, None);
+        let described = accessible(
+            &Preferences::default(),
+            &[],
+            PreferenceCategory::Search,
+            None,
+        );
 
         let categories = described.find(&"preference-categories".into()).unwrap();
         assert_eq!(categories.role, Role::TabList);

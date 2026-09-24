@@ -62,6 +62,9 @@ pub(super) struct FieldEditor {
     pub(super) prompt: FieldPrompt,
     pub(super) input: Option<Entity<SearchInput>>,
     focus: FocusHandle,
+    /// Draws the editor again as its text changes, for Auto-Complete's
+    /// suggestions to follow the typing.
+    _typing: Option<gpui::Subscription>,
 }
 
 impl Canvas {
@@ -99,10 +102,14 @@ impl Canvas {
             Some(input) => window.focus(&input.read(cx).focus_handle(cx)),
             None => window.focus(&focus),
         }
+        let typing = input
+            .as_ref()
+            .map(|input| cx.observe(input, |_, _, cx| cx.notify()));
         self.field_editor = Some(FieldEditor {
             prompt,
             input,
             focus,
+            _typing: typing,
         });
         cx.notify();
     }
@@ -118,8 +125,7 @@ impl Canvas {
             return true;
         };
         let typed = input.read(cx).query().to_owned();
-        let value = editor.prompt.entry.value_for(&typed);
-        let result = self.model.commit_field(editor.prompt.field, value);
+        let result = self.model.commit_typed(&editor.prompt, &typed);
         let accepted = matches!(result, Ok(true));
         if matches!(result, Ok(false)) {
             self.field_editor = Some(editor);
@@ -174,6 +180,34 @@ impl Canvas {
         self.field_editor.as_ref()?.input.clone()
     }
 
+    /// What Auto-Complete offers for the text the editor holds.
+    pub(in crate::shell) fn field_suggestions(&self, cx: &App) -> Vec<String> {
+        let Some(editor) = self.field_editor.as_ref() else {
+            return Vec::new();
+        };
+        let Some(input) = editor.input.as_ref() else {
+            return Vec::new();
+        };
+        self.model
+            .suggestions(&editor.prompt.entry, input.read(cx).query())
+    }
+
+    /// Put suggestion `index` in the editor, to be committed as typed text
+    /// is.
+    pub(in crate::shell) fn pick_suggestion(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(chosen) = self.field_suggestions(cx).into_iter().nth(index) else {
+            return;
+        };
+        if let Some(input) = self
+            .field_editor
+            .as_ref()
+            .and_then(|editor| editor.input.clone())
+        {
+            input.update(cx, |input, cx| input.set_query(chosen, cx));
+        }
+        cx.notify();
+    }
+
     /// Option `index` of the open dropdown picked, as a screen reader
     /// activates it.
     pub(in crate::shell) fn choose_field_option_at(
@@ -218,6 +252,17 @@ impl Canvas {
                     };
                     Rects::view_rect(rect, self.model.canvas_origin(), scale)
                 });
+        for (index, suggestion) in self.field_suggestions(cx).into_iter().enumerate() {
+            node = node.child(
+                A11yElement::new(
+                    ("form-field-suggestion", index),
+                    Role::ListBoxOption,
+                    suggestion,
+                )
+                .with_description("Auto-Complete")
+                .with_activation(Activation::FormSuggestion(index)),
+            );
+        }
         if let Entry::Choose {
             options, chosen, ..
         } = &prompt.entry
@@ -289,6 +334,29 @@ impl Canvas {
                         .child(editor.prompt.entry.initial_text()),
                 );
             }
+        }
+        let suggestions = self.field_suggestions(cx);
+        if !suggestions.is_empty() {
+            let mut list = div().id("form-field-suggestions").flex().flex_col();
+            for (index, suggestion) in suggestions.into_iter().enumerate() {
+                list = list.child(
+                    div()
+                        .id(("form-field-suggestion", index))
+                        .h(px(ROW_HEIGHT))
+                        .px_2()
+                        .text_color(theme.secondary_text)
+                        .hover(|row| row.bg(theme.hover))
+                        .child(suggestion)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |canvas, _, _window, cx| {
+                                cx.stop_propagation();
+                                canvas.pick_suggestion(index, cx);
+                            }),
+                        ),
+                );
+            }
+            body = body.child(list);
         }
         if let Entry::Choose {
             options, chosen, ..

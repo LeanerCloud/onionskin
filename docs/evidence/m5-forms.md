@@ -42,9 +42,10 @@ hosted-CI run is claimed.
     and style are fixed.
   - Field properties: Format, Validate, Calculate. Simplified field notation
     and editing the calculation order are not offered.
-- **Still `planned`:** image field, auto-detect form fields, and
-  auto-complete.
-- **Headline after both parts:** 114 planned / 36 partial / 80
+- **To `partial`, with Auto-Complete:** Auto-Complete form entries. Basic
+  and the entry list are offered; Advanced is not.
+- **Still `planned`:** image field and auto-detect form fields.
+- **Headline after every part:** 113 planned / 37 partial / 80
   out-of-scope, 173 implemented.
 
 ## Preparing forms: what the user gets
@@ -92,6 +93,27 @@ hosted-CI run is claimed.
     appearances again.
 - **One drag gesture.** The marquee and the click-or-drag threshold, written
   four times across the tool plugins, are one module in `plugin-api` now.
+
+## Auto-Complete
+
+- **Preferences > Forms.**
+  - Auto-Complete: Off or Basic, on by default.
+  - Remember numerical data: off by default, so a number typed into a form,
+    which may be an account's or a card's, is not kept. (judgment)
+  - The remembered entries, each with Remove, and Clear All.
+- **Remembering.** What is typed into a text field and kept is
+  remembered, most recent first, up to 500 entries.
+  - Never a password field.
+  - Never a value the field's scripts refused.
+  - Never a dropdown's choice.
+- **Offering.** Typing into a text field offers the entries that start with
+  what was typed, ignoring case, up to five, under the text box. A click
+  puts one in the box, to be committed as typed text is. A screen reader
+  gets the suggestions as options of the field's node, each of which picks
+  itself.
+- **Kept locally.** The entries are kept in `autocomplete.json` beside the
+  other settings, written owner-only. The list is read again from the file
+  before every change, so two windows do not lose each other's entries.
 
 ## Filling forms: what the user gets
 
@@ -212,20 +234,53 @@ over `corpus/js-forms/pdfs/` by `tools-form/tests/guarantee.rs`.
     - one test for the preference row and one for the masked input.
 - **App integration tests:** `--test '*'`, guarantees included, all pass.
 
+Preparing forms and Auto-Complete, run afterwards:
+
+- `cargo test -p onionskin-core --test forms`: 13 pass. These cover adding
+  every kind of field to a document without a form, names, removal
+  (including from `/CO`), and properties written and read back for each
+  kind, plus the refusals.
+- `cargo test -p onionskin-plugin-api --test marquee`: 2 pass.
+- `cargo test -p onionskin-tools-form`: 21 pass:
+  - fill 4;
+  - replay 3;
+  - field tools 6;
+  - the Format, Validate and Calculate scripts 5;
+  - field edits 3.
+
+  The corpus suite stays ignored.
+- `cargo test -p onionskin-tools-basic -p onionskin-tools-edit -p
+  onionskin-redact -p onionskin-tools-fill-sign`: all pass after the shared
+  gesture moved.
+- App lib: 942 pass. Six fail, all environmental: three canvas timing tests
+  that pass alone, and three export rollback tests, which fail when run as
+  root.
+  - New for preparing forms: 8 tests of the dialog as data, and 3 window
+    tests (place, double-click, change and save; a refused name and Delete;
+    a field gone away).
+  - New for Auto-Complete:
+    - 5 tests of the entry list;
+    - 1 of the Forms preference rows;
+    - 1 of the canvas model;
+    - 2 window tests: remembering, offering, picking from the tree, and
+      removing, then Off, numbers, and Clear All.
+
 ## Coverage
 
 `cargo tarpaulin` with optimisation off.
 
 | Code | Lines covered |
 | --- | --- |
-| `plugins/tools-form/src` | 208 of 230 (90.4%) |
+| `plugins/tools-form/src`, after preparing forms | 568 of 598 (95.0%) |
 | `crates/scripting/src/lib.rs` | 55 of 55 (100%) |
-| `crates/core/src/forms/*` | 524 of 571 (91.8%) |
+| `crates/core/src/forms/*`, after preparing forms | 1037 of 1120 (92.6%) |
 
-In `core` forms, `appearance.rs` (175 of 196) and `read.rs` (183 of 202)
-are the least covered: font resources that fail to resolve and malformed
-`/Opt` entries. In `tools-form`, the lines left are the plugin manifest (3 lines, never
-called in tests) and error paths in `fill.rs`. The forms API itself is
+In `core` forms, the least covered files are `appearance.rs` (199 of 222),
+`author.rs` (239 of 264) and `read.rs` (196 of 217). What is left is font
+resources that fail to resolve, malformed `/Opt` entries, and a `/Fields`,
+`/DR` or `/AcroForm` held in an object of its own. In `tools-form`, the
+lines left are the plugin manifest (5 lines, registered only by the app)
+and error paths in `fill.rs`. The forms API itself is
 JavaScript and is covered by `scripting/tests/forms_api.rs` (8 tests over
 every `AF` function family, `util`, `getField` and the error kinds). The app
 crate is not run under tarpaulin; its new code is covered by the tests
@@ -242,6 +297,10 @@ Each was caught, then reverted.
 - The editor closed on a refused value:
   `typing_into_a_text_field_commits_on_enter_and_its_script_can_refuse`
   fails.
+- A field's calculation not put into `/CO`:
+  `a_text_field_s_properties_are_written_and_read_back` fails.
+- A radio button placed with one selected not joining its group:
+  `a_radio_button_placed_with_one_selected_joins_its_group` fails.
 
 ## Clippy and format
 

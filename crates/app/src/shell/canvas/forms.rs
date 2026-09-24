@@ -13,6 +13,7 @@ use onionskin_core::{FieldRequest, ObjRef, PageIndex};
 use onionskin_tools_form::fill::{clear_form, fill, toggle, FillOptions, Filled};
 
 use super::{CanvasError, CanvasModel};
+use crate::autocomplete::EntryList;
 
 /// How the canvas fills: whether the form's scripts run, and what filling
 /// had to say that the frame has not shown yet.
@@ -20,6 +21,10 @@ use super::{CanvasError, CanvasModel};
 pub(in crate::shell) struct FormFilling {
     scripts: bool,
     notices: Vec<String>,
+    /// Auto-Complete's entries, when it is on.
+    autocomplete: Option<EntryList>,
+    /// Text typed into fields and kept, for Auto-Complete to remember.
+    typed: Vec<String>,
 }
 
 impl Default for FormFilling {
@@ -27,6 +32,8 @@ impl Default for FormFilling {
         FormFilling {
             scripts: true,
             notices: Vec::new(),
+            autocomplete: None,
+            typed: Vec::new(),
         }
     }
 }
@@ -191,6 +198,48 @@ impl CanvasModel {
     /// Whether the form's scripts run: Preferences > JavaScript.
     pub fn set_form_scripts(&mut self, on: bool) {
         self.forms.scripts = on;
+    }
+
+    /// Auto-Complete's entries, or `None` when it is off.
+    pub fn set_autocomplete(&mut self, entries: Option<EntryList>) {
+        self.forms.autocomplete = entries;
+    }
+
+    /// What Auto-Complete offers for `typed` in a field `entry`: nothing for
+    /// a password, or when it is off.
+    pub fn suggestions(&self, entry: &Entry, typed: &str) -> Vec<String> {
+        match (&self.forms.autocomplete, entry) {
+            (
+                Some(list),
+                Entry::Text {
+                    password: false, ..
+                },
+            ) => list.suggest(typed),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Text typed into fields and kept since the frame last asked.
+    pub fn take_typed(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.forms.typed)
+    }
+
+    /// Commit what was typed into `prompt`'s editor. A text field's value,
+    /// kept, is remembered for Auto-Complete unless it is a password.
+    pub fn commit_typed(&mut self, prompt: &FieldPrompt, typed: &str) -> Result<bool, CanvasError> {
+        let accepted = self.commit_field(prompt.field, prompt.entry.value_for(typed))?;
+        if accepted
+            && matches!(
+                prompt.entry,
+                Entry::Text {
+                    password: false,
+                    ..
+                }
+            )
+        {
+            self.forms.typed.push(typed.to_owned());
+        }
+        Ok(accepted)
     }
 
     /// What filling had to say since the frame last asked.

@@ -114,6 +114,8 @@ pub(in crate::shell) struct ShellSettings {
     pub(in crate::shell) paths: ConfigPaths,
     pub(in crate::shell) preferences: Preferences,
     pub(in crate::shell) recents: Recents,
+    /// Forms Auto-Complete's remembered entries.
+    pub(in crate::shell) autocomplete: crate::autocomplete::EntryList,
     /// What the app's own registry answers, for the menus to consult when no
     /// document is open and there is no tab's registry to ask.
     pub(in crate::shell) registry: RegistryFacts,
@@ -130,6 +132,7 @@ impl ShellSettings {
             paths: self.paths.clone(),
             preferences: self.preferences.clone(),
             recents: self.recents.clone(),
+            autocomplete: self.autocomplete.clone(),
             registry: self.registry,
             bindings: self.bindings.clone(),
             notices: Vec::new(),
@@ -149,6 +152,18 @@ impl ShellSettings {
         }
     }
 
+    /// Hand a tab what it is configured from: its tools' environment, and
+    /// the Auto-Complete entries its form fields offer.
+    pub(in crate::shell) fn configure(&self, model: &mut CanvasModel) {
+        model.configure_tools(&self.tool_environment());
+        #[cfg(feature = "tools-form")]
+        model.set_autocomplete(
+            self.preferences
+                .autocomplete
+                .then(|| self.autocomplete.clone()),
+        );
+    }
+
     pub(in crate::shell) fn load(paths: ConfigPaths, registry: &PluginRegistry) -> Self {
         let mut notices = Vec::new();
         let (preferences, preference_errors) = Preferences::load(paths.preferences.as_deref());
@@ -156,6 +171,9 @@ impl ShellSettings {
         let (mut recents, recent_errors) = Recents::load(paths.recents.as_deref());
         notices.extend(recent_errors.iter().map(ToString::to_string));
         recents.truncate(preferences.recent_documents);
+        let (autocomplete, autocomplete_error) =
+            crate::autocomplete::EntryList::load(paths.autocomplete.as_deref());
+        notices.extend(autocomplete_error);
 
         let defaults = command_defaults(
             registry
@@ -173,6 +191,7 @@ impl ShellSettings {
             paths,
             preferences,
             recents,
+            autocomplete,
             registry: RegistryFacts::of(registry),
             bindings,
             notices,
@@ -922,9 +941,8 @@ where
     // command list is read, to resolve the keymap against.
     let mut settings = ShellSettings::load(ConfigPaths::resolve(), &crate::build_registry());
     let mut prepared = prepared;
-    let environment = settings.tool_environment();
     for (path, model) in &mut prepared {
-        model.configure_tools(&environment);
+        settings.configure(model);
         settings
             .notices
             .extend(repair_notice(path, &model.provenance()));

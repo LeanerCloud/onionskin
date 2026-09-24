@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 pub const KEYMAP_FILE: &str = "keymap.json";
 pub const PREFERENCES_FILE: &str = "preferences.json";
 pub const RECENTS_FILE: &str = "recents.json";
+/// Forms Auto-Complete's remembered entries.
+pub const AUTOCOMPLETE_FILE: &str = "autocomplete.json";
 /// The folder beside the settings files that tools keep their own files in.
 pub const DATA_DIR: &str = "data";
 /// Autosave's recovery files, one per open document with unsaved edits.
@@ -67,6 +69,8 @@ pub struct ConfigPaths {
     pub keymap: Option<PathBuf>,
     pub preferences: Option<PathBuf>,
     pub recents: Option<PathBuf>,
+    /// Forms Auto-Complete's entries.
+    pub autocomplete: Option<PathBuf>,
     /// Where tools keep files of their own - the custom stamp library - as
     /// opposed to the settings files above.
     pub data: Option<PathBuf>,
@@ -101,6 +105,7 @@ impl ConfigPaths {
             keymap: Some(dir.join(KEYMAP_FILE)),
             preferences: Some(dir.join(PREFERENCES_FILE)),
             recents: Some(dir.join(RECENTS_FILE)),
+            autocomplete: Some(dir.join(AUTOCOMPLETE_FILE)),
             data: Some(dir.join(DATA_DIR)),
             recovery: Some(dir.join(RECOVERY_DIR)),
             home: home_dir(),

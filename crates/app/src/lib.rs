@@ -6,6 +6,7 @@ use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
 #[cfg(feature = "shell")]
 pub(crate) mod a11y;
+pub mod autocomplete;
 pub mod config;
 pub mod keymap;
 pub mod preferences;

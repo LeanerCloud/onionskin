@@ -8,6 +8,69 @@ use super::ShellFrame;
 /// What the form entries say in a build that does not fill forms.
 pub(in crate::shell) const NO_FORMS: &str = "The Forms plugin is not installed";
 
+impl ShellFrame {
+    /// Forms Auto-Complete's remembered entries, most recent first.
+    pub(in crate::shell) fn autocomplete_entries(&self) -> &[String] {
+        self.settings.autocomplete.entries()
+    }
+
+    /// Preferences > Forms' Remove and Clear All, written at once. The file
+    /// is read again first, so an entry another window remembered is not
+    /// lost.
+    pub(in crate::shell) fn change_entries(
+        &mut self,
+        change: crate::shell::preferences_dialog::PreferenceChange,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::shell::preferences_dialog::PreferenceChange;
+        let shown = self.settings.autocomplete.clone();
+        self.edit_entries(cx, |list| match change {
+            PreferenceChange::ForgetEntry(index) => {
+                // By the entry shown, which the file may hold elsewhere.
+                if let Some(entry) = shown.entries().get(index) {
+                    let at = list.entries().iter().position(|each| each == entry);
+                    at.is_some_and(|at| list.forget(at))
+                } else {
+                    false
+                }
+            }
+            PreferenceChange::ClearEntries => {
+                list.clear();
+                true
+            }
+            _ => false,
+        });
+    }
+
+    /// Change the entry list as it is on disk, save it, and hand every tab
+    /// the new list.
+    pub(in crate::shell) fn edit_entries(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut crate::autocomplete::EntryList) -> bool,
+    ) {
+        let path = self.settings.paths.autocomplete.clone();
+        let mut list = match path.as_deref() {
+            Some(path) => {
+                let (list, error) = crate::autocomplete::EntryList::load(Some(path));
+                self.notices.extend(error);
+                list
+            }
+            None => self.settings.autocomplete.clone(),
+        };
+        if change(&mut list) {
+            if let Some(path) = path.as_deref() {
+                if let Err(error) = list.save(path) {
+                    self.notices.push(error);
+                }
+            }
+        }
+        self.settings.autocomplete = list;
+        self.apply_tool_environment(cx);
+        cx.notify();
+    }
+}
+
 #[cfg(not(feature = "tools-form"))]
 impl ShellFrame {
     /// Disabled without the plugin, saying so; reached some other way, it
@@ -42,6 +105,13 @@ impl ShellFrame {
         cx.notify();
     }
 
+    /// A screen reader picked Auto-Complete suggestion `index`.
+    pub(super) fn pick_form_suggestion(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(canvas) = self.active_canvas().cloned() {
+            canvas.update(cx, |canvas, cx| canvas.pick_suggestion(index, cx));
+        }
+    }
+
     /// A screen reader picked option `index` of the dropdown being filled.
     pub(super) fn choose_form_option(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(canvas) = self.active_canvas().cloned() {
@@ -50,15 +120,30 @@ impl ShellFrame {
     }
 
     /// Take what filling a field had to say: the scripts' alerts, scripts
-    /// that did not run, values refused.
+    /// that did not run, values refused; and what was typed, for
+    /// Auto-Complete to remember.
     pub(super) fn collect_form_notices(&mut self, cx: &mut Context<Self>) {
         let Some(canvas) = self.active_canvas().cloned() else {
             return;
         };
-        let notices = canvas.update(cx, |canvas, _| canvas.model.take_form_notices());
+        let (notices, typed) = canvas.update(cx, |canvas, _| {
+            (canvas.model.take_form_notices(), canvas.model.take_typed())
+        });
         if !notices.is_empty() {
             self.notices.extend(notices);
             cx.notify();
+        }
+        let preferences = &self.settings.preferences;
+        if preferences.autocomplete && !typed.is_empty() {
+            let numbers = preferences.autocomplete_numbers;
+            self.edit_entries(cx, |list| {
+                // Every one remembered: `any` would stop at the first.
+                let mut changed = false;
+                for text in &typed {
+                    changed |= list.remember(text, numbers);
+                }
+                changed
+            });
         }
     }
 }

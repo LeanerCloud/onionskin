@@ -175,6 +175,9 @@ pub(in crate::shell) enum Activation {
     /// Pick this option of the dropdown being filled on the canvas.
     #[cfg(feature = "tools-form")]
     FormOption(usize),
+    /// Put this Auto-Complete suggestion in the field being filled.
+    #[cfg(feature = "tools-form")]
+    FormSuggestion(usize),
     /// A form field's Properties dialog.
     #[cfg(feature = "tools-form")]
     Field(crate::shell::chrome::field_dialog::FieldAction),

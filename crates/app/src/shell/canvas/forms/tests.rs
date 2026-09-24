@@ -348,3 +348,44 @@ fn an_xfa_form_is_said_when_it_opens() {
         "a plain form says nothing"
     );
 }
+
+#[test]
+fn auto_complete_offers_what_was_typed_but_not_into_a_password() {
+    let mut model = model();
+    let qty = click(&mut model, 4, 4, (50.0, 710.0)).expect("an editor");
+    assert!(model.suggestions(&qty.entry, "1").is_empty(), "off");
+    let mut list = EntryList::default();
+    list.remember("123", true);
+    model.set_autocomplete(Some(list));
+    assert_eq!(model.suggestions(&qty.entry, "1"), ["123"]);
+    let password = Entry::Text {
+        value: String::new(),
+        password: true,
+        max_len: None,
+    };
+    assert!(model.suggestions(&password, "1").is_empty());
+
+    assert!(model.commit_typed(&qty, "12").expect("commits"));
+    assert!(
+        !model.commit_typed(&qty, "twelve").expect("runs"),
+        "refused"
+    );
+    let secret = FieldPrompt {
+        entry: password,
+        ..qty.clone()
+    };
+    model.set_form_scripts(false);
+    assert!(model.commit_typed(&secret, "hunter2").expect("commits"));
+    assert_eq!(
+        model.take_typed(),
+        ["12"],
+        "not the refused, not the password"
+    );
+    assert!(model.take_typed().is_empty());
+    let colour = click(&mut model, 10, 10, (50.0, 530.0)).expect("an editor");
+    assert!(model.commit_typed(&colour, "Red").expect("commits"));
+    assert!(
+        model.take_typed().is_empty(),
+        "a dropdown's choice is not typed text"
+    );
+}
