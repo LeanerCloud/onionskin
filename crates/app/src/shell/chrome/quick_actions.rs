@@ -724,6 +724,7 @@ mod tests {
             ToolCapability::EditImages => &[ToolCapability::EditImages],
             ToolCapability::PlacesImage => &[ToolCapability::PlacesImage],
             ToolCapability::EditText => &[ToolCapability::EditText],
+            ToolCapability::Measure => &[ToolCapability::Measure],
         }
     }
 

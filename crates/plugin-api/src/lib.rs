@@ -123,6 +123,10 @@ pub enum ToolCapability {
     /// Edits a line of text where it is: the shell opens an editor on the
     /// line the tool asks for.
     EditText,
+    /// Measures distances, perimeters and areas. Measuring reads the page;
+    /// a measurement kept as a comment is written as one, and refused where
+    /// comments are.
+    Measure,
 }
 
 impl ToolCapability {
@@ -150,7 +154,8 @@ impl ToolCapability {
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom
-            | ToolCapability::ChoosesFile => false,
+            | ToolCapability::ChoosesFile
+            | ToolCapability::Measure => false,
         }
     }
 }
@@ -174,6 +179,23 @@ pub struct ToolChoice {
     pub label: String,
     /// The heading it is listed under, e.g. "Sign Here".
     pub category: String,
+}
+
+/// One line of what a tool is reading off the page, for the side panel:
+/// a measurement as it is being made, say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reading {
+    pub label: &'static str,
+    pub value: String,
+}
+
+impl Reading {
+    pub fn new(label: &'static str, value: impl Into<String>) -> Self {
+        Reading {
+            label,
+            value: value.into(),
+        }
+    }
 }
 
 /// What the shell hands every tool before it is used: the user's settings a
@@ -335,6 +357,26 @@ pub trait ToolPlugin: Send {
     /// The choice in effect, if the tool has one.
     fn chosen(&self) -> Option<String> {
         None
+    }
+
+    /// The tool's settings, for the side panel to list under its name: each
+    /// shown on or off by [`Self::picked`] and changed by [`Self::choose`].
+    /// Empty for a tool with none.
+    fn settings(&self) -> Vec<ToolChoice> {
+        Vec::new()
+    }
+
+    /// Whether choice or setting `id` is in effect. A tool with settings,
+    /// several on at once, answers for each; by default it is the one
+    /// [`Self::chosen`] names.
+    fn picked(&self, id: &str) -> bool {
+        self.chosen().as_deref() == Some(id)
+    }
+
+    /// What the tool is reading off the page now, for the side panel to show
+    /// under its name. Empty for a tool that reads nothing.
+    fn readings(&self) -> Vec<Reading> {
+        Vec::new()
     }
 }
 
@@ -525,6 +567,22 @@ mod tests {
             "{}",
             error.to_string()
         );
+    }
+
+    #[test]
+    fn a_tool_reads_nothing_and_picks_only_what_it_chose_by_default() {
+        let tool: &dyn ToolPlugin = &LegacyTool;
+        assert!(tool.readings().is_empty());
+        assert!(tool.settings().is_empty());
+        assert!(!tool.picked("anything"));
+        assert_eq!(
+            Reading::new("Distance", "2 in"),
+            Reading {
+                label: "Distance",
+                value: "2 in".to_owned()
+            }
+        );
+        assert!(!ToolCapability::Measure.edits_document());
     }
 
     #[test]
