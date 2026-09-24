@@ -30,7 +30,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use onionskin_cos::{Document as CosDocument, Name, Object, PendingEdit, XrefEntry};
+use onionskin_cos::{Document as CosDocument, Name, ObjRef, Object, PendingEdit, XrefEntry};
 
 use crate::session::Result;
 
@@ -342,6 +342,18 @@ impl Overlay {
         for value in self.trailer.values().flatten() {
             queue.push(value.clone());
         }
+        // A changed object the base has is written whether anything reaches
+        // it or not: rule 1 keeps it for differing from the base. What it
+        // names has to be written with it, or the section names an object
+        // it does not hold. A page deleted after its content was replaced
+        // is one: the page's dictionary stays in the section, and so must
+        // its new content stream.
+        queue.extend(
+            self.states
+                .keys()
+                .filter(|number| base_has(base, **number))
+                .map(|number| Object::Ref(ObjRef::new(*number, 0))),
+        );
 
         while let Some(object) = queue.pop() {
             match object {

@@ -192,3 +192,28 @@ fn new_text_is_drawn_after_the_page_in_a_standard_font() {
         assert!(error.to_string().contains("no"), "{error}");
     }
 }
+
+#[test]
+fn a_page_deleted_after_its_text_was_edited_leaves_a_whole_file() {
+    // The page's dictionary stays in the section, changed; the new content
+    // stream it names must stay with it, reached or not.
+    let mut doc = onionskin_core::Document::open_bytes(tagged()).expect("opens");
+    let edit = {
+        let structure = doc.structure().expect("reads");
+        let lines = page_lines(structure, 2).expect("reads");
+        rewrite_lines(structure, 2, &[(&lines[0], "Last page".to_owned())]).expect("works out")
+    };
+    doc.edit_document("Edit Text", |tx| write_page_edit(tx, &edit))
+        .expect("edits");
+    doc.edit_annotations("Delete Pages", |tx, structure| {
+        onionskin_core::pages::delete_pages(tx, structure, &[2]).map(|_| ())
+    })
+    .expect("deletes");
+    let current = doc.structure().expect("the edited file still reads");
+    assert_eq!(current.page_count().expect("pages"), 2);
+    let whole = doc
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentAndMarkups)
+        .expect("the edited file writes");
+    let reopened = open(&whole);
+    assert_eq!(reopened.page_count().expect("pages"), 2);
+}
