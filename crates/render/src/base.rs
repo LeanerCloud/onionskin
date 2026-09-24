@@ -132,8 +132,17 @@ impl Document {
     /// as an `Arc` internally, so this shares the buffer rather than copying
     /// it: one allocation serves `cos` and the render thread both.
     pub fn from_shared(bytes: Arc<Vec<u8>>) -> Result<Self, RenderError> {
+        Self::from_shared_with_password(bytes, "")
+    }
+
+    /// [`Document::from_shared`] for an encrypted document that opens with
+    /// `password`, its user or owner password.
+    pub fn from_shared_with_password(
+        bytes: Arc<Vec<u8>>,
+        password: &str,
+    ) -> Result<Self, RenderError> {
         Ok(Self {
-            pdf: Pdf::new(bytes).map_err(RenderError::Load)?,
+            pdf: Pdf::new_with_password(bytes, password).map_err(RenderError::Load)?,
         })
     }
 
