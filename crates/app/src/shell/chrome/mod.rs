@@ -8,6 +8,8 @@ pub(in crate::shell) mod export_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;
 pub(in crate::shell) mod inspector;
+#[cfg(feature = "tools-edit")]
+pub(in crate::shell) mod link_dialog;
 pub(in crate::shell) mod manage_tools;
 #[cfg(feature = "tools-edit")]
 pub(in crate::shell) mod marks_dialog;
@@ -24,6 +26,7 @@ pub(in crate::shell) mod summary_dialog;
 mod tabs;
 mod theme;
 mod tool_search;
+pub(in crate::shell) mod web_link_dialog;
 
 pub(in crate::shell) use accessible::install_keybindings as install_a11y_keybindings;
 pub(in crate::shell) use commands::{command_defaults, command_for_id};

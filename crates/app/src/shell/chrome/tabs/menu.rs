@@ -355,10 +355,15 @@ impl ShellFrame {
                 self.open_marks_dialog(kind, window, cx);
                 Ok(())
             }
+            #[cfg(feature = "tools-edit")]
+            MenuCommand::WebLinks { remove } => {
+                self.run_links_command(remove, cx);
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]
-            MenuCommand::PageMarks(_) => {
+            MenuCommand::PageMarks(_) | MenuCommand::WebLinks { .. } => {
                 self.notices.push(
                     crate::shell::chrome::crop_dialog::crop_refusal(None)
                         .unwrap_or_default()

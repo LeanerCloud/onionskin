@@ -114,6 +114,9 @@ impl ShellFrame {
             // The print dialog, as File > Print opens it.
             CanvasContextCommand::Print => self.open_print_dialog(window, cx),
             CanvasContextCommand::ExportSelectionAs => self.export_selection(cx),
+            // Selected text's own link; with nothing selected, the tool.
+            #[cfg(feature = "tools-edit")]
+            CanvasContextCommand::CreateLink if self.create_link_from_selection(window, cx) => {}
             // Spelled out rather than left to a wildcard: every remaining
             // entry runs its registered command or activates a tool, and an entry added without a decision
             // here has to be a compile error rather than a silent tool

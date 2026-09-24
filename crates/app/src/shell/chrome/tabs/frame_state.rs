@@ -239,6 +239,13 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) page_properties: Vec<(String, String)>,
     /// Copy To or Move To Document, while it asks where.
     pub(super) send_pages: Option<crate::shell::chrome::send_pages::SendPagesState>,
+    /// A link request taken from the canvas, for the next render to run.
+    pub(super) pending_link: Option<onionskin_core::LinkRequest>,
+    /// The Trust Manager's prompt, while it asks.
+    pub(super) web_link: Option<crate::shell::chrome::web_link_dialog::WebLinkPrompt>,
+    /// Create Link or Link Properties, while it is open.
+    #[cfg(feature = "tools-edit")]
+    pub(super) link_dialog: Option<crate::shell::chrome::link_dialog::LinkDialogState>,
     /// The page-marks dialog, while it is open.
     #[cfg(feature = "tools-edit")]
     pub(super) marks: Option<crate::shell::chrome::marks_dialog::MarksDialogState>,
@@ -424,6 +431,10 @@ impl ShellFrame {
             crop: None,
             #[cfg(feature = "tools-edit")]
             marks: None,
+            pending_link: None,
+            web_link: None,
+            #[cfg(feature = "tools-edit")]
+            link_dialog: None,
             send_pages: None,
             page_setup: Default::default(),
             unsaved: None,

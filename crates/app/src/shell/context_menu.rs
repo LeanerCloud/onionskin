@@ -125,7 +125,11 @@ impl CanvasContextCommand {
             },
             Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
             Self::RedactText => Requirement::Milestone("Available in M5 redact"),
-            Self::CreateLink => Requirement::Milestone("Available in M5 commands-core"),
+            // The selection's own link, through the Link tool's dialog; with
+            // nothing selected, the Link tool itself.
+            Self::CreateLink => {
+                Requirement::Tool(ToolCapability::Link, "Available with the Link tool")
+            }
         }
     }
 }
@@ -360,7 +364,6 @@ mod tests {
         for command in [
             CanvasContextCommand::EditText,
             CanvasContextCommand::RedactText,
-            CanvasContextCommand::CreateLink,
         ] {
             assert!(
                 reason(command).contains("M5"),
@@ -368,6 +371,22 @@ mod tests {
                 command.label(),
                 reason(command)
             );
+        }
+    }
+
+    /// Create Link is live wherever a tool makes links, with or without a
+    /// selection: with none it chooses the Link tool.
+    #[cfg(feature = "tools-edit")]
+    #[test]
+    fn create_link_is_live_with_the_link_tool() {
+        for selected in [true, false] {
+            let entries =
+                canvas_context_entries(&crate::build_registry(), selected, Refusals::default());
+            let entry = entries
+                .iter()
+                .find(|entry| entry.command == CanvasContextCommand::CreateLink)
+                .expect("present");
+            assert!(entry.availability.is_enabled(), "{selected}");
         }
     }
 

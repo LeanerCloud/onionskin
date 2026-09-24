@@ -18,7 +18,7 @@ use super::chrome::accessible::{Activation, Element};
 use super::chrome::{ShellFrame, ThemeTokens};
 use crate::a11y::State as A11yState;
 use crate::preferences::{
-    layout_label, PreferenceCategory, Preferences, ThemePreference, ZoomPreference,
+    layout_label, PreferenceCategory, Preferences, ThemePreference, WebLinks, ZoomPreference,
     MAX_RECENT_DOCUMENTS,
 };
 use onionskin_core::{MatchMode, PageLayoutMode};
@@ -35,6 +35,13 @@ pub(in crate::shell) enum PreferenceChange {
     SearchCaseSensitive(bool),
     SearchWholeWord(bool),
     SearchMode(MatchMode),
+    /// Trust Manager: what a web link does.
+    WebLinks(WebLinks),
+    /// Trust Manager: stop always allowing the site at this index of the
+    /// sorted list.
+    ForgetSite(usize),
+    /// Keep always allowing it: the choice in force, which changes nothing.
+    KeepSite(usize),
 }
 
 /// The rows of one category: a title, the choices, and which is in force.
@@ -43,7 +50,7 @@ pub(in crate::shell) enum PreferenceChange {
 /// testable without a window, which is where the "only categories with a
 /// real setting" claim is checked.
 pub(in crate::shell) struct PreferenceRow {
-    pub(in crate::shell) label: &'static str,
+    pub(in crate::shell) label: String,
     pub(in crate::shell) choices: Vec<PreferenceChoice>,
 }
 
@@ -72,7 +79,7 @@ pub(in crate::shell) fn category_rows(
         // `AUTHOR_LABEL`.
         PreferenceCategory::Commenting => Vec::new(),
         PreferenceCategory::General => vec![PreferenceRow {
-            label: "Display theme",
+            label: "Display theme".to_owned(),
             choices: ThemePreference::ALL
                 .into_iter()
                 .map(|theme| {
@@ -85,7 +92,7 @@ pub(in crate::shell) fn category_rows(
                 .collect(),
         }],
         PreferenceCategory::Documents => vec![PreferenceRow {
-            label: "Documents in recently used list",
+            label: "Documents in recently used list".to_owned(),
             choices: recent_steps(preferences.recent_documents)
                 .into_iter()
                 .map(|count| {
@@ -99,7 +106,7 @@ pub(in crate::shell) fn category_rows(
         }],
         PreferenceCategory::PageDisplay => vec![
             PreferenceRow {
-                label: "Page layout",
+                label: "Page layout".to_owned(),
                 choices: LAYOUTS
                     .into_iter()
                     .map(|layout| {
@@ -112,7 +119,7 @@ pub(in crate::shell) fn category_rows(
                     .collect(),
             },
             PreferenceRow {
-                label: "Zoom",
+                label: "Zoom".to_owned(),
                 choices: ZoomPreference::ALL
                     .into_iter()
                     .map(|zoom| {
@@ -125,27 +132,64 @@ pub(in crate::shell) fn category_rows(
                     .collect(),
             },
             PreferenceRow {
-                label: "Use line weights",
+                label: "Use line weights".to_owned(),
                 choices: switch(preferences.line_weights, PreferenceChange::LineWeights),
             },
         ],
+        PreferenceCategory::TrustManager => {
+            let mut rows = vec![PreferenceRow {
+                label: "Open web links".to_owned(),
+                choices: WebLinks::ALL
+                    .into_iter()
+                    .map(|links| {
+                        choice(
+                            links.label().to_owned(),
+                            PreferenceChange::WebLinks(links),
+                            preferences.web_links == links,
+                        )
+                    })
+                    .collect(),
+            }];
+            rows.extend(
+                preferences
+                    .trusted_sites
+                    .iter()
+                    .enumerate()
+                    .map(|(index, site)| PreferenceRow {
+                        label: site.clone(),
+                        choices: vec![
+                            choice(
+                                "Always allow".to_owned(),
+                                PreferenceChange::KeepSite(index),
+                                true,
+                            ),
+                            choice(
+                                "Forget".to_owned(),
+                                PreferenceChange::ForgetSite(index),
+                                false,
+                            ),
+                        ],
+                    }),
+            );
+            rows
+        }
         PreferenceCategory::Search => vec![
             PreferenceRow {
-                label: "Whole words only",
+                label: "Whole words only".to_owned(),
                 choices: switch(
                     preferences.search.whole_word,
                     PreferenceChange::SearchWholeWord,
                 ),
             },
             PreferenceRow {
-                label: "Case sensitive",
+                label: "Case sensitive".to_owned(),
                 choices: switch(
                     preferences.search.case_sensitive,
                     PreferenceChange::SearchCaseSensitive,
                 ),
             },
             PreferenceRow {
-                label: "Return results containing",
+                label: "Return results containing".to_owned(),
                 choices: MODES
                     .into_iter()
                     .map(|(label, mode)| {
@@ -442,6 +486,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Trust Manager: the web link policy, then one row per trusted site
+    /// whose other choice forgets it.
+    #[test]
+    fn the_trust_manager_lists_each_trusted_site() {
+        let preferences = Preferences {
+            trusted_sites: ["b.example".to_owned(), "a.example".to_owned()].into(),
+            ..Preferences::default()
+        };
+        let rows = category_rows(&preferences, PreferenceCategory::TrustManager);
+        let labels: Vec<_> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(labels, ["Open web links", "a.example", "b.example"]);
+        assert!(matches!(
+            rows[2].choices[1].change,
+            PreferenceChange::ForgetSite(1)
+        ));
+        assert_eq!(rows[0].choices.len(), 3);
     }
 
     /// A count the file allows but the row does not list still shows as the

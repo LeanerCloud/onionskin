@@ -607,10 +607,11 @@ what-does-not-transfer section demands:
   sanitize and its verifier (guarantee test 3).
   Status (2026-09-24): started. In `tools-edit`, Crop Pages and Set Page
   Boxes (advanced page boxes, Change Page Size, Remove White Margins, the
-  crop tool) and the page marks (header and footer, watermark, background,
-  Bates numbering, each with Update and Remove) have landed
-  (docs/evidence/m5-crop-pages.md, m5-page-marks.md); the rest of M5 is
-  planned.
+  crop tool), the page marks (header and footer, watermark, background,
+  Bates numbering, each with Update and Remove), and links (the Link tool,
+  Create Links from URLs, Remove Web Links, following links, the Trust
+  Manager's web-link policy) have landed (docs/evidence/m5-crop-pages.md,
+  m5-page-marks.md, m5-links.md); the rest of M5 is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

@@ -66,6 +66,7 @@ impl MenuCommand {
         ]);
         all.extend([MenuCommand::OrganizePages, MenuCommand::CropPages]);
         all.extend(onionskin_core::pages::MarkKind::ALL.map(MenuCommand::PageMarks));
+        all.extend([false, true].map(|remove| MenuCommand::WebLinks { remove }));
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
         all.extend([
             MenuCommand::Stamps,
@@ -159,6 +160,8 @@ impl MenuCommand {
                 onionskin_core::pages::MarkKind::HeaderFooter => "edit.header-footer",
                 onionskin_core::pages::MarkKind::Bates => "edit.bates-numbering",
             },
+            Self::WebLinks { remove: false } => "edit.create-links-from-urls",
+            Self::WebLinks { remove: true } => "edit.remove-web-links",
             Self::ReduceFileSize => onionskin_plugin_api::command_ids::REDUCE_FILE_SIZE,
             Self::PageSetup => "file.page-setup",
             Self::Print => onionskin_plugin_api::command_ids::PRINT,
@@ -298,6 +301,7 @@ impl MenuCommand {
             | Self::SplitDocument
             | Self::CropPages
             | Self::PageMarks(_)
+            | Self::WebLinks { .. }
             | Self::Export(_)
             | Self::SelectAll
             | Self::DeselectAll

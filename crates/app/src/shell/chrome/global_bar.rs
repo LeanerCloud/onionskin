@@ -198,6 +198,10 @@ pub(in crate::shell) enum MenuCommand {
     /// Watermark, Background, Header & Footer or Bates Numbering: the
     /// dialog that adds, updates or removes that kind of page mark.
     PageMarks(onionskin_core::pages::MarkKind),
+    /// Edit > Create Links from URLs, or with `remove`, Remove Web Links.
+    WebLinks {
+        remove: bool,
+    },
     Properties,
     SaveAsOther,
     ReduceFileSize,
@@ -749,6 +753,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                 },
             ])
             .chain(mark_entries(state))
+            .chain(link_entries(state))
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain([MenuEntry {
@@ -857,6 +862,25 @@ fn mark_entries(state: MenuState) -> Vec<MenuEntry> {
             selected: false,
         })
         .collect()
+}
+
+/// Create Links from URLs and Remove Web Links, live as the page marks are.
+fn link_entries(state: MenuState) -> Vec<MenuEntry> {
+    let availability = mark_entries(state)
+        .first()
+        .map_or(MenuAvailability::Enabled, |entry| entry.availability);
+    [
+        (false, "Create Links from URLs"),
+        (true, "Remove Web Links"),
+    ]
+    .into_iter()
+    .map(|(remove, label)| MenuEntry {
+        command: MenuCommand::WebLinks { remove },
+        label,
+        availability,
+        selected: false,
+    })
+    .collect()
 }
 
 fn mark_label(kind: onionskin_core::pages::MarkKind) -> &'static str {
@@ -1350,6 +1374,7 @@ impl MenuCommand {
             | Self::SplitDocument
             | Self::CropPages
             | Self::PageMarks(_)
+            | Self::WebLinks { .. }
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1419,6 +1444,7 @@ impl MenuCommand {
             | Self::SplitDocument
             | Self::CropPages
             | Self::PageMarks(_)
+            | Self::WebLinks { .. }
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1632,6 +1658,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::SplitDocument
         | MenuCommand::CropPages
         | MenuCommand::PageMarks(_)
+        | MenuCommand::WebLinks { .. }
         | MenuCommand::Properties
         | MenuCommand::SaveAsOther
         | MenuCommand::Save
@@ -2141,6 +2168,8 @@ mod tests {
                 "Background…",
                 "Header & Footer…",
                 "Bates Numbering…",
+                "Create Links from URLs",
+                "Remove Web Links",
                 "Rotate Page Clockwise",
                 "Rotate Page Counterclockwise",
                 "Insert Blank Page",

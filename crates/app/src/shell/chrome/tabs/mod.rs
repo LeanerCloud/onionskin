@@ -8,9 +8,12 @@ mod dialogs;
 mod export;
 mod export_selection;
 mod file;
+mod follow_link;
 mod frame_state;
 mod inspector;
 mod line_weights;
+#[cfg(feature = "tools-edit")]
+mod link_editor;
 mod manage_tools;
 #[cfg(feature = "tools-edit")]
 mod marks;
@@ -607,6 +610,7 @@ impl ShellFrame {
         // is the only signal a thumbnail has landed: it answers on its own
         // channel and changes nothing the view state would show.
         self.collect_thumbnails(cx);
+        self.collect_link_request(cx);
         self.follow_document_edits(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
@@ -1278,6 +1282,8 @@ impl Render for ShellFrame {
         if self.dialog.is_none() && !self.pending_recoveries.is_empty() {
             self.offer_next_recovery(window, cx);
         }
+        // Likewise a link the Hand or Link tool asked about.
+        self.run_pending_link(window, cx);
         let theme = self.shell_view_state.tokens();
         let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
@@ -1720,6 +1726,8 @@ mod tests {
     mod input_values;
     #[cfg(feature = "shell-test-support")]
     mod line_weights;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]
+    mod links;
     #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
     mod manage_tools;
     #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]

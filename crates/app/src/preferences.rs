@@ -122,16 +122,18 @@ pub enum PreferenceCategory {
     General,
     PageDisplay,
     Search,
+    TrustManager,
 }
 
 impl PreferenceCategory {
     /// Acrobat's order, which is alphabetical.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Commenting,
         Self::Documents,
         Self::General,
         Self::PageDisplay,
         Self::Search,
+        Self::TrustManager,
     ];
 
     pub fn label(self) -> &'static str {
@@ -141,8 +143,46 @@ impl PreferenceCategory {
             Self::General => "General",
             Self::PageDisplay => "Page Display",
             Self::Search => "Search",
+            Self::TrustManager => "Trust Manager",
         }
     }
+}
+
+/// Trust Manager: what following a link to a web page does. A site the user
+/// chose to always allow opens under Ask as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WebLinks {
+    /// Ask each time, offering to always allow the site.
+    #[default]
+    Ask,
+    /// Open every web link without asking.
+    Allow,
+    /// Open none.
+    Block,
+}
+
+impl WebLinks {
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Allow, Self::Block];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Allow => "allow",
+            Self::Block => "block",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask",
+            Self::Allow => "Always allow",
+            Self::Block => "Never",
+        }
+    }
+}
+
+fn parse_web_links(value: &str) -> Option<WebLinks> {
+    WebLinks::ALL.into_iter().find(|links| links.key() == value)
 }
 
 /// The largest recents list the Documents category offers. Acrobat's own
@@ -175,6 +215,10 @@ pub struct Preferences {
     /// hidden tool still runs from its menu entry, its shortcut and Tool
     /// Search; only its rail button goes.
     pub hidden_tools: BTreeSet<String>,
+    /// Trust Manager: whether a web link opens.
+    pub web_links: WebLinks,
+    /// Trust Manager: the sites whose links open without asking, by host.
+    pub trusted_sites: BTreeSet<String>,
 }
 
 impl Default for Preferences {
@@ -191,6 +235,8 @@ impl Default for Preferences {
             commenting_author: None,
             comment_defaults: BTreeMap::new(),
             hidden_tools: BTreeSet::new(),
+            web_links: WebLinks::default(),
+            trusted_sites: BTreeSet::new(),
         }
     }
 }
@@ -291,6 +337,8 @@ const LAYOUTS: &str =
 const ZOOMS: &str = "\"actual-size\", \"fit-page\", \"fit-width\", \"fit-height\"";
 const MODES: &str = "\"phrase\", \"any-word\", \"all-words\"";
 const FLAGS: &str = "true, false";
+const WEB_LINKS: &str = "\"ask\", \"allow\", \"block\"";
+const SITES: &str = "a list of host names in quotes";
 
 impl Preferences {
     /// The defaults with `~/.config/onionskin/preferences.json` applied when
@@ -386,6 +434,13 @@ impl Preferences {
                 self.hidden_tools.iter().cloned().collect(),
             );
         }
+        file.insert("web_links".into(), self.web_links.key().into());
+        if !self.trusted_sites.is_empty() {
+            file.insert(
+                "trusted_sites".into(),
+                self.trusted_sites.iter().cloned().collect(),
+            );
+        }
         carry_forward(path, &mut file);
         let json = serde_json::to_string_pretty(&file)
             .expect("a map of strings, bools and one number serializes");
@@ -423,6 +478,13 @@ fn apply(
         "hidden_tools" => {
             preferences.hidden_tools =
                 tool_ids(value).ok_or_else(|| unknown_value(path, setting, value, TOOL_IDS))?;
+        }
+        "web_links" => {
+            preferences.web_links = named(path, setting, value, WEB_LINKS, parse_web_links)?;
+        }
+        "trusted_sites" => {
+            preferences.trusted_sites =
+                tool_ids(value).ok_or_else(|| unknown_value(path, setting, value, SITES))?;
         }
         _ => {
             return Err(PreferencesError::UnknownSetting {
@@ -759,6 +821,8 @@ mod tests {
                 },
             )]),
             hidden_tools: BTreeSet::from(["tool.highlight".to_owned(), "tool.ink".to_owned()]),
+            web_links: WebLinks::Block,
+            trusted_sites: BTreeSet::from(["example.com".to_owned()]),
         };
 
         written.save(&path).expect("preferences save");
@@ -766,6 +830,23 @@ mod tests {
 
         assert!(errors.is_empty());
         assert_eq!(read, written);
+    }
+
+    #[test]
+    fn web_links_name_their_three_choices() {
+        let (preferences, errors) =
+            parse(r#"{"web_links": "allow", "trusted_sites": ["a.example"]}"#);
+        assert!(errors.is_empty());
+        assert_eq!(preferences.web_links, WebLinks::Allow);
+        assert!(preferences.trusted_sites.contains("a.example"));
+        let (_, errors) = parse(r#"{"web_links": "sometimes", "trusted_sites": [3]}"#);
+        assert_eq!(errors.len(), 2);
+        assert!(
+            errors[0].contains("\"ask\", \"allow\", \"block\""),
+            "{errors:?}"
+        );
+        let labels: Vec<_> = WebLinks::ALL.iter().map(|links| links.label()).collect();
+        assert_eq!(labels, ["Ask", "Always allow", "Never"]);
     }
 
     /// Every value a setting names is reported by name, and the rest of the
@@ -987,7 +1068,7 @@ mod tests {
     /// The parity row is `partial` for that reason, and a category that
     /// arrives with its feature adds a row here at the same time.
     #[test]
-    fn the_dialog_lists_the_five_categories_this_milestone_can_change() {
+    fn the_dialog_lists_the_categories_that_change_something() {
         assert_eq!(
             PreferenceCategory::ALL.map(PreferenceCategory::label),
             [
@@ -995,7 +1076,8 @@ mod tests {
                 "Documents",
                 "General",
                 "Page Display",
-                "Search"
+                "Search",
+                "Trust Manager"
             ]
         );
     }

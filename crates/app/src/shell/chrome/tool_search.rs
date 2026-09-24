@@ -540,6 +540,12 @@ fn field_node(
         TextField::Mark(field) if field.numeric() => accesskit::Role::NumberInput,
         #[cfg(feature = "tools-edit")]
         TextField::Mark(_) => accesskit::Role::TextInput,
+        #[cfg(feature = "tools-edit")]
+        TextField::Link(crate::shell::chrome::link_dialog::LinkField::Page) => {
+            accesskit::Role::NumberInput
+        }
+        #[cfg(feature = "tools-edit")]
+        TextField::Link(_) => accesskit::Role::TextInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)

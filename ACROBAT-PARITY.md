@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 146 planned / 30 partial / 80 out-of-scope. 147 implemented.**
+**403 rows: 142 planned / 30 partial / 80 out-of-scope. 151 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -301,7 +301,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
 | Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
 | Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live, with stale async completion guards. Evidence: M2-BASIC. |
-| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); Export Selection As writes RTF or text (P22); Copy With Formatting and future editing commands remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
+| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); Export Selection As writes RTF or text (P22); Create Link links the selected text (M5); Copy With Formatting, Edit Text and Redact Text remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
 | Copy with formatting / Export selected text | partial | M3 | Export Selection As, from the text context menu, writes the selection to a file: RTF with each span's family, size, bold and italic for a `.rtf` name, plain text otherwise, refused on an encrypted document. Copy With Formatting stays disabled: GPUI's clipboard carries only text and images, so a rich-text flavour needs a fork addition. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
 | Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
@@ -324,9 +324,9 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Replace image | planned | M5 | |
 | Add image | planned | M5 | |
 | Extract / save image | planned | M5 | (judgment) |
-| Add or edit links | planned | M5 | Named in the plan's `tools-edit` list. Link actions: go to a page view, open a file, open a web page, custom (Link Properties). |
-| Auto-create links from URLs | planned | M5 | (judgment) |
-| Remove web links | planned | M5 | (judgment) |
+| Add or edit links | implemented | M5 | The Link tool: drag a rectangle for Create Link, or click a link for Link Properties, where it can also be deleted; the canvas context menu's Create Link links the selected text. A link goes to a page (fitted in the window), opens a web page, or opens a file; an action it does not write, such as JavaScript, is kept as it is. Appearance: visible or invisible rectangle, thickness, line style, colour, highlight. The Hand tool follows links. Evidence: docs/evidence/m5-links.md. |
+| Auto-create links from URLs | implemented | M5 | (judgment) Edit > Create Links from URLs: every `http://`, `https://` and `www.` address in the pages' text that has no link gets an invisible one. Evidence: docs/evidence/m5-links.md. |
+| Remove web links | implemented | M5 | (judgment) Edit > Remove Web Links removes every link to a web page and keeps links to pages and files. Evidence: docs/evidence/m5-links.md. |
 | Crop pages | implemented | M5 | Named in the plan's `tools-edit` list. The Crop Pages tool: drag a rectangle, then double-click in it or press Enter, and the page's crop box becomes it. Edit > Crop Pages… opens the dialog on the page on screen: CropBox, BleedBox, TrimBox or ArtBox from four margins measured from the media box as the page is shown, Remove White Margins (each page fitted to what it draws), Set To Zero, Change Page Size, and the chosen pages or all of them. One undo step each. Margins are in points only. Twin: Organize > Crop pages. Evidence: docs/evidence/m5-crop-pages.md. |
 | Header and footer: add, update, remove | implemented | M5 | Edit > Header & Footer…: six lines (left, centre, right, top and bottom) with `[page]`, `[pages]` and `[date]`, a standard font, size, colour, margins and start number, on the chosen pages or all. Update opens on what the header was made with; Remove takes it from every page, Acrobat's own included. Drawn as artifacts, so a tagged document stays valid. Evidence: docs/evidence/m5-page-marks.md. |
 | Watermark: add, update, remove | implemented | M5 | Edit > Watermark…: text in a standard font, or a page of a PDF at a scale; rotation, opacity, alignment, and on top of or behind the page. Update and Remove as for the header and footer. An image file is not offered directly: make it a PDF first. Evidence: docs/evidence/m5-page-marks.md. |
@@ -521,7 +521,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Adobe Experience Manager / LiveCycle Rights Management policies | out-of-scope | - | Server-tethered enterprise DRM. |
 | Protected View / Enhanced Security / privileged locations | out-of-scope | - | These configure Acrobat's sandbox around document JavaScript, embedded media and network access. Onionskin's `scripting` sandbox has no I/O and no network at all, so there is nothing to loosen or tighten. |
 | JavaScript preferences (enable or disable document JavaScript) | planned | M5 | Decision 9: a user-facing preference disables document JavaScript entirely, mirroring Acrobat's. Ships with `scripting` at M5. |
-| Trust Manager: allow or block links and attachment opening | planned | M5 | The per-site and per-type trust list. It is the same trust surface as the JS-disable preference decision 9 names, so it ships with `scripting` at M5 rather than drifting to post-1.0. (judgment) |
+| Trust Manager: allow or block links and attachment opening | implemented | M5 | Preferences > Trust Manager: web links open after asking (with Always Allow for the site), always, or never, and each always-allowed site is listed and can be forgotten. A file link opens only a PDF, in Onionskin, and an attachment is only ever saved, never opened with another application, so there is no attachment type to trust. The JavaScript preference is its own row. (judgment) Evidence: docs/evidence/m5-links.md. |
 | Document properties > Security tab | planned | M6 | (judgment) |
 
 ## Toolset: Use a certificate (digital signatures)

@@ -508,6 +508,9 @@ impl ShellFrame {
             Activation::Crop(action) => self.run_crop_action(action, window, cx),
             #[cfg(feature = "tools-edit")]
             Activation::Marks(action) => self.run_marks_action(action, window, cx),
+            #[cfg(feature = "tools-edit")]
+            Activation::Link(action) => self.run_link_action(action, window, cx),
+            Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),
@@ -708,6 +711,11 @@ impl ShellFrame {
                 .marks
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            #[cfg(feature = "tools-edit")]
+            TextField::Link(field) => self
+                .link_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -861,7 +869,9 @@ impl ShellFrame {
 fn mark_text_fields() -> Vec<TextField> {
     #[cfg(feature = "tools-edit")]
     {
-        crate::shell::chrome::marks_dialog::text_fields().collect()
+        crate::shell::chrome::marks_dialog::text_fields()
+            .chain(crate::shell::chrome::link_dialog::text_fields())
+            .collect()
     }
     #[cfg(not(feature = "tools-edit"))]
     {

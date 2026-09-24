@@ -88,6 +88,9 @@ pub(in crate::shell) enum TextField {
     /// The page-marks dialog's fields.
     #[cfg(feature = "tools-edit")]
     Mark(crate::shell::chrome::marks_dialog::MarkField),
+    /// The link dialog's page number and web address.
+    #[cfg(feature = "tools-edit")]
+    Link(crate::shell::chrome::link_dialog::LinkField),
 }
 
 /// What activating an accessible element does.
@@ -148,6 +151,11 @@ pub(in crate::shell) enum Activation {
     /// The Watermark, Background, Header & Footer and Bates dialog.
     #[cfg(feature = "tools-edit")]
     Marks(crate::shell::chrome::marks_dialog::MarkAction),
+    /// Create Link and Link Properties.
+    #[cfg(feature = "tools-edit")]
+    Link(crate::shell::chrome::link_dialog::LinkAction),
+    /// The Trust Manager's Open Web Link prompt.
+    WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),
