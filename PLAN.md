@@ -651,7 +651,12 @@ what-does-not-transfer section demands:
   Perimeter and Area snap to the page's line art, read against a shared
   scale in the side panel's Measurement Info, and keep each measurement as
   a dimension comment Acrobat reads (m6-measure.md). Typing a scale,
-  precision, and rulers and grids are still to come.
+  precision, and rulers and grids are still to come. Password security has
+  landed: documents open with either password, permissions are enforced
+  by kind of change, allowed changes are saved encrypted, and File >
+  Protect Using Password and Remove Security set and lift 128-bit or
+  256-bit AES protection (m6-security.md). The remaining work is planned
+  package by package in `docs/plans-remaining.md`.
 - **Post-1.0.** The MCP server (`crates/mcp`): sessions, `describe`,
   generic invokers over the registry and `render` returning inline PNG, with
   Schist's `mcp` crate as the template; moved here from M4. Then

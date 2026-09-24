@@ -57,10 +57,10 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 94 planned / 45 partial / 80 out-of-scope. 184 implemented.**
+**403 rows: 89 planned / 44 partial / 80 out-of-scope. 190 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
-deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
+deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
 M4 carries only five rows because its deliverables (the CUPS and Windows print
 backends, then booklet and poster/tile per ruling B, and Line Weights per P22) are mostly not Acrobat surface; the MCP server moved to post-1.0. 42 rows are marked
 `(judgment)`: their milestone does not follow from plan text and a plan revision
@@ -510,11 +510,11 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Protect using a password (open password) | planned | M6 | `tools-protect`; `cos` parses encryption from M1 and writes it at M6. Acrobat's levels: 128-bit AES and 256-bit AES. |
-| Restrict editing and printing (permissions password) | planned | M6 | |
-| Set permission details (printing allowed, changes allowed, copy, accessibility) | planned | M6 | |
-| Open an encrypted document | partial | M3 | Ruling A: empty-user-password documents open read-only, with editing disabled at open and an open-time notice. Documents with a user password are refused; writing encrypted files and `/P` enforcement are M6. Accepted regression: where `/P` bit 4 allows modification, other editors may let the user change the document. Evidence: docs/evidence/m3-p1b-encryption.md. |
-| Remove security | planned | M6 | |
+| Protect using a password (open password) | implemented | M6 | File > Protect Using Password: a password to open the document, at 256-bit AES (`/R` 6) or 128-bit AES (`/R` 4); Apply saves the whole document encrypted, and qpdf opens it with the password and not without. Evidence: docs/evidence/m6-security.md. |
+| Restrict editing and printing (permissions password) | implemented | M6 | The same dialog's permissions password; a document opened without it keeps to its permissions, each kind of change refused at the one edit door with the reason shown on the entries it disables. Evidence: docs/evidence/m6-security.md. |
+| Set permission details (printing allowed, changes allowed, copy, accessibility) | implemented | M6 | Printing none, low or high resolution; changes none, page assembly, form filling, commenting, or any except extracting pages; copying; screen reader access. Evidence: docs/evidence/m6-security.md. |
+| Open an encrypted document | implemented | M6 | A document that needs a password asks for it as it opens; either password opens it, the permissions password with every permission. Allowed changes are saved encrypted with the document's key, and `/P` is enforced by kind of change. Evidence: docs/evidence/m6-security.md (superseding docs/evidence/m3-p1b-encryption.md). |
+| Remove security | implemented | M6 | File > Remove Security saves the document with none, for a document opened with its permissions password or with no restrictions. Evidence: docs/evidence/m6-security.md. |
 | Encrypt with a certificate | planned | M6 | `crypto` handles the recipient list. |
 | Encrypt only file attachments | planned | post-1.0 | A narrow variant of certificate and password encryption, with no plan consumer. (judgment) |
 | Security policies (save and reuse a security setting) | planned | post-1.0 | Convenience layer over the same primitives. |
@@ -522,7 +522,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Protected View / Enhanced Security / privileged locations | out-of-scope | - | These configure Acrobat's sandbox around document JavaScript, embedded media and network access. Onionskin's `scripting` sandbox has no I/O and no network at all, so there is nothing to loosen or tighten. |
 | JavaScript preferences (enable or disable document JavaScript) | implemented | M5 | Preferences > JavaScript > Enable Acrobat JavaScript, on by default: off, a form is filled with no script run, as typed. Decision 9. Evidence: docs/evidence/m5-forms.md. |
 | Trust Manager: allow or block links and attachment opening | implemented | M5 | Preferences > Trust Manager: web links open after asking (with Always Allow for the site), always, or never, and each always-allowed site is listed and can be forgotten. A file link opens only a PDF, in Onionskin, and an attachment is only ever saved, never opened with another application, so there is no attachment type to trust. The JavaScript preference is its own row. (judgment) Evidence: docs/evidence/m5-links.md. |
-| Document properties > Security tab | planned | M6 | (judgment) |
+| Document properties > Security tab | implemented | M6 | Security method, encryption level, the password it was opened with, and every permission as Acrobat's Document Restrictions Summary lists them. Evidence: docs/evidence/m6-security.md. |
 
 ## Toolset: Use a certificate (digital signatures)
 
