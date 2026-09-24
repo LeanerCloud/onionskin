@@ -3,8 +3,8 @@
 //! Five tabs, as Acrobat's unified UI has them. Description and Custom write
 //! `/Info` and XMP through `core::metadata`; Initial View writes the
 //! catalog's open action, layout and mode. Security and Fonts are read-only:
-//! Security because writing encryption is M6's, Fonts because a document's
-//! fonts are what its pages draw with. Read-only is carried in the
+//! Security because Protect Using Password changes it, Fonts because a
+//! document's fonts are what its pages draw with. Read-only is carried in the
 //! accessibility state, not only in how the rows look.
 //!
 //! One Apply for every tab, and one undo step for whatever it changes: the
@@ -52,31 +52,48 @@ pub(in crate::shell) struct PropertiesFacts {
     pub(in crate::shell) edit_refusal: Option<&'static str>,
 }
 
-/// The document's permissions, as the Security tab reports them: print,
-/// change, copy, comment. `None` is a document with no security.
-pub(in crate::shell) type Permissions = Option<[bool; 4]>;
-
-/// The Security tab's rows.
-pub(in crate::shell) fn security_rows(permissions: Permissions) -> Vec<(&'static str, String)> {
+/// The Security tab's rows, as Acrobat's Document Restrictions Summary
+/// lists them: what the document allows as it was opened.
+pub(in crate::shell) fn security_rows(
+    facts: &onionskin_core::security::SecurityFacts,
+    change_refusal: Option<&'static str>,
+) -> Vec<(&'static str, String)> {
     let allowed = |allowed: bool| if allowed { "Allowed" } else { "Not Allowed" }.to_owned();
-    let [print, modify, copy, comment] = permissions.unwrap_or([true; 4]);
+    let p = facts.permitted;
+    let printing = match (p.print(), p.print_high()) {
+        (false, _) => "Not Allowed",
+        (true, false) => "Low Resolution",
+        (true, true) => "High Resolution",
+    };
+    let opened = match facts.access {
+        Some(onionskin_core::security::Access::Owner) => "The permissions password",
+        Some(onionskin_core::security::Access::User) => "The open password, or none",
+        None => "No password",
+    };
     vec![
+        ("Security Method", facts.method.to_owned()),
+        ("Encryption Level", facts.level.unwrap_or("None").to_owned()),
+        ("Opened With", opened.to_owned()),
+        ("Printing", printing.to_owned()),
+        ("Changing the Document", allowed(p.modify())),
+        ("Document Assembly", allowed(p.modify() || p.assemble())),
+        ("Content Copying", allowed(p.extract())),
         (
-            "Security Method",
-            if permissions.is_some() {
-                "Password Security"
-            } else {
-                "No Security"
-            }
-            .to_owned(),
+            "Content Copying for Accessibility",
+            allowed(p.extract() || p.accessibility()),
         ),
-        ("Printing", allowed(print)),
-        ("Changing the Document", allowed(modify)),
-        ("Content Copying", allowed(copy)),
-        ("Commenting", allowed(comment)),
+        ("Commenting", allowed(p.modify() || p.annotate())),
+        (
+            "Filling of Form Fields",
+            allowed(p.modify() || p.annotate() || p.fill_forms()),
+        ),
         (
             "Changing Security Settings",
-            "Arrives in M6, with encryption".to_owned(),
+            match change_refusal {
+                Some(_) => "Needs the permissions password",
+                None => "Allowed, with File > Protect Using Password",
+            }
+            .to_owned(),
         ),
     ]
 }

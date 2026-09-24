@@ -111,6 +111,12 @@ pub(in crate::shell) enum TextField {
     /// Check Spelling's Change To.
     #[cfg(feature = "spelling")]
     SpellingChangeTo,
+    /// The password an encrypted document asks for as it opens.
+    DocumentPassword,
+    /// Protect Using Password's Document Open Password.
+    OpenPassword,
+    /// Protect Using Password's Change Permissions Password.
+    PermissionsPassword,
 }
 
 /// What activating an accessible element does.
@@ -201,6 +207,10 @@ pub(in crate::shell) enum Activation {
     LineStyle(crate::shell::line_style::StyleChoice),
     /// One of the active tool's settings, chosen or turned the other way.
     ToolSetting(String),
+    /// The password prompt's Open or Cancel.
+    Password(crate::shell::chrome::password_dialog::PasswordAction),
+    /// A control in Protect Using Password.
+    Protect(crate::shell::chrome::protect_dialog::ProtectAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),

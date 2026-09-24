@@ -534,6 +534,8 @@ impl ShellFrame {
                 }
             }
             Activation::ToolSetting(id) => self.choose_tool_setting(&id, cx),
+            Activation::Password(action) => self.run_password_action(action, window, cx),
+            Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -767,6 +769,13 @@ impl ShellFrame {
                 .advanced_search
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            TextField::DocumentPassword => {
+                self.password_prompt.as_ref().map(|prompt| &prompt.input)
+            }
+            TextField::OpenPassword | TextField::PermissionsPassword => self
+                .protect
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
         }
     }
 
@@ -848,6 +857,8 @@ impl ShellFrame {
             .chain(crate::shell::chrome::crop_dialog::TEXT_FIELDS)
             .chain(mark_text_fields())
             .chain(spelling_text_fields())
+            .chain([TextField::DocumentPassword])
+            .chain(crate::shell::chrome::protect_dialog::TEXT_FIELDS)
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

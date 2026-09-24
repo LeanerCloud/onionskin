@@ -323,7 +323,7 @@ fn the_security_tab_is_read_only_in_the_tree_and_the_dialog_leaves_it_on_close(
 #[gpui::test]
 fn an_encrypted_document_shows_its_permissions_and_cannot_apply(cx: &mut TestAppContext) {
     let bytes = std::fs::read(onionskin_corpus_testing::encrypted_fixture(
-        "r4-aes-128.pdf",
+        "r6-aes-256-print-only.pdf",
     ))
     .expect("reads");
     let (window, _) = bound_window_from_bytes(vec![("locked.pdf", bytes)], cx);
@@ -337,7 +337,12 @@ fn an_encrypted_document_shows_its_permissions_and_cannot_apply(cx: &mut TestApp
             assert!(apply.state.disabled);
             assert_eq!(
                 apply.description.as_deref(),
-                Some(onionskin_core::protection::Refusal::EncryptedSource.reason())
+                Some(
+                    onionskin_core::protection::Refusal::Restricted(
+                        onionskin_core::protection::EditKind::Content
+                    )
+                    .reason()
+                )
             );
             act(
                 frame,
@@ -350,6 +355,22 @@ fn an_encrypted_document_shows_its_permissions_and_cannot_apply(cx: &mut TestApp
                 .find(&("properties-security", 0usize).into())
                 .expect("the first security row");
             assert_eq!(method.value.as_deref(), Some("Password Security"));
+            let rows: Vec<(String, Option<String>)> = (0..11usize)
+                .filter_map(|index| tree.find(&("properties-security", index).into()))
+                .map(|row| (row.label.clone(), row.value.clone()))
+                .collect();
+            let value = |label: &str| {
+                rows.iter()
+                    .find(|(found, _)| found == label)
+                    .and_then(|(_, value)| value.clone())
+            };
+            assert_eq!(value("Encryption Level").as_deref(), Some("256-bit AES"));
+            assert_eq!(value("Printing").as_deref(), Some("High Resolution"));
+            assert_eq!(value("Commenting").as_deref(), Some("Not Allowed"));
+            assert_eq!(
+                value("Changing Security Settings").as_deref(),
+                Some("Needs the permissions password")
+            );
         })
         .unwrap();
 }

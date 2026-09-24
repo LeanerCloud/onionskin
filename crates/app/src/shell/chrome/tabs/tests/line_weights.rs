@@ -119,7 +119,7 @@ fn a_document_opened_while_line_weights_are_off_opens_without_them(cx: &mut Test
     let two_page = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/two-page.pdf");
     window
         .update(cx, |frame, _, cx| {
-            frame.open_document(&two_page, cx).expect("opens");
+            frame.open_document(&two_page, "", cx).expect("opens");
         })
         .unwrap();
     cx.run_until_parked();

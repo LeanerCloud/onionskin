@@ -185,18 +185,10 @@ fn read_source(model: &mut CanvasModel, path: &Path) -> Result<PropertiesSource,
     let fonts = document
         .fonts()
         .map_err(|error| sentence(&error.to_string()));
-    let permissions = document
-        .structure()
-        .map_err(failed)?
-        .permissions()
-        .map(|permissions| {
-            [
-                permissions.print(),
-                permissions.modify(),
-                permissions.extract(),
-                permissions.annotate(),
-            ]
-        });
+    let security = security_rows(
+        &document.security_facts(),
+        document.security_refusal().map(|refusal| refusal.reason()),
+    );
     let text = |value: Option<&str>| value.map_or_else(|| NOT_SET.to_owned(), str::to_owned);
     let date = |value: Option<&str>| value.map_or_else(|| NOT_SET.to_owned(), date_label);
     let file = vec![
@@ -223,7 +215,7 @@ fn read_source(model: &mut CanvasModel, path: &Path) -> Result<PropertiesSource,
         view,
         facts: PropertiesFacts {
             file,
-            security: security_rows(permissions),
+            security,
             fonts,
             page_count,
             edit_refusal,

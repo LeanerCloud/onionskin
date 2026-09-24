@@ -17,8 +17,10 @@ pub(in crate::shell) mod manage_tools;
 #[cfg(feature = "tools-edit")]
 pub(in crate::shell) mod marks_dialog;
 mod page_controls;
+pub(in crate::shell) mod password_dialog;
 pub(in crate::shell) mod print_dialog;
 pub(in crate::shell) mod properties_dialog;
+pub(in crate::shell) mod protect_dialog;
 mod quick_actions;
 mod rail;
 #[cfg(feature = "redact")]

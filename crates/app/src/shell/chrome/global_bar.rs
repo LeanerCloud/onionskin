@@ -218,6 +218,10 @@ pub(in crate::shell) enum MenuCommand {
         remove: bool,
     },
     Properties,
+    /// Protect Using Password: the Password Security settings.
+    ProtectWithPassword,
+    /// Remove Security: the document saved with none.
+    RemoveSecurity,
     SaveAsOther,
     ReduceFileSize,
     PageSetup,
@@ -372,6 +376,10 @@ pub(in crate::shell) struct RegistryFacts {
     /// an entry whose command declares [`CommandEffect::ReadsOut`] is disabled
     /// with it.
     read_out_refusal: Option<&'static str>,
+    /// Whether the active document is encrypted, which Remove Security needs.
+    encrypted: bool,
+    /// Why its security may not be changed, from `core`.
+    security_refusal: Option<&'static str>,
 }
 
 impl RegistryFacts {
@@ -395,6 +403,22 @@ impl RegistryFacts {
             image_tool: tool_with(registry, ToolCapability::EditImages).is_some(),
             edit_refusal: None,
             read_out_refusal: None,
+            encrypted: false,
+            security_refusal: None,
+        }
+    }
+
+    /// The same facts for a document with security, or without, that
+    /// refuses changing it for `refusal`.
+    pub(in crate::shell) fn with_security(
+        self,
+        encrypted: bool,
+        refusal: Option<&'static str>,
+    ) -> Self {
+        Self {
+            encrypted,
+            security_refusal: refusal,
+            ..self
         }
     }
 
@@ -682,6 +706,18 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     command: MenuCommand::Properties,
                     label: "Properties…",
                     availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::ProtectWithPassword,
+                    label: "Protect Using Password…",
+                    availability: security_availability(&state, false),
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::RemoveSecurity,
+                    label: "Remove Security",
+                    availability: security_availability(&state, true),
                     selected: false,
                 },
                 MenuEntry {
@@ -991,6 +1027,22 @@ fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
         availability,
         selected: false,
     })
+}
+
+/// Protect Using Password, or with `removing`, Remove Security: live on an
+/// open document whose security may be changed, and Remove Security only
+/// on one that has some.
+fn security_availability(state: &MenuState, removing: bool) -> MenuAvailability {
+    if !state.has_active_tab {
+        return MenuAvailability::Disabled("No document is open");
+    }
+    if let Some(refusal) = state.registry.security_refusal {
+        return MenuAvailability::Disabled(refusal);
+    }
+    if removing && !state.registry.encrypted {
+        return MenuAvailability::Disabled(super::tabs::NO_SECURITY);
+    }
+    MenuAvailability::Enabled
 }
 
 /// Check Spelling: live in a build that checks spelling, on an open
@@ -1539,6 +1591,8 @@ impl MenuCommand {
             | Self::PageMarks(_)
             | Self::WebLinks { .. }
             | Self::Properties
+            | Self::ProtectWithPassword
+            | Self::RemoveSecurity
             | Self::SaveAsOther
             | Self::CloseTab
             | Self::CloseOtherTabs
@@ -1615,6 +1669,8 @@ impl MenuCommand {
             | Self::PageMarks(_)
             | Self::WebLinks { .. }
             | Self::Properties
+            | Self::ProtectWithPassword
+            | Self::RemoveSecurity
             | Self::SaveAsOther
             | Self::CloseTab
             | Self::CloseOtherTabs
@@ -1836,6 +1892,8 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::PageMarks(_)
         | MenuCommand::WebLinks { .. }
         | MenuCommand::Properties
+        | MenuCommand::ProtectWithPassword
+        | MenuCommand::RemoveSecurity
         | MenuCommand::SaveAsOther
         | MenuCommand::Save
         | MenuCommand::SaveAs
@@ -1910,6 +1968,8 @@ mod tests {
             image_tool: true,
             edit_refusal: None,
             read_out_refusal: None,
+            encrypted: false,
+            security_refusal: None,
         }
     }
 

@@ -52,6 +52,8 @@ impl MenuCommand {
             MenuCommand::SaveAsOther,
             MenuCommand::ReduceFileSize,
             MenuCommand::Properties,
+            MenuCommand::ProtectWithPassword,
+            MenuCommand::RemoveSecurity,
             MenuCommand::PageSetup,
             MenuCommand::Print,
         ]);
@@ -165,6 +167,8 @@ impl MenuCommand {
             Self::ExportAllImages => "file.export-all-images",
             Self::SaveAsOther => "file.save-as-other",
             Self::Properties => "file.properties",
+            Self::ProtectWithPassword => "protect.protect-using-password",
+            Self::RemoveSecurity => "protect.remove-security",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::CropPages => onionskin_plugin_api::command_ids::CROP_PAGES,
             Self::PageMarks(kind) => match kind {
@@ -312,6 +316,8 @@ impl MenuCommand {
             | Self::Signature { .. }
             | Self::ClearForm
             | Self::CheckSpelling
+            | Self::ProtectWithPassword
+            | Self::RemoveSecurity
             | Self::DetectFields
             | Self::Redact(_)
             | Self::SummarizeComments

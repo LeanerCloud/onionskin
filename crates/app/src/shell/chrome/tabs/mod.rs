@@ -27,6 +27,7 @@ mod print;
 mod properties;
 mod redact;
 mod replace;
+mod security;
 mod send_pages;
 mod signature;
 mod skins;
@@ -43,6 +44,7 @@ pub(in crate::shell) use self::images::NO_IMAGE_TOOL;
 pub(in crate::shell) const NO_SPELLING: &str = "No installed plugin checks spelling";
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
 pub(in crate::shell) use self::redact::{RedactCommand, NO_REDACT};
+pub(in crate::shell) use self::security::NO_SECURITY;
 pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
 pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
 
@@ -299,11 +301,52 @@ impl ShellFrame {
             .collect();
         let mut opened: Vec<PathBuf> = Vec::new();
         for path in paths {
-            match self.open_document(path, cx) {
+            match self.open_document(path, "", cx) {
                 Ok(source) => opened.push(source),
-                Err(failure) => self.notices.push(failure),
+                // Asked for once the frame renders, where there is a window
+                // to show the prompt in.
+                Err(OpenFailure::NeedsPassword(path)) => {
+                    if !self.pending_passwords.contains(&path) {
+                        self.pending_passwords.push_back(path);
+                    }
+                }
+                Err(OpenFailure::Failed(failure)) => self.notices.push(failure),
             }
         }
+        self.after_opening(&before, &opened, cx);
+    }
+
+    /// Open `path` with `password`. `Err(None)` when the password does not
+    /// open it, and `Err(Some(why))` when it would not open anyway.
+    pub(super) fn open_with_password(
+        &mut self,
+        path: &Path,
+        password: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Option<String>> {
+        let before: Vec<_> = self
+            .canvases()
+            .into_iter()
+            .map(|canvas| canvas.entity_id())
+            .collect();
+        match self.open_document(path, password, cx) {
+            Ok(source) => {
+                self.after_opening(&before, &[source], cx);
+                Ok(())
+            }
+            Err(OpenFailure::NeedsPassword(_)) => Err(None),
+            Err(OpenFailure::Failed(failure)) => Err(Some(failure)),
+        }
+    }
+
+    /// What every open does once its documents are in tabs: autosave for
+    /// the new ones, the recent list, Home's cards, the menus.
+    fn after_opening(
+        &mut self,
+        before: &[gpui::EntityId],
+        opened: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
         let new: Vec<_> = self
             .canvases()
             .into_iter()
@@ -328,9 +371,15 @@ impl ShellFrame {
         cx.notify();
     }
 
-    fn open_document(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<PathBuf, String> {
-        let source = std::path::absolute(path)
-            .map_err(|error| format!("{} could not be resolved: {error}", path.display()))?;
+    fn open_document(
+        &mut self,
+        path: &Path,
+        password: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<PathBuf, OpenFailure> {
+        let source = std::path::absolute(path).map_err(|error| {
+            OpenFailure::Failed(format!("{} could not be resolved: {error}", path.display()))
+        })?;
         if let Some(index) = self.tabs.tabs().iter().position(|tab| tab.source == source) {
             // Already open. Acrobat raises the tab rather than opening the
             // document twice, and two tabs over one file would be two
@@ -338,8 +387,14 @@ impl ShellFrame {
             self.activate(index, cx);
             return Ok(source);
         }
-        let document = Document::open_path(&source)
-            .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
+        let document =
+            Document::open_path_with_password(&source, password).map_err(|error| match error {
+                onionskin_core::Error::NeedsPassword => OpenFailure::NeedsPassword(source.clone()),
+                error => OpenFailure::Failed(format!(
+                    "{} could not be opened: {error}",
+                    source.display()
+                )),
+            })?;
         let mut model = CanvasModel::new(
             document,
             crate::build_registry(),
@@ -348,7 +403,9 @@ impl ShellFrame {
                 height: crate::shell::WINDOW_HEIGHT,
             },
         )
-        .map_err(|error| format!("{} could not be opened: {error}", source.display()))?;
+        .map_err(|error| {
+            OpenFailure::Failed(format!("{} could not be opened: {error}", source.display()))
+        })?;
         self.settings.configure(&mut model);
         let repaired = repair_notice(&source, &model.provenance());
         if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
@@ -1321,12 +1378,25 @@ impl ShellFrame {
     }
 }
 
+/// Why a document did not open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OpenFailure {
+    /// It is encrypted, and the password given, if any, does not open it.
+    NeedsPassword(PathBuf),
+    /// Anything else, said for the notice bar.
+    Failed(String),
+}
+
 impl Render for ShellFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // A recovery found as documents opened is asked about here, the first
         // place after the open with a window to show a dialog in.
         if self.dialog.is_none() && !self.pending_recoveries.is_empty() {
             self.offer_next_recovery(window, cx);
+        }
+        // Likewise the password an encrypted document asked for as it opened.
+        if self.dialog.is_none() && !self.pending_passwords.is_empty() {
+            self.ask_next_password(window, cx);
         }
         // Likewise a link the Hand or Link tool asked about.
         self.run_pending_link(window, cx);
@@ -1822,6 +1892,8 @@ mod tests {
     mod redact;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod reduce;
+    #[cfg(feature = "shell-test-support")]
+    mod security;
     #[cfg(all(feature = "shell-test-support", feature = "tools-organize"))]
     mod send_pages;
     #[cfg(all(feature = "shell-test-support", feature = "tools-fill-sign"))]

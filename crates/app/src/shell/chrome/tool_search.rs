@@ -579,6 +579,9 @@ fn field_node(
         TextField::LineText => accesskit::Role::TextInput,
         #[cfg(feature = "spelling")]
         TextField::SpellingChangeTo => accesskit::Role::TextInput,
+        TextField::DocumentPassword | TextField::OpenPassword | TextField::PermissionsPassword => {
+            accesskit::Role::PasswordInput
+        }
         #[cfg(feature = "tools-form")]
         TextField::Field(field) if field.numeric() => accesskit::Role::NumberInput,
         #[cfg(feature = "tools-form")]

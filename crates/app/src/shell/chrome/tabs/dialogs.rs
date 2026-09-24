@@ -123,6 +123,8 @@ impl ShellFrame {
             self.spelling = None;
         }
         self.send_pages = None;
+        self.password_prompt = None;
+        self.protect = None;
         self.unsaved = None;
         self.recover = None;
         cx.notify();

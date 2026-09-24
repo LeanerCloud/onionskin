@@ -206,6 +206,14 @@ impl ShellFrame {
                 self.open_properties_dialog(window, cx);
                 Ok(())
             }
+            MenuCommand::ProtectWithPassword => {
+                self.open_protect_dialog(window, cx);
+                Ok(())
+            }
+            MenuCommand::RemoveSecurity => {
+                self.remove_security(cx);
+                Ok(())
+            }
             MenuCommand::SaveAsOther => {
                 self.toggle_menu_panel(MenuPanel::SaveAsOther, cx);
                 Ok(())
@@ -509,6 +517,10 @@ impl ShellFrame {
                 RegistryFacts::of(model.registry())
                     .refusing_edits(model.edit_refusal())
                     .refusing_read_out(model.refusals().read_out)
+                    .with_security(
+                        model.security_facts().level.is_some(),
+                        model.security_refusal(),
+                    )
             }
             // With no document there is no tab registry to ask, and the
             // entries still have to say whether their plugin is installed.

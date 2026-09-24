@@ -81,6 +81,10 @@ pub(in crate::shell) enum ShellDialog {
     SendPages {
         moving: bool,
     },
+    /// The password an encrypted document asks for as it opens.
+    DocumentPassword,
+    /// Protect Using Password's Password Security settings.
+    Protect,
 }
 
 impl ShellDialog {
@@ -117,6 +121,8 @@ impl ShellDialog {
             Self::Spelling => "Check Spelling",
             Self::SendPages { moving: true } => "Move Pages To",
             Self::SendPages { moving: false } => "Copy Pages To",
+            Self::DocumentPassword => "Password",
+            Self::Protect => "Password Security - Settings",
             Self::Preferences(_) => "Preferences",
             Self::Export => "Export",
             Self::About => "About Onionskin",
@@ -265,6 +271,14 @@ pub(in crate::shell) fn accessible(
         #[cfg(feature = "spelling")]
         ShellDialog::Spelling => super::chrome::spelling_dialog::accessible(
             frame.spelling_dialog().expect("check spelling has state"),
+            cx,
+        ),
+        ShellDialog::DocumentPassword => super::chrome::password_dialog::accessible(
+            frame.password_prompt().expect("the prompt has state"),
+            cx,
+        ),
+        ShellDialog::Protect => super::chrome::protect_dialog::accessible(
+            frame.protect_dialog().expect("the dialog has state"),
             cx,
         ),
         #[cfg(feature = "tools-form")]
@@ -517,6 +531,20 @@ pub(in crate::shell) fn render_dialog(
         #[cfg(feature = "spelling")]
         ShellDialog::Spelling => super::chrome::spelling_dialog::render(
             frame.spelling_dialog().expect("check spelling has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::DocumentPassword => super::chrome::password_dialog::render(
+            frame.password_prompt().expect("the prompt has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::Protect => super::chrome::protect_dialog::render(
+            frame.protect_dialog().expect("the dialog has state"),
             focused,
             theme,
             cx,

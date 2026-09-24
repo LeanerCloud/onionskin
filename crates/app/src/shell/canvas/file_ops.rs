@@ -88,7 +88,8 @@ impl CanvasModel {
             .ok_or(CanvasError::Core(onionskin_core::Error::NoPath))?
             .to_path_buf();
         let recovery = self.recovery.clone();
-        let mut reopened = DocumentFile::open(&path)?;
+        let password = self.document.borrow().password().to_owned();
+        let mut reopened = DocumentFile::open_with_password(&path, &password)?;
         if let Some(store) = recovery.clone() {
             reopened.set_recovery(store);
         }
@@ -96,6 +97,34 @@ impl CanvasModel {
         // Nothing unsaved is worth keeping now, so the recovery goes too.
         old.close()?;
         self.relayout_after_edit()
+    }
+
+    /// Save the document to its file with `protection`, or with its security
+    /// removed, and go on from what was saved. See `core::security`.
+    pub fn save_with_security(
+        &mut self,
+        protection: Option<&onionskin_core::security::Protection>,
+    ) -> Result<(), CanvasError> {
+        let path = self
+            .path()
+            .ok_or(CanvasError::Core(onionskin_core::Error::NoPath))?;
+        self.document
+            .borrow_mut()
+            .save_with_security(&path, protection)?;
+        self.relayout_after_edit()
+    }
+
+    /// What the Security tab says about the document.
+    pub fn security_facts(&self) -> onionskin_core::security::SecurityFacts {
+        self.document.borrow().security_facts()
+    }
+
+    /// Why the document's security may not be changed, if it may not.
+    pub fn security_refusal(&self) -> Option<&'static str> {
+        self.document
+            .borrow()
+            .security_refusal()
+            .map(|refusal| refusal.reason())
     }
 
     /// Every generation of the file, described, for the skins panel.

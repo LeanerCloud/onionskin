@@ -257,6 +257,13 @@ pub(in crate::shell) struct ShellFrame {
     /// Check Spelling, while it is open.
     #[cfg(feature = "spelling")]
     pub(super) spelling: Option<crate::shell::chrome::spelling_dialog::SpellingState>,
+    /// The password prompt, while it asks.
+    pub(super) password_prompt: Option<crate::shell::chrome::password_dialog::PasswordPrompt>,
+    /// Encrypted documents still to ask a password for, in the order they
+    /// were opened.
+    pub(super) pending_passwords: std::collections::VecDeque<std::path::PathBuf>,
+    /// Protect Using Password, while it is open.
+    pub(super) protect: Option<crate::shell::chrome::protect_dialog::ProtectState>,
     /// A form field's Properties, while open.
     #[cfg(feature = "tools-form")]
     pub(super) field_dialog: Option<crate::shell::chrome::field_dialog::FieldDialogState>,
@@ -472,6 +479,9 @@ impl ShellFrame {
             pending_redaction: None,
             #[cfg(feature = "spelling")]
             spelling: None,
+            password_prompt: None,
+            pending_passwords: std::collections::VecDeque::new(),
+            protect: None,
             #[cfg(feature = "tools-form")]
             field_dialog: None,
             #[cfg(feature = "tools-form")]
