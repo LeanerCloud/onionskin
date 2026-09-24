@@ -476,7 +476,7 @@ pub(crate) fn attach_annotation_as(
         return Ok((Maintenance::Untagged, None));
     };
 
-    let key = next_parent_key(tree);
+    let key = next_parent_key(tree, &crate::pages::struct_parent_keys(tx)?);
     let number = tx.reserve();
     let element = ObjRef::new(number, 0);
 
@@ -533,9 +533,17 @@ pub(crate) fn attach_annotation_as(
 /// The next free `/ParentTree` key: the file's own `/ParentTreeNextKey` when it
 /// states one past every key in use, else one past the highest key in use.
 /// Trusting a stated key that is already taken would produce a tree that is
-/// well-formed and points at the wrong element.
-fn next_parent_key(tree: &StructureTree) -> i64 {
-    let highest = tree.parent_tree.keys().copied().max().unwrap_or(-1);
+/// well-formed and points at the wrong element. A key is in use when the tree
+/// lists it or when a page or annotation holds it (`taken`), since a file
+/// whose tree lost a page's entry still has the page pointing at that key.
+fn next_parent_key(tree: &StructureTree, taken: &BTreeSet<i64>) -> i64 {
+    let highest = tree
+        .parent_tree
+        .keys()
+        .chain(taken)
+        .copied()
+        .max()
+        .unwrap_or(-1);
     match tree.parent_tree_next_key {
         Some(stated) if stated > highest => stated,
         _ => highest + 1,

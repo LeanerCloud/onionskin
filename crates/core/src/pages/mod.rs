@@ -74,6 +74,40 @@ pub(crate) fn inherited_resources(
         .and_then(|leaf| leaf.inherited.resources))
 }
 
+/// Every `/ParentTree` key a page's `/StructParents` or an annotation's
+/// `/StructParent` holds: keys taken whether the tree lists them or not.
+pub(crate) fn struct_parent_keys(
+    tx: &crate::edit::Transaction<'_>,
+) -> crate::Result<std::collections::BTreeSet<i64>> {
+    use onionskin_cos::Object;
+    let mut keys = std::collections::BTreeSet::new();
+    for leaf in ops::leaves(tx)? {
+        keys.extend(leaf.dict.get(b"StructParents").and_then(Object::as_integer));
+        let annots = match leaf.dict.get(b"Annots") {
+            Some(Object::Ref(objref)) => rewrite::object_at(tx, *objref)?,
+            other => other.cloned(),
+        };
+        for annot in annots
+            .as_ref()
+            .and_then(Object::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let dict = match annot {
+                Object::Ref(objref) => rewrite::object_at(tx, *objref)?,
+                other => Some(other.clone()),
+            };
+            keys.extend(
+                dict.as_ref()
+                    .and_then(Object::as_dict)
+                    .and_then(|dict| dict.get(b"StructParent"))
+                    .and_then(Object::as_integer),
+            );
+        }
+    }
+    Ok(keys)
+}
+
 /// Draw `content` after everything page dictionary `page` draws, as a
 /// content stream of its own, with the page's own content guarded so its
 /// leftover graphics state does not reach it.

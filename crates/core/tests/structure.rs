@@ -519,3 +519,41 @@ fn a_parent_on_a_deleted_page_stays_for_a_child_that_does() {
     let report = check(after, &structure, 1).expect("the invariant runs");
     assert!(report.is_clean(), "{:?}", report.violations);
 }
+
+/// A page holding a key its tree does not list, and a `/ParentTreeNextKey`
+/// that states it: the key is taken all the same, so a new annotation's
+/// entry does not take the page's place.
+#[test]
+fn a_key_a_page_holds_is_taken_even_when_the_tree_lost_it() {
+    let original = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> /StructParents 0 >>"
+            .to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> /StructParents 1 >>"
+            .to_vec(),
+        b"<< /Type /StructTreeRoot /K [6 0 R] /ParentTree << /Nums [0 [6 0 R]] >> /ParentTreeNextKey 1 >>".to_vec(),
+        b"<< /Type /StructElem /S /P /P 5 0 R /Pg 3 0 R /K 0 >>".to_vec(),
+    ]);
+    let base = open(&original);
+    let structure = read_structure(&base).expect("the tree reads");
+    let mut edit = EditSession::for_base(&base);
+    let key = edit
+        .transact(&base, "Attach Annotation", |tx| {
+            let annotation = tx.reserve();
+            let mut annot = onionskin_cos::Dict::new();
+            annot.set(Name::new("Type"), Object::name("Annot"));
+            annot.set(Name::new("Subtype"), Object::name("Text"));
+            tx.put_object(annotation, 0, Object::Dict(annot))?;
+            let (_, key) = attach_annotation(
+                tx,
+                &structure,
+                ObjRef::new(3, 0),
+                ObjRef::new(annotation, 0),
+            )?;
+            Ok(key)
+        })
+        .expect("attaches");
+    assert_eq!(key, Some(2), "page 2 holds key 1");
+}
