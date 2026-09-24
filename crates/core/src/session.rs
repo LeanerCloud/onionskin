@@ -361,6 +361,9 @@ pub struct Document {
     search: SearchState,
     snapshot: Option<SnapshotRequest>,
     link_request: Option<LinkRequest>,
+    /// A redaction mark the Redact tool clicked, for the shell to open its
+    /// properties.
+    redaction_request: Option<ObjRef>,
     /// Spawned by the first find, so a document nobody searches never pays for
     /// the worker's own parse of the bytes.
     search_worker: Option<DocumentSearch>,
@@ -447,6 +450,7 @@ impl Document {
             search: SearchState::default(),
             snapshot: None,
             link_request: None,
+            redaction_request: None,
             search_worker: None,
             search_snapshot: None,
             outline: None,
@@ -1480,6 +1484,15 @@ impl Document {
 
     pub fn take_link_request(&mut self) -> Option<LinkRequest> {
         self.link_request.take()
+    }
+
+    /// Ask the shell to open redaction mark `mark`'s properties.
+    pub fn request_redaction_properties(&mut self, mark: ObjRef) {
+        self.redaction_request = Some(mark);
+    }
+
+    pub fn take_redaction_request(&mut self) -> Option<ObjRef> {
+        self.redaction_request.take()
     }
 
     /// Every link in the document as the session currently has it.

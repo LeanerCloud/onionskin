@@ -357,6 +357,17 @@ fn collect(
     }
 }
 
+/// An image XObject's size and pixels, or why they cannot be handed back:
+/// what redaction paints an area of out.
+pub fn decode_image(
+    doc: &CosDocument,
+    stream: &Stream,
+) -> std::result::Result<(u32, u32, ImageColor, ImageData), String> {
+    let image = read_image(doc, 0, ObjRef::new(0, 0), stream);
+    let (color, data) = image.content?;
+    Ok((image.width, image.height, color, data))
+}
+
 fn read_image(doc: &CosDocument, page: usize, object: ObjRef, stream: &Stream) -> DocumentImage {
     let integer = |key: &[u8]| {
         stream
