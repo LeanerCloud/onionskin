@@ -113,6 +113,13 @@ pub enum ToolCapability {
     Redact,
     /// Adds form fields and changes them: Prepare Form's tools.
     PrepareForm,
+    /// Selects the images a page draws to move, resize, turn, flip,
+    /// replace, save or delete them. The Edit menu's image entries find
+    /// their tool through this.
+    EditImages,
+    /// Places a picture the user picks, handed over as a one-page PDF: the
+    /// shell makes one from an image file before [`ToolPlugin::choose`].
+    PlacesImage,
 }
 
 impl ToolCapability {
@@ -133,7 +140,9 @@ impl ToolCapability {
             | ToolCapability::EditPages
             | ToolCapability::Link
             | ToolCapability::Redact
-            | ToolCapability::PrepareForm => true,
+            | ToolCapability::PrepareForm
+            | ToolCapability::EditImages
+            | ToolCapability::PlacesImage => true,
             ToolCapability::Select
             | ToolCapability::Snapshot
             | ToolCapability::DynamicZoom

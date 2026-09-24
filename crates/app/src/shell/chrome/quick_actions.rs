@@ -721,6 +721,8 @@ mod tests {
             ToolCapability::Link => &[ToolCapability::Link],
             ToolCapability::Redact => &[ToolCapability::Redact],
             ToolCapability::PrepareForm => &[ToolCapability::PrepareForm],
+            ToolCapability::EditImages => &[ToolCapability::EditImages],
+            ToolCapability::PlacesImage => &[ToolCapability::PlacesImage],
         }
     }
 

@@ -39,3 +39,9 @@ pub const CROP_PAGES: &str = "edit.crop-pages";
 /// The Edit menu's Summarize Comments entry asks for it, and opens the dialog
 /// that offers both layouts.
 pub const SUMMARIZE_COMMENTS: &str = "comment.summarize";
+/// The selected image turned and flipped, M5 `tools-edit`: what the Edit
+/// menu's image entries run.
+pub const ROTATE_IMAGE_CLOCKWISE: &str = "image.rotate-clockwise";
+pub const ROTATE_IMAGE_COUNTERCLOCKWISE: &str = "image.rotate-counterclockwise";
+pub const FLIP_IMAGE_HORIZONTAL: &str = "image.flip-horizontal";
+pub const FLIP_IMAGE_VERTICAL: &str = "image.flip-vertical";
