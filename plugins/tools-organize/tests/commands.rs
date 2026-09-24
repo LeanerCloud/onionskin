@@ -76,6 +76,7 @@ fn an_encrypted_document_disables_every_organize_command() {
             registry: &registry,
             has_text_selection: false,
             edit_refusal,
+            comment_refusal: edit_refusal,
             read_out_refusal: None,
         };
         assert_eq!(

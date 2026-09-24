@@ -130,6 +130,35 @@ pub enum ToolCapability {
 }
 
 impl ToolCapability {
+    /// The kind of change a tool with this capability makes, which decides
+    /// what a document's security must allow; `None` for one that changes
+    /// nothing. Comments, including marks placed by Fill & Sign and
+    /// signature pictures, need the commenting permission; everything else
+    /// needs the one for changes.
+    pub fn edit_kind(self) -> Option<onionskin_core::protection::EditKind> {
+        use onionskin_core::protection::EditKind;
+        match self {
+            ToolCapability::Comment
+            | ToolCapability::Highlight
+            | ToolCapability::Draw
+            | ToolCapability::FillTextFields
+            | ToolCapability::AddSignature
+            | ToolCapability::Stamp => Some(EditKind::Comments),
+            ToolCapability::EditPages
+            | ToolCapability::Link
+            | ToolCapability::Redact
+            | ToolCapability::PrepareForm
+            | ToolCapability::EditImages
+            | ToolCapability::PlacesImage
+            | ToolCapability::EditText => Some(EditKind::Content),
+            ToolCapability::Select
+            | ToolCapability::Snapshot
+            | ToolCapability::DynamicZoom
+            | ToolCapability::ChoosesFile
+            | ToolCapability::Measure => None,
+        }
+    }
+
     /// Whether a tool with this capability changes the document.
     ///
     /// Stated per capability rather than per tool, so a new tool inherits the
@@ -137,26 +166,7 @@ impl ToolCapability {
     /// edited disables every such tool through the requirement query, without
     /// the shell keeping a list of which tools write.
     pub fn edits_document(self) -> bool {
-        match self {
-            ToolCapability::Comment
-            | ToolCapability::Highlight
-            | ToolCapability::Draw
-            | ToolCapability::FillTextFields
-            | ToolCapability::AddSignature
-            | ToolCapability::Stamp
-            | ToolCapability::EditPages
-            | ToolCapability::Link
-            | ToolCapability::Redact
-            | ToolCapability::PrepareForm
-            | ToolCapability::EditImages
-            | ToolCapability::PlacesImage
-            | ToolCapability::EditText => true,
-            ToolCapability::Select
-            | ToolCapability::Snapshot
-            | ToolCapability::DynamicZoom
-            | ToolCapability::ChoosesFile
-            | ToolCapability::Measure => false,
-        }
+        self.edit_kind().is_some()
     }
 }
 
@@ -583,6 +593,14 @@ mod tests {
             }
         );
         assert!(!ToolCapability::Measure.edits_document());
+        assert_eq!(
+            ToolCapability::Highlight.edit_kind(),
+            Some(onionskin_core::protection::EditKind::Comments)
+        );
+        assert_eq!(
+            ToolCapability::EditText.edit_kind(),
+            Some(onionskin_core::protection::EditKind::Content)
+        );
     }
 
     #[test]

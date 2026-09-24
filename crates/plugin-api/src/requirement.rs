@@ -72,6 +72,11 @@ pub struct Session<'a> {
     /// `core`'s protection query, which derives it from the document; the shell
     /// never sets it by hand.
     pub edit_refusal: Option<&'static str>,
+    /// Why the open document may not be commented on, or `None` when it may:
+    /// what a tool that places comments is refused with. A document whose
+    /// security allows comments and no other change refuses only
+    /// [`Session::edit_refusal`].
+    pub comment_refusal: Option<&'static str>,
     /// Why the open document's objects may not be copied into another file,
     /// or `None` when they may: the encrypted-source rule, for a command whose
     /// input is this session. Set from the same `core` query.
@@ -87,7 +92,16 @@ impl Requirement {
     /// "this document is encrypted" is the true answer even when the tool is
     /// also missing.
     pub fn availability(self, session: &Session<'_>) -> Availability {
-        if let (Some(refusal), true) = (session.edit_refusal, self.edits(session.registry)) {
+        let refusal = match self {
+            Requirement::Tool(capability, _)
+                if capability.edit_kind()
+                    == Some(onionskin_core::protection::EditKind::Comments) =>
+            {
+                session.comment_refusal
+            }
+            _ => session.edit_refusal,
+        };
+        if let (Some(refusal), true) = (refusal, self.edits(session.registry)) {
             return Availability::Disabled(refusal);
         }
         match self {
@@ -205,6 +219,7 @@ mod tests {
             registry,
             has_text_selection: false,
             edit_refusal: edit,
+            comment_refusal: edit,
             read_out_refusal: read_out,
         })
     }

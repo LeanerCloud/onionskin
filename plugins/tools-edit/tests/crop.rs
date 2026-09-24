@@ -116,6 +116,7 @@ fn the_plugin_registers_crop_as_an_edit() {
         registry: &registry,
         has_text_selection: false,
         edit_refusal,
+        comment_refusal: edit_refusal,
         read_out_refusal: None,
     };
     assert_eq!(

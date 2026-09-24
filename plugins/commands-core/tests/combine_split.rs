@@ -435,6 +435,7 @@ fn the_split_entry_is_disabled_where_reading_out_is_refused() {
         registry: &registry,
         has_text_selection: false,
         edit_refusal: None,
+        comment_refusal: None,
         read_out_refusal,
     };
     assert_eq!(

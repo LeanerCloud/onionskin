@@ -24,7 +24,10 @@ fn encrypted() -> Document {
 }
 
 fn refused_by_the_rule(error: &Error) -> bool {
-    matches!(error, Error::Protected(Refusal::EncryptedSource))
+    matches!(
+        error,
+        Error::Protected(Refusal::EncryptedSource | Refusal::Restricted(_))
+    )
 }
 
 /// `core`'s own read-outs, which no registry walk reaches: attachment
@@ -96,6 +99,7 @@ mod registry {
             registry: &registry,
             has_text_selection: true,
             edit_refusal: edit,
+            comment_refusal: edit,
             read_out_refusal: read_out,
         };
         assert!(

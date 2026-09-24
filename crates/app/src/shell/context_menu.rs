@@ -154,7 +154,24 @@ pub(in crate::shell) struct CanvasContextEntry {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::shell) struct Refusals {
     pub(in crate::shell) edit: Option<&'static str>,
+    /// Why comments are refused, which a document can allow where it
+    /// refuses every other change.
+    pub(in crate::shell) comment: Option<&'static str>,
     pub(in crate::shell) read_out: Option<&'static str>,
+}
+
+impl Refusals {
+    /// Why a tool with `capability` is refused, if it is.
+    pub(in crate::shell) fn for_capability(
+        self,
+        capability: onionskin_plugin_api::ToolCapability,
+    ) -> Option<&'static str> {
+        match capability.edit_kind() {
+            Some(onionskin_core::protection::EditKind::Comments) => self.comment,
+            Some(_) => self.edit,
+            None => None,
+        }
+    }
 }
 
 pub(in crate::shell) fn canvas_context_entries(
@@ -166,6 +183,7 @@ pub(in crate::shell) fn canvas_context_entries(
         registry,
         has_text_selection,
         edit_refusal: refusals.edit,
+        comment_refusal: refusals.comment,
         read_out_refusal: refusals.read_out,
     };
     CanvasContextCommand::ALL
@@ -321,13 +339,14 @@ mod tests {
     #[test]
     fn a_document_that_may_not_be_edited_disables_exactly_the_entries_that_edit() {
         let registry = crate::build_registry();
-        let refusal = "Encrypted document: editing arrives in M6";
+        let refusal = "Security: changes are not allowed";
         let open = canvas_context_entries(&registry, true, Refusals::default());
         let locked = canvas_context_entries(
             &registry,
             true,
             Refusals {
                 edit: Some(refusal),
+                comment: Some(refusal),
                 read_out: None,
             },
         );

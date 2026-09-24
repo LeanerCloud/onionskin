@@ -1,3 +1,4 @@
+use crate::shell::context_menu::Refusals;
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -198,28 +199,28 @@ impl Default for QuickActionsState {
 }
 
 impl QuickActionsState {
-    /// `edit_refusal` is the open document's reason it may not be edited, from
-    /// `core`'s protection query; `None` for a document that may be. An action
-    /// whose tool edits is refused with that reason.
+    /// `refusals` are the open document's reasons it may not be changed, from
+    /// `core`'s protection queries. An action whose tool makes a change the
+    /// document refuses is refused with that reason.
     pub(super) fn entries(
         &self,
         registry: &PluginRegistry,
-        edit_refusal: Option<&'static str>,
+        refusals: Refusals,
     ) -> Vec<QuickActionEntry> {
         self.visible_actions()
             .into_iter()
-            .map(|action| quick_action_entry(action, registry, edit_refusal))
+            .map(|action| quick_action_entry(action, registry, refusals))
             .collect()
     }
 
     pub(super) fn all_entries(
         &self,
         registry: &PluginRegistry,
-        edit_refusal: Option<&'static str>,
+        refusals: Refusals,
     ) -> Vec<QuickActionEntry> {
         QuickAction::ALL
             .into_iter()
-            .map(|action| quick_action_entry(action, registry, edit_refusal))
+            .map(|action| quick_action_entry(action, registry, refusals))
             .collect()
     }
 
@@ -333,9 +334,9 @@ fn clamp_axis(value: Pixels, maximum: Pixels) -> Pixels {
 fn quick_action_entry(
     action: QuickAction,
     registry: &PluginRegistry,
-    edit_refusal: Option<&'static str>,
+    refusals: Refusals,
 ) -> QuickActionEntry {
-    if let (Some(reason), true) = (edit_refusal, action.capability().edits_document()) {
+    if let Some(reason) = refusals.for_capability(action.capability()) {
         return QuickActionEntry {
             action,
             availability: QuickActionAvailability::Refused { reason },
@@ -742,7 +743,8 @@ mod tests {
 
     #[test]
     fn default_slots_and_missing_reasons_name_their_delivery_milestones() {
-        let entries = QuickActionsState::default().entries(&PluginRegistry::new(), None);
+        let entries =
+            QuickActionsState::default().entries(&PluginRegistry::new(), Refusals::default());
 
         assert_eq!(
             entries.iter().map(|entry| entry.action).collect::<Vec<_>>(),
@@ -781,7 +783,7 @@ mod tests {
     #[test]
     fn the_registry_makes_exactly_the_declared_quick_actions_live() {
         let registry = crate::build_registry();
-        let entries = QuickActionsState::default().entries(&registry, None);
+        let entries = QuickActionsState::default().entries(&registry, Refusals::default());
 
         let live = entries
             .iter()
@@ -820,9 +822,14 @@ mod tests {
     #[test]
     fn a_document_that_may_not_be_edited_refuses_exactly_the_editing_actions() {
         let registry = crate::build_registry();
-        let reason = "Encrypted document: editing arrives in M6";
-        let open = QuickActionsState::default().all_entries(&registry, None);
-        let locked = QuickActionsState::default().all_entries(&registry, Some(reason));
+        let reason = "Security: changes are not allowed";
+        let open = QuickActionsState::default().all_entries(&registry, Refusals::default());
+        let refusing = Refusals {
+            edit: Some(reason),
+            comment: Some(reason),
+            read_out: None,
+        };
+        let locked = QuickActionsState::default().all_entries(&registry, refusing);
 
         for (free, gated) in open.iter().zip(&locked) {
             if free.action.capability().edits_document() {
@@ -837,6 +844,25 @@ mod tests {
                 assert_eq!(gated.availability, free.availability, "{:?}", free.action);
             }
         }
+
+        // A document that allows comments and nothing else refuses only the
+        // actions that change more than comments.
+        let comments_only = Refusals {
+            edit: Some(reason),
+            comment: None,
+            read_out: None,
+        };
+        let entries = QuickActionsState::default().all_entries(&registry, comments_only);
+        for (free, gated) in open.iter().zip(&entries) {
+            let refused = free.action.capability().edit_kind()
+                == Some(onionskin_core::protection::EditKind::Content);
+            assert_eq!(
+                gated.availability.reason() == Some(reason),
+                refused,
+                "{:?}",
+                free.action
+            );
+        }
     }
 
     #[test]
@@ -848,7 +874,7 @@ mod tests {
                 capabilities: single_capability(action.capability()),
             }));
 
-            let entries = QuickActionsState::default().entries(&registry, None);
+            let entries = QuickActionsState::default().entries(&registry, Refusals::default());
             let enabled = entries
                 .iter()
                 .filter(|entry| entry.availability.is_enabled())
@@ -877,7 +903,7 @@ mod tests {
         }));
 
         let enabled = QuickActionsState::default()
-            .entries(&registry, None)
+            .entries(&registry, Refusals::default())
             .into_iter()
             .filter(|entry| entry.availability.is_enabled())
             .collect::<Vec<_>>();
@@ -916,7 +942,7 @@ mod tests {
     #[test]
     fn comment_highlight_and_draw_are_live_on_the_tools_acrobat_uses() {
         let registry = crate::build_registry();
-        let entries = QuickActionsState::default().entries(&registry, None);
+        let entries = QuickActionsState::default().entries(&registry, Refusals::default());
         let tool_id = |action| {
             let entry = entries
                 .iter()
@@ -939,7 +965,7 @@ mod tests {
 
         assert_eq!(registry.plugins().len(), 1);
         assert!(QuickActionsState::default()
-            .entries(&registry, None)
+            .entries(&registry, Refusals::default())
             .iter()
             .all(|entry| !entry.availability.is_enabled()));
     }
@@ -1022,8 +1048,8 @@ mod tests {
 
     fn described(state: &QuickActionsState, registry: &PluginRegistry) -> Element {
         accessible(
-            &state.entries(registry, None),
-            &state.all_entries(registry, None),
+            &state.entries(registry, Refusals::default()),
+            &state.all_entries(registry, Refusals::default()),
             state,
         )
     }
@@ -1074,8 +1100,12 @@ mod tests {
     fn each_described_quick_action_carries_the_action_its_click_runs() {
         let state = QuickActionsState::default();
         let registry = PluginRegistry::new();
-        let entries = state.entries(&registry, None);
-        let described = accessible(&entries, &state.all_entries(&registry, None), &state);
+        let entries = state.entries(&registry, Refusals::default());
+        let described = accessible(
+            &entries,
+            &state.all_entries(&registry, Refusals::default()),
+            &state,
+        );
 
         for entry in &entries {
             let node = described
@@ -1159,7 +1189,7 @@ mod tests {
         state.toggle_visibility(QuickAction::Draw);
 
         let row_only = described(&state, &registry);
-        let visible = state.entries(&registry, None);
+        let visible = state.entries(&registry, Refusals::default());
 
         assert_eq!(visible.len(), QuickAction::ALL.len() - 1);
         assert_eq!(row_only.children.len(), visible.len() + 2);

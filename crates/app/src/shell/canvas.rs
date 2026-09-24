@@ -681,13 +681,23 @@ impl CanvasModel {
 
     /// Both of the document's refusals, as the context menu asks for them.
     pub(super) fn refusals(&self) -> super::context_menu::Refusals {
+        // One borrow each, ended before the next: temporaries in a struct
+        // literal live to its end.
+        let edit = self.edit_refusal();
+        let comment = self
+            .document
+            .borrow()
+            .edit_refusal_as(onionskin_core::protection::EditKind::Comments)
+            .map(|refusal| refusal.reason());
+        let read_out = self
+            .document
+            .borrow_mut()
+            .read_out_refusal()
+            .map(|refusal| refusal.reason());
         super::context_menu::Refusals {
-            edit: self.edit_refusal(),
-            read_out: self
-                .document
-                .borrow_mut()
-                .read_out_refusal()
-                .map(|refusal| refusal.reason()),
+            edit,
+            comment,
+            read_out,
         }
     }
 
@@ -3474,8 +3484,8 @@ mod tests {
     /// not keep - and a plain one says nothing.
     #[test]
     fn an_encrypted_document_opens_with_a_notice_and_a_plain_one_without() {
-        let encrypted =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/encrypted/r6-aes-256-print-only.pdf");
+        let encrypted = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/encrypted/r6-aes-256-print-only.pdf");
         let mut model = CanvasModel::new(
             Document::open_path(&encrypted).expect("an encrypted document opens"),
             PluginRegistry::new(),
