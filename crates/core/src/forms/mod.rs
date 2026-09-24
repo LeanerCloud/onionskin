@@ -9,6 +9,7 @@
 //! are the `scripting` crate's; this module only reads what they are.
 
 mod appearance;
+mod author;
 mod read;
 mod write;
 
@@ -16,6 +17,7 @@ use onionskin_cos::{Dict, ObjRef};
 
 use crate::PageIndex;
 
+pub use author::{add_field, remove_field, unique_name, Added, NewField};
 pub use read::read_form;
 pub use write::{reset_fields, set_field_value};
 

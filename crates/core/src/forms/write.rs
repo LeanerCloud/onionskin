@@ -22,6 +22,19 @@ pub fn set_field_value(
     let field = form.field_by_ref(field).ok_or(Error::NotADictionary {
         number: field.number,
     })?;
+    write_field_value(tx, form.resources.as_ref(), field, value, display)
+}
+
+/// [`set_field_value`] for a field described by `field` rather than read
+/// from the form: one just made, or one whose properties just changed.
+/// `resources` is the form's `/DR`.
+pub(super) fn write_field_value(
+    tx: &mut Transaction<'_>,
+    resources: Option<&Dict>,
+    field: &Field,
+    value: &FieldValue,
+    display: Option<&str>,
+) -> Result<()> {
     let mut dict = dict_at(tx, field.objref)?;
     set_value_key(&mut dict, &field.kind, value);
     tx.put_object(
@@ -29,7 +42,7 @@ pub fn set_field_value(
         generation(tx, field.objref)?,
         Object::Dict(dict),
     )?;
-    let appearances = appearances(tx, form, field, value, display)?;
+    let appearances = appearances(tx, resources, field, value, display)?;
     for (widget, change) in field.widgets.iter().zip(appearances) {
         let mut dict = dict_at(tx, widget.objref)?;
         match change {
@@ -73,7 +86,7 @@ pub fn reset_fields(
     Ok(reset)
 }
 
-fn dict_at(tx: &Transaction<'_>, objref: ObjRef) -> Result<Dict> {
+pub(super) fn dict_at(tx: &Transaction<'_>, objref: ObjRef) -> Result<Dict> {
     tx.object(objref.number)?
         .and_then(|state| state.object.as_dict().cloned())
         .ok_or(Error::NotADictionary {
@@ -81,7 +94,7 @@ fn dict_at(tx: &Transaction<'_>, objref: ObjRef) -> Result<Dict> {
         })
 }
 
-fn generation(tx: &Transaction<'_>, objref: ObjRef) -> Result<u16> {
+pub(super) fn generation(tx: &Transaction<'_>, objref: ObjRef) -> Result<u16> {
     Ok(tx
         .object(objref.number)?
         .map_or(objref.generation, |state| state.generation))
@@ -121,7 +134,7 @@ enum Change {
 /// What each widget of `field` becomes for `value`.
 fn appearances(
     tx: &Transaction<'_>,
-    form: &Form,
+    resources: Option<&Dict>,
     field: &Field,
     value: &FieldValue,
     display: Option<&str>,
@@ -135,7 +148,7 @@ fn appearances(
         other => other.clone(),
     };
     let da = parse_da(field.appearance.as_deref());
-    let font = font(&da, form.resources.as_ref(), resolve);
+    let font = font(&da, resources, resolve);
     let shown = display.map_or_else(|| value.as_text(), str::to_owned);
     let mut out = Vec::new();
     for widget in &field.widgets {
@@ -192,10 +205,30 @@ fn appearances(
                     .collect();
                 Change::Normal(list_appearance(&frame, &da, &font, &entries))
             }
-            FieldKind::PushButton | FieldKind::Signature => Change::Keep,
+            FieldKind::PushButton => match caption(&dict, resolve) {
+                Some(caption) => {
+                    let layout = Layout {
+                        multiline: false,
+                        comb: None,
+                        align: 1,
+                    };
+                    Change::Normal(text_appearance(&frame, &da, &font, layout, &caption))
+                }
+                None => Change::Keep,
+            },
+            FieldKind::Signature => Change::Keep,
         });
     }
     Ok(out)
+}
+
+/// A push button's `/MK /CA`, what its face says.
+fn caption(widget: &Dict, resolve: impl Fn(&Object) -> Object) -> Option<String> {
+    let mk = resolve(widget.get(b"MK")?);
+    match resolve(mk.as_dict()?.get(b"CA")?) {
+        Object::String(bytes) => Some(onionskin_content::pdf_text_string(&bytes)),
+        _ => None,
+    }
 }
 
 /// A dropdown's chosen entry as it is shown: its display text.

@@ -320,6 +320,46 @@ pub(super) fn text_appearance(
     stream(frame, font, &body)
 }
 
+/// A check box's or radio button's appearances, on and off: for on, the
+/// ZapfDingbats `mark` centred (Acrobat's `4` is a check, `l` a dot), and
+/// for off, the frame alone.
+pub(super) fn button_states(frame: &Frame, mark: char, color: &[f64]) -> (Stream, Stream) {
+    let size = (frame.width.min(frame.height) * 0.8).max(1.0);
+    let code = u8::try_from(u32::from(mark)).unwrap_or(b'4');
+    // ZapfDingbats has its own glyph names, which the WinAnsi width table
+    // does not know: the widths are its AFM's.
+    let em = match mark {
+        '4' => 0.846,
+        'l' => 0.791,
+        'n' => 0.873,
+        'u' => 0.759,
+        '8' => 0.838,
+        _ => 0.8,
+    };
+    let width = em * size;
+    let x = (frame.width - width) / 2.0;
+    let y = (frame.height - size * 0.7) / 2.0;
+    let body = format!(
+        "BT /ZaDb {size} Tf {} 1 0 0 1 {x} {y} Tm {} Tj ET\n",
+        color_operator(color, false),
+        hex(&[code])
+    );
+    let font = zapf_dingbats();
+    (stream(frame, &font, &body), stream(frame, &font, ""))
+}
+
+fn zapf_dingbats() -> Font {
+    let mut dict = Dict::new();
+    dict.set(Name::new("Type"), Object::name("Font"));
+    dict.set(Name::new("Subtype"), Object::name("Type1"));
+    dict.set(Name::new("BaseFont"), Object::name("ZapfDingbats"));
+    Font {
+        name: "ZaDb".to_owned(),
+        base: "ZapfDingbats".to_owned(),
+        dict: Object::Dict(dict),
+    }
+}
+
 /// A list box's text size and row height.
 pub(super) fn list_metrics(da: &Da) -> (f64, f64) {
     let size = if da.size > 0.0 { da.size } else { AUTO_MAX };

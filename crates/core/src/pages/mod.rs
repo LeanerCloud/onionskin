@@ -61,7 +61,7 @@ mod outline;
 mod print_form;
 mod rewrite;
 
-pub(crate) use rewrite::{dict_at, resolve};
+pub(crate) use rewrite::{catalog_ref, dict_at, resolve};
 mod threads;
 mod thumbs;
 mod tree;

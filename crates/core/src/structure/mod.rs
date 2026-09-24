@@ -74,6 +74,17 @@ pub fn attach_annotation(
     maintain::attach_annotation(tx, structure, page, annotation)
 }
 
+/// Attach a `/Form` element for a form field's widget, as
+/// [`attach_annotation`] does an `/Annot` one.
+pub(crate) fn attach_form_field(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    page: ObjRef,
+    widget: ObjRef,
+) -> Result<(Maintenance, Option<i64>)> {
+    maintain::attach_annotation_as(tx, structure, page, widget, "Form")
+}
+
 /// Attach a `/Link` element for a link annotation, as
 /// [`attach_annotation`] does an `/Annot` one.
 pub(crate) fn attach_link(

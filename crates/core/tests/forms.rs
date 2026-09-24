@@ -1,8 +1,10 @@
 //! `core::forms`: the field tree read, values written with their
-//! appearances, and Clear Form, each read back from a fresh parse.
+//! appearances, Clear Form, and fields added and taken away, each read back
+//! from a fresh parse.
 
 use onionskin_core::forms::{
-    read_form, reset_fields, set_field_value, FieldKind, FieldValue, Form,
+    add_field, read_form, remove_field, reset_fields, set_field_value, unique_name, FieldKind,
+    FieldValue, Form, NewField,
 };
 use onionskin_core::{EditSession, Structure, Transaction};
 use onionskin_cos::{BytesSource, Document as CosDocument, Object};
@@ -418,4 +420,245 @@ fn a_document_without_a_form_has_an_empty_one() {
         Ok(())
     });
     assert!(missing.len() >= bytes.len());
+}
+
+/// One blank page and no form.
+fn blank() -> Vec<u8> {
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>".to_vec(),
+    ])
+}
+
+/// `bytes` with a field of `kind` added over `rect` on the first page.
+fn with_field(bytes: &[u8], kind: NewField, rect: [f64; 4]) -> Vec<u8> {
+    let before = form(bytes);
+    apply(bytes, |tx, structure| {
+        add_field(tx, structure, &before, &kind, 0, rect).map(|_| ())
+    })
+}
+
+/// The raw normal appearance of `name`'s first widget, or of its `state`.
+fn normal_appearance(bytes: &[u8], name: &str, state: Option<&str>) -> String {
+    let doc = open(bytes);
+    let form = read_form(&doc).expect("reads");
+    let widget = form.field(name).expect("the field").widgets[0].objref;
+    let dict = doc.get(widget.number).expect("widget").object;
+    let ap = doc
+        .resolve(
+            dict.as_dict()
+                .and_then(|dict| dict.get(b"AP"))
+                .expect("an /AP"),
+        )
+        .expect("resolves");
+    let mut normal = doc
+        .resolve(ap.as_dict().and_then(|ap| ap.get(b"N")).expect("an /N"))
+        .expect("resolves");
+    if let Some(state) = state {
+        normal = doc
+            .resolve(
+                normal
+                    .as_dict()
+                    .and_then(|n| n.get(state.as_bytes()))
+                    .expect("the state"),
+            )
+            .expect("resolves");
+    }
+    let stream = normal.as_stream().expect("a stream").clone();
+    String::from_utf8_lossy(&stream.raw).into_owned()
+}
+
+#[test]
+fn a_field_of_every_kind_is_added_to_a_document_without_a_form() {
+    let mut bytes = blank();
+    let kinds = [
+        (NewField::Text, [100.0, 700.0, 244.0, 722.0]),
+        (NewField::Date, [300.0, 700.0, 444.0, 722.0]),
+        (NewField::CheckBox, [100.0, 650.0, 114.0, 664.0]),
+        (
+            NewField::Radio { group: None },
+            [100.0, 600.0, 114.0, 614.0],
+        ),
+        (
+            NewField::Radio {
+                group: Some("Group1".to_owned()),
+            },
+            [130.0, 600.0, 144.0, 614.0],
+        ),
+        (NewField::ListBox, [100.0, 500.0, 244.0, 572.0]),
+        (NewField::Dropdown, [300.0, 500.0, 444.0, 522.0]),
+        (NewField::Button, [100.0, 450.0, 172.0, 472.0]),
+        (NewField::Signature, [100.0, 380.0, 280.0, 416.0]),
+    ];
+    for (kind, rect) in kinds {
+        bytes = with_field(&bytes, kind, rect);
+    }
+    let form = form(&bytes);
+    let names: Vec<&str> = form
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Text1",
+            "Date1",
+            "Check Box1",
+            "Group1",
+            "List Box1",
+            "Dropdown1",
+            "Button1",
+            "Signature1"
+        ]
+    );
+    assert!(form
+        .fields
+        .iter()
+        .all(|field| field.widgets.iter().all(|widget| widget.page == Some(0))));
+    let text = form.field("Text1").expect("text");
+    assert!(matches!(
+        text.kind,
+        FieldKind::Text {
+            multiline: false,
+            ..
+        }
+    ));
+    assert_eq!(text.widgets[0].rect, [100.0, 700.0, 244.0, 722.0]);
+    assert_eq!(text.appearance.as_deref(), Some("/Helv 0 Tf 0 g"));
+    let drawn = normal_appearance(&bytes, "Text1", None);
+    assert!(drawn.contains("0 0 0 RG 1 w"), "a black border: {drawn}");
+
+    let date = form.field("Date1").expect("date");
+    assert_eq!(
+        date.scripts.format.as_deref(),
+        Some("AFDate_FormatEx(\"mm/dd/yyyy\");")
+    );
+    assert!(date.scripts.keystroke.is_some());
+
+    let check = form.field("Check Box1").expect("check box");
+    assert_eq!(check.kind, FieldKind::CheckBox);
+    assert_eq!(check.widgets[0].on_state.as_deref(), Some("Yes"));
+    assert_eq!(check.value, FieldValue::State(None));
+    assert!(normal_appearance(&bytes, "Check Box1", Some("Yes")).contains("/ZaDb"));
+
+    let group = form.field("Group1").expect("the radio group");
+    assert_eq!(
+        group.kind,
+        FieldKind::Radio {
+            no_toggle_to_off: true
+        }
+    );
+    let states: Vec<_> = group
+        .widgets
+        .iter()
+        .map(|widget| widget.on_state.as_deref())
+        .collect();
+    assert_eq!(states, [Some("Choice1"), Some("Choice2")]);
+
+    assert!(matches!(
+        form.field("List Box1").expect("list").kind,
+        FieldKind::Choice { combo: false, .. }
+    ));
+    assert!(matches!(
+        form.field("Dropdown1").expect("dropdown").kind,
+        FieldKind::Choice { combo: true, .. }
+    ));
+    assert_eq!(
+        form.field("Button1").expect("button").kind,
+        FieldKind::PushButton
+    );
+    // "Button" in WinAnsi hex, centred on the grey face.
+    assert!(normal_appearance(&bytes, "Button1", None).contains("<427574746F6E>"));
+    assert_eq!(
+        form.field("Signature1").expect("signature").kind,
+        FieldKind::Signature
+    );
+
+    let fonts = form
+        .resources
+        .as_ref()
+        .and_then(|dr| dr.get(b"Font"))
+        .and_then(|fonts| fonts.as_dict().cloned())
+        .expect("fonts in /DR");
+    assert!(fonts.contains(b"Helv") && fonts.contains(b"ZaDb"));
+    let doc = open(&bytes);
+    let page = doc.page(0).expect("page");
+    let annots = doc
+        .resolve(page.dict.get(b"Annots").expect("/Annots"))
+        .expect("resolves");
+    assert_eq!(
+        annots.as_array().map(<[Object]>::len),
+        Some(9),
+        "every widget"
+    );
+}
+
+#[test]
+fn names_are_numbered_past_those_taken() {
+    let bytes = with_field(&blank(), NewField::Text, [0.0, 0.0, 10.0, 10.0]);
+    let bytes = with_field(&bytes, NewField::Text, [0.0, 20.0, 10.0, 30.0]);
+    let form = form(&bytes);
+    assert!(form.field("Text2").is_some());
+    assert_eq!(unique_name(&form, "Text"), "Text3");
+    assert_eq!(unique_name(&form, "Check Box"), "Check Box1");
+    assert_eq!(NewField::Text.base_name(), "Text");
+    assert_eq!(NewField::CheckBox.default_size(), (14.0, 14.0));
+    assert_eq!(NewField::Signature.default_size(), (180.0, 36.0));
+}
+
+#[test]
+fn a_field_taken_away_leaves_the_page_the_form_and_the_calculation_order() {
+    let mut bytes = with_field(&blank(), NewField::Text, [0.0, 0.0, 10.0, 10.0]);
+    bytes = with_field(
+        &bytes,
+        NewField::Radio { group: None },
+        [0.0, 20.0, 10.0, 30.0],
+    );
+    bytes = with_field(
+        &bytes,
+        NewField::Radio {
+            group: Some("Group1".into()),
+        },
+        [20.0, 20.0, 30.0, 30.0],
+    );
+    let before = form(&bytes);
+    let text = before.field("Text1").expect("text").objref;
+    let group = before.field("Group1").expect("group").objref;
+    bytes = apply(&bytes, |tx, _| remove_field(tx, &before, text));
+    let middle = form(&bytes);
+    assert!(middle.field("Text1").is_none());
+    assert!(middle.field("Group1").is_some());
+    bytes = apply(&bytes, |tx, _| remove_field(tx, &middle, group));
+    assert_eq!(form(&bytes).fields, Vec::new());
+    let doc = open(&bytes);
+    let page = doc.page(0).expect("page");
+    let left = page
+        .dict
+        .get(b"Annots")
+        .map(|annots| doc.resolve(annots).expect("resolves"))
+        .and_then(|annots| annots.as_array().map(<[Object]>::len))
+        .unwrap_or(0);
+    assert_eq!(left, 0, "no widget is left on the page");
+    let missing = apply(&bytes, |tx, _| {
+        assert!(remove_field(tx, &Form::default(), text).is_err());
+        Ok(())
+    });
+    assert!(missing.len() >= bytes.len());
+
+    let every_kind = document();
+    let before = form(&every_kind);
+    let calculated = before.calculation_order[0];
+    let name = before
+        .field_by_ref(calculated)
+        .expect("in the form")
+        .name
+        .clone();
+    let after = form(&apply(&every_kind, |tx, _| {
+        remove_field(tx, &before, calculated)
+    }));
+    assert!(after.field(&name).is_none());
+    assert!(after.calculation_order.is_empty(), "out of /CO too");
+    assert_eq!(after.fields.len(), before.fields.len() - 1);
 }
