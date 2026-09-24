@@ -438,6 +438,49 @@ fn the_hand_keeps_the_grabbed_point_under_the_cursor() {
     assert!((now.y - moved.y).abs() < 0.5, "{now:?} != {moved:?}");
 }
 
+/// A click with the hand asks the shell to follow whatever link is there;
+/// a drag, even one that comes back to where it started, does not.
+#[test]
+fn a_hand_click_asks_to_follow_a_link_and_a_drag_does_not() {
+    let mut fixture = Fixture::open("hello.pdf");
+    let mut tool = HandTool::new();
+    let at = fixture.glyph(0, 3);
+    click(&mut fixture, &mut tool, at, Modifiers::default());
+    assert_eq!(
+        fixture.doc.take_link_request(),
+        Some(onionskin_core::LinkRequest::Follow(at))
+    );
+
+    let start = fixture
+        .viewport
+        .view_point_for(at)
+        .unwrap()
+        .expect("on screen");
+    let away = fixture
+        .viewport
+        .page_point_at(ViewPoint {
+            x: start.x + 40.0,
+            y: start.y,
+        })
+        .unwrap()
+        .expect("on the page");
+    press(&mut fixture, &mut tool, at, Modifiers::default());
+    tool.on_pointer_move(&mut fixture.ctx(), input(away, Modifiers::default()));
+    let back = fixture
+        .viewport
+        .page_point_at(start)
+        .unwrap()
+        .expect("on the page");
+    tool.on_pointer_up(&mut fixture.ctx(), input(back, Modifiers::default()));
+    assert_eq!(fixture.doc.take_link_request(), None);
+
+    // Escape mid-press: nothing to follow.
+    press(&mut fixture, &mut tool, at, Modifiers::default());
+    tool.on_cancel(&mut fixture.ctx());
+    tool.on_pointer_up(&mut fixture.ctx(), input(at, Modifiers::default()));
+    assert_eq!(fixture.doc.take_link_request(), None);
+}
+
 #[test]
 fn every_tool_survives_a_page_with_no_text() {
     let mut fixture = Fixture::open("minimal.pdf");
