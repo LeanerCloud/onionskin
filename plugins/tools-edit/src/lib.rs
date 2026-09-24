@@ -13,12 +13,15 @@ use onionskin_plugin_api::{Command, CommandEffect, CommandPlugin, PluginManifest
 
 mod crop;
 mod crop_tool;
+mod image_tool;
+pub mod images;
 mod link_tool;
 pub mod links;
 pub mod marks;
 
 pub use crop::{crop_pages, crop_to_content, crop_to_rect, white_margins, CropPages};
 pub use crop_tool::CropTool;
+pub use image_tool::{AddImageTool, EditImageTool};
 pub use link_tool::LinkTool;
 
 pub struct EditToolsPlugin;
@@ -36,17 +39,45 @@ impl PluginManifest for EditToolsPlugin {
         registry.register_commands(self);
         registry.register_tool(Box::new(CropTool::new()));
         registry.register_tool(Box::new(LinkTool::new()));
+        registry.register_tool(Box::new(EditImageTool::new()));
+        registry.register_tool(Box::new(AddImageTool::new()));
     }
 }
 
 impl CommandPlugin for EditToolsPlugin {
     fn commands(&self) -> Vec<Command> {
-        vec![Command {
-            id: onionskin_plugin_api::command_ids::CROP_PAGES,
-            title: "Crop Page to Its Content",
+        use onionskin_plugin_api::command_ids as ids;
+        let image = |id, title, run: fn(&mut onionskin_core::Document) -> _| Command {
+            id,
+            title,
             keybind: None,
             effect: CommandEffect::Edits,
-            run: Box::new(|ctx| crop_to_content(ctx.doc, &[ctx.page], PageBox::Crop)),
-        }]
+            run: Box::new(move |ctx| run(ctx.doc)),
+        };
+        vec![
+            Command {
+                id: ids::CROP_PAGES,
+                title: "Crop Page to Its Content",
+                keybind: None,
+                effect: CommandEffect::Edits,
+                run: Box::new(|ctx| crop_to_content(ctx.doc, &[ctx.page], PageBox::Crop)),
+            },
+            image(
+                ids::ROTATE_IMAGE_CLOCKWISE,
+                "Rotate Image Clockwise",
+                |doc| images::rotate_selected(doc, true),
+            ),
+            image(
+                ids::ROTATE_IMAGE_COUNTERCLOCKWISE,
+                "Rotate Image Counterclockwise",
+                |doc| images::rotate_selected(doc, false),
+            ),
+            image(ids::FLIP_IMAGE_HORIZONTAL, "Flip Image Horizontal", |doc| {
+                images::flip_selected(doc, true)
+            }),
+            image(ids::FLIP_IMAGE_VERTICAL, "Flip Image Vertical", |doc| {
+                images::flip_selected(doc, false)
+            }),
+        ]
     }
 }

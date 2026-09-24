@@ -85,10 +85,18 @@ fn run_command(document: &mut Document, page: usize) -> Result<(), CommandError>
 fn the_plugin_registers_crop_as_an_edit() {
     let registry = registry();
     let ids: Vec<_> = registry.commands().iter().map(|c| c.id).collect();
-    assert_eq!(ids, [CROP_PAGES]);
-    assert_eq!(registry.commands()[0].effect, CommandEffect::Edits);
+    assert_eq!(ids[0], CROP_PAGES);
+    assert_eq!(ids.len(), 5, "crop, and the image commands: {ids:?}");
+    assert!(registry
+        .commands()
+        .iter()
+        .all(|command| command.effect == CommandEffect::Edits));
     let tools: Vec<_> = registry.tools().map(|tool| tool.id()).collect();
-    assert_eq!(tools, ["crop-pages", "link"], "and the tools that draw");
+    assert_eq!(
+        tools,
+        ["crop-pages", "link", "edit-image", "add-image"],
+        "and the tools that draw"
+    );
     assert_eq!(EditToolsPlugin.id(), "onionskin.tools-edit");
     assert_eq!(EditToolsPlugin.name(), "Edit PDF");
 

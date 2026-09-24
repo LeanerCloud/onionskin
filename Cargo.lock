@@ -4652,6 +4652,7 @@ dependencies = [
  "onionskin-corpus-testing",
  "onionskin-cos",
  "onionskin-plugin-api",
+ "tempfile",
 ]
 
 [[package]]

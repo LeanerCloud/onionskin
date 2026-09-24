@@ -14,3 +14,4 @@ onionskin-plugin-api.workspace = true
 # Crops are asserted on documents saved and parsed back.
 [dev-dependencies]
 onionskin-corpus-testing.workspace = true
+tempfile.workspace = true
