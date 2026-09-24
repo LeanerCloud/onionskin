@@ -63,6 +63,9 @@ pub(in crate::shell) enum ShellDialog {
     /// Edit > Watermark, Background, Header & Footer or Bates Numbering.
     #[cfg_attr(not(feature = "tools-edit"), allow(dead_code))]
     Marks(onionskin_core::pages::MarkKind),
+    /// The redaction dialog on one of its panels.
+    #[cfg(feature = "redact")]
+    Redact(super::chrome::redact_dialog::Panel),
     /// Edit > Add Signature, or Add Initials when `initials`.
     #[cfg_attr(not(feature = "tools-fill-sign"), allow(dead_code))]
     Signature {
@@ -98,6 +101,8 @@ impl ShellDialog {
             Self::Link { editing: false } => "Create Link",
             Self::Link { editing: true } => "Link Properties",
             Self::WebLink => "Open Web Link",
+            #[cfg(feature = "redact")]
+            Self::Redact(panel) => panel.title(),
             Self::Signature { initials: false } => "Add Signature",
             Self::Signature { initials: true } => "Add Initials",
             Self::SendPages { moving: true } => "Move Pages To",
@@ -239,6 +244,13 @@ pub(in crate::shell) fn accessible(
         ),
         #[cfg(not(feature = "tools-edit"))]
         ShellDialog::Link { .. } => Vec::new(),
+        #[cfg(feature = "redact")]
+        ShellDialog::Redact(_) => super::chrome::redact_dialog::accessible(
+            frame
+                .redact_dialog()
+                .expect("the redaction dialog has state"),
+            cx,
+        ),
         #[cfg(feature = "tools-fill-sign")]
         ShellDialog::Signature { .. } => super::chrome::signature_dialog::accessible(
             frame
@@ -469,6 +481,16 @@ pub(in crate::shell) fn render_dialog(
         .into_any_element(),
         #[cfg(not(feature = "tools-edit"))]
         ShellDialog::Link { .. } => gpui::div().into_any_element(),
+        #[cfg(feature = "redact")]
+        ShellDialog::Redact(_) => super::chrome::redact_dialog::render(
+            frame
+                .redact_dialog()
+                .expect("the redaction dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
         #[cfg(feature = "tools-fill-sign")]
         ShellDialog::Signature { .. } => super::chrome::signature_dialog::render(
             frame

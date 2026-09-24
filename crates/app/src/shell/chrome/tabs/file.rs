@@ -22,11 +22,11 @@ use crate::shell::Canvas;
 pub(super) const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl ShellFrame {
-    fn active_canvas_entity(&self) -> Option<Entity<Canvas>> {
+    pub(super) fn active_canvas_entity(&self) -> Option<Entity<Canvas>> {
         self.tabs.active().map(|tab| tab.canvas.clone())
     }
 
-    fn canvas_by_id(&self, id: EntityId) -> Option<(usize, Entity<Canvas>)> {
+    pub(super) fn canvas_by_id(&self, id: EntityId) -> Option<(usize, Entity<Canvas>)> {
         self.tabs
             .tabs()
             .iter()

@@ -23,6 +23,7 @@ mod outline;
 mod page_grid;
 mod print;
 mod properties;
+mod redact;
 mod send_pages;
 mod signature;
 mod skins;
@@ -31,6 +32,7 @@ mod summary;
 mod windows;
 
 pub(in crate::shell) use self::organize::NO_CORE_COMMANDS;
+pub(in crate::shell) use self::redact::{RedactCommand, NO_REDACT};
 pub(in crate::shell) use self::signature::NO_SIGN_TOOL;
 pub(in crate::shell) use self::stamps::NO_STAMP_TOOL;
 
@@ -613,6 +615,7 @@ impl ShellFrame {
         // channel and changes nothing the view state would show.
         self.collect_thumbnails(cx);
         self.collect_link_request(cx);
+        self.collect_redaction_request(cx);
         self.follow_document_edits(cx);
         let view = self.active_view_state(cx);
         if self.observed_view_state == view {
@@ -1286,6 +1289,7 @@ impl Render for ShellFrame {
         }
         // Likewise a link the Hand or Link tool asked about.
         self.run_pending_link(window, cx);
+        self.run_pending_redaction(window, cx);
         let theme = self.shell_view_state.tokens();
         let visibility = self.shell_view_state.visibility();
         let document_bounds = document_view_bounds(
@@ -1755,6 +1759,8 @@ mod tests {
     mod print_cups;
     #[cfg(feature = "shell-test-support")]
     mod properties;
+    #[cfg(all(feature = "shell-test-support", feature = "redact"))]
+    mod redact;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod reduce;
     #[cfg(all(feature = "shell-test-support", feature = "tools-organize"))]

@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 136 planned / 30 partial / 80 out-of-scope. 157 implemented.**
+**403 rows: 128 planned / 31 partial / 80 out-of-scope. 164 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -301,7 +301,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Pan / Hand tool | implemented | M2 | `tools-basic` Hand drag semantics are live. Evidence: M2-BASIC. |
 | Text selection | implemented | M2 | Document-order text selection and plain copy are live. Evidence: M2-BASIC. |
 | Select region / Snapshot | implemented | M2 | Region selection and bounded background clipboard PNG snapshot are live, with stale async completion guards. Evidence: M2-BASIC. |
-| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); Export Selection As writes RTF or text (P22); Create Link links the selected text (M5); Copy With Formatting, Edit Text and Redact Text remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
+| Page canvas and text-selection context menu (Copy, Copy With Formatting, Export Selection As, Highlight Text, Add Note To Text, Edit Text, Redact Text, Create Link, Take A Snapshot, Add Bookmark, Rotate, Print, page commands) | partial | M2 | The menu plus Copy, bounded background Snapshot, view rotation, second-right-click repositioning, and command-specific disabled reasons are live; Print opens the Print dialog (P17); Export Selection As writes RTF or text (P22); Create Link links the selected text and Redact Text marks it (M5); Copy With Formatting and Edit Text remain disabled. Evidence: M2-SHELL, M2-BASIC, and B3.6. |
 | Copy with formatting / Export selected text | partial | M3 | Export Selection As, from the text context menu, writes the selection to a file: RTF with each span's family, size, bold and italic for a `.rtf` name, plain text otherwise, refused on an encrypted document. Copy With Formatting stays disabled: GPUI's clipboard carries only text and images, so a rich-text flavour needs a fork addition. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Find toolbar (highlight all, next, previous) | implemented | M2 | The Edit > Find bar, highlight-all, next, and previous paths are live. Evidence: M2-SEARCH. |
 | Search results pane | implemented | M2 | Multi-hit results, click-to-navigate, and rendered pane body bounds are implemented. Evidence: M2-SEARCH, M2-PANES, and B3.1. |
@@ -497,14 +497,14 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
-| Mark text for redaction | planned | M5 | |
-| Mark images / regions for redaction | planned | M5 | Plan: image region scrub. |
-| Mark whole pages for redaction | planned | M5 | |
-| Find text and redact (search and redact, including patterns) | planned | M5 | Search lives in `content`, shared with viewer Ctrl+F. |
-| Redaction properties (fill colour or none, overlay text, font, auto-size, repeat, alignment, outline and fill opacity) | planned | M5 | |
-| Redaction code sets and the Redaction Code Editor | planned | M5 | Acrobat ships U.S. FOIA and U.S. Privacy Act sets and supports add, rename, import and export of custom sets. |
-| Apply redactions | planned | M5 | The one destructive path: a flattening rewrite, never an incremental save. Onionskin's verifier runs as part of this command (not counted: no Acrobat equivalent). |
-| Sanitize document / remove hidden information | planned | M5 | The full sweep is named in the plan's `redact` crate: scripts, hidden layers, deleted and cropped content, attachments and actions, on top of metadata. Acrobat folds it into the Apply flow. |
+| Mark text for redaction | implemented | M5 | The Redact tool: a drag that starts on text marks the text it selects; the canvas menu's Redact Text marks the selection. A mark is an ordinary undoable edit, outlined until applied. Evidence: docs/evidence/m5-redaction.md. |
+| Mark images / regions for redaction | implemented | M5 | A drag that starts off text marks a rectangle. Images under it are decoded and the covered pixels painted out (soft masks too); one that cannot be decoded is not drawn there at all. Evidence: docs/evidence/m5-redaction.md. |
+| Mark whole pages for redaction | implemented | M5 | Edit > Mark Pages for Redaction, over page numbers and ranges. Evidence: docs/evidence/m5-redaction.md. |
+| Find text and redact (search and redact, including patterns) | implemented | M5 | Edit > Find Text & Redact: words or a phrase (whole words, case sensitive), or the phone number, e-mail address, credit card, social security number and date patterns; every hit listed to check or uncheck, then marked. Search lives in `content`, shared with viewer Ctrl+F. Evidence: docs/evidence/m5-redaction.md. |
+| Redaction properties (fill colour or none, overlay text, font, auto-size, repeat, alignment, outline and fill opacity) | partial | M5 | Fill colour or none, outline colour, overlay text with its colour, size or fit, repeat and alignment, for new marks (kept in preferences) or for a clicked mark. Overlay text is set in Helvetica only, and fill opacity is not offered. Evidence: docs/evidence/m5-redaction.md. |
+| Redaction code sets and the Redaction Code Editor | implemented | M5 | The U.S. FOIA and U.S. Privacy Act sets are built in; the user's own are added, renamed, removed, imported and exported as text files, and a code is used as a mark's overlay text. Evidence: docs/evidence/m5-redaction.md. |
+| Apply redactions | implemented | M5 | The one destructive path: a flattening rewrite, never an incremental save, saved as a new file (`name_Redacted.pdf`) and opened. Text, paths, images, forms, soft-mask groups and annotations under the marks are removed; fills and overlay text drawn. Onionskin's verifier runs as part of this command and refuses a file it finds anything in (not counted: no Acrobat equivalent); guarantee test 3 runs. Evidence: docs/evidence/m5-redaction.md. |
+| Sanitize document / remove hidden information | implemented | M5 | Edit > Remove Hidden Information, or Apply Redactions' "also remove hidden information": metadata, document scripts and running actions, attachments, comments, hidden layers, content outside the crop box, private data and thumbnails; earlier revisions and deleted objects go with the rewrite. Links and form fields stay. Evidence: docs/evidence/m5-redaction.md. |
 
 ## Toolset: Protect a PDF
 

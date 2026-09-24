@@ -196,6 +196,9 @@ pub(in crate::shell) enum MenuCommand {
     Signature {
         initials: bool,
     },
+    /// The redaction commands: marking pages, finding, properties, and
+    /// writing a redacted or sanitized copy.
+    Redact(super::tabs::RedactCommand),
     SummarizeComments,
     SplitDocument,
     /// Crop Pages: the dialog, on the pages chosen.
@@ -343,6 +346,8 @@ pub(in crate::shell) struct RegistryFacts {
     stamp_tool: bool,
     /// Whether a tool places a saved signature, which Add Signature arms.
     sign_tool: bool,
+    /// Whether a tool marks for redaction, which the redaction entries need.
+    redact_tool: bool,
     /// Why the active document may not be edited, from `core`. Carried with
     /// the registry's answers because it is asked the same way: an entry whose
     /// command declares [`CommandEffect::Edits`] is disabled with it.
@@ -370,6 +375,7 @@ impl RegistryFacts {
             image_import: registry.codecs().any(|codec| codec.imports()),
             stamp_tool: tool_with(registry, ToolCapability::Stamp).is_some(),
             sign_tool: tool_with(registry, ToolCapability::AddSignature).is_some(),
+            redact_tool: tool_with(registry, ToolCapability::Redact).is_some(),
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -765,6 +771,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain(signature_entries(state))
+            .chain(redact_entries(state))
             .chain([MenuEntry {
                 command: MenuCommand::SummarizeComments,
                 label: "Summarize Comments…",
@@ -959,6 +966,35 @@ fn signature_entries(state: MenuState) -> [MenuEntry; 2] {
         availability,
         selected: false,
     })
+}
+
+/// The redaction entries: live when a tool marks for redaction and a
+/// document is open. Marking needs a document that may be edited; writing a
+/// redacted copy needs one whose content may be read out.
+fn redact_entries(state: MenuState) -> Vec<MenuEntry> {
+    super::tabs::RedactCommand::ALL
+        .into_iter()
+        .map(|command| {
+            let refusal = if command.writes_a_file() {
+                state.registry.read_out_refusal
+            } else {
+                state.registry.edit_refusal
+            };
+            let availability = match (state.registry.redact_tool, state.has_active_tab) {
+                (false, _) => MenuAvailability::Disabled(super::tabs::NO_REDACT),
+                (true, false) => MenuAvailability::Disabled("No document is open"),
+                (true, true) => {
+                    refusal.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled)
+                }
+            };
+            MenuEntry {
+                command: MenuCommand::Redact(command),
+                label: command.label(),
+                availability,
+                selected: false,
+            }
+        })
+        .collect()
 }
 
 /// The page commands, on the page the viewport is on.
@@ -1399,6 +1435,7 @@ impl MenuCommand {
             | Self::Stamps
             | Self::PasteStamp
             | Self::Signature { .. }
+            | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
@@ -1470,6 +1507,7 @@ impl MenuCommand {
             | Self::Stamps
             | Self::PasteStamp
             | Self::Signature { .. }
+            | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
@@ -1685,6 +1723,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::Stamps
         | MenuCommand::PasteStamp
         | MenuCommand::Signature { .. }
+        | MenuCommand::Redact(_)
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument
@@ -1761,6 +1800,7 @@ mod tests {
             image_import: true,
             stamp_tool: true,
             sign_tool: true,
+            redact_tool: true,
             edit_refusal: None,
             read_out_refusal: None,
         }
@@ -2085,6 +2125,7 @@ mod tests {
         );
         assert_eq!(facts.stamp_tool, cfg!(feature = "tools-comment"));
         assert_eq!(facts.sign_tool, cfg!(feature = "tools-fill-sign"));
+        assert_eq!(facts.redact_tool, cfg!(feature = "redact"));
     }
 
     /// Open Recent is live when there is something to open, and says why
@@ -2215,6 +2256,11 @@ mod tests {
                 "Paste Clipboard Image as Stamp",
                 "Add Signature…",
                 "Add Initials…",
+                "Mark Pages for Redaction…",
+                "Find Text & Redact…",
+                "Redaction Properties…",
+                "Apply Redactions…",
+                "Remove Hidden Information…",
                 "Summarize Comments…",
                 "Preferences…",
             ]

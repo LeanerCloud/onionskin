@@ -512,6 +512,8 @@ impl ShellFrame {
             Activation::Link(action) => self.run_link_action(action, window, cx),
             #[cfg(feature = "tools-fill-sign")]
             Activation::Signature(action) => self.run_signature_action(action, window, cx),
+            #[cfg(feature = "redact")]
+            Activation::Redact(action) => self.run_redact_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
@@ -723,6 +725,11 @@ impl ShellFrame {
                 .signature
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            #[cfg(feature = "redact")]
+            TextField::Redact(field) => self
+                .redact
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -875,7 +882,11 @@ impl ShellFrame {
 /// The plugin dialogs' fields, in a build that has them.
 fn mark_text_fields() -> Vec<TextField> {
     #[cfg_attr(
-        not(any(feature = "tools-edit", feature = "tools-fill-sign")),
+        not(any(
+            feature = "tools-edit",
+            feature = "tools-fill-sign",
+            feature = "redact"
+        )),
         allow(unused_mut)
     )]
     let mut fields = Vec::new();
@@ -886,6 +897,8 @@ fn mark_text_fields() -> Vec<TextField> {
     );
     #[cfg(feature = "tools-fill-sign")]
     fields.extend(crate::shell::chrome::signature_dialog::text_fields());
+    #[cfg(feature = "redact")]
+    fields.extend(crate::shell::chrome::redact_dialog::text_fields());
     fields
 }
 

@@ -18,6 +18,8 @@ pub(in crate::shell) mod print_dialog;
 pub(in crate::shell) mod properties_dialog;
 mod quick_actions;
 mod rail;
+#[cfg(feature = "redact")]
+pub(in crate::shell) mod redact_dialog;
 pub(in crate::shell) mod send_pages;
 mod side_panel;
 #[cfg(feature = "tools-fill-sign")]

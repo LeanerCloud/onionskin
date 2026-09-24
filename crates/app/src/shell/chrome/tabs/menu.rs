@@ -364,6 +364,10 @@ impl ShellFrame {
                 self.open_signature_dialog(initials, window, cx);
                 Ok(())
             }
+            MenuCommand::Redact(command) => {
+                self.run_redact_command(command, window, cx);
+                Ok(())
+            }
             // Disabled without the plugin, saying so; reached some other way,
             // it says so too.
             #[cfg(not(feature = "tools-edit"))]

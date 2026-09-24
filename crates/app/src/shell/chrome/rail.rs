@@ -171,6 +171,7 @@ fn icon_glyph(icon: &str) -> &'static str {
         "fill-circle" => "○",
         "fill-line" => "╱",
         "fill-sign" => "✍",
+        "redact" => "▇",
         _ => "?",
     }
 }
@@ -569,6 +570,7 @@ mod tests {
         assert_eq!(icon_glyph("snapshot"), "▣");
         assert_eq!(icon_glyph("fill-check"), "✓");
         assert_eq!(icon_glyph("fill-sign"), "✍");
+        assert_eq!(icon_glyph("redact"), "▇");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }
 

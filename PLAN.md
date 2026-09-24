@@ -614,8 +614,11 @@ what-does-not-transfer section demands:
   Add Text, checkmark, cross, dot, circle and line, and Sign with a typed,
   drawn or image signature or initials kept locally
   (docs/evidence/m5-crop-pages.md, m5-page-marks.md, m5-links.md,
-  m5-fill-sign.md). The rest of M5 (forms and `scripting`, text editing,
-  redaction, spell check, find-and-replace, images) is planned.
+  m5-fill-sign.md). `redact` has landed: marking text, regions, pages and
+  search results, properties and code sets, Apply Redactions as a verified
+  flattening rewrite, and Remove Hidden Information; guarantee test 3 runs
+  (m5-redaction.md). The rest of M5 (forms and `scripting`, text editing,
+  spell check, find-and-replace, images) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

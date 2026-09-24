@@ -111,6 +111,10 @@ impl ShellFrame {
         {
             self.signature = None;
         }
+        #[cfg(feature = "redact")]
+        {
+            self.redact = None;
+        }
         self.send_pages = None;
         self.unsaved = None;
         self.recover = None;

@@ -117,6 +117,9 @@ impl ShellFrame {
             // Selected text's own link; with nothing selected, the tool.
             #[cfg(feature = "tools-edit")]
             CanvasContextCommand::CreateLink if self.create_link_from_selection(window, cx) => {}
+            // The selection marked; with nothing selected, the Redact tool.
+            #[cfg(feature = "redact")]
+            CanvasContextCommand::RedactText if self.redact_selection(cx) => {}
             // Spelled out rather than left to a wildcard: every remaining
             // entry runs its registered command or activates a tool, and an entry added without a decision
             // here has to be a compile error rather than a silent tool

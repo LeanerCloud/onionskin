@@ -124,7 +124,11 @@ impl CanvasContextCommand {
                 reason: "Available with page organization",
             },
             Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
-            Self::RedactText => Requirement::Milestone("Available in M5 redact"),
+            // The selection marked for redaction; with nothing selected, the
+            // Redact tool itself.
+            Self::RedactText => {
+                Requirement::Tool(ToolCapability::Redact, "Available with the Redact tool")
+            }
             // The selection's own link, through the Link tool's dialog; with
             // nothing selected, the Link tool itself.
             Self::CreateLink => {
@@ -361,17 +365,13 @@ mod tests {
                 .expect("a disabled entry says why")
         };
 
-        for command in [
-            CanvasContextCommand::EditText,
-            CanvasContextCommand::RedactText,
-        ] {
-            assert!(
-                reason(command).contains("M5"),
-                "{} should name the milestone it waits on, said {:?}",
-                command.label(),
-                reason(command)
-            );
-        }
+        let command = CanvasContextCommand::EditText;
+        assert!(
+            reason(command).contains("M5"),
+            "{} should name the milestone it waits on, said {:?}",
+            command.label(),
+            reason(command)
+        );
     }
 
     /// Create Link is live wherever a tool makes links, with or without a
@@ -385,6 +385,21 @@ mod tests {
             let entry = entries
                 .iter()
                 .find(|entry| entry.command == CanvasContextCommand::CreateLink)
+                .expect("present");
+            assert!(entry.availability.is_enabled(), "{selected}");
+        }
+    }
+
+    /// Redact Text is live wherever a tool marks for redaction.
+    #[cfg(feature = "redact")]
+    #[test]
+    fn redact_text_is_live_with_the_redact_tool() {
+        for selected in [true, false] {
+            let entries =
+                canvas_context_entries(&crate::build_registry(), selected, Refusals::default());
+            let entry = entries
+                .iter()
+                .find(|entry| entry.command == CanvasContextCommand::RedactText)
                 .expect("present");
             assert!(entry.availability.is_enabled(), "{selected}");
         }

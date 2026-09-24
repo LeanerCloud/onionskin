@@ -73,8 +73,9 @@ impl MenuCommand {
             MenuCommand::PasteStamp,
             MenuCommand::Signature { initials: false },
             MenuCommand::Signature { initials: true },
-            MenuCommand::SummarizeComments,
         ]);
+        all.extend(super::tabs::RedactCommand::ALL.map(MenuCommand::Redact));
+        all.extend([MenuCommand::SummarizeComments]);
         all.extend([
             MenuCommand::Preferences,
             MenuCommand::PreviousView,
@@ -152,6 +153,7 @@ impl MenuCommand {
             Self::PasteStamp => "comment.paste-stamp",
             Self::Signature { initials: false } => "fill-sign.add-signature",
             Self::Signature { initials: true } => "fill-sign.add-initials",
+            Self::Redact(command) => command.id(),
             Self::SummarizeComments => onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS,
             Self::ExportAllImages => "file.export-all-images",
             Self::SaveAsOther => "file.save-as-other",
@@ -300,6 +302,7 @@ impl MenuCommand {
             | Self::Stamps
             | Self::PasteStamp
             | Self::Signature { .. }
+            | Self::Redact(_)
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SaveAsOther

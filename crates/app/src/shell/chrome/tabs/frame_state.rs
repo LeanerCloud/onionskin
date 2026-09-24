@@ -246,6 +246,12 @@ pub(in crate::shell) struct ShellFrame {
     /// Create Link or Link Properties, while it is open.
     #[cfg(feature = "tools-edit")]
     pub(super) link_dialog: Option<crate::shell::chrome::link_dialog::LinkDialogState>,
+    /// The redaction dialog, while it is open.
+    #[cfg(feature = "redact")]
+    pub(super) redact: Option<crate::shell::chrome::redact_dialog::RedactDialogState>,
+    /// A redaction mark the Redact tool clicked, for the next render to open.
+    #[cfg(feature = "redact")]
+    pub(super) pending_redaction: Option<onionskin_core::ObjRef>,
     /// Add Signature or Add Initials, while it is open.
     #[cfg(feature = "tools-fill-sign")]
     pub(super) signature: Option<crate::shell::chrome::signature_dialog::SignatureDialogState>,
@@ -440,6 +446,10 @@ impl ShellFrame {
             link_dialog: None,
             #[cfg(feature = "tools-fill-sign")]
             signature: None,
+            #[cfg(feature = "redact")]
+            redact: None,
+            #[cfg(feature = "redact")]
+            pending_redaction: None,
             send_pages: None,
             page_setup: Default::default(),
             unsaved: None,
