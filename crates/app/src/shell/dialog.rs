@@ -53,6 +53,9 @@ pub(in crate::shell) enum ShellDialog {
     AdvancedSearch,
     /// Edit > Crop Pages, and the thumbnails' and grid's Crop Pages.
     CropPages,
+    /// Edit > Watermark, Background, Header & Footer or Bates Numbering.
+    #[cfg_attr(not(feature = "tools-edit"), allow(dead_code))]
+    Marks(onionskin_core::pages::MarkKind),
     /// Organize Pages' Copy To and Move To Document.
     SendPages {
         moving: bool,
@@ -79,6 +82,7 @@ impl ShellDialog {
             Self::ManageTools => "Manage Tools",
             Self::AdvancedSearch => "Advanced Search",
             Self::CropPages => "Crop Pages",
+            Self::Marks(kind) => mark_title(kind),
             Self::SendPages { moving: true } => "Move Pages To",
             Self::SendPages { moving: false } => "Copy Pages To",
             Self::Preferences(_) => "Preferences",
@@ -87,6 +91,17 @@ impl ShellDialog {
             Self::KeyboardShortcuts => "Keyboard Shortcuts",
             Self::ZoomTo => "Zoom To",
         }
+    }
+}
+
+/// A page-marks dialog's title, which is also its Edit menu entry's name.
+pub(in crate::shell) fn mark_title(kind: onionskin_core::pages::MarkKind) -> &'static str {
+    use onionskin_core::pages::MarkKind;
+    match kind {
+        MarkKind::Watermark => "Watermark",
+        MarkKind::Background => "Background",
+        MarkKind::HeaderFooter => "Header & Footer",
+        MarkKind::Bates => "Bates Numbering",
     }
 }
 
@@ -198,6 +213,13 @@ pub(in crate::shell) fn accessible(
                 .send_pages_dialog()
                 .expect("the send dialog has state"),
         ),
+        #[cfg(feature = "tools-edit")]
+        ShellDialog::Marks(_) => super::chrome::marks_dialog::accessible(
+            frame.marks_dialog().expect("the marks dialog has state"),
+            cx,
+        ),
+        #[cfg(not(feature = "tools-edit"))]
+        ShellDialog::Marks(_) => Vec::new(),
         ShellDialog::CropPages => super::chrome::crop_dialog::accessible(
             frame.crop_dialog().expect("crop pages has state"),
             cx,
@@ -395,6 +417,16 @@ pub(in crate::shell) fn render_dialog(
             cx,
         )
         .into_any_element(),
+        #[cfg(feature = "tools-edit")]
+        ShellDialog::Marks(_) => super::chrome::marks_dialog::render(
+            frame.marks_dialog().expect("the marks dialog has state"),
+            focused,
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        #[cfg(not(feature = "tools-edit"))]
+        ShellDialog::Marks(_) => gpui::div().into_any_element(),
         ShellDialog::CropPages => super::chrome::crop_dialog::render(
             frame.crop_dialog().expect("crop pages has state"),
             focused,

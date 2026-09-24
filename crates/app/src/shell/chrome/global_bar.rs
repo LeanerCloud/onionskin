@@ -195,6 +195,9 @@ pub(in crate::shell) enum MenuCommand {
     SplitDocument,
     /// Crop Pages: the dialog, on the pages chosen.
     CropPages,
+    /// Watermark, Background, Header & Footer or Bates Numbering: the
+    /// dialog that adds, updates or removes that kind of page mark.
+    PageMarks(onionskin_core::pages::MarkKind),
     Properties,
     SaveAsOther,
     ReduceFileSize,
@@ -745,6 +748,7 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
             ])
+            .chain(mark_entries(state))
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain([MenuEntry {
@@ -833,6 +837,36 @@ fn registry_command(state: MenuState, command: MenuCommand) -> MenuAvailability 
         Some(CommandEffect::Reads) => None,
     };
     refusal.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled)
+}
+
+/// Watermark, Background, Header & Footer and Bates Numbering: live on an
+/// open document that may be edited, in a build with `tools-edit`.
+fn mark_entries(state: MenuState) -> Vec<MenuEntry> {
+    let availability = if !state.has_active_tab {
+        MenuAvailability::Disabled("No document is open")
+    } else {
+        super::crop_dialog::crop_refusal(state.registry.edit_refusal)
+            .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled)
+    };
+    onionskin_core::pages::MarkKind::ALL
+        .into_iter()
+        .map(|kind| MenuEntry {
+            command: MenuCommand::PageMarks(kind),
+            label: mark_label(kind),
+            availability,
+            selected: false,
+        })
+        .collect()
+}
+
+fn mark_label(kind: onionskin_core::pages::MarkKind) -> &'static str {
+    use onionskin_core::pages::MarkKind;
+    match kind {
+        MarkKind::Watermark => "Watermark…",
+        MarkKind::Background => "Background…",
+        MarkKind::HeaderFooter => "Header & Footer…",
+        MarkKind::Bates => "Bates Numbering…",
+    }
 }
 
 /// Combine needs no open document, only the plugin that does the work. The
@@ -1315,6 +1349,7 @@ impl MenuCommand {
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CropPages
+            | Self::PageMarks(_)
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1383,6 +1418,7 @@ impl MenuCommand {
             | Self::ExportAllImages
             | Self::SplitDocument
             | Self::CropPages
+            | Self::PageMarks(_)
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1595,6 +1631,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument
         | MenuCommand::CropPages
+        | MenuCommand::PageMarks(_)
         | MenuCommand::Properties
         | MenuCommand::SaveAsOther
         | MenuCommand::Save
@@ -2100,6 +2137,10 @@ mod tests {
                 "Advanced Search…",
                 "Organize Pages",
                 "Crop Pages…",
+                "Watermark…",
+                "Background…",
+                "Header & Footer…",
+                "Bates Numbering…",
                 "Rotate Page Clockwise",
                 "Rotate Page Counterclockwise",
                 "Insert Blank Page",

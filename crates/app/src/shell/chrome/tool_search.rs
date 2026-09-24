@@ -536,6 +536,10 @@ fn field_node(
         TextField::Search | TextField::Find | TextField::AdvancedQuery => {
             accesskit::Role::SearchInput
         }
+        #[cfg(feature = "tools-edit")]
+        TextField::Mark(field) if field.numeric() => accesskit::Role::NumberInput,
+        #[cfg(feature = "tools-edit")]
+        TextField::Mark(_) => accesskit::Role::TextInput,
     };
     let mut node = super::accessible::Element::new(id, role, label)
         .with_value(query)

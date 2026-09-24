@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 150 planned / 30 partial / 80 out-of-scope. 143 implemented.**
+**403 rows: 146 planned / 30 partial / 80 out-of-scope. 147 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -328,10 +328,10 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Auto-create links from URLs | planned | M5 | (judgment) |
 | Remove web links | planned | M5 | (judgment) |
 | Crop pages | implemented | M5 | Named in the plan's `tools-edit` list. The Crop Pages tool: drag a rectangle, then double-click in it or press Enter, and the page's crop box becomes it. Edit > Crop Pages… opens the dialog on the page on screen: CropBox, BleedBox, TrimBox or ArtBox from four margins measured from the media box as the page is shown, Remove White Margins (each page fitted to what it draws), Set To Zero, Change Page Size, and the chosen pages or all of them. One undo step each. Margins are in points only. Twin: Organize > Crop pages. Evidence: docs/evidence/m5-crop-pages.md. |
-| Header and footer: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
-| Watermark: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
-| Background: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
-| Bates numbering: add, remove, add to file names | planned | M5 | Named in the plan's `tools-edit` list. |
+| Header and footer: add, update, remove | implemented | M5 | Edit > Header & Footer…: six lines (left, centre, right, top and bottom) with `[page]`, `[pages]` and `[date]`, a standard font, size, colour, margins and start number, on the chosen pages or all. Update opens on what the header was made with; Remove takes it from every page, Acrobat's own included. Drawn as artifacts, so a tagged document stays valid. Evidence: docs/evidence/m5-page-marks.md. |
+| Watermark: add, update, remove | implemented | M5 | Edit > Watermark…: text in a standard font, or a page of a PDF at a scale; rotation, opacity, alignment, and on top of or behind the page. Update and Remove as for the header and footer. An image file is not offered directly: make it a PDF first. Evidence: docs/evidence/m5-page-marks.md. |
+| Background: add, update, remove | implemented | M5 | Edit > Background…: a colour filling the page, or a page of a PDF at a scale, rotation, opacity and alignment, always behind the page's content. Update and Remove as for the header and footer. Evidence: docs/evidence/m5-page-marks.md. |
+| Bates numbering: add, remove, add to file names | implemented | M5 | Edit > Bates Numbering…: prefix, suffix, digits and start, in any of the six places, on this document and then on other files chosen after it, the numbers running on. The other files are written as new files, their names given added text and, if asked, their first and last numbers; nothing is written unless every file numbers, and nothing is overwritten. Remove takes the numbers off and leaves a header or footer. Evidence: docs/evidence/m5-page-marks.md. |
 | Edit a scanned PDF (OCR-then-edit) | planned | post-1.0 | Depends on the post-1.0 `neural` OCR slot. |
 | Edit a signed or certified PDF | planned | M6 | Structural for Onionskin: an incremental update is the only legal way, and the plan makes it the default save path. |
 | Generate or edit an image with Adobe Express / Firefly | out-of-scope | - | Cloud-tethered generative service. |

@@ -65,6 +65,7 @@ impl MenuCommand {
             MenuCommand::AdvancedSearch,
         ]);
         all.extend([MenuCommand::OrganizePages, MenuCommand::CropPages]);
+        all.extend(onionskin_core::pages::MarkKind::ALL.map(MenuCommand::PageMarks));
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
         all.extend([
             MenuCommand::Stamps,
@@ -152,6 +153,12 @@ impl MenuCommand {
             Self::Properties => "file.properties",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
             Self::CropPages => onionskin_plugin_api::command_ids::CROP_PAGES,
+            Self::PageMarks(kind) => match kind {
+                onionskin_core::pages::MarkKind::Watermark => "edit.watermark",
+                onionskin_core::pages::MarkKind::Background => "edit.background",
+                onionskin_core::pages::MarkKind::HeaderFooter => "edit.header-footer",
+                onionskin_core::pages::MarkKind::Bates => "edit.bates-numbering",
+            },
             Self::ReduceFileSize => onionskin_plugin_api::command_ids::REDUCE_FILE_SIZE,
             Self::PageSetup => "file.page-setup",
             Self::Print => onionskin_plugin_api::command_ids::PRINT,
@@ -290,6 +297,7 @@ impl MenuCommand {
             | Self::SaveAsOther
             | Self::SplitDocument
             | Self::CropPages
+            | Self::PageMarks(_)
             | Self::Export(_)
             | Self::SelectAll
             | Self::DeselectAll

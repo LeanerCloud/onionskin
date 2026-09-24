@@ -506,6 +506,8 @@ impl ShellFrame {
             Activation::Combine(action) => self.run_combine_action(action, cx),
             Activation::Split(action) => self.run_split_action(action, window, cx),
             Activation::Crop(action) => self.run_crop_action(action, window, cx),
+            #[cfg(feature = "tools-edit")]
+            Activation::Marks(action) => self.run_marks_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),
@@ -701,6 +703,11 @@ impl ShellFrame {
                 .crop
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            #[cfg(feature = "tools-edit")]
+            TextField::Mark(field) => self
+                .marks
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -768,6 +775,7 @@ impl ShellFrame {
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)
             .chain(crate::shell::chrome::crop_dialog::TEXT_FIELDS)
+            .chain(mark_text_fields())
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());
@@ -846,6 +854,18 @@ impl ShellFrame {
                 }
             }
         }
+    }
+}
+
+/// The page-marks dialog's fields, in a build that has it.
+fn mark_text_fields() -> Vec<TextField> {
+    #[cfg(feature = "tools-edit")]
+    {
+        crate::shell::chrome::marks_dialog::text_fields().collect()
+    }
+    #[cfg(not(feature = "tools-edit"))]
+    {
+        Vec::new()
     }
 }
 

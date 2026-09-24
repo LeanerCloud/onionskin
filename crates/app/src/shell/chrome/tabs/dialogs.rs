@@ -101,6 +101,10 @@ impl ShellFrame {
         self.print = None;
         self.advanced_search = None;
         self.crop = None;
+        #[cfg(feature = "tools-edit")]
+        {
+            self.marks = None;
+        }
         self.send_pages = None;
         self.unsaved = None;
         self.recover = None;

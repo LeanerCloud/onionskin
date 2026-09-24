@@ -12,6 +12,8 @@ mod frame_state;
 mod inspector;
 mod line_weights;
 mod manage_tools;
+#[cfg(feature = "tools-edit")]
+mod marks;
 mod menu;
 mod organize;
 mod outline;
@@ -1720,6 +1722,8 @@ mod tests {
     mod line_weights;
     #[cfg(all(feature = "shell-test-support", feature = "tools-basic"))]
     mod manage_tools;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]
+    mod marks;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod native_input;
     #[cfg(feature = "shell-test-support")]

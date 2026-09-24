@@ -239,6 +239,9 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) page_properties: Vec<(String, String)>,
     /// Copy To or Move To Document, while it asks where.
     pub(super) send_pages: Option<crate::shell::chrome::send_pages::SendPagesState>,
+    /// The page-marks dialog, while it is open.
+    #[cfg(feature = "tools-edit")]
+    pub(super) marks: Option<crate::shell::chrome::marks_dialog::MarksDialogState>,
     /// The Crop Pages dialog, while it is open.
     pub(super) crop: Option<crate::shell::chrome::crop_dialog::CropDialogState>,
     /// The Advanced Search dialog, while it is open.
@@ -419,6 +422,8 @@ impl ShellFrame {
             managed_tools: Vec::new(),
             advanced_search: None,
             crop: None,
+            #[cfg(feature = "tools-edit")]
+            marks: None,
             send_pages: None,
             page_setup: Default::default(),
             unsaved: None,

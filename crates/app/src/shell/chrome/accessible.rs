@@ -85,6 +85,9 @@ pub(in crate::shell) enum TextField {
     CropRight,
     CropWidth,
     CropHeight,
+    /// The page-marks dialog's fields.
+    #[cfg(feature = "tools-edit")]
+    Mark(crate::shell::chrome::marks_dialog::MarkField),
 }
 
 /// What activating an accessible element does.
@@ -142,6 +145,9 @@ pub(in crate::shell) enum Activation {
     Split(crate::shell::chrome::split_dialog::SplitAction),
     /// The Crop Pages dialog.
     Crop(crate::shell::chrome::crop_dialog::CropAction),
+    /// The Watermark, Background, Header & Footer and Bates dialog.
+    #[cfg(feature = "tools-edit")]
+    Marks(crate::shell::chrome::marks_dialog::MarkAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),

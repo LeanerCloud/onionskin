@@ -350,6 +350,22 @@ impl ShellFrame {
                 self.open_crop_dialog(window, cx);
                 Ok(())
             }
+            #[cfg(feature = "tools-edit")]
+            MenuCommand::PageMarks(kind) => {
+                self.open_marks_dialog(kind, window, cx);
+                Ok(())
+            }
+            // Disabled without the plugin, saying so; reached some other way,
+            // it says so too.
+            #[cfg(not(feature = "tools-edit"))]
+            MenuCommand::PageMarks(_) => {
+                self.notices.push(
+                    crate::shell::chrome::crop_dialog::crop_refusal(None)
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+                Ok(())
+            }
             // Disabled in the schema for a milestone rather than for a
             // state, so the check at the top of this function returns first.
             // Kept as a loud answer in case an entry is ever enabled before
