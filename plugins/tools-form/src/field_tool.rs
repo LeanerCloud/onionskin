@@ -121,7 +121,7 @@ impl FieldTool {
         };
         let Ok(form) = doc.form() else { return };
         let corners = [rect.x0, rect.y0, rect.x1, rect.y1];
-        let added = doc.edit_annotations(label(&self.kind), |tx, structure| {
+        let added = doc.edit_content(label(&self.kind), |tx, structure| {
             add_field(tx, structure, &form, &kind, rect.page, corners)
         });
         if let Ok(added) = added {
@@ -232,7 +232,7 @@ impl ToolPlugin for FieldTool {
         }
         let selected = self.selected.take()?;
         if let Ok(form) = ctx.doc.form() {
-            let _ = ctx.doc.edit_annotations("Delete Field", |tx, _| {
+            let _ = ctx.doc.edit_content("Delete Field", |tx, _| {
                 remove_field(tx, &form, selected.field)
             });
         }

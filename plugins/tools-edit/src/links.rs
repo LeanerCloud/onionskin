@@ -20,7 +20,7 @@ pub fn create_link(
     look: LinkLook,
 ) -> Result<ObjRef, CommandError> {
     let label = "Create Link";
-    doc.edit_annotations(label, |tx, structure| {
+    doc.edit_content(label, |tx, structure| {
         links::add_link(tx, structure, page, rect, target, look)
     })
     .map_err(edit_error(label))
@@ -34,14 +34,14 @@ pub fn edit_link(
     look: LinkLook,
 ) -> Result<(), CommandError> {
     let label = "Edit Link";
-    doc.edit_annotations(label, |tx, _| links::set_link(tx, link, target, look))
+    doc.edit_content(label, |tx, _| links::set_link(tx, link, target, look))
         .map_err(edit_error(label))
 }
 
 /// Delete `link` from `page`, as one undo step.
 pub fn delete_link(doc: &mut Document, page: PageIndex, link: ObjRef) -> Result<(), CommandError> {
     let label = "Delete Link";
-    doc.edit_annotations(label, |tx, _| {
+    doc.edit_content(label, |tx, _| {
         links::remove_link(tx, page, link).map(|_| ())
     })
     .map_err(edit_error(label))
@@ -63,7 +63,7 @@ pub fn find_link(doc: &mut Document, link: ObjRef) -> Result<Option<Link>, Comma
 pub fn remove_web_links(doc: &mut Document) -> Result<usize, CommandError> {
     let label = "Remove Web Links";
     let pages: Vec<PageIndex> = (0..doc.page_count()).collect();
-    doc.edit_annotations(label, |tx, _| links::remove_web_links(tx, &pages))
+    doc.edit_content(label, |tx, _| links::remove_web_links(tx, &pages))
         .map_err(edit_error(label))
 }
 
@@ -100,7 +100,7 @@ pub fn create_links_from_urls(
     if count == 0 {
         return Ok(0);
     }
-    doc.edit_annotations(label, |tx, structure| {
+    doc.edit_content(label, |tx, structure| {
         for (page, rect, url) in &found {
             links::add_link(
                 tx,

@@ -55,7 +55,7 @@ pub fn set_properties(
             reason,
         });
     }
-    doc.edit_annotations(PROPERTIES, |tx, _| {
+    doc.edit_content(PROPERTIES, |tx, _| {
         set_field_properties(tx, &form, field, widget, properties)
     })
     .map_err(failed(PROPERTIES))
@@ -67,7 +67,7 @@ pub fn delete_field(doc: &mut Document, field: ObjRef) -> Result<(), CommandErro
     if form.field_by_ref(field).is_none() {
         return Err(missing(DELETE));
     }
-    doc.edit_annotations(DELETE, |tx, _| remove_field(tx, &form, field))
+    doc.edit_content(DELETE, |tx, _| remove_field(tx, &form, field))
         .map_err(failed(DELETE))
 }
 
@@ -106,7 +106,7 @@ pub fn set_image(
     {
         return Err(missing(LABEL));
     }
-    doc.edit_annotations(LABEL, |tx, _| {
+    doc.edit_content(LABEL, |tx, _| {
         set_button_icon(tx, &form, field, widget, source)
     })
     .map_err(failed(LABEL))

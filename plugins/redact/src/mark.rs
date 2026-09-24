@@ -23,7 +23,7 @@ pub fn mark_text(
     quads: &[PageQuad],
     look: &RedactionLook,
 ) -> Result<ObjRef, CommandError> {
-    doc.edit_annotations(MARK, |tx, _| add_redaction(tx, page, [0.0; 4], quads, look))
+    doc.edit_content(MARK, |tx, _| add_redaction(tx, page, [0.0; 4], quads, look))
         .map_err(edit_error(MARK))
 }
 
@@ -34,7 +34,7 @@ pub fn mark_region(
     rect: [f64; 4],
     look: &RedactionLook,
 ) -> Result<ObjRef, CommandError> {
-    doc.edit_annotations(MARK, |tx, _| add_redaction(tx, page, rect, &[], look))
+    doc.edit_content(MARK, |tx, _| add_redaction(tx, page, rect, &[], look))
         .map_err(edit_error(MARK))
 }
 
@@ -47,7 +47,7 @@ pub fn mark_pages(
 ) -> Result<usize, CommandError> {
     let label = "Mark Pages for Redaction";
     let boxes = media_boxes(doc, pages, label)?;
-    doc.edit_annotations(label, |tx, _| {
+    doc.edit_content(label, |tx, _| {
         for (page, rect) in &boxes {
             add_redaction(tx, *page, *rect, &[], look)?;
         }
@@ -63,7 +63,7 @@ pub fn mark_found(
     look: &RedactionLook,
 ) -> Result<usize, CommandError> {
     let label = "Mark Search Results for Redaction";
-    doc.edit_annotations(label, |tx, _| {
+    doc.edit_content(label, |tx, _| {
         for hit in found {
             add_redaction(tx, hit.page, [0.0; 4], &hit.quads, look)?;
         }
@@ -79,14 +79,14 @@ pub fn set_look(
     look: &RedactionLook,
 ) -> Result<(), CommandError> {
     let label = "Redaction Properties";
-    doc.edit_annotations(label, |tx, _| set_redaction(tx, mark, look))
+    doc.edit_content(label, |tx, _| set_redaction(tx, mark, look))
         .map_err(edit_error(label))
 }
 
 /// Take `mark` off `page` without applying it.
 pub fn unmark(doc: &mut Document, page: PageIndex, mark: ObjRef) -> Result<(), CommandError> {
     let label = "Remove Redaction Mark";
-    doc.edit_annotations(label, |tx, _| remove_redaction(tx, page, mark).map(|_| ()))
+    doc.edit_content(label, |tx, _| remove_redaction(tx, page, mark).map(|_| ()))
         .map_err(edit_error(label))
 }
 

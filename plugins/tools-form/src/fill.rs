@@ -105,7 +105,7 @@ pub fn fill(
     } else {
         BTreeMap::new()
     };
-    doc.edit_annotations(FILL, |tx, _| {
+    doc.edit_form_fields(FILL, |tx, _| {
         for (objref, value) in &changed {
             set_field_value(
                 tx,
@@ -164,7 +164,7 @@ pub fn toggle(
 pub fn clear_form(doc: &mut Document) -> Result<usize, CommandError> {
     let label = "Clear Form";
     let form = doc.form().map_err(failed(label))?;
-    doc.edit_annotations(label, |tx, _| reset_fields(tx, &form, None))
+    doc.edit_form_fields(label, |tx, _| reset_fields(tx, &form, None))
         .map_err(failed(label))
 }
 

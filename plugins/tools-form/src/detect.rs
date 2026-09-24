@@ -316,7 +316,7 @@ pub fn detect_fields(doc: &mut Document) -> Result<usize, CommandError> {
     }
     let form = doc.form().map_err(failed(LABEL))?;
     let names = names(&form, &found);
-    doc.edit_annotations(LABEL, |tx, structure| {
+    doc.edit_content(LABEL, |tx, structure| {
         for (place, name) in found.iter().zip(&names) {
             add_named_field(
                 tx,

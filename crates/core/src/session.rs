@@ -612,6 +612,18 @@ impl Document {
         self.edit_with_current_structure(label, EditKind::Comments, body)
     }
 
+    /// A change to the content with the structure tree to hand, as one
+    /// undoable step: links, redaction marks and form fields are
+    /// annotations, but making them needs the permission for changes, not
+    /// the one for comments.
+    pub fn edit_content<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
+    ) -> Result<T> {
+        self.edit_with_current_structure(label, EditKind::Content, body)
+    }
+
     /// Fill in form fields as one undoable step: what a document whose
     /// security allows only form filling still allows.
     pub fn edit_form_fields<T>(
@@ -654,6 +666,12 @@ impl Document {
     /// What this document's security allows, as it was opened.
     pub fn permitted(&self) -> onionskin_crypto::Permissions {
         crate::protection::permitted(&self.cos)
+    }
+
+    /// The password this document opened with, empty for one that needed
+    /// none: what a reopen of the same file needs.
+    pub fn password(&self) -> &str {
+        &self.password
     }
 
     /// Which password opened this document, when it is encrypted.
