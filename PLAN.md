@@ -628,9 +628,14 @@ what-does-not-transfer section demands:
   Fields (m5-forms.md). Editing images has landed: the Edit Image tool
   moves, resizes and deletes the selected image, the Edit menu turns,
   flips, replaces and saves it, and the Add Image tool places a picture
-  (m5-images.md). Guarantee test 7 waits on the JS-forms corpus's values
-  recorded in Acrobat. The rest of M5 (text editing, spell check,
-  find-and-replace, tagged-PDF maintenance checking) is planned.
+  (m5-images.md). Editing text has landed: the Edit Text tool rewrites a
+  line where it is, in its own font or a standard one of the same family,
+  the Add Text tool draws a new line, and the find bar replaces one match
+  or all of them (m5-text-editing.md); system-font matching and embedding
+  in `text-engine` are still to come. Guarantee test 7 waits on the
+  JS-forms corpus's values recorded in Acrobat. The rest of M5 (spell
+  check, changing edited text's font, size and colour, and tagged-PDF
+  maintenance checking) is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping
