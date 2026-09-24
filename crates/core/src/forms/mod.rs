@@ -19,7 +19,9 @@ use onionskin_cos::{Dict, ObjRef};
 
 use crate::PageIndex;
 
-pub use author::{add_field, remove_field, unique_name, Added, NewField, IMAGE_SUFFIX};
+pub use author::{
+    add_field, add_named_field, remove_field, unique_name, Added, NewField, IMAGE_SUFFIX,
+};
 pub use icon::set_button_icon;
 pub use properties::{
     refusal as properties_refusal, set_field_properties, FieldProperties, KindOptions,

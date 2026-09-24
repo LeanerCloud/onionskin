@@ -100,7 +100,8 @@ fn numbered(form: &Form, name: impl Fn(usize) -> String) -> String {
         .expect("a name is free")
 }
 
-/// Put a new field of kind `kind` over `rect` on `page`.
+/// Put a new field of kind `kind` over `rect` on `page`, numbered as
+/// Acrobat numbers them.
 pub fn add_field(
     tx: &mut Transaction<'_>,
     structure: &Structure,
@@ -108,6 +109,21 @@ pub fn add_field(
     kind: &NewField,
     page: PageIndex,
     rect: [f64; 4],
+) -> Result<Added> {
+    add_named_field(tx, structure, form, kind, page, rect, None)
+}
+
+/// [`add_field`] with the name given, which must not be one the form
+/// already has, or with `None`, numbered. A radio button joining a group
+/// takes the group's name whatever is given.
+pub fn add_named_field(
+    tx: &mut Transaction<'_>,
+    structure: &Structure,
+    form: &Form,
+    kind: &NewField,
+    page: PageIndex,
+    rect: [f64; 4],
+    named: Option<&str>,
 ) -> Result<Added> {
     let page_object = page_ref(tx, page)?;
     let rect = normalized(rect);
@@ -124,6 +140,7 @@ pub fn add_field(
     };
     let name = match (kind, group) {
         (_, Some(group)) => group.name.clone(),
+        (_, None) if named.is_some() => named.unwrap_or_default().to_owned(),
         (NewField::Image, _) => numbered(form, |number| format!("Image{number}{IMAGE_SUFFIX}")),
         _ => unique_name(form, kind.base_name()),
     };
