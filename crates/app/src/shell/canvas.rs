@@ -2659,6 +2659,34 @@ impl CanvasModel {
         Some((tool.name(), tool.hint()))
     }
 
+    /// What the active tool is reading off the page, for the side panel.
+    pub(super) fn active_tool_readings(&self) -> Vec<onionskin_plugin_api::Reading> {
+        self.active_tool
+            .and_then(|index| self.registry.tool(index))
+            .map(|tool| tool.readings())
+            .unwrap_or_default()
+    }
+
+    /// The active tool's settings, each with whether it is on.
+    pub(super) fn active_tool_settings(&self) -> Vec<(onionskin_plugin_api::ToolChoice, bool)> {
+        let Some(tool) = self.active_tool.and_then(|index| self.registry.tool(index)) else {
+            return Vec::new();
+        };
+        tool.settings()
+            .into_iter()
+            .map(|setting| {
+                let on = tool.picked(&setting.id);
+                (setting, on)
+            })
+            .collect()
+    }
+
+    /// Choose or turn over one of the active tool's settings.
+    pub(super) fn choose_active_tool_setting(&mut self, id: &str) -> bool {
+        self.active_tool
+            .is_some_and(|index| self.choose_tool(index, id))
+    }
+
     fn cancel_active_tool(&mut self) {
         let Some(index) = self.active_tool else {
             return;

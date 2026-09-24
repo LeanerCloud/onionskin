@@ -533,6 +533,7 @@ impl ShellFrame {
                     canvas.update(cx, |canvas, cx| canvas.choose_line_style(choice, cx));
                 }
             }
+            Activation::ToolSetting(id) => self.choose_tool_setting(&id, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),

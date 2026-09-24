@@ -185,6 +185,9 @@ fn icon_glyph(icon: &str) -> &'static str {
         "form-image" => "▨",
         "form-date" => "◷",
         "form-signature" => "✒",
+        "measure-distance" => "↔",
+        "measure-perimeter" => "∠",
+        "measure-area" => "▱",
         _ => "?",
     }
 }
@@ -585,6 +588,8 @@ mod tests {
         assert_eq!(icon_glyph("fill-sign"), "✍");
         assert_eq!(icon_glyph("form-check-box"), "☑");
         assert_eq!(icon_glyph("form-signature"), "✒");
+        assert_eq!(icon_glyph("measure-distance"), "↔");
+        assert_eq!(icon_glyph("measure-area"), "▱");
         assert_eq!(icon_glyph("redact"), "▇");
         assert_eq!(icon_glyph("plugin-id-token"), "?");
     }

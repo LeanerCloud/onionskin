@@ -866,10 +866,37 @@ impl ShellFrame {
     }
 
     /// The active tool's name and how it is used, for the side panel.
-    pub(super) fn active_tool_help(&self, cx: &App) -> super::side_panel::ToolHelp {
-        self.tabs
-            .active()
-            .and_then(|tab| tab.canvas.read(cx).model.active_tool_help())
+    pub(super) fn active_tool_help(&self, cx: &App) -> Option<super::side_panel::ToolHelp> {
+        let model = &self.tabs.active()?.canvas.read(cx).model;
+        let (name, hint) = model.active_tool_help()?;
+        let settings = model
+            .active_tool_settings()
+            .into_iter()
+            .map(|(setting, on)| super::side_panel::ToolSetting {
+                id: setting.id,
+                label: setting.label,
+                category: setting.category,
+                on,
+            })
+            .collect();
+        Some(super::side_panel::ToolHelp {
+            name,
+            hint,
+            readings: model.active_tool_readings(),
+            settings,
+        })
+    }
+
+    /// A setting of the active tool chosen from the side panel.
+    pub(super) fn choose_tool_setting(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(canvas) = self.active_canvas().cloned() {
+            canvas.update(cx, |canvas, cx| {
+                if canvas.model.choose_active_tool_setting(id) {
+                    cx.notify();
+                }
+            });
+        }
+        cx.notify();
     }
 
     fn render_global_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1766,6 +1793,8 @@ mod tests {
     mod manage_tools;
     #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]
     mod marks;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-measure"))]
+    mod measure;
     #[cfg(all(feature = "shell-test-support", feature = "commands-core"))]
     mod native_input;
     #[cfg(feature = "shell-test-support")]

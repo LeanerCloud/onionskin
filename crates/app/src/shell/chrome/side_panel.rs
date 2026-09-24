@@ -1,10 +1,12 @@
 use accesskit::Role;
 use gpui::{
-    div, px, Context, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    StatefulInteractiveElement as _, Styled as _,
+    div, prelude::FluentBuilder as _, px, Context, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
 
 use super::accessible::{Activation, Element};
+use onionskin_plugin_api::Reading;
+
 use super::tabs::ShellFrame;
 use super::theme::ThemeTokens;
 use crate::a11y::State as A11yState;
@@ -62,13 +64,97 @@ fn toggle_name(state: SidePanelState) -> &'static str {
     }
 }
 
-/// The active tool's name and how it is used, when a tool is active.
-pub(super) type ToolHelp = Option<(&'static str, Option<&'static str>)>;
+/// The active tool: its name, how it is used, what it is reading off the
+/// page, and its settings.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(in crate::shell) struct ToolHelp {
+    pub(in crate::shell) name: &'static str,
+    pub(in crate::shell) hint: Option<&'static str>,
+    pub(in crate::shell) readings: Vec<Reading>,
+    pub(in crate::shell) settings: Vec<ToolSetting>,
+}
+
+/// One of the active tool's settings, and whether it is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::shell) struct ToolSetting {
+    pub(in crate::shell) id: String,
+    pub(in crate::shell) label: String,
+    pub(in crate::shell) category: String,
+    pub(in crate::shell) on: bool,
+}
+
+/// What the readings are called, as Acrobat calls its measuring tools'.
+const READINGS_LABEL: &str = "Measurement Info";
+
+/// The settings, one group to a category, in the order the tool lists them.
+fn by_category(settings: &[ToolSetting]) -> Vec<(&str, Vec<&ToolSetting>)> {
+    let mut groups: Vec<(&str, Vec<&ToolSetting>)> = Vec::new();
+    for setting in settings {
+        match groups
+            .iter_mut()
+            .find(|(category, _)| *category == setting.category)
+        {
+            Some((_, members)) => members.push(setting),
+            None => groups.push((&setting.category, vec![setting])),
+        }
+    }
+    groups
+}
+
+fn setting_id(setting: &ToolSetting) -> SharedString {
+    SharedString::from(format!("tool-setting-{}", setting.id))
+}
+
+/// The tool's name and hint, readings and settings, to a screen reader.
+fn accessible_tool(help: ToolHelp) -> Vec<Element> {
+    let tool = Element::new("side-panel-tool", Role::Heading, help.name);
+    let mut nodes = vec![match help.hint {
+        Some(hint) => tool.with_description(hint),
+        None => tool,
+    }];
+    if !help.readings.is_empty() {
+        nodes.push(
+            Element::new("side-panel-readings", Role::Group, READINGS_LABEL).with_children(
+                help.readings
+                    .iter()
+                    .enumerate()
+                    .map(|(index, reading)| {
+                        Element::new(
+                            SharedString::from(format!("side-panel-reading-{index}")),
+                            Role::Label,
+                            format!("{}: {}", reading.label, reading.value),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    for (category, members) in by_category(&help.settings) {
+        nodes.push(
+            Element::new(
+                SharedString::from(format!("tool-settings-{category}")),
+                Role::Group,
+                category,
+            )
+            .with_children(
+                members
+                    .into_iter()
+                    .map(|setting| {
+                        Element::new(setting_id(setting), Role::CheckBox, &setting.label)
+                            .with_state(A11yState::toggled(setting.on))
+                            .with_activation(Activation::ToolSetting(setting.id.clone()))
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    nodes
+}
 
 /// What the side panel tells a screen reader.
 pub(super) fn accessible(
     state: SidePanelState,
-    help: ToolHelp,
+    help: Option<ToolHelp>,
     content: Option<Element>,
 ) -> Element {
     let toggle = Element::new("side-panel-toggle", Role::Button, toggle_name(state))
@@ -82,16 +168,14 @@ pub(super) fn accessible(
             return panel.child(content).child(toggle);
         }
         let body = match help {
-            Some((name, hint)) => {
-                let tool = Element::new("side-panel-tool", Role::Heading, name);
-                match hint {
-                    Some(hint) => tool.with_description(hint),
-                    None => tool,
-                }
-            }
-            None => Element::new("side-panel-empty", Role::Label, EMPTY_PANEL_MESSAGE),
+            Some(help) => accessible_tool(help),
+            None => vec![Element::new(
+                "side-panel-empty",
+                Role::Label,
+                EMPTY_PANEL_MESSAGE,
+            )],
         };
-        panel.child(body).child(toggle)
+        panel.with_children(body).child(toggle)
     } else {
         panel.child(toggle)
     }
@@ -99,7 +183,7 @@ pub(super) fn accessible(
 
 pub(super) fn render_side_panel(
     state: SidePanelState,
-    help: ToolHelp,
+    help: Option<ToolHelp>,
     content: Option<gpui::AnyElement>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
@@ -147,16 +231,7 @@ pub(super) fn render_side_panel(
             // The tool the canvas is in and what to do with it: every rail
             // icon is a glyph, and without this nothing on screen says what a
             // drag or a click will do.
-            Some((name, hint)) => div()
-                .id("side-panel-tool")
-                .p_3()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_sm().child(name))
-                .children(
-                    hint.map(|hint| div().text_xs().text_color(theme.muted_text).child(hint)),
-                ),
+            Some(help) => render_tool(help, theme, cx),
             None => div()
                 .id("side-panel-empty")
                 .p_3()
@@ -176,6 +251,72 @@ pub(super) fn render_side_panel(
     panel
 }
 
+/// The tool's name and hint, then its readings and its settings.
+fn render_tool(
+    help: ToolHelp,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> gpui::Stateful<gpui::Div> {
+    let mut tool = div()
+        .id("side-panel-tool")
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(div().text_sm().child(help.name))
+        .children(
+            help.hint
+                .map(|hint| div().text_xs().text_color(theme.muted_text).child(hint)),
+        );
+    if !help.readings.is_empty() {
+        let mut readings = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .text_xs()
+            .child(div().text_color(theme.muted_text).child(READINGS_LABEL));
+        for reading in help.readings {
+            readings = readings.child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .child(div().text_color(theme.muted_text).child(reading.label))
+                    .child(reading.value),
+            );
+        }
+        tool = tool.child(readings);
+    }
+    for (category, members) in by_category(&help.settings) {
+        let mut group = div().flex().flex_col().text_xs().child(
+            div()
+                .text_color(theme.muted_text)
+                .child(category.to_owned()),
+        );
+        for setting in members {
+            let id = setting.id.clone();
+            group = group.child(
+                div()
+                    .id(setting_id(setting))
+                    .px_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .when(setting.on, |row| row.bg(theme.selected))
+                    .hover(move |row| row.bg(theme.hover))
+                    .on_click(cx.listener(move |frame, _event, window, cx| {
+                        frame.run_activation(Activation::ToolSetting(id.clone()), window, cx);
+                    }))
+                    .child(format!(
+                        "{} {}",
+                        if setting.on { "✓" } else { " " },
+                        setting.label
+                    )),
+            );
+        }
+        tool = tool.child(group);
+    }
+    tool
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,7 +325,11 @@ mod tests {
     fn the_active_tool_and_its_hint_are_described_in_place_of_the_empty_message() {
         let panel = accessible(
             SidePanelState::OpenEmpty,
-            Some(("Draw", Some("Drag on the page to draw freehand."))),
+            Some(ToolHelp {
+                name: "Draw",
+                hint: Some("Drag on the page to draw freehand."),
+                ..ToolHelp::default()
+            }),
             None,
         );
         let tool = panel.find(&"side-panel-tool".into()).expect("described");
@@ -194,6 +339,41 @@ mod tests {
             Some("Drag on the page to draw freehand.")
         );
         assert!(panel.find(&"side-panel-empty".into()).is_none());
+    }
+
+    #[test]
+    fn a_tools_readings_and_settings_are_listed_under_it() {
+        let setting = |id: &str, category: &str, on: bool| ToolSetting {
+            id: id.to_owned(),
+            label: id.to_uppercase(),
+            category: category.to_owned(),
+            on,
+        };
+        let panel = accessible(
+            SidePanelState::OpenEmpty,
+            Some(ToolHelp {
+                name: "Distance",
+                hint: None,
+                readings: vec![Reading::new("Distance", "3.00 in")],
+                settings: vec![
+                    setting("a", "Scale", true),
+                    setting("b", "Snap to", false),
+                    setting("c", "Scale", false),
+                ],
+            }),
+            None,
+        );
+        let readings = panel.find(&"side-panel-readings".into()).expect("read");
+        assert_eq!(readings.label, READINGS_LABEL);
+        assert_eq!(readings.children[0].label, "Distance: 3.00 in");
+        let scale = panel.find(&"tool-settings-Scale".into()).expect("grouped");
+        assert_eq!(scale.children.len(), 2, "a category's settings together");
+        let on = panel.find(&"tool-setting-a".into()).expect("listed");
+        assert_eq!(on.role, Role::CheckBox);
+        assert_eq!(on.state.toggled, Some(true));
+        assert_eq!(on.activation, Some(Activation::ToolSetting("a".to_owned())));
+        let off = panel.find(&"tool-setting-b".into()).expect("listed");
+        assert_eq!(off.state.toggled, Some(false));
     }
 
     #[test]
