@@ -275,7 +275,10 @@ pub(in crate::shell) fn accessible(
                 .expect("properties dialog has state"),
             cx,
         ),
-        ShellDialog::LayerProperties => row_labels(frame.layer_property_rows()),
+        ShellDialog::LayerProperties => frame
+            .layer_properties()
+            .map(|state| super::chrome::layer_properties_dialog::accessible(state, cx))
+            .unwrap_or_default(),
         ShellDialog::PageProperties => row_labels(frame.page_property_rows()),
         ShellDialog::SendPages { .. } => super::chrome::send_pages::accessible(
             frame
@@ -671,9 +674,12 @@ pub(in crate::shell) fn render_dialog(
             cx,
         )
         .into_any_element(),
-        ShellDialog::LayerProperties => rows(frame.layer_property_rows(), rects)
-            .text_color(theme.text)
-            .into_any_element(),
+        ShellDialog::LayerProperties => match frame.layer_properties() {
+            Some(state) => {
+                super::chrome::layer_properties_dialog::render(state, focused, theme, cx)
+            }
+            None => gpui::div().into_any_element(),
+        },
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
             .into_any_element(),

@@ -16,6 +16,7 @@ mod generations;
 mod history;
 pub mod image_edit;
 pub mod images;
+mod layer_properties;
 mod layers;
 mod layout;
 pub mod links;
@@ -62,6 +63,7 @@ pub use edit::{
 pub use file::DocumentFile;
 pub use generations::{Generation, GenerationDetail, RevertRefusal};
 pub use history::{ViewHistory, ViewState};
+pub use layer_properties::{set_layer_properties, LayerIntent, LayerProperties};
 pub use layers::Layer;
 pub use layout::{
     LayoutError, PageAlignment, PageLayoutMode, PagePlacement, PageRenderRect, ViewPoint, ViewRect,

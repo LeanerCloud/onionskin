@@ -1374,6 +1374,31 @@ impl Document {
         Ok(true)
     }
 
+    /// Every layer as the file's default configuration has it, whatever
+    /// the pane has toggled since: what Layer Properties starts from.
+    pub fn layer_defaults(&mut self) -> Result<Vec<Layer>> {
+        layers::read(self.structure()?)
+    }
+
+    /// Layer Properties: rename `layer`, set its intent and whether it is on
+    /// when the document opens, as one undoable step. The pane then shows
+    /// every layer at the file's new defaults, and the renderer is told.
+    pub fn set_layer_properties(
+        &mut self,
+        layer: ObjRef,
+        properties: &crate::LayerProperties,
+    ) -> Result<()> {
+        self.edit_content("Layer Properties", |tx, _| {
+            crate::set_layer_properties(tx, layer, properties)
+        })?;
+        let fresh = layers::read(self.structure()?)?;
+        self.render
+            .set_layer_visibility(layers::overrides(&fresh))?;
+        self.layers = Some(fresh);
+        self.layer_epoch += 1;
+        Ok(())
+    }
+
     /// Draw strokes one device pixel wide from the next render on, or at
     /// their own widths: View > Show/Hide > Line Weights, off and on. Returns
     /// whether that changed anything, so a caller knows to drop its rasters.

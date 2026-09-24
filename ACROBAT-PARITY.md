@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 83 planned / 45 partial / 80 out-of-scope. 195 implemented.**
+**403 rows: 83 planned / 44 partial / 80 out-of-scope. 196 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
@@ -279,7 +279,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Comments pane (list, sort, filter, reply, status) | implemented | M3 | Lists every comment the edited document holds, with replies, status and checkmark; follows edits made anywhere. Sits in the left column for now. Evidence: docs/evidence/m3-p20a-comments-pane.md. |
 | Comments list context menu (Reply, Delete, Set Status, Mark With Checkmark, Properties, Make Current Properties Default) | implemented | M3 | Reply, Edit Text, Set Status, Check, Mark as Read/Unread, Delete, Properties and Make Current Properties Default. Evidence: docs/evidence/m3-p20a-comments-pane.md, docs/evidence/m3-p20b-comment-surfaces.md. |
 | Layers pane (show/hide optional content groups) | implemented | M2 | OCG listing, nested `/D /Order` hierarchy, omitted-group handling, visibility toggles, and rendered pane body bounds are implemented. Evidence: M2-LAYERS, M2-PANES, B3.1, and B3.2. |
-| Layers pane context menu (Layer Properties, visibility and default-state commands) | partial | M2 | Show, Hide, Reset, rendered menu access, and a read-only Layer Properties dialog (visibility and lock per layer) are implemented; renaming, intent changes, merge and flatten remain post-1.0 layer editing. Evidence: M2-PANES, B3.1, and docs/evidence/m3-p13a-properties.md. |
+| Layers pane context menu (Layer Properties, visibility and default-state commands) | implemented | M2 | Show, Hide, Reset and rendered menu access; Layer Properties chooses a layer and sets its name, intent (View or Design) and default state, written to the group and `/OCProperties /D` as one undoable step and read back by pikepdf and qpdf. Merging and flattening layers stay post-1.0 layer editing. Evidence: M2-PANES, B3.1, docs/evidence/m3-p13a-properties.md, docs/evidence/m3-shell-leftovers.md. |
 | Layers: import as layers, merge, flatten, layer properties | planned | post-1.0 | Layer editing (import, merge, flatten OCGs) is a named post-1.0 slot. |
 | Content pane (document object tree) | planned | M6 | With `tools-accessibility`. |
 | Tags pane (structure tree) | planned | M6 | `core` owns the tagged-PDF structure tree; this is its UI. |

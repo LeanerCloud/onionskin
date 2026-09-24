@@ -30,6 +30,8 @@ pub struct Layer {
     /// not change this group's visibility, so the pane disables the control
     /// rather than offering a toggle that would be ignored.
     pub locked: bool,
+    /// `/Intent`: what the layer is for.
+    pub intent: crate::layer_properties::LayerIntent,
 }
 
 /// Read `/OCProperties`.
@@ -125,6 +127,7 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<Layer>> {
             depth,
             visible,
             locked: locked.contains(&id),
+            intent: crate::layer_properties::LayerIntent::of(&dict),
         });
     }
     Ok(layers)
@@ -427,6 +430,7 @@ mod tests {
             depth: 0,
             visible: true,
             locked: false,
+            intent: Default::default(),
         };
 
         assert_eq!(identifier(ObjRef::new(u32::MAX, 0)), None);

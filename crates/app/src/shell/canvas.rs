@@ -1073,6 +1073,25 @@ impl CanvasModel {
         Ok(true)
     }
 
+    /// Every layer at the file's own defaults, for Layer Properties.
+    pub(in crate::shell) fn layer_defaults(&mut self) -> Result<Vec<Layer>, CanvasError> {
+        Ok(self.document.borrow_mut().layer_defaults()?)
+    }
+
+    /// Layer Properties' Apply, as one undoable step; every raster is drawn
+    /// again, since the defaults the renderer starts from changed.
+    pub(in crate::shell) fn set_layer_properties(
+        &mut self,
+        layer: ObjRef,
+        properties: &onionskin_core::LayerProperties,
+    ) -> Result<(), CanvasError> {
+        self.document
+            .borrow_mut()
+            .set_layer_properties(layer, properties)?;
+        self.invalidate_rendered_pixels();
+        Ok(())
+    }
+
     /// A number that changes with every edit, undo and redo of the
     /// document, for a view that has to follow them.
     pub fn edit_epoch(&self) -> u64 {

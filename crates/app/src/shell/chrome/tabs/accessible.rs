@@ -32,7 +32,6 @@ use crate::shell::chrome::accessible::{
 use crate::shell::chrome::page_controls::{self, PageControlsState};
 use crate::shell::chrome::tool_search::SearchInput;
 use crate::shell::chrome::{quick_actions, rail, side_panel};
-use crate::shell::dialog::ShellDialog;
 use crate::shell::find_bar::FindSummary;
 use crate::shell::panes;
 use crate::shell::panes::{
@@ -467,7 +466,7 @@ impl ShellFrame {
             }
             Activation::Pane(PaneAction::Layer(LayerAction::Run(LayersCommand::Properties))) => {
                 self.run_pane_action(PaneAction::DismissMenus, cx);
-                self.show_dialog(ShellDialog::LayerProperties, window, cx);
+                self.open_layer_properties(window, cx);
             }
             Activation::Pane(PaneAction::Bookmark(BookmarkAction::Run(
                 command @ (BookmarksCommand::New | BookmarksCommand::Rename),
@@ -538,6 +537,9 @@ impl ShellFrame {
             Activation::Password(action) => self.run_password_action(action, window, cx),
             Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
+            Activation::LayerProperties(action) => {
+                self.run_layer_properties_action(action, window, cx)
+            }
             Activation::ShowPermissionDetails => self.show_permission_details(window, cx),
             Activation::ShowSignatureProperties(index) => {
                 self.show_signature_properties(index, window, cx)
@@ -719,6 +721,7 @@ impl ShellFrame {
                 .and_then(|dialog| dialog.text_field(field)),
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
             TextField::ZoomPercent => Some(&self.page_entry.zoom_input),
+            TextField::LayerName => self.layer_properties.as_ref().map(|dialog| &dialog.name),
             TextField::CommentDraft => self.navigation.comment_draft(),
             TextField::CommentingAuthor => Some(&self.commenting_author),
             TextField::InspectorAuthor => Some(&self.inspector.author),
@@ -864,6 +867,7 @@ impl ShellFrame {
                 TextField::BookmarkTitle,
                 TextField::CommentingAuthor,
                 TextField::ZoomPercent,
+                TextField::LayerName,
             ])
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)

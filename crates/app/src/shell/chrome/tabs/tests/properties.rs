@@ -427,11 +427,20 @@ fn save_as_other_offers_what_the_registry_exports_and_nothing_else(cx: &mut Test
 }
 
 #[gpui::test]
-fn layer_properties_opens_from_the_layers_pane_and_names_each_layer(cx: &mut TestAppContext) {
+fn layer_properties_renames_a_layer_and_sets_its_default_and_intent(cx: &mut TestAppContext) {
+    use crate::shell::chrome::layer_properties_dialog::LayerPropertiesAction;
+    use onionskin_core::LayerIntent;
     let (window, _) = bound_window_from_bytes(
         vec![("layers.pdf", crate::shell::fixtures::optional_content_pdf())],
         cx,
     );
+    let act = |action: LayerPropertiesAction, cx: &mut TestAppContext| {
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::LayerProperties(action), window, cx)
+            })
+            .unwrap();
+    };
     window
         .update(cx, |frame, window, cx| {
             frame.run_pane_action(PaneAction::Select(NavigationPane::Layers), cx);
@@ -443,11 +452,53 @@ fn layer_properties_opens_from_the_layers_pane_and_names_each_layer(cx: &mut Tes
                 cx,
             );
             assert_eq!(frame.dialog, Some(ShellDialog::LayerProperties));
-            let rows = frame.layer_property_rows();
-            assert_eq!(rows[0], ("Stamp".to_owned(), "Visible".to_owned()));
             let tree = frame.accessible(window, cx);
-            let row = tree.find(&("dialog-row", 0usize).into()).expect("a row");
-            assert_eq!(row.label, "Stamp: Visible");
+            let chosen = tree
+                .find(&("layer-choice", 0usize).into())
+                .expect("a layer");
+            assert_eq!(chosen.label, "Stamp");
+            assert_eq!(chosen.state.selected, Some(true));
+            let state = frame.layer_properties().expect("open");
+            assert_eq!(state.name.read(cx).query(), "Stamp");
+            assert!(state.default_on);
+            // An empty name is refused in the dialog.
+            state
+                .name
+                .clone()
+                .update(cx, |input, cx| input.set_query(String::new(), cx));
+        })
+        .unwrap();
+    act(LayerPropertiesAction::Apply, cx);
+    window
+        .update(cx, |frame, _, _| {
+            let state = frame.layer_properties().expect("still open");
+            assert_eq!(state.error.as_deref(), Some("A layer needs a name"));
+        })
+        .unwrap();
+
+    window
+        .update(cx, |frame, _, cx| {
+            let input = frame.layer_properties().unwrap().name.clone();
+            input.update(cx, |input, cx| input.set_query("Approved".to_owned(), cx));
+        })
+        .unwrap();
+    act(LayerPropertiesAction::Intent(LayerIntent::Design), cx);
+    act(LayerPropertiesAction::DefaultOn(false), cx);
+    act(LayerPropertiesAction::Apply, cx);
+    window
+        .update(cx, |frame, _, cx| {
+            assert_eq!(frame.dialog, None);
+            let layers = frame
+                .navigation
+                .layers()
+                .expect("the pane re-read")
+                .to_vec();
+            assert_eq!(layers[0].name, "Approved");
+            assert!(!layers[0].visible, "off by default now");
+            assert_eq!(layers[0].intent, LayerIntent::Design);
+            let canvas = frame.active_canvas().unwrap().clone();
+            let undone = canvas.update(cx, |canvas, _| canvas.model.undo());
+            assert!(undone.is_ok());
         })
         .unwrap();
 }

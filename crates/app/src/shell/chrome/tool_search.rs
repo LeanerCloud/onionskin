@@ -543,6 +543,7 @@ fn field_node(
         TextField::CombinePages
         | TextField::PrintPages
         | TextField::BookmarkTitle
+        | TextField::LayerName
         | TextField::CommentDraft
         | TextField::CommentingAuthor
         | TextField::InspectorAuthor

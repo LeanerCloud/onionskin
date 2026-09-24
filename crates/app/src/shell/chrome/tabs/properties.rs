@@ -9,6 +9,9 @@ use onionskin_core::metadata::{write_initial_view, write_properties};
 
 use super::ShellFrame;
 use crate::shell::canvas::CanvasModel;
+use crate::shell::chrome::layer_properties_dialog::{
+    LayerPropertiesAction, LayerPropertiesState, NO_LAYERS,
+};
 use crate::shell::chrome::properties_dialog::{
     date_label, security_rows, size_label, PropertiesAction, PropertiesDialogState,
     PropertiesFacts, PropertiesSource, PropertiesTab,
@@ -149,36 +152,72 @@ impl ShellFrame {
         }
     }
 
-    /// Layer Properties: each layer, what it shows now, and whether the
-    /// document lets the user change that. Read-only: a layer's name and
-    /// intent are layer editing, which parity row 204 puts after 1.0.
-    pub(in crate::shell) fn layer_property_rows(&self) -> Vec<(String, String)> {
-        let layers = self.navigation.layers().unwrap_or_default();
-        let mut rows: Vec<(String, String)> = layers
-            .iter()
-            .map(|layer| {
-                let name = if layer.name.is_empty() {
-                    "(unnamed layer)".to_owned()
-                } else {
-                    layer.name.clone()
-                };
-                let shown = if layer.visible { "Visible" } else { "Hidden" };
-                let locked = if layer.locked {
-                    ", visibility locked by the document"
-                } else {
-                    ""
-                };
-                (name, format!("{shown}{locked}"))
-            })
-            .collect();
-        if rows.is_empty() {
-            rows.push(("This document has no layers.".to_owned(), String::new()));
+    pub(in crate::shell) fn layer_properties(&self) -> Option<&LayerPropertiesState> {
+        self.layer_properties.as_ref()
+    }
+
+    /// The Layers pane's Layer Properties, on the first layer, at the
+    /// file's defaults.
+    pub(super) fn open_layer_properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(canvas) = self.active_canvas().cloned() else {
+            return;
+        };
+        let (layers, refusal) = canvas.update(cx, |canvas, _| {
+            (canvas.model.layer_defaults(), canvas.model.edit_refusal())
+        });
+        match layers {
+            Ok(layers) => {
+                self.show_dialog(ShellDialog::LayerProperties, window, cx);
+                let theme = self.shell_view_state.tokens();
+                self.layer_properties = Some(LayerPropertiesState::new(layers, refusal, theme, cx));
+            }
+            Err(error) => self.notices.push(error.to_string()),
         }
-        rows.push((
-            "Renaming a layer or changing its intent".to_owned(),
-            "arrives after 1.0, with layer editing".to_owned(),
-        ));
-        rows
+        cx.notify();
+    }
+
+    pub(super) fn run_layer_properties_action(
+        &mut self,
+        action: LayerPropertiesAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut state) = self.layer_properties.take() else {
+            return;
+        };
+        match action {
+            LayerPropertiesAction::Choose(index) => state.choose(index, cx),
+            LayerPropertiesAction::Intent(intent) => state.intent = intent,
+            LayerPropertiesAction::DefaultOn(on) => state.default_on = on,
+            LayerPropertiesAction::Apply => {
+                if let Err(error) = self.apply_layer_properties(&state, cx) {
+                    state.error = Some(error);
+                } else {
+                    self.close_dialog(window, cx);
+                    return;
+                }
+            }
+        }
+        self.layer_properties = Some(state);
+        cx.notify();
+    }
+
+    /// Write the chosen layer's properties and read the pane again.
+    fn apply_layer_properties(
+        &mut self,
+        state: &LayerPropertiesState,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let properties = state.properties(cx)?;
+        let layer = state.chosen_layer().ok_or(NO_LAYERS)?.id;
+        let canvas = self.active_canvas().cloned().ok_or(NO_LAYERS)?;
+        canvas
+            .update(cx, |canvas, _| {
+                canvas.model.set_layer_properties(layer, &properties)
+            })
+            .map_err(|error| error.to_string())?;
+        self.navigation.reread(&canvas, cx);
+        Ok(())
     }
 }
 

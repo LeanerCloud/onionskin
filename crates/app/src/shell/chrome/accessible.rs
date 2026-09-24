@@ -43,6 +43,8 @@ pub(in crate::shell) enum TextField {
     Page,
     /// Zoom To's magnification, in percent.
     ZoomPercent,
+    /// Layer Properties' layer name.
+    LayerName,
     ExportFirst,
     ExportLast,
     ExportDpi,
@@ -217,6 +219,8 @@ pub(in crate::shell) enum Activation {
     Protect(crate::shell::chrome::protect_dialog::ProtectAction),
     /// The Trust Manager's Open Web Link prompt.
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
+    /// A control in Layer Properties.
+    LayerProperties(crate::shell::chrome::layer_properties_dialog::LayerPropertiesAction),
     /// The Security Settings pane: Document Properties on its Security tab.
     ShowPermissionDetails,
     /// The Signatures pane: open this row's Signature Properties.

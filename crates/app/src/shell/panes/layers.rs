@@ -355,6 +355,7 @@ mod tests {
             depth: 0,
             visible,
             locked,
+            intent: Default::default(),
         }
     }
 

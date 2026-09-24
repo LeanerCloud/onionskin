@@ -11,6 +11,7 @@ pub(in crate::shell) mod file_dialogs;
 mod global_bar;
 mod image_commands;
 pub(in crate::shell) mod inspector;
+pub(in crate::shell) mod layer_properties_dialog;
 #[cfg(feature = "tools-edit")]
 pub(in crate::shell) mod link_dialog;
 pub(in crate::shell) mod manage_tools;
