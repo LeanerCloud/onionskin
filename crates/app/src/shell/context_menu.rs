@@ -123,7 +123,11 @@ impl CanvasContextCommand {
                 id: command_ids::ROTATE_PAGE_CLOCKWISE,
                 reason: "Available with page organization",
             },
-            Self::EditText => Requirement::Milestone("Available in M5 tools-edit"),
+            // Chooses the Edit Text tool, whose click edits a line.
+            Self::EditText => Requirement::Tool(
+                ToolCapability::EditText,
+                "Available with the Edit Text tool",
+            ),
             // The selection marked for redaction; with nothing selected, the
             // Redact tool itself.
             Self::RedactText => {
@@ -352,25 +356,26 @@ mod tests {
         );
     }
 
+    /// Edit Text chooses the Edit Text tool, so it is live where that tool
+    /// is installed and says which tool it waits on where it is not.
     #[test]
-    fn future_editing_entries_name_their_m5_milestone() {
+    fn edit_text_is_live_with_the_edit_text_tool() {
         let entries = canvas_context_entries(&crate::build_registry(), true, Refusals::default());
-        let reason = |command| {
-            entries
-                .iter()
-                .find(|entry| entry.command == command)
-                .expect("the entry is present")
-                .availability
-                .reason()
-                .expect("a disabled entry says why")
-        };
-
-        let command = CanvasContextCommand::EditText;
-        assert!(
-            reason(command).contains("M5"),
-            "{} should name the milestone it waits on, said {:?}",
-            command.label(),
-            reason(command)
+        let entry = entries
+            .iter()
+            .find(|entry| entry.command == CanvasContextCommand::EditText)
+            .expect("the entry is present");
+        if cfg!(feature = "tools-edit") {
+            assert!(entry.availability.is_enabled());
+        } else {
+            assert_eq!(
+                entry.availability.reason(),
+                Some("Available with the Edit Text tool")
+            );
+        }
+        assert_eq!(
+            CanvasContextCommand::EditText.capability(),
+            Some(ToolCapability::EditText)
         );
     }
 
