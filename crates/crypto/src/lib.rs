@@ -17,6 +17,7 @@
 mod algorithms;
 mod encrypt;
 mod filters;
+pub mod signature;
 mod standard;
 
 pub use encrypt::{protect, system_random, Protection, Random, Strength};
