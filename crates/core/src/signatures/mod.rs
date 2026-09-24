@@ -1,10 +1,16 @@
-//! Signature fields, as the signatures pane lists them.
+//! Signature fields, as the signatures pane lists them, and their
+//! validation ([`validate`]).
 //!
-//! Listing only, and deliberately. Nothing here reads `/Contents`, computes a
-//! digest or looks at a certificate, so nothing here can say a signature is
-//! valid, invalid or trusted. Every field on this type is a fact the form
-//! dictionary states about itself; validation is M6's, and until it lands the
-//! pane says so rather than implying an answer.
+//! The listing is what the form dictionary states about itself, unverified.
+//! Validation checks each signature's bytes and key and what was changed
+//! after it.
+
+mod changes;
+mod validate;
+
+pub use changes::Change;
+pub(crate) use validate::validate;
+pub use validate::{Coverage, Validation, Verdict};
 
 use std::collections::BTreeSet;
 
@@ -38,13 +44,28 @@ pub struct SignatureField {
 /// An absent `/AcroForm` is no signature fields. A present one that is not a
 /// dictionary is an error: the file claims a form the reader cannot produce.
 pub(crate) fn read(doc: &CosDocument) -> Result<Vec<SignatureField>> {
+    Ok(walk(doc)?.found)
+}
+
+/// Every signed field's name and signature dictionary.
+pub(crate) fn read_with_values(doc: &CosDocument) -> Result<Vec<(String, Dict)>> {
+    Ok(walk(doc)?.values)
+}
+
+fn walk(doc: &CosDocument) -> Result<Walk<'_>> {
+    let mut walk = Walk {
+        doc,
+        seen: BTreeSet::new(),
+        found: Vec::new(),
+        values: Vec::new(),
+    };
     let catalog = doc.catalog()?;
     let Some(form) = catalog.get(b"AcroForm") else {
-        return Ok(Vec::new());
+        return Ok(walk);
     };
     let form = doc.resolve(form)?;
     if matches!(form, Object::Null) {
-        return Ok(Vec::new());
+        return Ok(walk);
     }
     let form = form.as_dict().cloned().ok_or_else(|| {
         Error::Cos(onionskin_cos::Error::Unrecoverable {
@@ -52,22 +73,16 @@ pub(crate) fn read(doc: &CosDocument) -> Result<Vec<SignatureField>> {
         })
     })?;
     let Some(fields) = form.get(b"Fields") else {
-        return Ok(Vec::new());
+        return Ok(walk);
     };
     let fields = doc.resolve(fields)?;
     let Some(fields) = fields.as_array().map(<[Object]>::to_vec) else {
-        return Ok(Vec::new());
-    };
-
-    let mut walk = Walk {
-        doc,
-        seen: BTreeSet::new(),
-        found: Vec::new(),
+        return Ok(walk);
     };
     for field in fields {
         walk.field(&field, "", None, 0, true)?;
     }
-    Ok(walk.found)
+    Ok(walk)
 }
 
 /// The field-tree walk's own state: the document it reads, the objects it
@@ -76,6 +91,8 @@ struct Walk<'a> {
     doc: &'a CosDocument,
     seen: BTreeSet<u32>,
     found: Vec<SignatureField>,
+    /// Each signed field's name and signature dictionary.
+    values: Vec<(String, Dict)>,
 }
 
 impl Walk<'_> {
@@ -136,6 +153,11 @@ impl Walk<'_> {
         if terminal && is_field_node && field_type == Some(b"Sig".as_slice()) {
             let found = signature(doc, &dict, name.clone())?;
             self.found.push(found);
+            if let Some(value) = dict.get(b"V") {
+                if let Some(value) = doc.resolve(value)?.as_dict() {
+                    self.values.push((name.clone(), value.clone()));
+                }
+            }
         }
 
         for kid in kids {

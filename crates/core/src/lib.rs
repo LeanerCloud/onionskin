@@ -33,7 +33,7 @@ mod search;
 pub mod security;
 mod selection;
 mod session;
-mod signatures;
+pub mod signatures;
 mod structure;
 #[cfg(test)]
 mod testpdf;

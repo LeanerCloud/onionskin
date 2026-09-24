@@ -123,6 +123,12 @@ pub fn encrypted_fixture(name: &str) -> PathBuf {
     committed("encrypted", name, "run corpus/make-encrypted.py")
 }
 
+/// One of the committed signed fixtures under `corpus/signed`, written by
+/// pyHanko (`corpus/make-signed.py`), with `test-ca.pem` beside them.
+pub fn signed_fixture(name: &str) -> PathBuf {
+    committed("signed", name, "run corpus/make-signed.py")
+}
+
 /// One of the committed page-organization fixtures under `corpus/organize`.
 ///
 /// Committed for the same reason as the encrypted ones: the importer's render

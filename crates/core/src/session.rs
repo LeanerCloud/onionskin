@@ -424,6 +424,8 @@ pub struct Document {
     outline: Option<Vec<OutlineItem>>,
     attachments: Option<Vec<Attachment>>,
     signatures: Option<Vec<SignatureField>>,
+    /// The signatures' validation, with the byte generation it was made at.
+    validations: Option<(u64, Vec<signatures::Validation>)>,
     /// Kept rather than re-read, because a toggle lives here: this is what
     /// the pane shows and what the render worker was last told.
     layers: Option<Vec<Layer>>,
@@ -527,6 +529,7 @@ impl Document {
             outline: None,
             attachments: None,
             signatures: None,
+            validations: None,
             layers: None,
             edit,
             path: None,
@@ -1305,6 +1308,27 @@ impl Document {
             .signatures
             .as_deref()
             .expect("the signature fields were just read"))
+    }
+
+    /// Every signature, validated against the document as last saved:
+    /// unsaved changes are not in any signed revision yet, and are checked
+    /// once they are saved. Kept until the bytes change.
+    pub fn validate_signatures(&mut self) -> Result<Vec<signatures::Validation>> {
+        if let Some((generation, found)) = &self.validations {
+            if *generation == self.byte_generation {
+                return Ok(found.clone());
+            }
+        }
+        let found = signatures::validate(&self.bytes, &self.password)?;
+        self.validations = Some((self.byte_generation, found.clone()));
+        Ok(found)
+    }
+
+    /// The document as signature `validation` signed it: the file cut where
+    /// its byte range ends.
+    pub fn signed_version(&self, validation: &signatures::Validation) -> Option<Vec<u8>> {
+        let length = validation.signed_length?;
+        self.bytes.get(..length).map(<[u8]>::to_vec)
     }
 
     /// The optional content groups, at the visibility the session is showing
