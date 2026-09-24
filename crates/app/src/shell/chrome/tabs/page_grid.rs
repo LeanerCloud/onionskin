@@ -64,6 +64,7 @@ impl ShellFrame {
             OrganizeAction::InsertFromFile | OrganizeAction::Replace | OrganizeAction::Extract => {
                 self.prompt_for_page_file(action, cx)
             }
+            OrganizeAction::Crop => self.open_crop_dialog(_window, cx),
             OrganizeAction::CopyTo => self.open_send_pages(false, _window, cx),
             OrganizeAction::MoveTo => self.open_send_pages(true, _window, cx),
         }
@@ -181,12 +182,10 @@ impl ShellFrame {
         }
     }
 
-    /// Why the grid's page edits cannot run, when they cannot.
+    /// Why the grid's document may not be edited, when it may not.
     fn grid_edit_refusal(&self, cx: &gpui::App) -> Option<&'static str> {
-        organize::page_edit_refusal(
-            self.active_canvas()
-                .and_then(|canvas| canvas.read(cx).model.edit_refusal()),
-        )
+        self.active_canvas()
+            .and_then(|canvas| canvas.read(cx).model.edit_refusal())
     }
 
     pub(super) fn accessible_grid(&self, cx: &gpui::App) -> Option<Element> {
@@ -358,7 +357,9 @@ impl ShellFrame {
                         })
                 });
             }
-            // Disabled, or the pane's own.
+            // Crop Pages opens a dialog, which needs the window:
+            // `run_activation` opens it before the pane is asked. The sizes
+            // are the pane's own.
             Command::CropPages | Command::ReduceThumbnails | Command::EnlargeThumbnails => {}
         }
         cx.notify();

@@ -78,6 +78,13 @@ pub(in crate::shell) enum TextField {
     /// Advanced Search's words, and its criterion's value.
     AdvancedQuery,
     AdvancedValue,
+    /// Crop Pages' four margins, and the page size it can change to.
+    CropTop,
+    CropBottom,
+    CropLeft,
+    CropRight,
+    CropWidth,
+    CropHeight,
 }
 
 /// What activating an accessible element does.
@@ -133,6 +140,8 @@ pub(in crate::shell) enum Activation {
     CancelExport,
     Combine(crate::shell::chrome::combine_dialog::CombineAction),
     Split(crate::shell::chrome::split_dialog::SplitAction),
+    /// The Crop Pages dialog.
+    Crop(crate::shell::chrome::crop_dialog::CropAction),
     Stamps(crate::shell::chrome::stamps_dialog::StampAction),
     Summary(crate::shell::chrome::summary_dialog::SummaryAction),
     Properties(crate::shell::chrome::properties_dialog::PropertiesAction),

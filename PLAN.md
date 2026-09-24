@@ -605,6 +605,10 @@ what-does-not-transfer section demands:
   check, find-and-replace, Bates numbering, advanced page boxes, and
   tagged-PDF maintenance on every edit (guarantee test 8); `redact` with
   sanitize and its verifier (guarantee test 3).
+  Status (2026-09-24): started. Crop Pages and Set Page Boxes (advanced
+  page boxes, Change Page Size, Remove White Margins, the crop tool) have
+  landed in `tools-edit` (docs/evidence/m5-crop-pages.md); the rest of M5
+  is planned.
 - **M6 - Trust and accessibility.** `tools-protect`: signature verification
   and preservation (guarantee test 4), platform-keystore signing identities,
   signature appearance management, trusted-identity management, timestamping

@@ -3,6 +3,7 @@ pub(in crate::shell) mod advanced_search;
 pub(in crate::shell) mod bookmark_dialog;
 pub(in crate::shell) mod combine_dialog;
 mod commands;
+pub(in crate::shell) mod crop_dialog;
 pub(in crate::shell) mod export_dialog;
 pub(in crate::shell) mod file_dialogs;
 mod global_bar;

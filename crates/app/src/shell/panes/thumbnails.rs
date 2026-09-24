@@ -117,14 +117,15 @@ impl ThumbnailsCommand {
     /// Whether the entry runs, and what it says when it does not.
     ///
     /// The two size commands are the pane's own. Page Properties reads. The
-    /// page edits run `tools-organize` on the chosen pages, so they are
-    /// refused with `edits` when the document's pages may not change.
-    /// Crop Pages waits on M5.
+    /// page edits run `tools-organize` on the chosen pages, and Crop Pages
+    /// `tools-edit`, so they are refused with `document`'s reason when the
+    /// document's pages may not change, or with the missing plugin's.
     pub(in crate::shell) fn availability(
         self,
         state: &ThumbnailsState,
-        edits: Option<&'static str>,
+        document: Option<&'static str>,
     ) -> MenuAvailability {
+        let edits = crate::shell::organize::page_edit_refusal(document);
         match self {
             Self::ReduceThumbnails => {
                 available(state.size > 0, "Already at the smallest thumbnail size")
@@ -133,7 +134,8 @@ impl ThumbnailsCommand {
                 state.size + 1 < SIZES.len(),
                 "Already at the largest thumbnail size",
             ),
-            Self::CropPages => MenuAvailability::Disabled("Available in M5 tools-organize"),
+            Self::CropPages => crate::shell::chrome::crop_dialog::crop_refusal(document)
+                .map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
             Self::PageProperties => MenuAvailability::Enabled,
             _ => edits.map_or(MenuAvailability::Enabled, MenuAvailability::Disabled),
         }
@@ -485,7 +487,7 @@ pub(super) fn accessible(
         state.body_height,
         page_count(canvas, cx),
         canvas.map(|canvas| canvas.read(cx).model.viewport().current_page()),
-        page_edits(state),
+        state.edit_refusal,
     )
 }
 
@@ -500,7 +502,7 @@ fn described(
     height: f32,
     page_count: usize,
     current: Option<PageIndex>,
-    edits: Option<&'static str>,
+    document: Option<&'static str>,
 ) -> Vec<Element> {
     if page_count == 0 {
         return vec![Element::new(
@@ -533,7 +535,7 @@ fn described(
             ThumbnailsCommand::ALL.map(|command| {
                 (
                     command.label(),
-                    command.availability(thumbnails, edits),
+                    command.availability(thumbnails, document),
                     run_command(command),
                 )
             }),
@@ -654,19 +656,14 @@ pub(super) fn render(
         .flex_col()
         .child(rows);
     if let Some(at) = thumbnails.menu {
-        body = body.child(render_menu(thumbnails, page_edits(state), at, theme, cx));
+        body = body.child(render_menu(thumbnails, state.edit_refusal, at, theme, cx));
     }
     body.into_any_element()
 }
 
-/// Why the page edits cannot run on this document, when they cannot.
-fn page_edits(state: &NavigationPanesState) -> Option<&'static str> {
-    crate::shell::organize::page_edit_refusal(state.edit_refusal)
-}
-
 fn render_menu(
     state: &ThumbnailsState,
-    edits: Option<&'static str>,
+    document: Option<&'static str>,
     at: Point<Pixels>,
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
@@ -687,7 +684,7 @@ fn render_menu(
             "thumbnail-menu-entry",
             index,
             command.label(),
-            command.availability(state, edits),
+            command.availability(state, document),
             run_command(command),
             theme,
             cx,
@@ -816,12 +813,12 @@ mod tests {
         }
     }
 
-    /// The page entries run on any document that may be edited, are
-    /// refused with the document's own reason on one that may not, and Crop
-    /// Pages alone still waits, on M5, so the test proves the mechanism
-    /// rather than that everything was switched on.
+    /// The page entries run on any document that may be edited, and are
+    /// refused with the document's own reason on one that may not. Crop
+    /// Pages is `tools-edit`'s rather than `tools-organize`'s, and follows
+    /// the same rule.
     #[test]
-    fn page_entries_follow_the_documents_edit_refusal_and_crop_waits_on_m5() {
+    fn page_entries_follow_the_documents_edit_refusal() {
         let pane = state(DEFAULT_SIZE, 0.0);
         let edits = [
             ThumbnailsCommand::InsertPages,
@@ -831,6 +828,7 @@ mod tests {
             ThumbnailsCommand::RotatePages,
             ThumbnailsCommand::EmbedThumbnails,
             ThumbnailsCommand::RemoveThumbnails,
+            ThumbnailsCommand::CropPages,
         ];
         for command in edits {
             assert!(
@@ -852,8 +850,6 @@ mod tests {
                 .is_enabled(),
             "reading is never refused"
         );
-        let crop = ThumbnailsCommand::CropPages.availability(&pane, None);
-        assert!(crop.reason().expect("disabled").contains("M5"));
     }
 
     /// The two size commands are the pane's own, so they are live, and they

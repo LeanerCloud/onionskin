@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 153 planned / 30 partial / 80 out-of-scope. 140 implemented.**
+**403 rows: 150 planned / 30 partial / 80 out-of-scope. 143 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 97, M4 5, M5 52, M6 45, post-1.0 57.
@@ -268,7 +268,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Item | Status | Milestone | Notes |
 |---|---|---|---|
 | Page thumbnails pane | implemented | M2 | Activation, lazy rendering, scrolling, selection, navigation, and rendered pane body bounds are implemented. `4132a99` also rearms the canvas poll loop when the pane queues work after initial rendering has settled; its GPUI-loop-only regression prevents black placeholders. Evidence: M2-PANES, B3.1, and the partially populated B7-REF-003 ledger row pending corrected visual capture. |
-| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | implemented | M2 | The menu and thumbnail sizing are implemented and accessible. Since P21 every page entry runs on the page on screen (or the Organize grid's selection), refused with the document's own reason when it may not be edited; Crop Pages alone stays disabled on its M5 reason. Evidence: M2-PANES, B3.1, B3.6, docs/evidence/m3-p21-organize-grid.md. |
+| Page thumbnails pane context menu (Insert Pages, Extract Pages, Replace Pages, Delete Pages, Rotate Pages, Crop Pages, Page Properties, Embed / Remove All Page Thumbnails, Reduce / Enlarge Page Thumbnails) | implemented | M2 | The menu and thumbnail sizing are implemented and accessible. Since P21 every page entry runs on the page on screen (or the Organize grid's selection), refused with the document's own reason when it may not be edited; Crop Pages opens the M5 Crop Pages dialog on the same pages. Evidence: M2-PANES, B3.1, B3.6, docs/evidence/m3-p21-organize-grid.md. |
 | Bookmarks pane (view and navigate) | implemented | M2 | Outline hierarchy, destination navigation, and rendered pane body bounds are implemented. Evidence: M2-PANES and B3.1. |
 | Bookmarks: create, rename, nest, set destination, delete | implemented | M3 | Pane behaviour over `core`: new, rename, set destination to the current page, nest, move out, delete with subtree; each is one undo step. Drag-to-reorder is not built. New Bookmarks From Structure follows at M6. Evidence: docs/evidence/m3-p13b-bookmarks-attachments.md. |
 | Attachments pane (list, open, save) | partial | M2 | Listing, Save, prompt-error feedback, stale successful-write protection, and rendered pane body bounds are implemented; Open remains disabled. Evidence: M2-PANES, B3.1, B4.2, and B4.3. |
@@ -327,7 +327,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Add or edit links | planned | M5 | Named in the plan's `tools-edit` list. Link actions: go to a page view, open a file, open a web page, custom (Link Properties). |
 | Auto-create links from URLs | planned | M5 | (judgment) |
 | Remove web links | planned | M5 | (judgment) |
-| Crop pages | planned | M5 | Named in the plan's `tools-edit` list. |
+| Crop pages | implemented | M5 | Named in the plan's `tools-edit` list. The Crop Pages tool: drag a rectangle, then double-click in it or press Enter, and the page's crop box becomes it. Edit > Crop Pages… opens the dialog on the page on screen: CropBox, BleedBox, TrimBox or ArtBox from four margins measured from the media box as the page is shown, Remove White Margins (each page fitted to what it draws), Set To Zero, Change Page Size, and the chosen pages or all of them. One undo step each. Margins are in points only. Twin: Organize > Crop pages. Evidence: docs/evidence/m5-crop-pages.md. |
 | Header and footer: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
 | Watermark: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
 | Background: add, update, remove | planned | M5 | Named in the plan's `tools-edit` list. |
@@ -376,7 +376,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Replace pages | implemented | M3 | Named in the plan's `tools-organize` list. Replace… takes the chosen pages' places from the first pages of a chosen file, as one undo step. Evidence: docs/evidence/m3-p11-organize.md, docs/evidence/m3-p21-organize-grid.md. |
 | Copy or move pages between open documents | implemented | M3 | Organize Pages' Copy To Document and Move To Document send the chosen pages to the end of another open document, each change one undo step in its own document; a move out of every page, an encrypted source or a target that may not be edited is refused. Acrobat drags between documents' panes; this asks which document instead, which the keyboard reaches too. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | Renumber pages / page labels | partial | M3 | A "number pages from 1" command is live; label styles, prefixes and ranges wait for P21's dialogs. Evidence: docs/evidence/m3-p11-organize.md. |
-| Crop pages (from Organize) | planned | M5 | Same command as Edit a PDF > Crop; delivered with `tools-edit`. |
+| Crop pages (from Organize) | implemented | M5 | The Organize grid's Crop Pages… and the thumbnails menu's Crop Pages open the same dialog as Edit a PDF > Crop on the pages chosen there. Evidence: docs/evidence/m5-crop-pages.md. |
 | Page thumbnail zoom and multi-select in the Organize grid | implemented | M3 | (judgment) Edit > Organize Pages: click, Shift-click, Cmd/Ctrl-click and marquee selection, drag to reorder as one undo step, Smaller and Larger thumbnails shared with the pane. Evidence: docs/evidence/m3-p21-organize-grid.md. |
 
 ## Toolset: Compress a PDF
@@ -600,7 +600,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Add Printer Marks | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
 | Fix Hairlines | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
 | Transparency Flattener Preview | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
-| Set Page Boxes (media, crop, bleed, trim, art) | planned | M5 | In scope per the plan: `tools-edit` crop covers advanced page boxes at M5. Only the prepress half of this toolset (Output Preview, Marks and Bleeds, trapping) stays out. |
+| Set Page Boxes (media, crop, bleed, trim, art) | implemented | M5 | The Crop Pages dialog is Set Page Boxes: crop, bleed, trim and art boxes from margins, and the media box through Change Page Size, centred on the old one. Only the prepress half of this toolset (Output Preview, Marks and Bleeds, trapping) stays out. Evidence: docs/evidence/m5-crop-pages.md. |
 | Trap Presets | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
 | Edit Object (prepress object editor) | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
 | Save as PDF/X, PDF/A, PDF/E from print production | out-of-scope | - | Print production, permanently out of scope: prepress is a product in itself. |
@@ -703,7 +703,7 @@ lossy post-1.0 targets. What follows is the remainder: the rows above marked
 
 | Area | Why it matters |
 |---|---|
-| The thumbnails context menu crosses M2/M3/M5 lines | The M2 shell ships the menu and thumbnail sizing. Most document mutations belong to `tools-organize` at M3, while Crop belongs to `tools-edit` at M5. Entries stay disabled until their owner ships, and the row states that split. |
+| The thumbnails context menu crosses M2/M3/M5 lines | The M2 shell ships the menu and thumbnail sizing. Most document mutations belong to `tools-organize` at M3, while Crop belongs to `tools-edit` at M5. Every entry has now shipped: Crop Pages with `tools-edit` in M5. |
 | Context menus as a class | The GUI parity section cites Acrobat's context menus as part of what transfers, but only the thumbnails menu is named anywhere. Seven context-menu surfaces now carry rows here (page canvas, thumbnails, bookmarks, attachments, comments list, layers, document tabs); their milestones are inherited, not stated. |
 | Viewer modes the M2 line does not enumerate | Split and Spreadsheet Split, page transitions and presentation setup, Overprint Preview, Automatically Scroll. Full Screen, line weights, Loupe and Pan & Zoom were the rest of this class and the plan now names them, which is why these four stand out. |
 | Home view | The plan describes the document window in detail and never mentions the no-document-open state: Recents, Starred, the list/thumbnail toggle. Acrobat users meet it first. |

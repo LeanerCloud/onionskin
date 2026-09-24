@@ -512,7 +512,13 @@ fn field_node(
         | TextField::PrintPosterOverlap
         | TextField::PrintBookletFrom
         | TextField::PrintBookletTo
-        | TextField::PropertiesOpenPage => accesskit::Role::NumberInput,
+        | TextField::PropertiesOpenPage
+        | TextField::CropTop
+        | TextField::CropBottom
+        | TextField::CropLeft
+        | TextField::CropRight
+        | TextField::CropWidth
+        | TextField::CropHeight => accesskit::Role::NumberInput,
         TextField::CombinePages
         | TextField::PrintPages
         | TextField::BookmarkTitle

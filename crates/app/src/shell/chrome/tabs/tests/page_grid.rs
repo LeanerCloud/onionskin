@@ -420,11 +420,11 @@ fn a_thousand_page_grid_asks_for_a_screenful(cx: &mut TestAppContext) {
         .unwrap();
 }
 
-/// The pane's page entries run on the page on screen, and Crop Pages alone
-/// is still disabled, on M5.
+/// The pane's page entries run on the page on screen; Crop Pages is live
+/// too, and opens its dialog (tested with the dialog).
 #[cfg(feature = "tools-organize")]
 #[gpui::test]
-fn the_thumbnail_menus_page_entries_run_and_crop_still_waits(cx: &mut TestAppContext) {
+fn the_thumbnail_menus_page_entries_run(cx: &mut TestAppContext) {
     let window = window(3, cx);
     let run = |command: ThumbnailsCommand, cx: &mut TestAppContext| {
         window
@@ -450,14 +450,7 @@ fn the_thumbnail_menus_page_entries_run_and_crop_still_waits(cx: &mut TestAppCon
             let tree = frame.accessible(window, cx);
             let menu = tree.find(&"thumbnail-context-menu".into()).expect("open");
             for entry in &menu.children {
-                if entry.label == "Crop Pages" {
-                    assert!(entry.state.disabled);
-                    assert!(entry
-                        .description
-                        .as_deref()
-                        .unwrap_or_default()
-                        .contains("M5"));
-                } else if !entry.label.contains("Thumbnails") || entry.label.contains("All") {
+                if !entry.label.contains("Thumbnails") || entry.label.contains("All") {
                     assert!(!entry.state.disabled, "{} is live", entry.label);
                 }
             }

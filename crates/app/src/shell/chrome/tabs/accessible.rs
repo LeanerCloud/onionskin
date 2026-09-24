@@ -453,7 +453,13 @@ impl ShellFrame {
             }
             Activation::View(action) => self.run_view_action(action, cx),
             Activation::SubmitPageEntry => self.submit_page_entry(cx),
-            // The one pane entry that opens a dialog, which is the frame's.
+            // The pane entries that open a dialog, which is the frame's.
+            Activation::Pane(PaneAction::Thumbnail(crate::shell::panes::ThumbnailAction::Run(
+                crate::shell::panes::ThumbnailsCommand::CropPages,
+            ))) => {
+                self.navigation.dismiss_thumbnail_menu();
+                self.open_crop_dialog(window, cx);
+            }
             Activation::Pane(PaneAction::Layer(LayerAction::Run(LayersCommand::Properties))) => {
                 self.run_pane_action(PaneAction::DismissMenus, cx);
                 self.show_dialog(ShellDialog::LayerProperties, window, cx);
@@ -499,6 +505,7 @@ impl ShellFrame {
             Activation::CancelExport => self.cancel_export(cx),
             Activation::Combine(action) => self.run_combine_action(action, cx),
             Activation::Split(action) => self.run_split_action(action, window, cx),
+            Activation::Crop(action) => self.run_crop_action(action, window, cx),
             Activation::Stamps(action) => self.run_stamp_action(action, window, cx),
             Activation::Summary(action) => self.run_summary_action(action, cx),
             Activation::Print(action) => self.run_print_action(action, window, cx),
@@ -685,6 +692,15 @@ impl ShellFrame {
                 .print
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
+            TextField::CropTop
+            | TextField::CropBottom
+            | TextField::CropLeft
+            | TextField::CropRight
+            | TextField::CropWidth
+            | TextField::CropHeight => self
+                .crop
+                .as_ref()
+                .and_then(|dialog| dialog.text_field(field)),
             TextField::AdvancedQuery | TextField::AdvancedValue => self
                 .advanced_search
                 .as_ref()
@@ -751,6 +767,7 @@ impl ShellFrame {
             .chain([TextField::BookmarkTitle, TextField::CommentingAuthor])
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)
+            .chain(crate::shell::chrome::crop_dialog::TEXT_FIELDS)
             .filter_map(|field| self.text_field(field))
             .find(|input| input.read(cx).focus_handle(cx).is_focused(window))
             .map(|input| input.read(cx).element_id().into());

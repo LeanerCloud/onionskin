@@ -51,6 +51,8 @@ pub(in crate::shell) enum ShellDialog {
     ManageTools,
     /// Edit > Advanced Search.
     AdvancedSearch,
+    /// Edit > Crop Pages, and the thumbnails' and grid's Crop Pages.
+    CropPages,
     /// Organize Pages' Copy To and Move To Document.
     SendPages {
         moving: bool,
@@ -76,6 +78,7 @@ impl ShellDialog {
             Self::PageProperties => "Page Properties",
             Self::ManageTools => "Manage Tools",
             Self::AdvancedSearch => "Advanced Search",
+            Self::CropPages => "Crop Pages",
             Self::SendPages { moving: true } => "Move Pages To",
             Self::SendPages { moving: false } => "Copy Pages To",
             Self::Preferences(_) => "Preferences",
@@ -194,6 +197,10 @@ pub(in crate::shell) fn accessible(
             frame
                 .send_pages_dialog()
                 .expect("the send dialog has state"),
+        ),
+        ShellDialog::CropPages => super::chrome::crop_dialog::accessible(
+            frame.crop_dialog().expect("crop pages has state"),
+            cx,
         ),
         ShellDialog::AdvancedSearch => super::chrome::advanced_search::accessible(
             frame
@@ -384,6 +391,13 @@ pub(in crate::shell) fn render_dialog(
             frame
                 .send_pages_dialog()
                 .expect("the send dialog has state"),
+            theme,
+            cx,
+        )
+        .into_any_element(),
+        ShellDialog::CropPages => super::chrome::crop_dialog::render(
+            frame.crop_dialog().expect("crop pages has state"),
+            focused,
             theme,
             cx,
         )

@@ -64,7 +64,7 @@ impl MenuCommand {
             MenuCommand::Find,
             MenuCommand::AdvancedSearch,
         ]);
-        all.push(MenuCommand::OrganizePages);
+        all.extend([MenuCommand::OrganizePages, MenuCommand::CropPages]);
         all.extend(PageCommand::ALL.map(MenuCommand::Page));
         all.extend([
             MenuCommand::Stamps,
@@ -151,6 +151,7 @@ impl MenuCommand {
             Self::SaveAsOther => "file.save-as-other",
             Self::Properties => "file.properties",
             Self::SplitDocument => onionskin_plugin_api::command_ids::SPLIT_DOCUMENT,
+            Self::CropPages => onionskin_plugin_api::command_ids::CROP_PAGES,
             Self::ReduceFileSize => onionskin_plugin_api::command_ids::REDUCE_FILE_SIZE,
             Self::PageSetup => "file.page-setup",
             Self::Print => onionskin_plugin_api::command_ids::PRINT,
@@ -288,6 +289,7 @@ impl MenuCommand {
             | Self::ExportAllImages
             | Self::SaveAsOther
             | Self::SplitDocument
+            | Self::CropPages
             | Self::Export(_)
             | Self::SelectAll
             | Self::DeselectAll
@@ -329,6 +331,7 @@ impl MenuCommand {
             | Self::DeselectAll
             | Self::Page(_)
             | Self::SplitDocument
+            | Self::CropPages
             | Self::SummarizeComments
             | Self::ReduceFileSize => Some(self.id()),
             _ => None,

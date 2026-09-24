@@ -3,6 +3,7 @@ mod advanced_search;
 mod auto_scroll;
 mod context;
 mod create;
+mod crop;
 mod dialogs;
 mod export;
 mod export_selection;
@@ -1703,6 +1704,8 @@ mod tests {
     mod comments;
     #[cfg(all(feature = "shell-test-support", feature = "codecs-common"))]
     mod convert;
+    #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]
+    mod crop;
     #[cfg(feature = "shell-test-support")]
     mod edit_menu;
     #[cfg(feature = "shell-test-support")]

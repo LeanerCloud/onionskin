@@ -343,6 +343,13 @@ impl ShellFrame {
                 self.open_advanced_search(window, cx);
                 Ok(())
             }
+            // The registered command crops the page on screen to its
+            // content; the entry, live when that command is, opens the
+            // dialog that offers margins, boxes and pages.
+            MenuCommand::CropPages => {
+                self.open_crop_dialog(window, cx);
+                Ok(())
+            }
             // Disabled in the schema for a milestone rather than for a
             // state, so the check at the top of this function returns first.
             // Kept as a loud answer in case an entry is ever enabled before

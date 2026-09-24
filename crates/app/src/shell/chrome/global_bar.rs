@@ -193,6 +193,8 @@ pub(in crate::shell) enum MenuCommand {
     PasteStamp,
     SummarizeComments,
     SplitDocument,
+    /// Crop Pages: the dialog, on the pages chosen.
+    CropPages,
     Properties,
     SaveAsOther,
     ReduceFileSize,
@@ -265,7 +267,7 @@ pub(super) const NO_SNAPSHOT_TOOL: &str = "No installed tool takes a snapshot";
 pub(super) const NO_DYNAMIC_ZOOM_TOOL: &str = "No installed tool zooms dynamically";
 
 /// The menu entries a registered command runs, rather than shell code.
-const REGISTRY_BACKED: [MenuCommand; 12] = [
+const REGISTRY_BACKED: [MenuCommand; 13] = [
     MenuCommand::SelectAll,
     MenuCommand::DeselectAll,
     MenuCommand::Page(PageCommand::RotateClockwise),
@@ -278,6 +280,7 @@ const REGISTRY_BACKED: [MenuCommand; 12] = [
     MenuCommand::SplitDocument,
     MenuCommand::SummarizeComments,
     MenuCommand::ReduceFileSize,
+    MenuCommand::CropPages,
 ];
 
 /// Which of those commands this build's plugins registered, and what each
@@ -728,12 +731,20 @@ pub(super) fn main_menu_schema(state: MenuState) -> Vec<MenuSection> {
                     selected: false,
                 },
             ])
-            .chain([MenuEntry {
-                command: MenuCommand::OrganizePages,
-                label: "Organize Pages",
-                availability: document_command,
-                selected: false,
-            }])
+            .chain([
+                MenuEntry {
+                    command: MenuCommand::OrganizePages,
+                    label: "Organize Pages",
+                    availability: document_command,
+                    selected: false,
+                },
+                MenuEntry {
+                    command: MenuCommand::CropPages,
+                    label: "Crop Pages…",
+                    availability: registry_command(state, MenuCommand::CropPages),
+                    selected: false,
+                },
+            ])
             .chain(page_entries(state))
             .chain(stamp_entries(state))
             .chain([MenuEntry {
@@ -1303,6 +1314,7 @@ impl MenuCommand {
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
+            | Self::CropPages
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1370,6 +1382,7 @@ impl MenuCommand {
             | Self::SummarizeComments
             | Self::ExportAllImages
             | Self::SplitDocument
+            | Self::CropPages
             | Self::Properties
             | Self::SaveAsOther
             | Self::CloseTab
@@ -1581,6 +1594,7 @@ fn native_action(command: MenuCommand) -> Option<Box<dyn Action>> {
         | MenuCommand::SummarizeComments
         | MenuCommand::ExportAllImages
         | MenuCommand::SplitDocument
+        | MenuCommand::CropPages
         | MenuCommand::Properties
         | MenuCommand::SaveAsOther
         | MenuCommand::Save
@@ -1631,15 +1645,19 @@ mod tests {
         RegistryFacts {
             codecs: ExportCodecs::installed(|_| true),
             commands: RegisteredCommands::installed(|id| {
-                Some(if id.starts_with("organize.") {
-                    CommandEffect::Edits
-                } else if id == onionskin_plugin_api::command_ids::SPLIT_DOCUMENT
-                    || id == onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS
-                {
-                    CommandEffect::ReadsOut
-                } else {
-                    CommandEffect::Reads
-                })
+                Some(
+                    if id.starts_with("organize.")
+                        || id == onionskin_plugin_api::command_ids::CROP_PAGES
+                    {
+                        CommandEffect::Edits
+                    } else if id == onionskin_plugin_api::command_ids::SPLIT_DOCUMENT
+                        || id == onionskin_plugin_api::command_ids::SUMMARIZE_COMMENTS
+                    {
+                        CommandEffect::ReadsOut
+                    } else {
+                        CommandEffect::Reads
+                    },
+                )
             }),
             snapshot_tool: true,
             dynamic_zoom_tool: true,
@@ -2081,6 +2099,7 @@ mod tests {
                 "Find…",
                 "Advanced Search…",
                 "Organize Pages",
+                "Crop Pages…",
                 "Rotate Page Clockwise",
                 "Rotate Page Counterclockwise",
                 "Insert Blank Page",

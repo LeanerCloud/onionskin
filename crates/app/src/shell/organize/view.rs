@@ -26,6 +26,8 @@ pub(in crate::shell) enum OrganizeAction {
     InsertFromFile,
     Extract,
     Replace,
+    /// Crop Pages, on the chosen pages.
+    Crop,
     /// Copy or move the chosen pages into another open document.
     CopyTo,
     MoveTo,
@@ -43,13 +45,14 @@ pub(in crate::shell) struct Button {
     pub(in crate::shell) refusal: Option<&'static str>,
 }
 
-/// The toolbar, left to right. `edits` is why the document's pages may not
-/// be changed, when they may not: an encrypted document, or a build without
-/// the Organize Pages plugin.
+/// The toolbar, left to right. `document` is why the document's pages may
+/// not be changed, when they may not; a button whose plugin this build lacks
+/// says that instead.
 pub(in crate::shell) fn buttons(
-    edits: Option<&'static str>,
+    document: Option<&'static str>,
     thumbnails: &ThumbnailsState,
 ) -> Vec<Button> {
+    let edits = super::page_edit_refusal(document);
     let button = |id, label, action, refusal| Button {
         id,
         label,
@@ -94,6 +97,12 @@ pub(in crate::shell) fn buttons(
             "Extract…",
             OrganizeAction::Extract,
             edits,
+        ),
+        button(
+            "organize-crop",
+            "Crop Pages…",
+            OrganizeAction::Crop,
+            crate::shell::chrome::crop_dialog::crop_refusal(document),
         ),
         button(
             "organize-copy-to",
