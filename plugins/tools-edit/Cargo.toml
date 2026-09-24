@@ -6,10 +6,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+onionskin-content.workspace = true
 onionskin-core.workspace = true
+onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
 
 # Crops are asserted on documents saved and parsed back.
 [dev-dependencies]
 onionskin-corpus-testing.workspace = true
-onionskin-cos.workspace = true
