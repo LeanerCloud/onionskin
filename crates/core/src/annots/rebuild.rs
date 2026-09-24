@@ -9,6 +9,7 @@
 
 use onionskin_cos::{Dict, Object};
 
+use super::measure::{Kind, Measure};
 use super::model::{
     Annotation, BaseFont, BorderEffect, Color, Intent, LineEnding, Rect, Subtype, TextStyle,
 };
@@ -58,6 +59,14 @@ pub(crate) fn model_from_dict(dict: &Dict) -> Option<Annotation> {
         .and_then(Object::as_name)
         .map(|name| String::from_utf8_lossy(name.as_bytes()).into_owned());
     model.contents = text(dict.get(b"Contents"));
+    // A measurement is only the shape its kind names: a free text saying it
+    // measures a line is a free text.
+    let measured = intent(dict)
+        .filter(|intent| Kind::from_intent(*intent).is_some_and(|kind| kind.subtype() == subtype));
+    if let Some(intent) = measured {
+        model.intent = Some(intent);
+        model.measure = Measure::from_dict(dict, Some(intent));
+    }
     Some(model)
 }
 
@@ -70,12 +79,12 @@ fn pairs(object: Option<&Object>) -> Vec<(f64, f64)> {
         .collect()
 }
 
+fn intent(dict: &Dict) -> Option<Intent> {
+    Intent::from_name(dict.get(b"IT").and_then(Object::as_name)?.as_bytes())
+}
+
 fn free_text(dict: &Dict, rect: Rect) -> Annotation {
-    let intent = match dict.get(b"IT").and_then(Object::as_name) {
-        Some(name) if name.as_bytes() == b"FreeTextTypewriter" => Some(Intent::FreeTextTypewriter),
-        Some(name) if name.as_bytes() == b"FreeTextCallout" => Some(Intent::FreeTextCallout),
-        _ => None,
-    };
+    let intent = intent(dict).filter(|intent| !intent.is_dimension());
     let style = dict
         .get(b"DA")
         .and_then(|da| match da {
@@ -160,6 +169,35 @@ mod tests {
             Some(TextStyle::new(BaseFont::Helvetica, 9.0, Color::BLACK))
         );
         assert_eq!(parse_default_appearance("0 g"), None);
+    }
+
+    #[test]
+    fn a_measured_area_reads_back_with_its_scale_and_a_free_text_keeps_its_intent() {
+        use crate::annots::measure::{Kind, Measure, Scale, Unit};
+
+        let measure = Measure::new(Kind::Area, Scale::new(1.0, Unit::Inch, 2.0, Unit::Metre));
+        let mut dict = Dict::new();
+        dict.set(Name::new("Subtype"), Object::name("Polygon"));
+        dict.set(Name::new("Rect"), array(&[0.0, 0.0, 10.0, 10.0]));
+        dict.set(
+            Name::new("Vertices"),
+            array(&[0.0, 0.0, 10.0, 0.0, 10.0, 10.0]),
+        );
+        dict.set(Name::new("IT"), Object::name("PolygonDimension"));
+        dict.set(Name::new("Measure"), Object::Dict(measure.dictionary()));
+        let model = model_from_dict(&dict).expect("a polygon");
+        assert_eq!(model.intent, Some(Intent::PolygonDimension));
+        assert_eq!(model.measure, Some(measure));
+
+        let mut free = Dict::new();
+        free.set(Name::new("Subtype"), Object::name("FreeText"));
+        free.set(Name::new("IT"), Object::name("FreeTextCallout"));
+        let model = model_from_dict(&free).expect("a free text");
+        assert_eq!(model.intent, Some(Intent::FreeTextCallout));
+        free.set(Name::new("IT"), Object::name("LineDimension"));
+        let model = model_from_dict(&free).expect("a free text");
+        assert_eq!(model.intent, None, "a free text is no measurement");
+        assert_eq!(model.measure, None);
     }
 
     fn array(values: &[f64]) -> Object {

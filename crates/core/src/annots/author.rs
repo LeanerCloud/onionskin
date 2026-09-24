@@ -184,6 +184,14 @@ fn dictionary(
     if let Some(intent) = annotation.intent {
         dict.set(Name::new("IT"), Object::name(intent.as_str()));
     }
+    if let Some(measure) = &annotation.measure {
+        dict.set(Name::new("Measure"), Object::Dict(measure.dictionary()));
+        // A line shows its measurement as its caption, which `/Cap` asks a
+        // reader drawing it afresh to do.
+        if annotation.subtype == Subtype::Line {
+            dict.set(Name::new("Cap"), Object::Bool(true));
+        }
+    }
     if !annotation.vertices.is_empty() {
         let flat: Vec<f64> = annotation
             .vertices

@@ -311,8 +311,12 @@ pub struct Annotation {
     /// `/DA`, how a `FreeText`'s text is drawn. `None` for every other
     /// subtype, and for a `FreeText` that carries no text of its own.
     pub text_style: Option<TextStyle>,
-    /// `/IT`, what a `FreeText` is being used as.
+    /// `/IT`, what a `FreeText` is being used as, or that a shape is a
+    /// measurement.
     pub intent: Option<Intent>,
+    /// `/Measure`, the scale a measurement was made at. Its value is in
+    /// `/Contents` and drawn as the shape's caption.
+    pub measure: Option<super::measure::Measure>,
     /// `/CL`, a callout's leader: two or three points, the tail - what the
     /// callout points at - first, the end at the text box last. Empty for
     /// everything else.
@@ -454,7 +458,8 @@ impl Default for TextStyle {
     }
 }
 
-/// `/IT`: what a `FreeText` is being used as.
+/// `/IT`: what a `FreeText` is being used as, or that a line, polyline or
+/// polygon is a measurement.
 ///
 /// A reader uses it to decide which handles to show and how to re-lay-out the
 /// annotation when its text changes, so a typewriter that says it is a plain
@@ -465,14 +470,46 @@ pub enum Intent {
     FreeTextTypewriter,
     /// A box with a leader line to what it points at.
     FreeTextCallout,
+    /// A `Line` measuring a distance.
+    LineDimension,
+    /// A `PolyLine` measuring a perimeter.
+    PolyLineDimension,
+    /// A `Polygon` measuring an area.
+    PolygonDimension,
 }
 
 impl Intent {
+    const ALL: [Intent; 5] = [
+        Intent::FreeTextTypewriter,
+        Intent::FreeTextCallout,
+        Intent::LineDimension,
+        Intent::PolyLineDimension,
+        Intent::PolygonDimension,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Intent::FreeTextTypewriter => "FreeTextTypewriter",
             Intent::FreeTextCallout => "FreeTextCallout",
+            Intent::LineDimension => "LineDimension",
+            Intent::PolyLineDimension => "PolyLineDimension",
+            Intent::PolygonDimension => "PolygonDimension",
         }
+    }
+
+    /// The intent an `/IT` name stands for, if it is one this crate knows.
+    pub fn from_name(name: &[u8]) -> Option<Intent> {
+        Intent::ALL
+            .into_iter()
+            .find(|intent| intent.as_str().as_bytes() == name)
+    }
+
+    /// Whether the annotation is a measurement.
+    pub fn is_dimension(self) -> bool {
+        matches!(
+            self,
+            Intent::LineDimension | Intent::PolyLineDimension | Intent::PolygonDimension
+        )
     }
 }
 
@@ -500,6 +537,7 @@ impl Annotation {
             state: None,
             text_style: None,
             intent: None,
+            measure: None,
             callout: Vec::new(),
             vertices: Vec::new(),
             endings: None,

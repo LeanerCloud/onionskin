@@ -23,6 +23,7 @@ use std::fmt::Write as _;
 
 use onionskin_cos::{Dict, Name, Object, Stream};
 
+use super::measure::{caption_stream, Kind};
 use super::model::{
     Annotation, BaseFont, BorderEffect, Color, Intent, LineEnding, Quad, Rect, Subtype, TextStyle,
 };
@@ -46,17 +47,44 @@ pub(crate) fn normal_appearance(annotation: &Annotation) -> Stream {
         Subtype::FreeText => free_text(annotation, rect),
         Subtype::Stamp => stamp(annotation, rect),
     };
-    let fonts: Vec<BaseFont> = annotation
+    let mut fonts: Vec<BaseFont> = annotation
         .text_style
         .map(|style| style.font)
         .into_iter()
         .collect();
+    if measured(annotation).is_some() {
+        fonts.push(BaseFont::Helvetica);
+    }
     form(
         rect,
         &content,
         annotation.opacity,
         blend_mode(annotation),
         &fonts,
+    )
+}
+
+/// A measurement's kind and caption, when the annotation is one with its
+/// value to show.
+fn measured(annotation: &Annotation) -> Option<(Kind, &str)> {
+    let kind = Kind::from_intent(annotation.intent?)?;
+    Some((kind, annotation.contents.as_deref()?))
+}
+
+/// A measurement's caption, drawn into the shape's own appearance in its
+/// colour: a reader with the stream draws the stream, so a value kept only in
+/// `/Contents` would be seen by no one looking at the page.
+fn measurement_caption(annotation: &Annotation, rect: Rect, points: &[(f64, f64)]) -> String {
+    let Some((kind, text)) = measured(annotation) else {
+        return String::new();
+    };
+    let color = annotation.color.unwrap_or(Color::BLACK);
+    caption_stream(
+        kind,
+        points,
+        text,
+        (rect.x0, rect.y0),
+        (color.red, color.green, color.blue),
     )
 }
 
@@ -324,6 +352,11 @@ fn line(annotation: &Annotation, rect: Rect) -> String {
         out.push_str(&arrow_head(first, end, start, annotation.border_width));
         out.push_str(&arrow_head(last, start, end, annotation.border_width));
     }
+    out.push_str(&measurement_caption(
+        annotation,
+        rect,
+        &[(sx, sy), (ex, ey)],
+    ));
     out
 }
 
@@ -394,6 +427,7 @@ fn vertex_path(annotation: &Annotation, rect: Rect, closed: bool) -> String {
         }
     }
     out.push_str(paint_operator(annotation, closed));
+    out.push_str(&measurement_caption(annotation, rect, &annotation.vertices));
     out
 }
 

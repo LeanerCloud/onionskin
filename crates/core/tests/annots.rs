@@ -711,3 +711,87 @@ fn pdf(objects: &[Vec<u8>]) -> Vec<u8> {
     out.extend_from_slice(format!("startxref\n{xref}\n%%EOF\n").as_bytes());
     out
 }
+
+// ---------------------------------------------------------------------------
+// Measurements
+// ---------------------------------------------------------------------------
+
+/// A distance measured at a scale is kept as Acrobat keeps one: a `/Line`
+/// with `/IT /LineDimension`, the scale in `/Measure`, the value in
+/// `/Contents`, and the value drawn as the line's caption, above it.
+#[test]
+fn a_measurement_keeps_its_scale_and_draws_its_value() {
+    use onionskin_core::measure::{Kind, Measure, Scale, Unit};
+    use onionskin_core::properties::{set_properties, CommentProperties};
+
+    let original = blank_page();
+    let base = open(&original);
+    let scale = Scale::new(1.0, Unit::Inch, 10.0, Unit::Foot);
+    let measure = Measure::new(Kind::Distance, scale);
+    let mut annotation = measure
+        .annotation(&[(20.0, 60.0), (164.0, 60.0)])
+        .expect("two points");
+    annotation.color = Some(Color::BLACK);
+    let (bytes, objref) = author(&original, &base, &annotation);
+
+    let reopened = open(&bytes);
+    let Object::Dict(dict) = reopened.resolve(&Object::Ref(objref)).expect("resolves") else {
+        panic!("a dictionary");
+    };
+    assert_eq!(
+        dict.get(b"IT")
+            .and_then(Object::as_name)
+            .map(|name| name.as_bytes().to_vec()),
+        Some(b"LineDimension".to_vec())
+    );
+    assert_eq!(dict.get(b"Cap"), Some(&Object::Bool(true)));
+    assert_eq!(
+        dict.get(b"Contents"),
+        Some(&Object::String(b"20.00 ft".to_vec()))
+    );
+    let measure_dict = dict
+        .get(b"Measure")
+        .and_then(Object::as_dict)
+        .expect("/Measure");
+    assert_eq!(
+        measure_dict.get(b"R"),
+        Some(&Object::String(b"1 in = 10 ft".to_vec()))
+    );
+    assert_eq!(
+        measure_dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .map(|name| name.as_bytes().to_vec()),
+        Some(b"RL".to_vec())
+    );
+
+    // The line is at y = 60, so row 140 of a 200-point page; the caption is
+    // drawn above it, in the rows between.
+    let ink_above = |bytes: &[u8]| {
+        raster(bytes)
+            .chunks(200)
+            .enumerate()
+            .filter(|(row, _)| (126..138).contains(row))
+            .flat_map(|(_, pixels)| pixels.iter())
+            .filter(|pixel| pixel[3] > 0 && pixel[0] < 128)
+            .count()
+    };
+    assert!(ink_above(&bytes) > 40, "the value is drawn above the line");
+
+    // A new colour draws the appearance again, caption and all.
+    let mut edit = EditSession::for_base(&reopened);
+    edit.transact(&reopened, "Properties", |tx| {
+        set_properties(
+            tx,
+            objref,
+            &CommentProperties {
+                color: Some(Color::new(0.0, 0.0, 1.0)),
+                ..CommentProperties::default()
+            },
+            WHEN,
+        )
+    })
+    .expect("recoloured");
+    let recoloured = append(&bytes, section(&reopened, &edit));
+    assert!(ink_above(&recoloured) > 40, "the caption is still drawn");
+}

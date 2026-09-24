@@ -9,6 +9,7 @@
 mod appearance;
 pub(crate) mod author;
 mod filter;
+pub mod measure;
 mod model;
 pub mod properties;
 mod read;

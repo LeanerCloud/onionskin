@@ -45,7 +45,7 @@ pub use annots::{
     AnnotationFilter, BaseFont, BorderEffect, Color, Flags, Intent, LineEnding, Quad,
     ReadAnnotation, Rect, StampArt, Subtype, TextStyle,
 };
-pub use annots::{properties, review};
+pub use annots::{measure, properties, review};
 pub use attachment_search::{
     AttachmentHit, AttachmentSearch, ATTACHMENT_SEARCH_DEPTH, MAX_ATTACHMENT_HITS,
 };
