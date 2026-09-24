@@ -4669,7 +4669,10 @@ dependencies = [
 name = "onionskin-tools-form"
 version = "0.1.0"
 dependencies = [
+ "onionskin-core",
+ "onionskin-cos",
  "onionskin-plugin-api",
+ "onionskin-scripting",
 ]
 
 [[package]]
