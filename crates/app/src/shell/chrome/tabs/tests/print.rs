@@ -1724,7 +1724,7 @@ fn an_encrypted_document_prints_as_images_and_the_box_says_why(cx: &mut TestAppC
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("locked.pdf");
     std::fs::copy(
-        onionskin_corpus_testing::encrypted_fixture("r4-aes-128.pdf"),
+        onionskin_corpus_testing::encrypted_fixture("r6-aes-256-print-only.pdf"),
         &path,
     )
     .expect("copies");

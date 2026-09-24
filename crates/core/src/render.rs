@@ -196,7 +196,17 @@ pub(crate) struct WorkerHandle {
 }
 
 impl WorkerHandle {
+    #[cfg(test)]
     pub(crate) fn spawn(bytes: Arc<Vec<u8>>) -> Result<Self, WorkerError> {
+        Self::spawn_with_password(bytes, Arc::from(""))
+    }
+
+    /// [`WorkerHandle::spawn`] for an encrypted document, which every reload
+    /// opens with `password` too.
+    pub(crate) fn spawn_with_password(
+        bytes: Arc<Vec<u8>>,
+        password: Arc<str>,
+    ) -> Result<Self, WorkerError> {
         let (requests, incoming) = mpsc::channel();
         let (outgoing, responses) = mpsc::channel();
         let (geometry_outgoing, geometry_responses) = mpsc::channel();
@@ -205,16 +215,17 @@ impl WorkerHandle {
         let thread = thread::Builder::new()
             .name("onionskin-render".into())
             .spawn(move || {
-                let document = match onionskin_render::Document::from_shared(bytes) {
-                    Ok(document) => {
-                        let _ = ready.send(Ok(()));
-                        document
-                    }
-                    Err(error) => {
-                        let _ = ready.send(Err(WorkerError::Render(error)));
-                        return;
-                    }
-                };
+                let document =
+                    match onionskin_render::Document::from_shared_with_password(bytes, &password) {
+                        Ok(document) => {
+                            let _ = ready.send(Ok(()));
+                            document
+                        }
+                        Err(error) => {
+                            let _ = ready.send(Err(WorkerError::Render(error)));
+                            return;
+                        }
+                    };
 
                 let mut document = document;
                 let mut pending = PendingRequests::default();
@@ -244,7 +255,7 @@ impl WorkerHandle {
                     // The old document is kept until the new one parses, so a
                     // reload that fails leaves a worker that still renders
                     // rather than one with nothing to render from.
-                    match onionskin_render::Document::from_shared(bytes) {
+                    match onionskin_render::Document::from_shared_with_password(bytes, &password) {
                         Ok(fresh) => {
                             document = fresh;
                             let _ = response.send(Ok(()));

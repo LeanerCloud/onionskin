@@ -313,7 +313,7 @@ fn the_plugin_registers_every_tool_in_one_group() {
 
 #[test]
 fn a_protected_document_is_left_as_it_was() {
-    let doc = Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens");
+    let doc = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf")).expect("opens");
     let mut fixture = Fixture::open(doc);
     let before = fixture.annotations().len();
     let mut tool = SymbolTool::new(Symbol::Check);

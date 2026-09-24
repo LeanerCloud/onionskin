@@ -10,6 +10,7 @@ use crate::render::WorkerHandle;
 
 #[path = "render_view.rs"]
 mod render_view;
+use crate::protection::EditKind;
 use crate::search::{DocumentSearch, SearchUpdate};
 use crate::{
     attachments, layers, outline, signatures, Attachment, Layer, ObjRef, OutlineItem, PageGeometry,
@@ -24,7 +25,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    EncryptedUnsupported,
+    /// The document is encrypted and the password given, or none, does not
+    /// open it: the shell asks for one.
+    NeedsPassword,
     NoSuchPage {
         page: PageIndex,
         count: usize,
@@ -123,10 +126,10 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(e) => write!(f, "io: {e}"),
-            Error::EncryptedUnsupported => write!(
+            Error::NeedsPassword => write!(
                 f,
-                "this encrypted PDF needs a password, and opening password-protected \
-                 documents arrives in M6"
+                "this encrypted PDF needs a password, and the one given, if any, does \
+                 not open it"
             ),
             Error::NoSuchPage { page, count } => {
                 write!(f, "page {page} is outside a {count}-page document")
@@ -227,7 +230,7 @@ impl std::error::Error for Error {
             Error::Worker(e) => Some(e),
             Error::SearchWorker(e) => Some(e),
             Error::Protected(e) => Some(e),
-            Error::EncryptedUnsupported
+            Error::NeedsPassword
             | Error::WouldLeaveNoPages
             | Error::ReplacementCountMismatch { .. }
             | Error::NoPageTree
@@ -265,7 +268,7 @@ impl From<std::io::Error> for Error {
 impl From<onionskin_cos::Error> for Error {
     fn from(e: onionskin_cos::Error) -> Self {
         match e {
-            onionskin_cos::Error::Encrypted => Error::EncryptedUnsupported,
+            onionskin_cos::Error::Encrypted => Error::NeedsPassword,
             other => Error::Cos(other),
         }
     }
@@ -274,7 +277,7 @@ impl From<onionskin_cos::Error> for Error {
 impl From<content::Error> for Error {
     fn from(e: content::Error) -> Self {
         match e {
-            content::Error::Cos(onionskin_cos::Error::Encrypted) => Error::EncryptedUnsupported,
+            content::Error::Cos(onionskin_cos::Error::Encrypted) => Error::NeedsPassword,
             other => Error::Content(other),
         }
     }
@@ -356,13 +359,14 @@ pub struct FieldRequest {
 /// The immutable document state an export worker reopens away from the UI.
 pub struct ExportSnapshot {
     bytes: Arc<Vec<u8>>,
+    password: Arc<str>,
     layer_visibility_differences: Vec<(ObjRef, bool)>,
 }
 
 impl ExportSnapshot {
     /// Reopen the original bytes and restore the session's live layer state.
     pub fn open(self) -> Result<Document> {
-        let mut document = Document::open_shared(self.bytes)?;
+        let mut document = Document::open_shared_with_password(self.bytes, &self.password)?;
         for (layer, visible) in self.layer_visibility_differences {
             document.set_layer_visible(layer, visible)?;
         }
@@ -375,7 +379,14 @@ const TEXT_CACHE_LIMIT: usize = 16;
 
 pub struct Document {
     bytes: Arc<Vec<u8>>,
-    cos: onionskin_cos::Document,
+    /// The password an encrypted document opened with, empty for one that
+    /// needs none. Every other reader of the bytes opens them with it too.
+    pub(crate) password: Arc<str>,
+    /// What the renderer opens the bytes with: the user password an owner's
+    /// unlocks, for an older document the renderer knows no owner password
+    /// for. See `onionskin_cos::Document::reader_password`.
+    pub(crate) render_password: Arc<str>,
+    pub(crate) cos: onionskin_cos::Document,
     provenance: Provenance,
     /// Pages in [`Document::cos`], the file as last opened or saved.
     opened_page_count: usize,
@@ -418,14 +429,14 @@ pub struct Document {
     layers: Option<Vec<Layer>>,
     /// What this session has changed, and the stack that can take it back.
     /// Empty for a document nobody edits, so a reader pays nothing for it.
-    edit: crate::EditSession,
+    pub(crate) edit: crate::EditSession,
     /// Where a save writes. `None` for a session opened from bytes, which is
     /// what `Save As` exists to fill in.
-    path: Option<PathBuf>,
+    pub(crate) path: Option<PathBuf>,
     /// Bumped whenever the bytes a reader should see change: a committed edit,
     /// a save, a revert. The preview cache and the render worker's staleness
     /// discipline both key on it.
-    byte_generation: u64,
+    pub(crate) byte_generation: u64,
     /// The unfiltered preview for the current generation, and the document
     /// every structural read goes through. Persistent across reads within a
     /// generation.
@@ -441,23 +452,31 @@ pub struct Document {
     seen_epoch: u64,
     /// Where autosave writes, when the app has given it somewhere. `None` means
     /// autosave is off for this document, which is the default.
-    recovery: Option<crate::recovery::RecoveryStore>,
+    pub(crate) recovery: Option<crate::recovery::RecoveryStore>,
     /// `(byte generation, edit epoch)` of the bytes the render worker holds.
     /// When it trails the session, the next render-side call hands the worker
     /// the preview first, so what is drawn is what a save would write.
     worker_state: (u64, u64),
     /// Bumped by every layer visibility change, so a second view's worker
     /// knows to take the new map (see [`RenderView`]).
-    layer_epoch: u64,
+    pub(crate) layer_epoch: u64,
     /// Whether strokes are drawn one pixel wide (View > Show/Hide > Line
     /// Weights off). A way of looking at the page, so it never reaches the
     /// bytes, a save or an export.
-    hairline_strokes: bool,
+    pub(crate) hairline_strokes: bool,
 }
 
 impl Document {
     pub fn open_path(path: &Path) -> Result<Self> {
-        let mut document = Self::open_bytes(std::fs::read(path)?)?;
+        Self::open_path_with_password(path, "")
+    }
+
+    /// Open an encrypted document with `password`, its user or owner
+    /// password. A document it does not open is [`Error::Cos`] with
+    /// `onionskin_cos::Error::Encrypted`.
+    pub fn open_path_with_password(path: &Path, password: &str) -> Result<Self> {
+        let mut document =
+            Self::open_shared_with_password(Arc::new(std::fs::read(path)?), password)?;
         document.path = Some(path.to_path_buf());
         Ok(document)
     }
@@ -467,14 +486,26 @@ impl Document {
     }
 
     pub fn open_shared(bytes: Arc<Vec<u8>>) -> Result<Self> {
-        let (cos, provenance) = onionskin_cos::Document::open_repairing(Box::new(
-            BytesSource::from_shared(Arc::clone(&bytes)),
-        ))?;
+        Self::open_shared_with_password(bytes, "")
+    }
+
+    pub fn open_shared_with_password(bytes: Arc<Vec<u8>>, password: &str) -> Result<Self> {
+        let (cos, provenance) = onionskin_cos::Document::open_repairing_with_password(
+            Box::new(BytesSource::from_shared(Arc::clone(&bytes))),
+            password.as_bytes(),
+        )?;
         let page_count = content::page_count(&cos)?;
         let edit = crate::EditSession::for_base(&cos);
-        let render = WorkerHandle::spawn(Arc::clone(&bytes))?;
+        let render_password: Arc<str> = Arc::from(String::from_utf8_lossy(
+            &cos.reader_password(password.as_bytes()),
+        ));
+        let password: Arc<str> = Arc::from(password);
+        let render =
+            WorkerHandle::spawn_with_password(Arc::clone(&bytes), Arc::clone(&render_password))?;
         Ok(Document {
             bytes,
+            password,
+            render_password,
             cos,
             provenance,
             opened_page_count: page_count,
@@ -566,7 +597,7 @@ impl Document {
         label: &'static str,
         body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
     ) -> Result<T> {
-        self.edit_with_current_structure(label, body)
+        self.edit_with_current_structure(label, EditKind::Pages, body)
     }
 
     /// Run an annotation edit as one undoable step, handing it the structure
@@ -578,17 +609,28 @@ impl Document {
         label: &'static str,
         body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
     ) -> Result<T> {
-        self.edit_with_current_structure(label, body)
+        self.edit_with_current_structure(label, EditKind::Comments, body)
+    }
+
+    /// Fill in form fields as one undoable step: what a document whose
+    /// security allows only form filling still allows.
+    pub fn edit_form_fields<T>(
+        &mut self,
+        label: &'static str,
+        body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
+    ) -> Result<T> {
+        self.edit_with_current_structure(label, EditKind::Forms, body)
     }
 
     fn edit_with_current_structure<T>(
         &mut self,
         label: &'static str,
+        kind: EditKind,
         body: impl FnOnce(&mut crate::Transaction<'_>, &crate::Structure) -> Result<T>,
     ) -> Result<T> {
         let structure = crate::read_structure(self.structure()?)?;
         self.edit
-            .transact(&self.cos, label, |tx| body(tx, &structure))
+            .transact_as(&self.cos, label, kind, |tx| body(tx, &structure))
     }
 
     /// Whether the document differs from its last save.
@@ -596,11 +638,27 @@ impl Document {
         self.edit.is_dirty()
     }
 
-    /// Whether this document may be edited: refused, with the reason, for an
-    /// encrypted one. The same answer `EditSession::transact` enforces, asked
-    /// ahead of time so a tool can show itself disabled instead of failing.
+    /// Whether this document may be changed: refused, with the reason, where
+    /// its security does not allow changes. The same answer
+    /// `EditSession::transact` enforces, asked ahead of time so a tool can
+    /// show itself disabled instead of failing.
     pub fn edit_refusal(&self) -> Option<crate::protection::Refusal> {
         crate::protection::edit(&self.cos).err()
+    }
+
+    /// [`Document::edit_refusal`] for a change of `kind`.
+    pub fn edit_refusal_as(&self, kind: EditKind) -> Option<crate::protection::Refusal> {
+        crate::protection::edit_as(&self.cos, kind).err()
+    }
+
+    /// What this document's security allows, as it was opened.
+    pub fn permitted(&self) -> onionskin_crypto::Permissions {
+        crate::protection::permitted(&self.cos)
+    }
+
+    /// Which password opened this document, when it is encrypted.
+    pub fn access(&self) -> Option<onionskin_crypto::Access> {
+        self.cos.access()
     }
 
     /// Whether this document's object graph may be read out into another
@@ -639,8 +697,13 @@ impl Document {
     }
 
     fn write_to(&mut self, path: &Path, saved_as: bool) -> Result<crate::SaveOutcome> {
-        let (bytes, cos, appended) =
-            crate::save::write_and_reopen(&self.bytes, &self.cos, &self.edit, path)?;
+        let (bytes, cos, appended) = crate::save::write_and_reopen(
+            &self.bytes,
+            &self.password,
+            &self.cos,
+            &self.edit,
+            path,
+        )?;
         // Counted before anything is replaced: the overlay is about to be
         // emptied, so the saved file's own count becomes the answer.
         let opened_page_count = content::page_count(&cos)?;
@@ -724,8 +787,10 @@ impl Document {
                 detail: "the recovery does not extend this document".into(),
             }));
         }
-        let replayed =
-            onionskin_cos::Document::open(Box::new(BytesSource::new(recovered.to_vec())))?;
+        let replayed = onionskin_cos::Document::open_with_password(
+            Box::new(BytesSource::new(recovered.to_vec())),
+            self.password.as_bytes(),
+        )?;
         let in_section = |entry: onionskin_cos::XrefEntry| match entry {
             onionskin_cos::XrefEntry::InFile { offset, .. } => offset >= original,
             _ => false,
@@ -829,6 +894,7 @@ impl Document {
     ) -> Result<crate::preview::PreviewBuffer> {
         crate::preview::build(
             Arc::clone(&self.bytes),
+            Arc::clone(&self.password),
             &self.cos,
             &self.edit,
             self.page_count(),
@@ -913,6 +979,7 @@ impl Document {
     pub fn generation_details(&self) -> Result<Vec<crate::GenerationDetail>> {
         Ok(crate::generations::details(
             &self.bytes,
+            &self.password,
             &self.generations()?,
         ))
     }
@@ -942,8 +1009,10 @@ impl Document {
         drop(file);
 
         let bytes = Arc::new(std::fs::read(&path)?);
-        let cos =
-            onionskin_cos::Document::open(Box::new(BytesSource::from_shared(Arc::clone(&bytes))))?;
+        let cos = onionskin_cos::Document::open_with_password(
+            Box::new(BytesSource::from_shared(Arc::clone(&bytes))),
+            self.password.as_bytes(),
+        )?;
         self.bytes = bytes;
         self.cos = cos;
         self.opened_page_count = content::page_count(&self.cos)?;
@@ -976,6 +1045,7 @@ impl Document {
         };
         Ok(ExportSnapshot {
             bytes: self.bytes(),
+            password: Arc::clone(&self.password),
             layer_visibility_differences,
         })
     }
@@ -1374,7 +1444,8 @@ impl Document {
                 .then(|| self.comment_hits(needle, options))
                 .transpose()?;
             if self.search_worker.is_none() {
-                self.search_worker = Some(DocumentSearch::spawn(bytes)?);
+                self.search_worker =
+                    Some(DocumentSearch::spawn(bytes, Arc::clone(&self.password))?);
             }
             let searched = self.page_count();
             self.search_worker

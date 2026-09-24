@@ -136,7 +136,7 @@ fn a_document_without_comments_says_so_in_the_dialog(cx: &mut TestAppContext) {
 /// the document's reason, through the command's read-out effect.
 #[gpui::test]
 fn summarize_is_disabled_on_an_encrypted_document(cx: &mut TestAppContext) {
-    let encrypted = onionskin_corpus_testing::encrypted_fixture("r4-aes-128.pdf");
+    let encrypted = onionskin_corpus_testing::encrypted_fixture("r6-aes-256-print-only.pdf");
     let dir = tempfile::tempdir().expect("dir");
     let window = window_on(
         &dir.path().join("Locked.pdf"),

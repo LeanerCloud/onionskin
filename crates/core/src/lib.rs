@@ -30,6 +30,7 @@ pub mod redactions;
 mod render;
 mod save;
 mod search;
+pub mod security;
 mod selection;
 mod session;
 mod signatures;

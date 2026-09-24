@@ -18,6 +18,7 @@ pub use history::{Entry, History, MAX_HISTORY_BYTES};
 pub use overlay::{Change, ObjectState, Overlay, TrailerState};
 pub use verb::DocumentEdit;
 
+use crate::protection::EditKind;
 use crate::session::Result;
 use overlay::ChangeKey;
 
@@ -81,16 +82,32 @@ impl EditSession {
     /// An aborted transaction leaves the overlay untouched, including any
     /// object numbers it reserved: an abort cannot leak a number.
     ///
-    /// **Refused on an encrypted base**, before the body runs: nothing in this
-    /// codebase can write an encrypted document until M6, and refusing here -
-    /// the one door every tool, command and verb goes through - is what makes
-    /// the editing gate a property of the document rather than a flag someone
-    /// has to remember to check. See `core::protection`.
+    /// **Refused where the base's security does not allow it**, before the
+    /// body runs: refusing here - the one door every tool, command and verb
+    /// goes through - is what makes the editing gate a property of the
+    /// document rather than a flag someone has to remember to check. A
+    /// transaction is a change of [`EditKind::Content`]; see
+    /// [`EditSession::transact_as`] and `core::protection`.
     pub fn transact<F, T>(&mut self, base: &CosDocument, label: &'static str, body: F) -> Result<T>
     where
         F: FnOnce(&mut Transaction<'_>) -> Result<T>,
     {
-        crate::protection::edit(base).map_err(crate::Error::Protected)?;
+        self.transact_as(base, label, EditKind::Content, body)
+    }
+
+    /// [`EditSession::transact`] for a change of `kind`, which the base's
+    /// security may allow where it allows no other.
+    pub fn transact_as<F, T>(
+        &mut self,
+        base: &CosDocument,
+        label: &'static str,
+        kind: EditKind,
+        body: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&mut Transaction<'_>) -> Result<T>,
+    {
+        crate::protection::edit_as(base, kind).map_err(crate::Error::Protected)?;
         let reserved_before = self.overlay.next_number();
         let mut tx = Transaction {
             base,

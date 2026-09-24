@@ -320,7 +320,7 @@ fn a_bad_split_value_is_reported_and_nothing_is_written(cx: &mut TestAppContext)
 /// with the document's reason, through the registry's read-out effect.
 #[gpui::test]
 fn split_is_disabled_on_an_encrypted_document(cx: &mut TestAppContext) {
-    let encrypted = onionskin_corpus_testing::encrypted_fixture("r4-aes-128.pdf");
+    let encrypted = onionskin_corpus_testing::encrypted_fixture("r6-aes-256-print-only.pdf");
     let dir = tempfile::tempdir().expect("dir");
     let window = window_on_file(
         &dir.path().join("Locked.pdf"),

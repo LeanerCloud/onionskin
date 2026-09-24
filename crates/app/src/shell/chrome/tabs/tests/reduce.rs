@@ -135,7 +135,7 @@ fn save_appends_and_never_rewrites(cx: &mut TestAppContext) {
 #[gpui::test]
 fn reduce_file_size_is_refused_on_an_encrypted_document(cx: &mut TestAppContext) {
     let bytes = std::fs::read(onionskin_corpus_testing::encrypted_fixture(
-        "r4-aes-128.pdf",
+        "r6-aes-256-print-only.pdf",
     ))
     .expect("reads");
     let (window, _) = bound_window_from_bytes(vec![("locked.pdf", bytes)], cx);

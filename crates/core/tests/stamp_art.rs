@@ -108,7 +108,7 @@ fn a_page_of_another_pdf_becomes_the_stamp_and_survives_a_save() {
 #[test]
 fn a_page_from_an_encrypted_pdf_is_refused() {
     let mut document = Document::open_path(&seed("hello.pdf")).expect("opens");
-    let encrypted = std::fs::read(encrypted_fixture("r4-aes-128.pdf")).expect("reads");
+    let encrypted = std::fs::read(encrypted_fixture("r6-aes-256-print-only.pdf")).expect("reads");
     let refused = place(
         &mut document,
         Rect::new(0.0, 0.0, 10.0, 10.0),

@@ -380,7 +380,8 @@ fn a_background_colour_fills_behind_what_the_page_draws() {
 
 #[test]
 fn a_protected_document_refuses_every_mark_by_name() {
-    let mut doc = Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens");
+    let mut doc =
+        Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf")).expect("opens");
     let refused = add_header_footer(&mut doc, &[0], &header("x", ""), false, "");
     assert!(matches!(
         refused,

@@ -107,6 +107,7 @@ pub struct WrittenButNotReloaded {
 /// saved mark exactly as they were.
 pub(crate) fn write_and_reopen(
     original: &[u8],
+    password: &str,
     base: &CosDocument,
     edit: &EditSession,
     path: &Path,
@@ -134,7 +135,10 @@ pub(crate) fn write_and_reopen(
     );
 
     let bytes = Arc::new(written);
-    match CosDocument::open(Box::new(BytesSource::from_shared(Arc::clone(&bytes)))) {
+    match CosDocument::open_with_password(
+        Box::new(BytesSource::from_shared(Arc::clone(&bytes))),
+        password.as_bytes(),
+    ) {
         Ok(document) => Ok((bytes, document, appended)),
         Err(error) => Err(Error::WrittenButNotReloaded(WrittenButNotReloaded {
             path: path.to_path_buf(),

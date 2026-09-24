@@ -136,17 +136,16 @@ fn encrypted_error_display_names_encryption_and_m6() {
         Ok(_) => panic!("encrypted file opened"),
         Err(err) => err,
     };
-    assert!(matches!(err, Error::EncryptedUnsupported));
+    assert!(matches!(err, Error::NeedsPassword));
 
     let message = err.to_string();
     assert!(message.contains("encrypted"));
     assert!(
         message.contains("password"),
-        "the refusal says why: a password, not encryption as such, since M3 \
-         opens the encrypted documents that need none"
+        "the refusal says why: a password, not encryption as such, since the \
+         encrypted documents that need none open"
     );
-    assert!(message.contains("M6"));
-    assert!(!message.contains("EncryptedUnsupported"));
+    assert!(!message.contains("NeedsPassword"));
 }
 
 fn encrypted_pdf() -> Vec<u8> {

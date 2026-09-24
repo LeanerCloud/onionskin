@@ -1,14 +1,14 @@
-//! `core::protection`: what M3 lets a user do with an encrypted document.
+//! `core::protection`: what a user may do with a document, from its
+//! security.
 //!
-//! Two refusals, one predicate, both derived from the document rather than from
-//! a flag. Asserted here at the depth this crate can reach - the predicate and
-//! the editing gate over real encrypted documents - and at the app's depth by
-//! the packages whose commands call it.
+//! Asserted here over real encrypted documents written by qpdf
+//! (`corpus/make-encrypted.py`): one whose permissions allow everything, one
+//! that allows printing only, and one that allows comments and form filling.
 
 use std::path::PathBuf;
 
-use onionskin_core::protection::{self, Refusal};
-use onionskin_core::{Document, DocumentEdit, EditSession, Error};
+use onionskin_core::protection::{self, EditKind, Refusal};
+use onionskin_core::{Document, DocumentEdit, DocumentFile, EditSession, Error};
 use onionskin_corpus_testing::{encrypted_fixture, seed};
 use onionskin_cos::{BytesSource, Document as CosDocument, Name, Object};
 
@@ -16,54 +16,109 @@ fn encrypted(name: &str) -> PathBuf {
     encrypted_fixture(name)
 }
 
-fn open_cos(path: &PathBuf) -> CosDocument {
-    CosDocument::open(Box::new(BytesSource::new(
-        std::fs::read(path).expect("readable"),
-    )))
+fn open_cos(path: &PathBuf, password: &[u8]) -> CosDocument {
+    CosDocument::open_with_password(
+        Box::new(BytesSource::new(std::fs::read(path).expect("readable"))),
+        password,
+    )
     .expect("opens")
 }
 
-/// The one predicate, over both kinds of document.
-#[test]
-fn the_predicate_refuses_an_encrypted_graph_and_allows_a_plain_one() {
-    let plain = open_cos(&seed("hello.pdf"));
-    assert_eq!(protection::read_out(&plain), Ok(()));
+const KINDS: [EditKind; 4] = [
+    EditKind::Content,
+    EditKind::Comments,
+    EditKind::Forms,
+    EditKind::Pages,
+];
 
-    let locked = open_cos(&encrypted("r4-aes-128.pdf"));
-    assert_eq!(protection::read_out(&locked), Err(Refusal::EncryptedSource));
-    assert_eq!(Refusal::EncryptedSource.milestone(), "M6");
-}
-
-/// The editing gate is the same answer, not a second function that can drift:
-/// asserted by asking both over every encrypted fixture and a plain one.
+/// A plain document, and an encrypted one whose permissions allow
+/// everything, allow everything.
 #[test]
-fn the_editing_gate_and_the_read_out_rule_agree_on_every_document() {
-    let mut paths = vec![seed("hello.pdf"), seed("two-page.pdf")];
-    for name in [
-        "r2-rc4-40.pdf",
-        "r3-rc4-128.pdf",
-        "r4-rc4-128.pdf",
-        "r4-aes-128.pdf",
-        "r6-aes-256.pdf",
+fn what_allows_everything_refuses_nothing() {
+    for path in [
+        seed("hello.pdf"),
+        encrypted("r4-aes-128.pdf"),
+        encrypted("r6-aes-256.pdf"),
     ] {
-        paths.push(encrypted(name));
-    }
-    for path in paths {
-        let document = open_cos(&path);
+        let document = open_cos(&path, b"");
         assert_eq!(
-            protection::edit(&document),
             protection::read_out(&document),
+            Ok(()),
             "{}",
             path.display()
         );
+        for kind in KINDS {
+            assert_eq!(
+                protection::edit_as(&document, kind),
+                Ok(()),
+                "{}",
+                path.display()
+            );
+        }
+        assert_eq!(protection::notice(&document), None);
     }
 }
 
-/// Refused at the one door every edit goes through, so no tool, command or verb
-/// can begin one - and before the body runs, so nothing is half-written.
+/// Printing only: every kind of change is refused, and so is copying out.
 #[test]
-fn no_edit_can_begin_on_an_encrypted_document() {
-    let base = open_cos(&encrypted("r4-aes-128.pdf"));
+fn print_only_refuses_every_change() {
+    let document = open_cos(&encrypted("r6-aes-256-print-only.pdf"), b"");
+    assert_eq!(
+        protection::read_out(&document),
+        Err(Refusal::EncryptedSource)
+    );
+    for kind in KINDS {
+        assert_eq!(
+            protection::edit_as(&document, kind),
+            Err(Refusal::Restricted(kind))
+        );
+    }
+    assert_eq!(
+        protection::edit(&document),
+        Err(Refusal::Restricted(EditKind::Content))
+    );
+    let notice = protection::notice(&document).expect("a notice");
+    assert!(
+        notice.contains(
+            "does not allow changes, comments, filling in forms, changing pages or copying content"
+        ),
+        "{notice}"
+    );
+    assert!(notice.contains("permissions password"), "{notice}");
+}
+
+/// Comments and form filling allowed, nothing else.
+#[test]
+fn comments_only_allows_comments_and_forms() {
+    let document = open_cos(&encrypted("r6-aes-256-comments-only.pdf"), b"");
+    assert_eq!(protection::edit_as(&document, EditKind::Comments), Ok(()));
+    assert_eq!(protection::edit_as(&document, EditKind::Forms), Ok(()));
+    assert_eq!(
+        protection::edit_as(&document, EditKind::Content),
+        Err(Refusal::Restricted(EditKind::Content))
+    );
+    assert_eq!(
+        protection::edit_as(&document, EditKind::Pages),
+        Err(Refusal::Restricted(EditKind::Pages))
+    );
+}
+
+/// The owner password lifts every restriction.
+#[test]
+fn the_owner_password_lifts_the_restrictions() {
+    let document = open_cos(&encrypted("r6-aes-256-print-only.pdf"), b"owner-password");
+    assert_eq!(protection::read_out(&document), Ok(()));
+    for kind in KINDS {
+        assert_eq!(protection::edit_as(&document, kind), Ok(()));
+    }
+    assert_eq!(protection::notice(&document), None);
+}
+
+/// Refused at the one door every edit goes through, so no tool, command or
+/// verb can begin one - and before the body runs, so nothing is half-written.
+#[test]
+fn no_refused_edit_can_begin() {
+    let base = open_cos(&encrypted("r6-aes-256-comments-only.pdf"), b"");
     let mut edit = EditSession::for_base(&base);
     let mut ran = false;
     let outcome = edit.transact(&base, "Anything", |_| {
@@ -71,7 +126,10 @@ fn no_edit_can_begin_on_an_encrypted_document() {
         Ok(())
     });
     assert!(
-        matches!(outcome, Err(Error::Protected(Refusal::EncryptedSource))),
+        matches!(
+            outcome,
+            Err(Error::Protected(Refusal::Restricted(EditKind::Content)))
+        ),
         "got {outcome:?}"
     );
     assert!(
@@ -79,17 +137,31 @@ fn no_edit_can_begin_on_an_encrypted_document() {
         "the body must not run: refused at the start of the work"
     );
     assert!(edit.pending_edits().is_empty());
-    assert!(!edit.is_dirty());
+
+    let outcome = edit.transact_as(&base, "Comment", EditKind::Comments, |_| {
+        ran = true;
+        Ok(())
+    });
+    assert!(outcome.is_ok() && ran, "a comment is allowed");
 }
 
 /// The same gate reached through `core::Document`, which is what a tool holds,
 /// and through a verb rather than a raw transaction.
 #[test]
-fn a_verb_on_an_encrypted_document_is_refused_and_says_why() {
-    let bytes = std::fs::read(encrypted("r6-aes-256.pdf")).expect("readable");
-    let mut document = Document::open_bytes(bytes).expect("an encrypted document opens");
-    assert_eq!(document.edit_refusal(), Some(Refusal::EncryptedSource));
+fn a_refused_verb_says_why() {
+    let bytes = std::fs::read(encrypted("r6-aes-256-print-only.pdf")).expect("readable");
+    let mut document = Document::open_bytes(bytes).expect("opens");
+    assert_eq!(
+        document.edit_refusal(),
+        Some(Refusal::Restricted(EditKind::Content))
+    );
+    assert_eq!(
+        document.edit_refusal_as(EditKind::Comments),
+        Some(Refusal::Restricted(EditKind::Comments))
+    );
     assert_eq!(document.read_out_refusal(), Some(Refusal::EncryptedSource));
+    assert!(!document.permitted().modify());
+    assert_eq!(document.access(), Some(onionskin_crypto::Access::User));
 
     let (edit, base) = document.edit_mut();
     let outcome = edit.apply(
@@ -100,12 +172,49 @@ fn a_verb_on_an_encrypted_document_is_refused_and_says_why() {
         },
     );
     let Err(error) = outcome else {
-        panic!("an encrypted document was edited");
+        panic!("a document that allows no changes was changed");
     };
     let message = error.to_string();
-    assert!(message.contains("encrypted"), "{message}");
-    assert!(message.contains("M6"), "{message}");
+    assert!(message.contains("changes are not allowed"), "{message}");
+    assert!(message.contains("permissions password"), "{message}");
     assert!(!document.is_dirty());
+}
+
+/// An encrypted document that allows changes takes them, saves them
+/// encrypted, and reads them back after the save.
+#[test]
+fn an_encrypted_document_is_edited_and_saved_encrypted() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("secured.pdf");
+    std::fs::copy(encrypted("r6-aes-256-user-password.pdf"), &path).expect("copies");
+    assert!(Document::open_path(&path).is_err(), "it needs its password");
+    let mut document = DocumentFile::open_with_password(&path, "secret").expect("opens");
+    let (edit, base) = document.edit_mut();
+    edit.apply(
+        base,
+        DocumentEdit::SetInfoField {
+            key: Name::new("Title"),
+            value: Some(Object::String(b"A secret title".to_vec())),
+        },
+    )
+    .expect("allowed");
+    assert_eq!(
+        document.info().expect("reads").description.title.as_deref(),
+        Some("A secret title"),
+        "the preview reads the edit through the password"
+    );
+    document.save().expect("saves");
+    let saved = std::fs::read(&path).expect("reads");
+    assert!(
+        !saved.windows(14).any(|w| w == b"A secret title"),
+        "in the clear"
+    );
+    let mut reopened = Document::open_path_with_password(&path, "secret").expect("reopens");
+    assert_eq!(
+        reopened.info().expect("reads").description.title.as_deref(),
+        Some("A secret title")
+    );
+    assert!(reopened.render_page_now(0, 1.0).is_ok(), "and renders");
 }
 
 /// A plain document is not touched by any of this.
@@ -114,6 +223,7 @@ fn a_plain_document_edits_as_before() {
     let mut document = Document::open_path(&seed("hello.pdf")).expect("opens");
     assert_eq!(document.edit_refusal(), None);
     assert_eq!(document.protection_notice(), None);
+    assert_eq!(document.access(), None);
     let (edit, base) = document.edit_mut();
     edit.apply(
         base,
@@ -126,36 +236,27 @@ fn a_plain_document_edits_as_before() {
     assert!(document.is_dirty());
 }
 
-/// The notice says what the user can and cannot do in words, and says the
-/// uncomfortable part when the document's own permissions allow changes.
+/// The reasons are words a disabled entry can show.
 #[test]
-fn the_open_time_notice_names_the_restriction_in_words() {
-    let bytes = std::fs::read(encrypted("r4-aes-128.pdf")).expect("readable");
-    let document = Document::open_bytes(bytes).expect("opens");
-    let notice = document
-        .protection_notice()
-        .expect("an encrypted document has a notice");
-    for words in ["encrypted", "read", "print", "editing is turned off", "M6"] {
-        assert!(
-            notice.contains(words),
-            "the notice does not say {words:?}: {notice}"
-        );
-    }
-
-    let permissions = open_cos(&encrypted("r4-aes-128.pdf"))
-        .permissions()
-        .expect("an encrypted document has permissions");
-    assert_eq!(
-        notice.contains("Its own permissions allow changes"),
-        permissions.modify(),
-        "the residual is stated exactly when /P bit 4 is set"
-    );
+fn each_refusal_has_its_reason() {
+    let reasons: Vec<&str> = [
+        Refusal::EncryptedSource,
+        Refusal::Restricted(EditKind::Content),
+        Refusal::Restricted(EditKind::Comments),
+        Refusal::Restricted(EditKind::Forms),
+        Refusal::Restricted(EditKind::Pages),
+    ]
+    .map(Refusal::reason)
+    .to_vec();
+    assert!(reasons
+        .iter()
+        .all(|reason| reason.starts_with("Security: ")));
+    let unique: std::collections::BTreeSet<_> = reasons.iter().collect();
+    assert_eq!(unique.len(), reasons.len());
 }
 
 /// An encrypted document still renders: the preview is `original ++ section`,
-/// and an empty overlay has no section. Refusing unconditionally would make
-/// every encrypted document unrenderable, which is the ordering the plan warns
-/// about.
+/// and an empty overlay has no section.
 #[test]
 fn an_encrypted_document_still_has_preview_bytes() {
     let bytes = std::fs::read(encrypted("r4-aes-128.pdf")).expect("readable");

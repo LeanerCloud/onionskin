@@ -351,16 +351,20 @@ pub(crate) struct DocumentSearch {
 }
 
 impl DocumentSearch {
-    pub(crate) fn spawn(bytes: Arc<Vec<u8>>) -> Result<Self, SearchWorkerError> {
+    pub(crate) fn spawn(
+        bytes: Arc<Vec<u8>>,
+        password: Arc<str>,
+    ) -> Result<Self, SearchWorkerError> {
         let (requests, incoming) = mpsc::channel();
         let (outgoing, updates) = mpsc::channel();
         let (ready, opened) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("onionskin-search".into())
             .spawn(move || {
-                let document = match onionskin_cos::Document::open_repairing(Box::new(
-                    BytesSource::from_shared(bytes),
-                )) {
+                let document = match onionskin_cos::Document::open_repairing_with_password(
+                    Box::new(BytesSource::from_shared(bytes)),
+                    password.as_bytes(),
+                ) {
                     Ok((document, _)) => {
                         let _ = ready.send(Ok(()));
                         document

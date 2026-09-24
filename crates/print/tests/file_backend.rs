@@ -730,7 +730,9 @@ fn comments_and_forms_prints_the_annotations_each_mode_names() {
 // ----- the encrypted-source rule --------------------------------------
 
 fn encrypted() -> Document {
-    Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("the fixture opens")
+    // Its permissions allow printing and not copying content out, so a
+    // vector print, which copies the pages' objects, is refused.
+    Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf")).expect("the fixture opens")
 }
 
 #[test]
@@ -739,7 +741,6 @@ fn an_encrypted_document_prints_only_as_image() {
     match refused {
         Err(PrintError::Refused(refusal)) => {
             assert_eq!(refusal, Refusal::EncryptedSource);
-            assert_eq!(refusal.milestone(), "M6");
         }
         other => panic!(
             "vector printing an encrypted document: {:?}",
@@ -820,7 +821,7 @@ fn the_refusal_tells_the_reader_how_to_print_anyway() {
     let error = print_to_file(&mut encrypted(), &letter()).expect_err("refused");
     let message = error.to_string();
     assert!(
-        message.contains("M6") && message.contains("Print as Image"),
+        message.contains("not allowed") && message.contains("Print as Image"),
         "{message}"
     );
 }

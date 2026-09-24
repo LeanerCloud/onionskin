@@ -154,6 +154,7 @@ pub struct GenerationDetail {
 /// as it was when that generation ended, over the same buffer.
 pub(crate) fn details(
     bytes: &std::sync::Arc<Vec<u8>>,
+    password: &str,
     generations: &[Generation],
 ) -> Vec<GenerationDetail> {
     generations
@@ -163,7 +164,7 @@ pub(crate) fn details(
                 std::sync::Arc::clone(bytes),
                 generation.end as usize,
             );
-            match CosDocument::open(Box::new(source)) {
+            match CosDocument::open_with_password(Box::new(source), password.as_bytes()) {
                 Ok(doc) => describe(&doc, *generation),
                 Err(_) => GenerationDetail {
                     generation: *generation,

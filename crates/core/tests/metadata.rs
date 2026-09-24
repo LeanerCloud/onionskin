@@ -254,7 +254,8 @@ fn every_fit_round_trips_and_no_page_removes_the_open_action() {
 
 #[test]
 fn an_encrypted_document_refuses_a_properties_edit() {
-    let mut document = Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens");
+    let mut document =
+        Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf")).expect("opens");
     assert!(matches!(
         set(&mut document, &edit()),
         Err(Error::Protected(_))

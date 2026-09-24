@@ -94,8 +94,8 @@ fn an_encrypted_document_disables_every_organize_command() {
 /// because `core` does, and nothing is written.
 #[test]
 fn a_command_run_on_an_encrypted_document_is_refused_by_core() {
-    let mut document =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let mut document = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     assert_eq!(document.page_count(), 1, "the fixture is one page");
     for id in IDS {
         let outcome = run(&mut document, id, 0);
@@ -109,7 +109,7 @@ fn a_command_run_on_an_encrypted_document_is_refused_by_core() {
             matches!(
                 outcome,
                 Err(CommandError::Edit {
-                    source: Error::Protected(Refusal::EncryptedSource),
+                    source: Error::Protected(Refusal::Restricted(_)),
                     ..
                 })
             ),
@@ -263,7 +263,7 @@ fn insert_from_a_file_brings_its_pages_in() {
 /// the command runs, so no session query saw it. Refused, and nothing written.
 #[test]
 fn insert_and_replace_from_an_encrypted_file_are_refused_and_write_nothing() {
-    let encrypted = encrypted_fixture("r4-aes-128.pdf");
+    let encrypted = encrypted_fixture("r6-aes-256-print-only.pdf");
     let mut document = numbered(2);
     let refused = insert_pages_from(&mut document, &encrypted, None, 0);
     assert!(is_encrypted_refusal(&refused), "{refused:?}");
@@ -301,8 +301,8 @@ fn extract_to_a_file_writes_the_pages_and_can_delete_them_after() {
 #[test]
 fn extracting_from_an_encrypted_document_is_refused_and_writes_no_file() {
     let dir = scratch("extract-encrypted");
-    let mut document =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let mut document = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     let target = dir.join("out.pdf");
     let refused = extract_pages_to(&mut document, &[0], &target, false);
     assert!(is_encrypted_refusal(&refused), "{refused:?}");
@@ -337,7 +337,7 @@ fn is_encrypted_refusal(outcome: &Result<(), CommandError>) -> bool {
     matches!(
         outcome,
         Err(CommandError::Edit {
-            source: Error::Protected(Refusal::EncryptedSource),
+            source: Error::Protected(Refusal::Restricted(_) | Refusal::EncryptedSource),
             ..
         })
     )

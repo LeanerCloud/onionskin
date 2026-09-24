@@ -43,7 +43,10 @@ impl Document {
     pub fn new_render_view(&mut self) -> Result<RenderView> {
         let bytes = self.preview_bytes(crate::AnnotationFilter::DocumentAndMarkups)?;
         let mut view = RenderView {
-            render: WorkerHandle::spawn(bytes)?,
+            render: WorkerHandle::spawn_with_password(
+                bytes,
+                std::sync::Arc::clone(&self.render_password),
+            )?,
             pending_geometry: BTreeSet::new(),
             state: self.view_state(),
             hairline_strokes: false,

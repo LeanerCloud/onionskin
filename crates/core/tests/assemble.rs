@@ -74,7 +74,8 @@ fn a_combined_document_is_every_input_page_in_order_drawn_as_it_was() {
 /// through.
 #[test]
 fn an_encrypted_input_anywhere_in_the_list_is_refused_before_anything_is_copied() {
-    let encrypted = open(&std::fs::read(encrypted_fixture("r4-aes-128.pdf")).expect("read"));
+    let encrypted =
+        open(&std::fs::read(encrypted_fixture("r6-aes-256-print-only.pdf")).expect("read"));
     let plain = open(&flat(2));
     let mut assembly = Assembly::new();
     assembly.append(&plain, &[0, 1]).expect("the first input");

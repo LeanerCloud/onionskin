@@ -206,7 +206,7 @@ fn a_blank_title_is_refused_in_the_dialog(cx: &mut TestAppContext) {
 #[gpui::test]
 fn an_encrypted_documents_bookmark_menu_is_disabled_with_its_reason(cx: &mut TestAppContext) {
     let bytes = std::fs::read(onionskin_corpus_testing::encrypted_fixture(
-        "r4-aes-128.pdf",
+        "r6-aes-256-print-only.pdf",
     ))
     .expect("reads");
     let (window, _) = bound_window_from_bytes(vec![("locked.pdf", bytes)], cx);
@@ -216,7 +216,10 @@ fn an_encrypted_documents_bookmark_menu_is_disabled_with_its_reason(cx: &mut Tes
             open_menu(frame, None, cx);
             let tree = frame.accessible(window, cx);
             let menu = tree.find(&"bookmarks-context-menu".into()).expect("menu");
-            let reason = onionskin_core::protection::Refusal::EncryptedSource.reason();
+            let reason = onionskin_core::protection::Refusal::Restricted(
+                onionskin_core::protection::EditKind::Content,
+            )
+            .reason();
             for entry in &menu.children {
                 assert!(entry.state.disabled, "{}", entry.label);
                 assert_eq!(entry.description.as_deref(), Some(reason));

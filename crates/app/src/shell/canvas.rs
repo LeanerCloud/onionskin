@@ -3475,7 +3475,7 @@ mod tests {
     #[test]
     fn an_encrypted_document_opens_with_a_notice_and_a_plain_one_without() {
         let encrypted =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/encrypted/r4-aes-128.pdf");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/encrypted/r6-aes-256-print-only.pdf");
         let mut model = CanvasModel::new(
             Document::open_path(&encrypted).expect("an encrypted document opens"),
             PluginRegistry::new(),
@@ -3486,11 +3486,16 @@ mod tests {
         let Some(CanvasStatus::Notice { message }) = model.status() else {
             panic!("no open-time notice: {:?}", model.status());
         };
-        assert!(message.contains("editing is turned off"), "{message}");
-        assert!(message.contains("M6"), "{message}");
+        assert!(message.contains("does not allow changes"), "{message}");
+        assert!(message.contains("permissions password"), "{message}");
         assert_eq!(
             model.edit_refusal(),
-            Some(onionskin_core::protection::Refusal::EncryptedSource.reason())
+            Some(
+                onionskin_core::protection::Refusal::Restricted(
+                    onionskin_core::protection::EditKind::Content
+                )
+                .reason()
+            )
         );
 
         let plain = model_with_registry(PluginRegistry::new());

@@ -29,8 +29,13 @@ pub struct DocumentFile {
 
 impl DocumentFile {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_password(path, "")
+    }
+
+    /// Open an encrypted document with its user or owner password.
+    pub fn open_with_password(path: &Path, password: &str) -> Result<Self> {
         Ok(DocumentFile {
-            document: Document::open_path(path)?,
+            document: Document::open_path_with_password(path, password)?,
         })
     }
 

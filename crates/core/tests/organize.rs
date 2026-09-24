@@ -523,8 +523,8 @@ fn extracting_from_an_encrypted_document_is_refused() {
         Err(Error::Protected(Refusal::EncryptedSource))
     ));
     // The session-scoped shape: the same predicate, asked ahead of time.
-    let session =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let session = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     assert_eq!(session.read_out_refusal(), Some(Refusal::EncryptedSource));
     assert!(Document::open_bytes(flat(1))
         .expect("opens")
@@ -675,7 +675,7 @@ fn embedded_font() -> CosDocument {
 }
 
 fn encrypted() -> CosDocument {
-    open(&std::fs::read(encrypted_fixture("r4-aes-128.pdf")).expect("the fixture reads"))
+    open(&std::fs::read(encrypted_fixture("r6-aes-256-print-only.pdf")).expect("the fixture reads"))
 }
 
 /// Run `body` in one transaction over `original` and append its section.

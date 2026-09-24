@@ -287,8 +287,8 @@ fn content_can_set_any_box() {
 
 #[test]
 fn a_crop_on_an_encrypted_document_is_refused_by_core() {
-    let mut document =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let mut document = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     let crop = CropPages {
         pages: vec![0],
         which: PageBox::Art,

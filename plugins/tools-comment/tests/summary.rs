@@ -110,8 +110,8 @@ fn a_document_with_no_comments_says_so_and_writes_nothing() {
 
 #[test]
 fn an_encrypted_document_is_refused() {
-    let mut document =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let mut document = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     assert!(matches!(
         summarize(&mut document, SummaryLayout::CommentsOnly),
         Err(SummaryError::Document(onionskin_core::Error::Protected(_)))

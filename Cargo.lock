@@ -4524,6 +4524,7 @@ dependencies = [
  "onionskin-content",
  "onionskin-corpus-testing",
  "onionskin-cos",
+ "onionskin-crypto",
  "onionskin-render",
  "roxmltree",
  "syn 2.0.119",

@@ -20,7 +20,7 @@ use onionskin_core::{Document, Error};
 use onionskin_corpus_testing::encrypted_fixture;
 
 fn encrypted() -> Document {
-    Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("the fixture opens")
+    Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf")).expect("the fixture opens")
 }
 
 fn refused_by_the_rule(error: &Error) -> bool {

@@ -587,7 +587,7 @@ fn custom_stamps_come_from_a_pdf_page_or_an_image_and_can_be_removed() {
 fn a_custom_stamp_from_an_encrypted_pdf_is_refused() {
     let data = tempfile::tempdir().expect("dir");
     let library = StampLibrary::new(data.path());
-    let encrypted = std::fs::read(encrypted_fixture("r4-aes-128.pdf")).expect("reads");
+    let encrypted = std::fs::read(encrypted_fixture("r6-aes-256-print-only.pdf")).expect("reads");
     assert!(matches!(
         library.add("Mine", "Secret", &encrypted, 0, false),
         Err(LibraryError::Source(onionskin_core::Error::Protected(_)))

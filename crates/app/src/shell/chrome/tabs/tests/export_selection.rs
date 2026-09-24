@@ -83,7 +83,7 @@ fn an_rtf_name_gets_rich_text_in_the_selections_face(cx: &mut TestAppContext) {
 #[gpui::test]
 fn an_encrypted_document_refuses_before_asking_where(cx: &mut TestAppContext) {
     let bytes = std::fs::read(onionskin_corpus_testing::encrypted_fixture(
-        "r4-aes-128.pdf",
+        "r6-aes-256-print-only.pdf",
     ))
     .expect("read");
     let (window, _bindings) = bound_window_from_bytes(vec![("Locked.pdf", bytes)], cx);

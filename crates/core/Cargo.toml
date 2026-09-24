@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 onionskin-content.workspace = true
 onionskin-cos.workspace = true
+# The permissions and protection a document's security is described with.
+onionskin-crypto.workspace = true
 onionskin-render.workspace = true
 roxmltree.workspace = true
 

@@ -159,7 +159,7 @@ fn an_encrypted_input_in_position_two_refuses_the_combine_and_names_it() {
     let dir = tempfile::tempdir().expect("dir");
     let first = write(dir.path(), "first.pdf", &numbered(1, &[]));
     let third = write(dir.path(), "third.pdf", &numbered(1, &[]));
-    let encrypted = encrypted_fixture("r4-aes-128.pdf");
+    let encrypted = encrypted_fixture("r6-aes-256-print-only.pdf");
     let output = dir.path().join("combined.pdf");
 
     let refused = combine_pdfs(
@@ -355,8 +355,8 @@ fn a_page_larger_than_the_target_gets_a_file_of_its_own() {
 #[test]
 fn splitting_an_encrypted_document_is_refused_and_writes_nothing() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut document =
-        Document::open_path(&encrypted_fixture("r4-aes-128.pdf")).expect("opens read-only");
+    let mut document = Document::open_path(&encrypted_fixture("r6-aes-256-print-only.pdf"))
+        .expect("opens read-only");
     let refused = split::split(
         &mut document,
         SplitBy::PageCount(NonZeroUsize::new(1).expect("nonzero")),

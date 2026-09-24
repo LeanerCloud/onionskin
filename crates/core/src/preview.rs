@@ -30,6 +30,8 @@ pub(crate) struct PreviewBuffer {
     generation: u64,
     filter: AnnotationFilter,
     bytes: Arc<Vec<u8>>,
+    /// What an encrypted document opens with.
+    password: Arc<str>,
     /// Built lazily, once per buffer, and only when a structural read actually
     /// happens: a generation that is merely rendered never pays for an xref
     /// parse.
@@ -53,9 +55,10 @@ impl PreviewBuffer {
     /// is dropped with the buffer. Different documents, different problems.
     pub(crate) fn structure(&mut self) -> Result<&CosDocument> {
         if self.structure.is_none() {
-            let (document, _provenance) = CosDocument::open_repairing(Box::new(
-                BytesSource::from_shared(Arc::clone(&self.bytes)),
-            ))?;
+            let (document, _provenance) = CosDocument::open_repairing_with_password(
+                Box::new(BytesSource::from_shared(Arc::clone(&self.bytes))),
+                self.password.as_bytes(),
+            )?;
             self.structure = Some(document);
         }
         Ok(self.structure.as_ref().expect("just built"))
@@ -65,6 +68,7 @@ impl PreviewBuffer {
 /// Build the buffer for one generation and filter.
 pub(crate) fn build(
     original: Arc<Vec<u8>>,
+    password: Arc<str>,
     base: &CosDocument,
     edit: &EditSession,
     page_count: usize,
@@ -98,6 +102,7 @@ pub(crate) fn build(
         generation,
         filter,
         bytes,
+        password,
         structure: None,
     })
 }
