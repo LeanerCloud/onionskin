@@ -4,7 +4,7 @@ use onionskin_core::textselect::{glyph_order, nearest_glyph, selection_for};
 use onionskin_core::{Document, PagePoint, PageQuad};
 use onionskin_plugin_api::{EditVerb, Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
-use crate::marquee::is_drag;
+use onionskin_plugin_api::marquee::is_drag;
 
 /// Selects the glyphs between the point the drag started on and the point
 /// it is over, in the order the page drew them. Reading order is document

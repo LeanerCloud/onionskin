@@ -16,7 +16,6 @@ mod crop_tool;
 mod link_tool;
 pub mod links;
 pub mod marks;
-mod marquee;
 
 pub use crop::{crop_pages, crop_to_content, crop_to_rect, white_margins, CropPages};
 pub use crop_tool::CropTool;

@@ -3,7 +3,7 @@
 use onionskin_core::Document;
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCtx, ToolPlugin};
 
-use crate::marquee::Marquee;
+use onionskin_plugin_api::marquee::Marquee;
 
 /// Selects a rectangle of the page rather than its text, which is what a
 /// snapshot, a crop or an export of an area starts from.

@@ -8,7 +8,7 @@
 use onionskin_core::{Document, LinkRequest, PageRect};
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
-use crate::marquee::Marquee;
+use onionskin_plugin_api::marquee::Marquee;
 
 #[derive(Debug, Default)]
 pub struct LinkTool {
@@ -77,7 +77,7 @@ impl ToolPlugin for LinkTool {
 
     fn on_pointer_up(&mut self, ctx: &mut ToolCtx, input: PointerInput) {
         self.marquee.extend(input.at, ctx.viewport);
-        match self.marquee.take() {
+        match self.marquee.finish() {
             Some(rect) => ctx.doc.request_link(LinkRequest::Create(rect)),
             None => {
                 let at = input.at;
@@ -94,7 +94,7 @@ impl ToolPlugin for LinkTool {
     }
 
     fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
-        self.marquee.clear();
+        self.marquee.cancel();
     }
 
     fn on_deactivate(&mut self, ctx: &mut ToolCtx) {

@@ -5,7 +5,6 @@
 use onionskin_plugin_api::{PluginManifest, PluginRegistry};
 
 mod hand;
-mod marquee;
 mod select_region;
 mod select_text;
 mod snapshot;

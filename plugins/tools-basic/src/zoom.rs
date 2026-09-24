@@ -8,7 +8,7 @@ use onionskin_core::{
 };
 use onionskin_plugin_api::{Modifiers, Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
-use crate::marquee::Marquee;
+use onionskin_plugin_api::marquee::Marquee;
 
 /// Drag a rectangle and the viewport fits it; click and the viewport zooms
 /// one step at the point clicked. Acrobat zooms out instead when the click

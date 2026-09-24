@@ -9,14 +9,12 @@
 use onionskin_core::redactions::RedactionLook;
 use onionskin_core::textselect::select_between;
 use onionskin_core::{Document, PagePoint, PageQuad, PageRect, Viewport};
+use onionskin_plugin_api::marquee::is_drag;
 use onionskin_plugin_api::{
     Overlay, PointerInput, ToolCapability, ToolCtx, ToolEnvironment, ToolPlugin,
 };
 
 use crate::mark::{mark_region, mark_text};
-
-/// A drag shorter than this many viewport pixels is a click.
-const MIN_DRAG_PIXELS: f32 = 3.0;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Gesture {
@@ -69,15 +67,6 @@ impl RedactTool {
             Some(Gesture::Region { .. }) | None => {}
         }
     }
-}
-
-fn is_drag(from: PagePoint, to: PagePoint, viewport: &Viewport) -> bool {
-    let (Ok(Some(from)), Ok(Some(to))) =
-        (viewport.view_point_for(from), viewport.view_point_for(to))
-    else {
-        return false;
-    };
-    (to.x - from.x).hypot(to.y - from.y) >= MIN_DRAG_PIXELS
 }
 
 /// Whether a glyph on the page is under `at`.

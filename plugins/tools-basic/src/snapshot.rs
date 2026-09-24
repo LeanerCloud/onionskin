@@ -3,7 +3,7 @@
 use onionskin_core::Document;
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
-use crate::marquee::Marquee;
+use onionskin_plugin_api::marquee::Marquee;
 
 /// Selects a region and raises a `SnapshotRequest`. Producing the pixels is
 /// the shell's job: a plugin holding a render handle would be a second way

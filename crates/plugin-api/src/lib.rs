@@ -29,6 +29,7 @@ pub use requirement::{tool_with, Availability, Requirement, Session};
 pub mod codec;
 pub mod command_ids;
 pub mod contract;
+pub mod marquee;
 pub mod registry;
 pub mod requirement;
 

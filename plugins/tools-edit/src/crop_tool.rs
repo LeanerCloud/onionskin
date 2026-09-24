@@ -10,7 +10,7 @@ use onionskin_core::{Document, PagePoint, PageRect};
 use onionskin_plugin_api::{Overlay, PointerInput, ToolCapability, ToolCtx, ToolPlugin};
 
 use crate::crop::crop_to_rect;
-use crate::marquee::Marquee;
+use onionskin_plugin_api::marquee::Marquee;
 
 #[derive(Debug, Default)]
 pub struct CropTool {
@@ -29,7 +29,7 @@ impl CropTool {
 
     /// Crop to the rectangle, if there is one big enough to be a page.
     fn crop(&mut self, doc: &mut Document) {
-        let Some(rect) = self.marquee.take() else {
+        let Some(rect) = self.marquee.finish() else {
             return;
         };
         if rect.x1 - rect.x0 >= MIN_BOX_SIZE && rect.y1 - rect.y0 >= MIN_BOX_SIZE {
@@ -92,7 +92,7 @@ impl ToolPlugin for CropTool {
     }
 
     fn on_cancel(&mut self, _ctx: &mut ToolCtx) {
-        self.marquee.clear();
+        self.marquee.cancel();
     }
 
     fn on_deactivate(&mut self, ctx: &mut ToolCtx) {
