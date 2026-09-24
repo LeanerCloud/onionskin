@@ -374,6 +374,14 @@ fn model(
             on_state,
             state: Some("Off".to_owned()),
             hidden: false,
+            border: Some([0.0; 3]),
+            fill: matches!(kind, NewField::Button).then_some([0.75; 3]),
+            caption: match kind {
+                NewField::CheckBox => Some("4".to_owned()),
+                NewField::Radio { .. } => Some("l".to_owned()),
+                NewField::Button => Some("Button".to_owned()),
+                _ => None,
+            },
         }],
         tooltip: None,
         scripts: FieldScripts::default(),
@@ -477,6 +485,20 @@ fn ensure_resources(acroform: &mut Dict) {
     }
     resources.set(Name::new("Font"), Object::Dict(fonts));
     acroform.set(Name::new("DR"), Object::Dict(resources));
+}
+
+/// Make `order` the form's calculation order, `/CO`.
+pub(super) fn set_calculation_order(tx: &mut Transaction<'_>, order: &[ObjRef]) -> Result<()> {
+    let (holder, mut acroform) = acroform(tx)?;
+    if order.is_empty() {
+        acroform.remove(b"CO");
+    } else {
+        acroform.set(
+            Name::new("CO"),
+            Object::Array(order.iter().map(|each| Object::Ref(*each)).collect()),
+        );
+    }
+    write_acroform(tx, holder, acroform)
 }
 
 /// Add `kid` to `parent`'s `/Kids`.

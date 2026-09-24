@@ -10,6 +10,7 @@
 
 mod appearance;
 mod author;
+mod properties;
 mod read;
 mod write;
 
@@ -18,6 +19,9 @@ use onionskin_cos::{Dict, ObjRef};
 use crate::PageIndex;
 
 pub use author::{add_field, remove_field, unique_name, Added, NewField};
+pub use properties::{
+    refusal as properties_refusal, set_field_properties, FieldProperties, KindOptions,
+};
 pub use read::read_form;
 pub use write::{reset_fields, set_field_value};
 
@@ -123,6 +127,12 @@ pub struct Widget {
     pub state: Option<String>,
     /// `/F` hidden or no-view.
     pub hidden: bool,
+    /// `/MK /BC`, the border colour, as RGB.
+    pub border: Option<[f64; 3]>,
+    /// `/MK /BG`, the fill colour, as RGB.
+    pub fill: Option<[f64; 3]>,
+    /// `/MK /CA`: a button's caption, or a check box's mark.
+    pub caption: Option<String>,
 }
 
 impl Widget {

@@ -256,6 +256,38 @@ impl Walk<'_> {
                 .and_then(Object::as_name)
                 .map(|name| String::from_utf8_lossy(name.as_bytes()).into_owned()),
             hidden: flags & (HIDDEN | NO_VIEW) != 0,
+            border: self.colour(dict, b"BC"),
+            fill: self.colour(dict, b"BG"),
+            caption: self
+                .mk(dict)
+                .and_then(|mk| match self.doc.resolve(mk.get(b"CA")?).ok()? {
+                    Object::String(bytes) => Some(pdf_text_string(&bytes)),
+                    _ => None,
+                }),
+        }
+    }
+
+    fn mk(&self, widget: &Dict) -> Option<Dict> {
+        self.doc
+            .resolve(widget.get(b"MK")?)
+            .ok()?
+            .as_dict()
+            .cloned()
+    }
+
+    /// A `/MK` colour as RGB: grey and CMYK converted, as a viewer shows
+    /// them.
+    fn colour(&self, widget: &Dict, key: &[u8]) -> Option<[f64; 3]> {
+        let mk = self.mk(widget)?;
+        let components: Vec<f64> = match self.doc.resolve(mk.get(key)?).ok()? {
+            Object::Array(items) => items.iter().filter_map(number).collect(),
+            _ => return None,
+        };
+        match components.as_slice() {
+            [grey] => Some([*grey; 3]),
+            [r, g, b] => Some([*r, *g, *b]),
+            [c, m, y, k] => Some([c, m, y].map(|each| (1.0 - each) * (1.0 - k))),
+            _ => None,
         }
     }
 }
