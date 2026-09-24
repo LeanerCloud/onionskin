@@ -154,6 +154,32 @@ pub(in crate::shell) fn mark_title(kind: onionskin_core::pages::MarkKind) -> &'s
 pub(in crate::shell) const MAGNIFICATIONS: [u32; 12] =
     [25, 50, 75, 100, 125, 150, 200, 400, 800, 1600, 2400, 3200];
 
+/// The id Zoom To's magnification field publishes.
+pub(in crate::shell) const ZOOM_FIELD_ID: &str = "zoom-to-percent";
+
+/// A magnification as typed, "150" or "150%", as a zoom factor within the
+/// range the viewport offers. Anything else is refused with the range.
+pub(in crate::shell) fn parse_magnification(typed: &str) -> Result<f32, String> {
+    let range = || {
+        format!(
+            "Type a magnification from {}% to {}%",
+            (onionskin_core::MIN_ZOOM * 100.0).round(),
+            (onionskin_core::MAX_ZOOM * 100.0).round()
+        )
+    };
+    let percent: f32 = typed
+        .trim()
+        .trim_end_matches('%')
+        .trim()
+        .parse()
+        .map_err(|_| range())?;
+    let zoom = percent / 100.0;
+    if !(onionskin_core::MIN_ZOOM..=onionskin_core::MAX_ZOOM).contains(&zoom) {
+        return Err(range());
+    }
+    Ok(zoom)
+}
+
 /// One row per magnification, as the dialog prints them and as it describes
 /// them: the label and the view action are built together so a screen reader
 /// cannot be offered a magnification a click would not apply.
@@ -355,13 +381,28 @@ pub(in crate::shell) fn accessible(
             cx,
         ),
         ShellDialog::KeyboardShortcuts => row_labels(frame.shortcut_rows(cx)),
-        ShellDialog::ZoomTo => magnification_rows()
-            .enumerate()
-            .map(|(index, (label, action))| {
-                Element::new(("zoom-to-magnification", index), Role::Button, label)
-                    .with_activation(Activation::View(action))
-            })
-            .collect(),
+        ShellDialog::ZoomTo => {
+            let mut body = vec![
+                frame.zoom_field().read(cx).accessible(
+                    "Magnification (%)",
+                    super::chrome::accessible::TextField::ZoomPercent,
+                ),
+                Element::new("zoom-to-apply", Role::Button, "Zoom")
+                    .with_activation(Activation::SubmitZoomPercent),
+            ];
+            if let Some(error) = frame.zoom_error() {
+                body.push(Element::new("zoom-to-error", Role::Alert, error.to_owned()));
+            }
+            body.extend(
+                magnification_rows()
+                    .enumerate()
+                    .map(|(index, (label, action))| {
+                        Element::new(("zoom-to-magnification", index), Role::Button, label)
+                            .with_activation(Activation::View(action))
+                    }),
+            );
+            body
+        }
     };
 
     let mut close = Element::new("dialog-close", Role::Button, "Close")
@@ -636,7 +677,13 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::KeyboardShortcuts => rows(frame.shortcut_rows(cx), rects)
             .text_color(theme.text)
             .into_any_element(),
-        ShellDialog::ZoomTo => render_magnifications(rects, theme, cx).into_any_element(),
+        ShellDialog::ZoomTo => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(render_zoom_field(frame, focused, theme, cx))
+            .child(render_magnifications(rects, theme, cx))
+            .into_any_element(),
     };
 
     div()
@@ -705,6 +752,41 @@ pub(in crate::shell) fn render_dialog(
 }
 
 /// The Zoom To body: one row per magnification, each applying it.
+/// Zoom To's field, its Zoom button and why a magnification was refused.
+fn render_zoom_field(
+    frame: &ShellFrame,
+    focused: Option<&gpui::ElementId>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> gpui::Div {
+    let field = frame.zoom_field().clone();
+    let mut column = div().flex().flex_col().gap_1().child(
+        div()
+            .flex()
+            .gap_2()
+            .items_center()
+            .child(div().w(px(160.0)).child(field))
+            .child(super::chrome::combine_dialog::button(
+                "zoom-to-apply",
+                "Zoom",
+                true,
+                theme,
+                focused,
+                cx,
+                Activation::SubmitZoomPercent,
+            )),
+    );
+    if let Some(error) = frame.zoom_error() {
+        column = column.child(
+            div()
+                .id("zoom-to-error")
+                .text_color(theme.error_text)
+                .child(error.to_owned()),
+        );
+    }
+    column
+}
+
 fn render_magnifications(
     rects: Rects,
     theme: ThemeTokens,
@@ -788,6 +870,17 @@ mod tests {
             );
         }
         assert!(rows_contain(1.0), "actual size is one of the choices");
+    }
+
+    #[test]
+    fn a_magnification_is_read_with_or_without_its_percent_sign() {
+        assert_eq!(parse_magnification("150"), Ok(1.5));
+        assert_eq!(parse_magnification(" 50 % "), Ok(0.5));
+        assert_eq!(parse_magnification("5"), Ok(0.05));
+        assert_eq!(parse_magnification("3200%"), Ok(32.0));
+        for wrong in ["", "abc", "4", "3201", "-100", "NaN"] {
+            assert!(parse_magnification(wrong).is_err(), "{wrong:?}");
+        }
     }
 
     fn rows_contain(zoom: f32) -> bool {

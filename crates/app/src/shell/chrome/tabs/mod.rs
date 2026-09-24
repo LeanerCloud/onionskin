@@ -754,6 +754,43 @@ impl ShellFrame {
         }
     }
 
+    /// View > Zoom > Zoom To, its field holding the magnification in force.
+    pub(super) fn show_zoom_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_dialog(crate::shell::dialog::ShellDialog::ZoomTo, window, cx);
+        let percent = self
+            .active_view_state(cx)
+            .map(|view| format!("{}", (view.zoom * 100.0).round()))
+            .unwrap_or_default();
+        self.page_entry.zoom_error = None;
+        self.page_entry
+            .zoom_input
+            .update(cx, |input, cx| input.set_query(percent, cx));
+    }
+
+    pub(in crate::shell) fn zoom_field(&self) -> &Entity<crate::shell::chrome::SearchInput> {
+        &self.page_entry.zoom_input
+    }
+
+    pub(in crate::shell) fn zoom_error(&self) -> Option<&str> {
+        self.page_entry.zoom_error.as_deref()
+    }
+
+    /// Zoom To's field: apply the magnification typed, or say why not.
+    pub(super) fn submit_zoom_percent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.page_entry.zoom_input.read(cx).query().to_owned();
+        match crate::shell::dialog::parse_magnification(&typed) {
+            Ok(zoom) => {
+                self.page_entry.zoom_error = None;
+                self.close_dialog(window, cx);
+                self.run_view_action(ViewAction::ZoomTo(zoom), cx);
+            }
+            Err(error) => {
+                self.page_entry.zoom_error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
     /// Escape is bound window-wide so it closes the bar from wherever focus
     /// sits, which means a closed bar has to hand the key back.
     pub(in crate::shell) fn find_next_match(

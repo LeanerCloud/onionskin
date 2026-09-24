@@ -337,6 +337,53 @@ mod tests {
             .unwrap();
     }
 
+    /// A magnification typed into Zoom To's field applies; one outside the
+    /// range, or not a number, is refused in the dialog with the range.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_typed_magnification_applies_and_a_wrong_one_is_refused(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf"], cx);
+        let type_zoom = |text: &'static str, cx: &mut TestAppContext| {
+            window
+                .update(cx, |frame, window, cx| {
+                    frame
+                        .zoom_field()
+                        .clone()
+                        .update(cx, |input, cx| input.set_query(text.to_owned(), cx));
+                    frame.run_activation(Activation::SubmitZoomPercent, window, cx);
+                })
+                .unwrap();
+        };
+        window
+            .update(cx, |frame, window, cx| {
+                frame.run_activation(Activation::MainMenu(MenuCommand::ZoomTo), window, cx);
+                let shown = frame.zoom_field().read(cx).query().to_owned();
+                let view = frame.active_view_state(cx).expect("open");
+                assert_eq!(shown, format!("{}", (view.zoom * 100.0).round()));
+            })
+            .unwrap();
+
+        type_zoom("9000", cx);
+        window
+            .update(cx, |frame, _, _| {
+                assert_eq!(frame.dialog, Some(ShellDialog::ZoomTo), "still asking");
+                assert_eq!(
+                    frame.zoom_error(),
+                    Some("Type a magnification from 5% to 3200%")
+                );
+            })
+            .unwrap();
+
+        type_zoom(" 137 % ", cx);
+        window
+            .update(cx, |frame, _, cx| {
+                assert!(frame.dialog.is_none());
+                let view = frame.active_view_state(cx).expect("open");
+                assert!((view.zoom - 1.37).abs() < 1e-4, "{}", view.zoom);
+            })
+            .unwrap();
+    }
+
     /// A preference has to reach three places: the state the window paints
     /// from, the file, and the menu that shows which one is in force.
     #[cfg(feature = "shell-test-support")]

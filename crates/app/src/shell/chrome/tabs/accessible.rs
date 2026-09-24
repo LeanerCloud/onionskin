@@ -457,6 +457,7 @@ impl ShellFrame {
             }
             Activation::View(action) => self.run_view_action(action, cx),
             Activation::SubmitPageEntry => self.submit_page_entry(cx),
+            Activation::SubmitZoomPercent => self.submit_zoom_percent(window, cx),
             // The pane entries that open a dialog, which is the frame's.
             Activation::Pane(PaneAction::Thumbnail(crate::shell::panes::ThumbnailAction::Run(
                 crate::shell::panes::ThumbnailsCommand::CropPages,
@@ -717,6 +718,7 @@ impl ShellFrame {
                 .as_ref()
                 .and_then(|dialog| dialog.text_field(field)),
             TextField::BookmarkTitle => self.bookmark_title.as_ref().map(|dialog| &dialog.title),
+            TextField::ZoomPercent => Some(&self.page_entry.zoom_input),
             TextField::CommentDraft => self.navigation.comment_draft(),
             TextField::CommentingAuthor => Some(&self.commenting_author),
             TextField::InspectorAuthor => Some(&self.inspector.author),
@@ -858,7 +860,11 @@ impl ShellFrame {
             ]
             .into_iter()
             .chain(crate::shell::chrome::properties_dialog::TEXT_FIELDS)
-            .chain([TextField::BookmarkTitle, TextField::CommentingAuthor])
+            .chain([
+                TextField::BookmarkTitle,
+                TextField::CommentingAuthor,
+                TextField::ZoomPercent,
+            ])
             .chain(crate::shell::chrome::print_dialog::TEXT_FIELDS)
             .chain(crate::shell::chrome::advanced_search::TEXT_FIELDS)
             .chain(crate::shell::chrome::crop_dialog::TEXT_FIELDS)

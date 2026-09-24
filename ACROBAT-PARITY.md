@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 83 planned / 46 partial / 80 out-of-scope. 194 implemented.**
+**403 rows: 83 planned / 45 partial / 80 out-of-scope. 195 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
@@ -242,7 +242,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | View > Page Display > Show Cover Page in Two Page View | implemented | M2 | Live two-page cover toggle. Evidence: M2-SHELL. |
 | View > Page Display > Automatically Scroll | implemented | M3 | Cmd/Ctrl+Shift+H or the View menu; nine speeds on Up and Down, minus reverses, Escape stops, and it stops itself at the end. A wheel scroll or a press pauses it for two seconds. Driven by drawn frames, so a hidden window does not scroll. Evidence: docs/evidence/m3-p22-shell-rows.md. (judgment) |
 | View > Page Display > Overprint Preview | planned | post-1.0 | A rendering toggle that simulates overprinting ink, so it belongs to `render`, not to the prepress Output Preview tool listed as out of scope. Deferred until hayro can express it. (judgment) |
-| View > Zoom > Zoom In / Zoom Out / Zoom To | partial | M2 | Zoom In, Zoom Out, and a dedicated Zoom To chooser with 12 presets from 25% to 3200% are live; custom percentage entry remains missing. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
+| View > Zoom > Zoom In / Zoom Out / Zoom To | implemented | M2 | Zoom In, Zoom Out, and Zoom To: 12 presets from 25% to 3200%, or any magnification typed from 5% to 3200% (the field starts at the one in force; one outside the range is refused with the range). Evidence: M2-SHELL, M2-VIEW-ZOOM, docs/evidence/m3-shell-leftovers.md. |
 | View > Zoom > Actual Size / Fit Page / Fit Width / Fit Height / Fit Visible | implemented | M2 | All five commands are live. Fit Visible uses the rendered page's content bounds and reports blank or unrendered pages explicitly. Evidence: M2-SHELL and M2-VIEW-ZOOM. |
 | View > Zoom > Marquee Zoom | implemented | M2 | `tools-basic` click and marquee zoom are live. Evidence: M2-BASIC. |
 | View > Zoom > Dynamic Zoom | implemented | M2 | Menu and rail select the tool; dragging up zooms in and down zooms out around the press point. Evidence: M2-BASIC and M2-VIEW-ZOOM. |

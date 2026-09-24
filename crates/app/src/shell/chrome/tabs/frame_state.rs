@@ -183,6 +183,10 @@ pub(super) struct ToolSearchState {
 pub(super) struct PageEntryState {
     pub(super) page_input: Entity<SearchInput>,
     pub(super) page_entry_error: Option<PageEntryError>,
+    /// Zoom To's magnification field, and why the last one typed there was
+    /// refused.
+    pub(super) zoom_input: Entity<SearchInput>,
+    pub(super) zoom_error: Option<String>,
 }
 
 /// Every loose field that had a second field to group with is in a sub-struct
@@ -359,6 +363,14 @@ impl ShellFrame {
         });
         let page_input =
             cx.new(|cx| SearchInput::with_placeholder(PAGE_ENTRY_ID, "Page", theme, cx));
+        let zoom_input = cx.new(|cx| {
+            SearchInput::with_placeholder(
+                crate::shell::dialog::ZOOM_FIELD_ID,
+                "Magnification",
+                theme,
+                cx,
+            )
+        });
         let author = settings.preferences.commenting_author.clone();
         let commenting_author = cx.new(|cx| {
             let mut input = SearchInput::with_placeholder(
@@ -442,6 +454,8 @@ impl ShellFrame {
             page_entry: PageEntryState {
                 page_input,
                 page_entry_error: None,
+                zoom_input,
+                zoom_error: None,
             },
             observed_view_state,
             observed_edit_epoch: None,

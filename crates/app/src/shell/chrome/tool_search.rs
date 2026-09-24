@@ -533,6 +533,7 @@ fn field_node(
         | TextField::PrintBookletFrom
         | TextField::PrintBookletTo
         | TextField::PropertiesOpenPage
+        | TextField::ZoomPercent
         | TextField::CropTop
         | TextField::CropBottom
         | TextField::CropLeft

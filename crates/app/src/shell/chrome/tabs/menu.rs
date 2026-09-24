@@ -115,7 +115,7 @@ impl ShellFrame {
             }
             MenuCommand::ZoomTo => {
                 self.menus.main_menu_open = false;
-                self.show_dialog(ShellDialog::ZoomTo, window, cx);
+                self.show_zoom_to(window, cx);
                 Ok(())
             }
             // A drag, not a command: the entry selects the tool, which is

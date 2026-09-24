@@ -41,6 +41,8 @@ pub(in crate::shell) enum TextField {
     Replace,
     /// The page number next to the page controls.
     Page,
+    /// Zoom To's magnification, in percent.
+    ZoomPercent,
     ExportFirst,
     ExportLast,
     ExportDpi,
@@ -159,6 +161,8 @@ pub(in crate::shell) enum Activation {
     ToggleSidePanel,
     View(ViewAction),
     SubmitPageEntry,
+    /// Zoom To: apply the magnification typed in its field.
+    SubmitZoomPercent,
     Pane(PaneAction),
     StepFind(FindDirection),
     ApplyFindOption(FindOption),
