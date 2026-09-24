@@ -48,6 +48,7 @@ mod geometry;
 mod interpret;
 mod matrix;
 mod page;
+pub mod redact;
 mod run;
 mod search;
 mod tokenizer;
@@ -91,6 +92,17 @@ pub fn extract_page(doc: &Document, index: PageIndex) -> Result<PageText> {
 /// page's geometry as well.
 pub fn extract(doc: &Document, page: &Page) -> Result<PageText> {
     interpret::page_text(doc, page)
+}
+
+/// Rewrites page `index`'s content streams without what `areas` cover. See
+/// [`redact`].
+pub fn redact_page(
+    doc: &Document,
+    index: PageIndex,
+    areas: &[redact::Area],
+) -> Result<redact::PageRedaction> {
+    let page = page::page(doc, index)?;
+    interpret::redact_page(doc, &page, areas)
 }
 
 /// The page's content streams, decoded and concatenated, with each part's
