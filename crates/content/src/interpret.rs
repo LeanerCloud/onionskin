@@ -64,6 +64,9 @@ struct GState {
     /// The resource name `Tf` selected the font by, which text editing
     /// selects it again with.
     font_name: Option<Name>,
+    /// The operators that set the fill colour in force, as written: what
+    /// text editing sets it back with after drawing in another.
+    fill: Vec<u8>,
     size: f64,
     char_spacing: f64,
     word_spacing: f64,
@@ -80,6 +83,7 @@ impl GState {
             ctm,
             font: None,
             font_name: None,
+            fill: Vec::new(),
             size: 0.0,
             char_spacing: 0.0,
             word_spacing: 0.0,
@@ -194,6 +198,32 @@ pub fn redact_page(
         counts: redacting.counts,
         warnings: text.warnings,
     })
+}
+
+/// Keep the operators that set the fill colour, as written: a colour
+/// space and its colour, or a colour in a device space.
+fn note_fill(op: &Operation, content: &Content, state: &mut GState) {
+    let written = || content.bytes[op.span.start as usize..op.span.end as usize].to_vec();
+    match op.operator.as_bytes() {
+        b"g" | b"rg" | b"k" | b"cs" => state.fill = written(),
+        b"sc" | b"scn" => {
+            // After the colour space it is in, which the last `cs` set;
+            // a device space's `g`, `rg` or `k` set both.
+            if let Some(space_end) = state
+                .fill
+                .windows(3)
+                .position(|window| window == b" cs")
+                .map(|at| at + 3)
+            {
+                state.fill.truncate(space_end);
+                state.fill.push(b' ');
+                state.fill.extend(written());
+            } else {
+                state.fill = written();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The marked-content ids `page`'s own content opens: what a tagged page's
@@ -421,6 +451,7 @@ impl<'a> Interpreter<'a> {
                     if let Some(shapes) = self.shapes.as_mut() {
                         shapes.follow(&op, &state.ctm);
                     }
+                    note_fill(&op, content, &mut state);
                     self.state_operator(&op, resources, &mut state, &mut text);
                     Emit::Copy
                 }
@@ -1181,8 +1212,18 @@ impl<'a> Interpreter<'a> {
             .position(|line| line.first.0 == ordinal && line.outcome.is_none())?;
         let (font, name) = (state.font.as_ref()?, state.font_name.as_ref()?);
         let line = &editing.lines[index];
-        let drawn =
-            crate::edit_text::insertion(editing, &line.text, font, name, spacing, line.first.1);
+        let drawn = crate::edit_text::insertion(
+            editing,
+            &line.text,
+            &line.style,
+            &crate::edit_text::LineState {
+                font,
+                font_name: name,
+                spacing,
+                fill: &state.fill,
+            },
+            line.first.1,
+        );
         let line = &mut editing.lines[index];
         match drawn {
             Ok((insertion, fallback)) => {

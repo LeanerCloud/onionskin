@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+pub use onionskin_content::edit_text::TextStyle;
 use onionskin_content::edit_text::{edit_lines, EditError, LineEdit};
 use onionskin_content::{text_lines, TextLine};
 use onionskin_cos::{flate_encode, Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
@@ -66,7 +67,21 @@ pub fn rewrite_lines(
     page: PageIndex,
     lines: &[(&TextLine, String)],
 ) -> Result<PageEdit> {
-    if let Some((line, _)) = lines.iter().find(|(line, _)| !line.is_mapped()) {
+    let styled: Vec<_> = lines
+        .iter()
+        .map(|(line, text)| (*line, text.clone(), TextStyle::default()))
+        .collect();
+    rewrite_styled_lines(doc, page, &styled)
+}
+
+/// Page `page` with each `(line, text, style)` rewritten: the text in the
+/// font, size and colour `style` gives, where it gives one.
+pub fn rewrite_styled_lines(
+    doc: &CosDocument,
+    page: PageIndex,
+    lines: &[(&TextLine, String, TextStyle)],
+) -> Result<PageEdit> {
+    if let Some((line, _, _)) = lines.iter().find(|(line, _, _)| !line.is_mapped()) {
         return Err(refused(format!(
             "the line {:?} has characters whose text is unknown, so it cannot be edited",
             line.text
@@ -82,9 +97,10 @@ pub fn rewrite_lines(
     let prefix = free_prefix(&fonts);
     let edits: Vec<LineEdit> = lines
         .iter()
-        .map(|(line, text)| LineEdit {
+        .map(|(line, text, style)| LineEdit {
             glyphs: line.glyphs.iter().map(|glyph| glyph.at).collect(),
             text: text.clone(),
+            style: *style,
         })
         .collect();
     let edited = edit_lines(doc, &loaded, &edits, &prefix).map_err(|error| match error {

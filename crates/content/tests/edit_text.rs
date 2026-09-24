@@ -6,7 +6,7 @@
 mod common;
 
 use common::{one_page, open_bytes, stream};
-use onionskin_content::edit_text::{edit_lines, EditError, EditedPage, LineEdit};
+use onionskin_content::edit_text::{edit_lines, EditError, EditedPage, LineEdit, TextStyle};
 use onionskin_content::{extract_page, page, text_lines, PageText, TextLine};
 
 const FONT: &str = "<< /Font << /F1 5 0 R >> >>";
@@ -41,6 +41,7 @@ fn line_edit(line: &TextLine, text: &str) -> LineEdit {
     LineEdit {
         glyphs: line.glyphs.iter().map(|glyph| glyph.at).collect(),
         text: text.to_owned(),
+        style: TextStyle::default(),
     }
 }
 
@@ -215,4 +216,100 @@ fn a_line_after_an_edited_one_is_edited_where_it_is() {
     let spelled: Vec<_> = after.iter().map(|line| line.text.as_str()).collect();
     assert_eq!(spelled, ["Hi", "Last line"]);
     assert!((after[1].bounds()[1] - before[1].bounds()[1]).abs() < 1e-6);
+}
+
+fn styled(bytes: &[u8], line: &TextLine, text: &str, style: TextStyle) -> EditedPage {
+    let edit = LineEdit {
+        glyphs: line.glyphs.iter().map(|glyph| glyph.at).collect(),
+        text: text.to_owned(),
+        style,
+    };
+    edit_all(bytes, &[edit]).expect("edits")
+}
+
+fn height(line: &TextLine) -> f64 {
+    let quad = line.glyphs[0].quad.corners;
+    (quad[0].1 - quad[2].1).abs()
+}
+
+#[test]
+fn a_line_takes_another_font_size_and_colour_and_gives_them_back() {
+    let content = "BT 0.2 g /F1 10 Tf 20 100 Td (Hello World) Tj 0 -20 Td (Next line) Tj ET";
+    let bytes = one_page(content, FONT, &[helvetica()]);
+    let (_, before) = lines(&bytes);
+    let style = TextStyle {
+        face: Some("Times-Bold"),
+        size: Some(14.0),
+        fill: Some([1.0, 0.0, 0.0]),
+    };
+    let edited = styled(&bytes, &before[0], "Hello World", style);
+    assert_eq!(
+        edited.fallbacks,
+        [(onionskin_cos::Name::new("OSFTimes-Bold"), "Times-Bold")]
+    );
+    let written = String::from_utf8(edited.content.bytes.clone()).expect("ascii");
+    assert!(
+        written.contains("1 0 0 rg /OSFTimes-Bold 14 Tf ["),
+        "{written}"
+    );
+    assert!(
+        written.contains("] TJ /F1 10 Tf 0.2 g"),
+        "font, size and colour back: {written}"
+    );
+    let resources = "<< /Font << /F1 5 0 R /OSFTimes-Bold 6 0 R >> >>";
+    let times =
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>";
+    let after = reread(&edited, resources, &[helvetica(), times.to_vec()]);
+    assert_eq!(after[0].text, "Hello World");
+    assert!(height(&after[0]) > height(&before[0]) * 1.3, "set larger");
+    assert!((x_of(&after[1], "Next") - x_of(&before[1], "Next")).abs() < 1e-6);
+    assert!(
+        (height(&after[1]) - height(&before[1])).abs() < 1e-6,
+        "the next line's size stays"
+    );
+}
+
+#[test]
+fn a_new_size_in_the_lines_own_font_keeps_the_rest_of_the_operator_in_place() {
+    let content = "BT /CS0 cs 0.3 sc /F1 10 Tf 20 100 Td [(Hello) -250 (World)] TJ ET";
+    let bytes = one_page(content, FONT, &[helvetica()]);
+    let (_, before) = lines(&bytes);
+    let hello = TextLine {
+        glyphs: before[0].glyphs[..5].to_vec(),
+        ..before[0].clone()
+    };
+    let style = TextStyle {
+        size: Some(20.0),
+        fill: Some([0.0, 0.0, 1.0]),
+        ..TextStyle::default()
+    };
+    let edited = styled(&bytes, &hello, "Hello", style);
+    assert!(edited.fallbacks.is_empty(), "the line's own font");
+    let written = String::from_utf8(edited.content.bytes.clone()).expect("ascii");
+    assert!(written.contains("0 0 1 rg /F1 20 Tf ["), "{written}");
+    assert!(
+        written.contains("] TJ /F1 10 Tf /CS0 cs 0.3 sc"),
+        "{written}"
+    );
+    let after = reread(&edited, FONT, &[helvetica()]);
+    let world = after
+        .iter()
+        .find(|line| line.text.contains("World"))
+        .expect("World is drawn");
+    assert!(
+        (x_of(world, "World") - x_of(&before[0], "World")).abs() < 1e-6,
+        "World did not move, though the larger Hello now reaches it"
+    );
+    let undrawable = edit_all(
+        &bytes,
+        &[LineEdit {
+            glyphs: before[0].glyphs.iter().map(|glyph| glyph.at).collect(),
+            text: "日本".to_owned(),
+            style: TextStyle {
+                face: Some("Courier"),
+                ..TextStyle::default()
+            },
+        }],
+    );
+    assert!(matches!(undrawable, Err(EditError::Undrawable(_))));
 }

@@ -33,6 +33,18 @@ pub struct LineEdit {
     /// The new text starts where the first of them was.
     pub glyphs: Vec<(usize, usize)>,
     pub text: String,
+    pub style: TextStyle,
+}
+
+/// How the new text looks, where it differs from the line's own.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextStyle {
+    /// A standard font to set it in, in place of the line's.
+    pub face: Option<&'static str>,
+    /// A size in place of the line's.
+    pub size: Option<f64>,
+    /// An RGB fill colour, each part 0 to 1, in place of the line's.
+    pub fill: Option<[f64; 3]>,
 }
 
 /// A page's content with its lines rewritten.
@@ -83,6 +95,7 @@ pub(crate) type Seen = BTreeMap<FontId, BTreeMap<char, Code>>;
 pub(crate) struct Pending {
     pub(crate) first: (usize, usize),
     pub(crate) text: String,
+    pub(crate) style: TextStyle,
     /// Set once the text is drawn: the standard font it needed, or why it
     /// could not be drawn.
     pub(crate) outcome: Option<std::result::Result<Option<&'static str>, String>>,
@@ -119,6 +132,7 @@ pub fn edit_lines(
         lines.push(Pending {
             first,
             text: edit.text.clone(),
+            style: edit.style,
             outcome: None,
         });
     }
@@ -149,35 +163,126 @@ pub fn edit_lines(
     })
 }
 
-/// The new text drawn before placed glyph `before`, in `font` or a
-/// standard font, with the pen put back afterwards.
+/// What the line's state was when its first glyph was drawn: its font by
+/// resource name, its size and spacing, and the operators that set its fill
+/// colour.
+pub(crate) struct LineState<'a> {
+    pub(crate) font: &'a Font,
+    pub(crate) font_name: &'a Name,
+    pub(crate) spacing: &'a Spacing,
+    pub(crate) fill: &'a [u8],
+}
+
+/// The new text drawn before placed glyph `before`, in the line's font or
+/// a standard one, at its size or `style`'s, with the font, size, colour
+/// and pen put back afterwards.
 pub(crate) fn insertion(
     editing: &Editing,
     text: &str,
-    font: &Font,
-    font_name: &Name,
-    spacing: &Spacing,
+    style: &TextStyle,
+    line: &LineState<'_>,
     before: usize,
 ) -> std::result::Result<(Insertion, Option<&'static str>), String> {
-    if let Some(codes) = own_codes(editing, text, font) {
-        let advance = codes
-            .iter()
-            .map(|code| skip(spacing, *code, font.displacement(*code)))
-            .sum();
-        let bytes: Vec<u8> = codes.iter().flat_map(|code| code_bytes(*code)).collect();
-        let mut draw = b"[".to_vec();
-        draw.extend(hex(&bytes));
-        draw.extend_from_slice(b"] TJ");
-        return Ok((
-            Insertion {
-                before,
-                draw,
-                advance,
-            },
-            None,
-        ));
+    let (bytes, widths, face) =
+        match own_codes(editing, text, line.font).filter(|_| style.face.is_none()) {
+            Some(codes) => (
+                codes
+                    .iter()
+                    .flat_map(|code| code_bytes(*code))
+                    .collect::<Vec<u8>>(),
+                codes
+                    .iter()
+                    .map(|code| (*code, line.font.displacement(*code)))
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            None => {
+                let face = style
+                    .face
+                    .unwrap_or_else(|| standard_face(&line.font.base_font));
+                let (bytes, widths) = standard_codes(text, face)?;
+                (bytes, widths, Some(face))
+            }
+        };
+    let size = style.size.unwrap_or(line.spacing.size);
+    let drawn = Spacing {
+        size,
+        ..*line.spacing
+    };
+    // `TJ` numbers are thousandths of the size in force, which is the
+    // line's own once it is put back.
+    let rescale = if line.spacing.size == 0.0 {
+        1.0
+    } else {
+        size / line.spacing.size
+    };
+    let advance = widths
+        .iter()
+        .map(|(code, width)| skip(&drawn, *code, *width) * rescale)
+        .sum();
+    Ok((
+        Insertion {
+            before,
+            draw: draw(editing, style, line, &bytes, face, size),
+            advance,
+        },
+        face,
+    ))
+}
+
+/// The operators that draw `bytes`, and put the line's state back.
+fn draw(
+    editing: &Editing,
+    style: &TextStyle,
+    line: &LineState<'_>,
+    bytes: &[u8],
+    face: Option<&'static str>,
+    size: f64,
+) -> Vec<u8> {
+    let number = crate::redact::number;
+    let mut out = Vec::new();
+    if let Some([r, g, b]) = style.fill {
+        out.extend_from_slice(format!("{} {} {} rg ", number(r), number(g), number(b)).as_bytes());
     }
-    let face = standard_face(&font.base_font);
+    let switched = face.is_some() || size != line.spacing.size;
+    if switched {
+        let name = face.map_or_else(
+            || line.font_name.clone(),
+            |face| editing.fallback_name(face),
+        );
+        out.extend_from_slice(format!("/{} {} Tf ", name_text(&name), number(size)).as_bytes());
+    }
+    out.push(b'[');
+    out.extend(hex(bytes));
+    out.extend_from_slice(b"] TJ");
+    if switched {
+        out.extend_from_slice(
+            format!(
+                " /{} {} Tf",
+                name_text(line.font_name),
+                number(line.spacing.size)
+            )
+            .as_bytes(),
+        );
+    }
+    if style.fill.is_some() {
+        out.push(b' ');
+        if line.fill.is_empty() {
+            out.extend_from_slice(b"0 g");
+        } else {
+            out.extend_from_slice(line.fill);
+        }
+    }
+    out
+}
+
+/// `text` in WinAnsiEncoding for standard font `face`, with each code's
+/// width, or the characters it cannot draw.
+#[allow(clippy::type_complexity)]
+fn standard_codes(
+    text: &str,
+    face: &str,
+) -> std::result::Result<(Vec<u8>, Vec<(Code, Option<f64>)>), String> {
     let undrawable: String = text
         .chars()
         .filter(|ch| *ch != '?' && encode_win_ansi(&ch.to_string()) == b"?")
@@ -186,7 +291,7 @@ pub(crate) fn insertion(
         return Err(undrawable);
     }
     let bytes = encode_win_ansi(text);
-    let advance = bytes
+    let widths = bytes
         .iter()
         .map(|byte| {
             let code = Code {
@@ -194,22 +299,13 @@ pub(crate) fn insertion(
                 cid: u32::from(*byte),
                 len: 1,
             };
-            let width = standard_text_width(face, &[*byte]).map(|w| w / 1000.0);
-            skip(spacing, code, width)
+            (
+                code,
+                standard_text_width(face, &[*byte]).map(|w| w / 1000.0),
+            )
         })
-        .sum();
-    let size = crate::redact::number(spacing.size);
-    let mut draw = format!("/{} {size} Tf [", name_text(&editing.fallback_name(face))).into_bytes();
-    draw.extend(hex(&bytes));
-    draw.extend_from_slice(format!("] TJ /{} {size} Tf", name_text(font_name)).as_bytes());
-    Ok((
-        Insertion {
-            before,
-            draw,
-            advance,
-        },
-        Some(face),
-    ))
+        .collect();
+    Ok((bytes, widths))
 }
 
 /// The codes `font` draws the text with, if it can draw all of it.

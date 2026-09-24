@@ -217,3 +217,29 @@ fn a_page_deleted_after_its_text_was_edited_leaves_a_whole_file() {
     let reopened = open(&whole);
     assert_eq!(reopened.page_count().expect("pages"), 2);
 }
+
+#[test]
+fn a_line_is_rewritten_in_another_font_size_and_colour() {
+    use onionskin_core::text_edit::{rewrite_styled_lines, TextStyle};
+    let bytes = tagged();
+    let doc = open(&bytes);
+    let lines = page_lines(&doc, 0).expect("reads");
+    let style = TextStyle {
+        face: Some("Courier"),
+        size: Some(30.0),
+        fill: Some([0.0, 0.5, 0.0]),
+    };
+    let edit = rewrite_styled_lines(&doc, 0, &[(&lines[0], "Page one".to_owned(), style)])
+        .expect("works out");
+    let edited = apply(&bytes, |tx, _| write_page_edit(tx, &edit));
+    assert_eq!(texts(&edited, 0), ["Page one"]);
+    let content = content_of(&edited, 0);
+    assert!(
+        content.contains("0 0.5 0 rg /OSFCourier 30 Tf"),
+        "{content}"
+    );
+    assert!(
+        content.contains("/F1 24 Tf 0 g"),
+        "put back, black by default: {content}"
+    );
+}
