@@ -32,10 +32,15 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
-- ActualText ownership across multiple showing operators is being integrated
-  across extraction, search, selection, and editing. The committed regression
-  port and runtime evidence are still pending; accessibility projection and
-  native acceptance remain out of scope until their dedicated checkpoints.
+- ActualText ownership across multiple showing operators is integrated across
+  extraction, search, selection, editing, redaction, and the headless
+  accessibility projection through checkpoints C1-C3. Checkpoint C4 commit
+  `13968e241f330b79114e2a9f4b8c02f98c766d58` and its five
+  `plugins/redact/tests/guarantee.rs` redaction tests plus seven
+  `plugins/tools-edit/tests/text.rs` plugin tests are recorded in
+  `/tmp/claude/onionskin-actualtext-c4-runtime.Sl9gRa`; the source and runtime
+  audit passed. Native VoiceOver, tagged-PDF structure reading, and
+  Linux/Windows accessibility adapters remain separate open work.
 
 - **Stamp generator provenance check, resolved 2026-09-23:** 22 committed
   SVGs carry root C2PA metadata that the generator does not emit. The check
