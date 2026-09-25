@@ -195,6 +195,83 @@ fn actual_text_neighbors_use_real_edit_and_replace_paths() {
 }
 
 #[test]
+fn actual_text_ordinary_replacements_preserve_members_and_history() {
+    let mut doc = actual_text_document();
+    let source_page = doc.page_text(0).expect("source page").clone();
+    let protected_codes = source_page.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+        .collect::<Vec<_>>();
+    let protected_quads = source_page.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    assert!(source_page.runs[1].actual_text.is_some());
+    assert_eq!(
+        source_page.runs[1].actual_text,
+        source_page.runs[2].actual_text
+    );
+
+    let left = find(&mut doc, "left", MatchOptions::default()).expect("finds left");
+    assert_eq!(left.len(), 1);
+    assert_eq!(
+        replace(&mut doc, &left, "LEFT", "Replace left").expect("replaces left"),
+        1
+    );
+    let right = find(&mut doc, "right", MatchOptions::default()).expect("finds right");
+    assert_eq!(right.len(), 1);
+    assert_eq!(
+        replace(&mut doc, &right, "RIGHT", "Replace right").expect("replaces right"),
+        1
+    );
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "RIGHT"]);
+    assert_eq!(
+        doc.page_text(0).expect("edited page").flatten().text,
+        "LEFT XY RIGHT"
+    );
+
+    assert!(doc.undo().expect("undoes right"));
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "right"]);
+    assert!(doc.undo().expect("undoes left"));
+    assert_eq!(lines(&mut doc, 0), ["left", "ABCD", "right"]);
+    assert!(doc.redo().expect("redoes left"));
+    assert!(doc.redo().expect("redoes right"));
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "RIGHT"]);
+
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("actual-text-replacements.pdf");
+    let mut file = onionskin_core::DocumentFile::from_document(doc);
+    file.save_as(&path).expect("save");
+    let mut reopened = onionskin_core::DocumentFile::open(&path).expect("reopen");
+    assert_eq!(lines(reopened.document_mut(), 0), ["LEFT", "ABCD", "RIGHT"]);
+    let reopened_page = reopened
+        .document_mut()
+        .page_text(0)
+        .expect("reopened page")
+        .clone();
+    assert_eq!(reopened_page.flatten().text, "LEFT XY RIGHT");
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        protected_codes
+    );
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        protected_quads
+    );
+    assert!(reopened_page.runs[1].actual_text.is_some());
+    assert_eq!(
+        reopened_page.runs[1].actual_text,
+        reopened_page.runs[2].actual_text
+    );
+}
+
+#[test]
 fn every_match_is_replaced_in_one_step_and_one_on_its_own() {
     let mut doc = document();
     let options = MatchOptions {

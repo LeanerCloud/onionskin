@@ -205,19 +205,23 @@ fn a_word_however_it_is_drawn_is_gone_after_redaction() {
     redact_and_prove(pdf(&objects), "Confidential");
 }
 
-#[test]
-fn nested_actual_text_redaction_observes_open_ancestor_spelling() {
+fn nested_actual_text_pdf() -> Vec<u8> {
     let content = "BT /F1 10 Tf 20 200 Td \
         /Span << /ActualText (OUT) /Alt (outer-alt) /E (outer-event) >> BDC \
         (A) Tj /Span << /ActualText (INNER) /Alt (inner-alt) /E (inner-event) >> BDC \
         (H) Tj EMC (B) Tj EMC ET";
-    let original = pdf(&[
+    pdf(&[
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
         stream("", content),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec(),
-    ]);
+    ])
+}
+
+#[test]
+fn nested_actual_text_redaction_observes_open_ancestor_spelling() {
+    let original = nested_actual_text_pdf();
     let mut outer = Document::open_bytes(original.clone()).expect("opens outer case");
     let source = extract_page(
         &CosDocument::open(Box::new(BytesSource::new(original.clone()))).expect("source"),
@@ -314,6 +318,74 @@ fn nested_actual_text_redaction_observes_open_ancestor_spelling() {
     assert!(inner_properties.iter().all(|dict| {
         !dict.contains(b"ActualText") && !dict.contains(b"Alt") && !dict.contains(b"E")
     }));
+}
+
+#[test]
+fn whole_outer_actual_text_redaction_preserves_inner_semantics() {
+    let original = nested_actual_text_pdf();
+    let source_doc =
+        CosDocument::open(Box::new(BytesSource::new(original.clone()))).expect("source");
+    let source = extract_page(&source_doc, 0).expect("extracts source");
+    let outer_a = source.runs[0].glyphs[0].quad;
+    let inner_h = source.runs[1].glyphs[0].quad;
+    let outer_b = source.runs[2].glyphs[0].quad;
+
+    let mut doc = Document::open_bytes(original).expect("opens");
+    let options = SearchOptions {
+        case_sensitive: true,
+        ..SearchOptions::default()
+    };
+    let found = find(&mut doc, &Query::Text("OUT".to_owned(), options)).expect("finds OUT");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].text, "OUT");
+    assert_eq!(found[0].quads, vec![outer_a, outer_b]);
+    assert!(!found[0].quads.contains(&inner_h));
+
+    mark_found(&mut doc, &found, &RedactionLook::default()).expect("marks OUT");
+    let applied = apply_redactions(&mut doc).expect("applies");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let out =
+        CosDocument::open(Box::new(BytesSource::new(applied.bytes))).expect("reopens output");
+    let page = extract_page(&out, 0).expect("extracts output");
+    assert_eq!(page.flatten().text, "INNER");
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.code)
+            .collect::<Vec<_>>(),
+        [72]
+    );
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.quad)
+            .collect::<Vec<_>>(),
+        [inner_h]
+    );
+
+    let properties = marked_properties(&page_content(&out));
+    assert_eq!(properties.len(), 2);
+    assert!(!properties[0].contains(b"ActualText"));
+    assert!(!properties[0].contains(b"Alt"));
+    assert!(!properties[0].contains(b"E"));
+    assert_eq!(
+        property_string(&properties[1], b"ActualText"),
+        Some(b"INNER".as_slice())
+    );
+    assert_eq!(
+        property_string(&properties[1], b"Alt"),
+        Some(b"inner-alt".as_slice())
+    );
+    assert_eq!(
+        property_string(&properties[1], b"E"),
+        Some(b"inner-event".as_slice())
+    );
 }
 
 fn repeated_form_pdf() -> Vec<u8> {
