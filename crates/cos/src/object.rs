@@ -35,7 +35,7 @@ impl fmt::Display for Holder {
 }
 
 /// A half-open byte range `[start, end)`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct Span {
     pub start: u64,
     pub end: u64,
@@ -50,7 +50,7 @@ impl Span {
 /// Where a parsed object's bytes live. An object inside an object stream has
 /// no span of its own in the file, so it reports both the container's span and
 /// its own span inside the container's decoded data.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Origin {
     File(Span),
     ObjectStream {

@@ -32,6 +32,11 @@ source IDs, severity, ownership, and required proof.
 
 ## Ours - accepted debt with a deadline
 
+- ActualText ownership across multiple showing operators is being integrated
+  across extraction, search, selection, and editing. The committed regression
+  port and runtime evidence are still pending; accessibility projection and
+  native acceptance remain out of scope until their dedicated checkpoints.
+
 - **Stamp generator provenance check, resolved 2026-09-23:** 22 committed
   SVGs carry root C2PA metadata that the generator does not emit. The check
   now ignores only the validated provenance shape while rejecting artwork and

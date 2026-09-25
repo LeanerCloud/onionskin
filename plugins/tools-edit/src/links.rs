@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use onionskin_core::links::{self, Link, LinkLook, LinkTarget};
-use onionskin_core::{Document, Mapping, ObjRef, PageIndex};
+use onionskin_core::{Document, ObjRef, PageIndex, RunCoverage};
 use onionskin_plugin_api::CommandError;
 
 fn edit_error(label: &'static str) -> impl Fn(onionskin_core::Error) -> CommandError {
@@ -83,9 +83,12 @@ pub fn create_links_from_urls(
         let text = doc
             .page_text(page)
             .map_err(|source| CommandError::Page { page, source })?;
-        for run in &text.runs {
-            for (range, url) in find_urls(&run.text) {
-                let Some(rect) = bounds(run, &range) else {
+        let flattened = text.flatten();
+        for piece in flattened.pieces() {
+            let piece_text = &flattened.text[piece.range.clone()];
+            for (range, url) in find_urls(piece_text) {
+                let global = piece.range.start + range.start..piece.range.start + range.end;
+                let Some(rect) = bounds(&text, piece, &global) else {
                     continue;
                 };
                 let centre = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0);
@@ -117,24 +120,30 @@ pub fn create_links_from_urls(
     Ok(count)
 }
 
-/// The box around the glyphs that made `range` of the run's text.
-fn bounds(run: &onionskin_core::TextRun, range: &Range<usize>) -> Option<[f64; 4]> {
+/// The box around the piece coverage for the flattened range.
+fn bounds(
+    page: &onionskin_core::PageText,
+    piece: &onionskin_core::FlatPiece,
+    range: &Range<usize>,
+) -> Option<[f64; 4]> {
     let mut rect: Option<[f64; 4]> = None;
-    for glyph in &run.glyphs {
-        let Mapping::Text(made) = &glyph.mapping else {
-            continue;
+    for covered in piece.coverage_for(page, range.clone()) {
+        let quads = match covered.coverage {
+            RunCoverage::Decoded(local) => covered.run.quads_for_decoded(local),
+            RunCoverage::WholeActualText => {
+                covered.run.glyphs.iter().map(|glyph| glyph.quad).collect()
+            }
         };
-        if made.end <= range.start || made.start >= range.end {
-            continue;
-        }
-        for (x, y) in glyph.quad.corners {
-            let grown = rect.get_or_insert([x, y, x, y]);
-            *grown = [
-                grown[0].min(x),
-                grown[1].min(y),
-                grown[2].max(x),
-                grown[3].max(y),
-            ];
+        for quad in quads {
+            for (x, y) in quad.corners {
+                let grown = rect.get_or_insert([x, y, x, y]);
+                *grown = [
+                    grown[0].min(x),
+                    grown[1].min(y),
+                    grown[2].max(x),
+                    grown[3].max(y),
+                ];
+            }
         }
     }
     rect

@@ -758,7 +758,7 @@ fn session_texts(document: &mut Document) -> Vec<String> {
                 .expect("text extracts")
                 .runs
                 .iter()
-                .map(|run| run.text.as_str())
+                .map(|run| run.decoded_text.as_str())
                 .collect::<String>()
                 .trim()
                 .to_owned()

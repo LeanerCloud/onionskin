@@ -65,6 +65,8 @@ pub enum EditError {
     Undrawable(String),
     /// A line's first glyph was not found where extraction put it.
     NotFound,
+    /// ActualText-associated glyphs have no safe editable character mapping.
+    ActualText,
 }
 
 impl std::fmt::Display for EditError {
@@ -75,6 +77,7 @@ impl std::fmt::Display for EditError {
                 write!(f, "no font available can draw {characters:?}")
             }
             EditError::NotFound => write!(f, "the line is no longer where it was"),
+            EditError::ActualText => write!(f, "ActualText content cannot be edited"),
         }
     }
 }
@@ -135,6 +138,18 @@ pub fn edit_lines(
             style: edit.style,
             outcome: None,
         });
+    }
+    let current = interpret::page_text(doc, page)?;
+    for &(run, glyph) in &targets {
+        let Some(text_run) = current.runs.get(run) else {
+            return Err(EditError::NotFound);
+        };
+        let Some(_) = text_run.glyphs.get(glyph) else {
+            return Err(EditError::NotFound);
+        };
+        if text_run.actual_text.is_some() {
+            return Err(EditError::ActualText);
+        }
     }
     let editing = Editing {
         lines,

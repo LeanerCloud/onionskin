@@ -78,7 +78,11 @@ fn letters(text: &PageText) -> Vec<Letter> {
                 .filter_map(move |glyph| match &glyph.mapping {
                     Mapping::Text(range) => Some(Letter {
                         rect: quad_rect(&glyph.quad.corners),
-                        text: run.text.get(range.clone()).unwrap_or_default().to_owned(),
+                        text: run
+                            .decoded_text
+                            .get(range.clone())
+                            .unwrap_or_default()
+                            .to_owned(),
                     }),
                     Mapping::Unmapped => None,
                 })

@@ -4,14 +4,18 @@
 mod common;
 
 use common::{one_page, open_bytes, stream};
-use onionskin_content::redact::{Area, NewResource, PageRedaction};
-use onionskin_content::{extract_page, redact_page, redact_page_with_hidden, PageText};
-use onionskin_cos::ObjRef;
+use onionskin_content::redact::{covers_glyph, Area, NewResource, PageRedaction};
+use onionskin_content::{extract_page, redact_page, redact_page_with_hidden, PageText, Tokenizer};
+use onionskin_cos::{Dict, ObjRef, Object};
 
 const FONT: &str = "<< /Font << /F1 5 0 R >> >>";
 
 fn helvetica() -> Vec<u8> {
     b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec()
+}
+
+fn courier() -> Vec<u8> {
+    b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec()
 }
 
 fn redact(content: &str, resources: &str, extra: &[Vec<u8>], areas: &[Area]) -> PageRedaction {
@@ -29,19 +33,308 @@ fn reread(redaction: &PageRedaction, resources: &str, extra: &[Vec<u8>]) -> Page
 fn text_of(page: &PageText) -> String {
     page.runs
         .iter()
-        .map(|run| run.text.as_str())
+        .map(|run| run.decoded_text.as_str())
         .collect::<Vec<_>>()
         .join("|")
+}
+
+fn marked_properties(bytes: &[u8]) -> Vec<Dict> {
+    let mut tokenizer = Tokenizer::new(bytes);
+    let mut properties = Vec::new();
+    while let Some(operation) = tokenizer.next_operation() {
+        if operation.operator.is(b"BDC") {
+            if let Some(Object::Dict(dict)) = operation.tail(1).and_then(|tail| tail.first()) {
+                properties.push(dict.clone());
+            }
+        }
+    }
+    properties
+}
+
+fn property_string(dict: &Dict, key: &[u8]) -> Option<Vec<u8>> {
+    match dict.get(key) {
+        Some(Object::String(value)) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn do_names(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut tokenizer = Tokenizer::new(bytes);
+    let mut names = Vec::new();
+    while let Some(operation) = tokenizer.next_operation() {
+        if operation.operator.is(b"Do") {
+            if let Some(Object::Name(name)) = operation.tail(1).and_then(|tail| tail.first()) {
+                names.push(name.as_bytes().to_vec());
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn actual_text_partial_redaction_removes_one_member_without_replacement_leakage() {
+    let content = "BT /F1 10 Tf 1 0 0 1 10 100 Tm /Span << /ActualText (XY) /Alt (Alt text) /E (expanded) >> BDC (AB) Tj (CD) Tj EMC ET";
+    let doc = open_bytes(one_page(content, FONT, &[courier()]));
+    let before = extract_page(&doc, 0).expect("extracts");
+    let source_quads = before
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    let first = source_quads[0].corners;
+    let area = Area::rect(first[2].0, first[2].1, first[1].0, first[1].1);
+    assert!(covers_glyph(
+        &[area.clone()],
+        &before.runs[0].glyphs[0].quad
+    ));
+    for quad in &source_quads[1..] {
+        assert!(!covers_glyph(&[area.clone()], quad));
+    }
+    let redaction = redact(content, FONT, &[courier()], &[area]);
+    assert_eq!(
+        redaction
+            .removed
+            .iter()
+            .map(|glyph| glyph.text.as_str())
+            .collect::<String>(),
+        "A"
+    );
+    let bytes = String::from_utf8(redaction.content.bytes.clone()).expect("ascii");
+    let properties = marked_properties(bytes.as_bytes());
+    assert_eq!(properties.len(), 1);
+    assert!(!properties[0].contains(b"ActualText"));
+    assert!(!properties[0].contains(b"Alt"));
+    assert!(!properties[0].contains(b"E"));
+    let after = reread(&redaction, FONT, &[courier()]);
+    assert_eq!(after.flatten().text, "BCD");
+    assert_eq!(
+        after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [66, 67, 68]
+    );
+    assert_eq!(
+        after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        source_quads[1..]
+    );
+}
+
+#[test]
+fn nested_actual_text_redaction_keeps_inner_hole_and_strips_owned_metadata() {
+    let content = "BT /F1 10 Tf 1 0 0 1 10 100 Tm /Span << /ActualText (OUT) /Alt (outer) /E (outer expanded) >> BDC (A) Tj /Span << /ActualText (INNER) /Alt (inner) /E (inner expanded) >> BDC (H) Tj EMC (B) Tj EMC ET";
+    let doc = open_bytes(one_page(content, FONT, &[courier()]));
+    let before = extract_page(&doc, 0).expect("extracts");
+    let source_quads = before
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    assert_eq!(source_quads.len(), 3);
+
+    let redact_outer = redact(
+        content,
+        FONT,
+        &[courier()],
+        &[Area::rect(
+            source_quads[0].corners[2].0,
+            source_quads[0].corners[2].1,
+            source_quads[0].corners[1].0,
+            source_quads[0].corners[1].1,
+        )],
+    );
+    let outer_bytes = String::from_utf8(redact_outer.content.bytes.clone()).expect("ascii");
+    assert!(!outer_bytes.contains("ActualText (OUT)"));
+    assert!(!outer_bytes.contains("/Alt (outer)") && !outer_bytes.contains("/E (outer expanded)"));
+    assert!(outer_bytes.contains("ActualText (INNER)"));
+    assert!(outer_bytes.contains("/Alt (inner)") && outer_bytes.contains("/E (inner expanded)"));
+    let outer_properties = marked_properties(outer_bytes.as_bytes());
+    assert_eq!(outer_properties.len(), 2);
+    assert!(!outer_properties[0].contains(b"ActualText"));
+    assert!(!outer_properties[0].contains(b"Alt"));
+    assert!(!outer_properties[0].contains(b"E"));
+    assert_eq!(
+        property_string(&outer_properties[1], b"ActualText"),
+        Some(b"INNER".to_vec())
+    );
+    assert_eq!(
+        property_string(&outer_properties[1], b"Alt"),
+        Some(b"inner".to_vec())
+    );
+    assert_eq!(
+        property_string(&outer_properties[1], b"E"),
+        Some(b"inner expanded".to_vec())
+    );
+    let outer_after = reread(&redact_outer, FONT, &[courier()]);
+    assert_eq!(outer_after.flatten().text, "INNERB");
+    assert_eq!(
+        outer_after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [72, 66]
+    );
+    assert_eq!(
+        outer_after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        source_quads[1..]
+    );
+
+    let redact_inner = redact(
+        content,
+        FONT,
+        &[courier()],
+        &[Area::rect(
+            source_quads[1].corners[2].0,
+            source_quads[1].corners[2].1,
+            source_quads[1].corners[1].0,
+            source_quads[1].corners[1].1,
+        )],
+    );
+    let inner_bytes = String::from_utf8(redact_inner.content.bytes.clone()).expect("ascii");
+    let inner_properties = marked_properties(inner_bytes.as_bytes());
+    assert_eq!(inner_properties.len(), 2);
+    for properties in &inner_properties {
+        assert!(!properties.contains(b"ActualText"));
+        assert!(!properties.contains(b"Alt"));
+        assert!(!properties.contains(b"E"));
+    }
+    let inner_after = reread(&redact_inner, FONT, &[courier()]);
+    assert_eq!(inner_after.flatten().text, "A B");
+    assert_eq!(
+        inner_after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [65, 66]
+    );
+    assert_eq!(
+        inner_after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        [source_quads[0], source_quads[2]]
+    );
+}
+
+#[test]
+fn repeated_actual_text_form_redaction_changes_only_one_placement() {
+    let resources = "<< /XObject << /Fm0 5 0 R >> >>";
+    let form = stream(
+        "/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /Font << /F1 6 0 R >> >>",
+        b"BT /F1 10 Tf 1 0 0 1 10 100 Tm /Span << /ActualText (XY) /Alt (alt) /E (expanded) >> BDC (A) Tj (B) Tj EMC ET",
+    );
+    let extra = vec![form.clone(), courier()];
+    let content = "/Fm0 Do q 1 0 0 1 0 -30 cm /Fm0 Do Q";
+    let doc = open_bytes(one_page(content, resources, &extra));
+    let before = extract_page(&doc, 0).expect("extracts");
+    let original_form = doc.get(5).expect("form object");
+    let original_form_stream = original_form.object.as_stream().expect("form stream");
+    let original_form_bytes = doc
+        .decode_stream(original_form_stream)
+        .expect("form content");
+    let original_properties = marked_properties(&original_form_bytes);
+    assert_eq!(original_properties.len(), 1);
+    assert_eq!(
+        property_string(&original_properties[0], b"ActualText"),
+        Some(b"XY".to_vec())
+    );
+    assert_eq!(
+        property_string(&original_properties[0], b"Alt"),
+        Some(b"alt".to_vec())
+    );
+    assert_eq!(
+        property_string(&original_properties[0], b"E"),
+        Some(b"expanded".to_vec())
+    );
+    assert_eq!(before.runs.len(), 4);
+    let first = before.runs[0].glyphs[0].quad;
+    let second = before.runs[2].glyphs[0].quad;
+    let area = Area::rect(
+        first.corners[2].0,
+        first.corners[2].1,
+        first.corners[1].0,
+        first.corners[1].1,
+    );
+    let redaction = redact(content, resources, &extra, &[area]);
+    assert!(redaction.content.resources.iter().any(|resource| matches!(
+        resource,
+        NewResource::Form { original, .. } if original.number == 5
+    )));
+    let NewResource::Form {
+        name,
+        content: rewritten_form,
+        ..
+    } = &redaction.content.resources[0]
+    else {
+        panic!("{:?}", redaction.content.resources);
+    };
+    let generated_name = String::from_utf8_lossy(name.as_bytes());
+    assert_ne!(generated_name, "Fm0");
+    let rewritten_properties = marked_properties(&rewritten_form.bytes);
+    assert_eq!(rewritten_properties.len(), 1);
+    assert!(!rewritten_properties[0].contains(b"ActualText"));
+    assert!(!rewritten_properties[0].contains(b"Alt"));
+    assert!(!rewritten_properties[0].contains(b"E"));
+    let generated_resources = format!("<< /XObject << /Fm0 5 0 R /{generated_name} 7 0 R >> >>");
+    let generated_form = stream(
+        "/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /Font << /F1 6 0 R >> >>",
+        &rewritten_form.bytes,
+    );
+    let materialized_extra = vec![form, courier(), generated_form];
+    let after_doc = open_bytes(one_page(
+        &String::from_utf8(redaction.content.bytes.clone()).expect("ascii"),
+        &generated_resources,
+        &materialized_extra,
+    ));
+    assert_eq!(
+        do_names(&redaction.content.bytes),
+        vec![name.as_bytes().to_vec(), b"Fm0".to_vec()]
+    );
+    let after = extract_page(&after_doc, 0).expect("extracts");
+    assert_eq!(after.flatten().text, "B\nXY");
+    let after_quads = after
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        after
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [66, 65, 66]
+    );
+    assert_eq!(
+        after_quads,
+        vec![
+            before.runs[1].glyphs[0].quad,
+            second,
+            before.runs[3].glyphs[0].quad
+        ]
+    );
 }
 
 fn first_x(page: &PageText, text: &str) -> f64 {
     let run = page
         .runs
         .iter()
-        .find(|run| run.text.contains(text))
+        .find(|run| run.decoded_text.contains(text))
         .expect("the text is there");
-    let at = run.text.find(text).expect("found");
-    run.quads_for(at..at + text.len())[0].corners[0].0
+    let at = run.decoded_text.find(text).expect("found");
+    run.quads_for_decoded(at..at + text.len())[0].corners[0].0
 }
 
 /// Where "Secret" sits on `BT /F1 10 Tf 10 100 Td (Hello Secret World) Tj`.
@@ -49,8 +342,8 @@ fn secret_area(content: &str) -> Area {
     let doc = open_bytes(one_page(content, FONT, &[helvetica()]));
     let page = extract_page(&doc, 0).expect("extracts");
     let run = &page.runs[0];
-    let at = run.text.find("Secret").expect("found");
-    let quads = run.quads_for(at..at + "Secret".len());
+    let at = run.decoded_text.find("Secret").expect("found");
+    let quads = run.quads_for_decoded(at..at + "Secret".len());
     let (first, last) = (quads[0], quads[quads.len() - 1]);
     Area::rect(
         first.corners[2].0,

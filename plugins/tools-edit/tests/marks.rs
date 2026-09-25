@@ -75,7 +75,7 @@ fn runs(doc: &mut Document, page: usize) -> Vec<(String, f64)> {
                 .iter()
                 .map(|(_, y)| *y)
                 .fold(f64::INFINITY, f64::min);
-            (run.text.clone(), bottom)
+            (run.decoded_text.clone(), bottom)
         })
         .collect()
 }

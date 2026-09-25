@@ -83,7 +83,7 @@ pub fn rewrite_styled_lines(
 ) -> Result<PageEdit> {
     if let Some((line, _, _)) = lines.iter().find(|(line, _, _)| !line.is_mapped()) {
         return Err(refused(format!(
-            "the line {:?} has characters whose text is unknown, so it cannot be edited",
+            "the line {:?} has characters whose text is unknown or protected by an ActualText replacement, so it cannot be edited",
             line.text
         )));
     }

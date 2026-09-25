@@ -46,13 +46,13 @@ fn assert_invariants(file: &Path, page: &PageText, raw_len: u64) {
             match &glyph.mapping {
                 Mapping::Text(range) => {
                     assert!(
-                        range.start <= range.end && range.end <= run.text.len(),
+                        range.start <= range.end && range.end <= run.decoded_text.len(),
                         "{where_}: glyph text range {range:?} is outside a {} byte run",
-                        run.text.len()
+                        run.decoded_text.len()
                     );
                     assert!(
-                        run.text.is_char_boundary(range.start)
-                            && run.text.is_char_boundary(range.end),
+                        run.decoded_text.is_char_boundary(range.start)
+                            && run.decoded_text.is_char_boundary(range.end),
                         "{where_}: glyph text range splits a character"
                     );
                     // Glyph ranges walk forward through the run's text; a
@@ -70,7 +70,7 @@ fn assert_invariants(file: &Path, page: &PageText, raw_len: u64) {
             }
         }
         // A run with text has at least one glyph that produced it.
-        if !run.text.trim().is_empty() {
+        if !run.decoded_text.trim().is_empty() {
             assert!(
                 run.glyphs
                     .iter()

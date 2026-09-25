@@ -67,9 +67,10 @@ pub use geometry::{PageIndex, PageQuad};
 pub use lines::{text_lines, LineGlyph, TextLine};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
-pub use run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
+pub use run::{ActualText, ByteProvenance, Glyph, Mapping, PageText, SelectedRun, TextRun};
 pub use search::{
-    flatten, search, search_flattened, text_matches, Flattened, Match, MatchMode, SearchOptions,
+    flatten, search, search_flattened, text_matches, CoveredRun, FlatPiece, Flattened, Match,
+    MatchMode, RunCoverage, SearchOptions,
 };
 
 /// The lexer, exposed for M5's redaction plugin.

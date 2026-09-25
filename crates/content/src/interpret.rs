@@ -19,7 +19,7 @@ use crate::redact::{
     covers_glyph, is_clip, is_construction, is_painting, named, taken_names, touches, unspelled,
     Area, Emit, NewResource, Output, PageRedaction, PathBuffer, Redacting, Removed, Rewritten,
 };
-use crate::run::{ByteProvenance, Glyph, Mapping, PageText, TextRun};
+use crate::run::{ActualText, ByteProvenance, Glyph, Mapping, PageText, TextRun};
 use crate::tokenizer::{Operation, Tokenizer};
 use crate::{PageIndex, PageQuad};
 
@@ -389,8 +389,8 @@ impl<'a> Interpreter<'a> {
         // matching `Q` pops nothing instead of popping somebody else's state.
         let mut unsaved = 0usize;
         let mut text: Option<TextObject> = None;
-        // One entry per open marked-content sequence, holding its
-        // `/ActualText` until a showing operator inside it consumes it.
+        // One entry per open marked-content sequence, retaining its
+        // `/ActualText` association for each showing operator inside it.
         let mut marked: Vec<Sequence> = Vec::new();
         let mut rewrite = self
             .redact
@@ -1150,28 +1150,9 @@ impl<'a> Interpreter<'a> {
         // is the difference between extracting the text and extracting nothing.
         //
         // The replacement belongs to the whole sequence, not to one operator
-        // in it. The first showing operator inside the span carries it; every
-        // later one keeps its glyphs positioned and contributes no text, which
-        // is what stops a two-operator span from spelling the replacement and
-        // then the tail it replaced.
-        if let Some(span) = marked.iter_mut().rev().find_map(Sequence::actual_text) {
-            match span.take() {
-                Some(actual) => {
-                    for glyph in &mut glyphs {
-                        // Every glyph stands for the whole replacement, so
-                        // selecting any part of it highlights all of them.
-                        glyph.mapping = Mapping::Text(0..actual.len());
-                    }
-                    out = actual;
-                }
-                None => {
-                    for glyph in &mut glyphs {
-                        glyph.mapping = Mapping::Text(0..0);
-                    }
-                    out.clear();
-                }
-            }
-        }
+        // in it. Every showing operator retains the same association, while
+        // flattening emits that association's replacement only once.
+        let actual_text = marked.iter().rev().find_map(Sequence::actual_text);
 
         let Some((provenance, clamped)) = provenance(content, op.span) else {
             return Some(placed);
@@ -1186,7 +1167,8 @@ impl<'a> Interpreter<'a> {
         }
         self.runs.push(TextRun {
             page: self.page,
-            text: out,
+            decoded_text: out,
+            actual_text,
             glyphs,
             provenance,
             font: font.id,
@@ -1300,7 +1282,7 @@ impl<'a> Interpreter<'a> {
     /// resource dictionary's `/Properties`.
     fn sequence(&self, op: &Operation, resources: &Dict) -> Sequence {
         match self.actual_text(op, resources) {
-            Some(text) => Sequence::Actual(Some(text)),
+            Some(text) => Sequence::Actual(text),
             None => Sequence::Plain,
         }
     }
@@ -1334,13 +1316,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<String> {
+    fn actual_text(&self, op: &Operation, resources: &Dict) -> Option<ActualText> {
         let properties = self.properties(op, resources)?;
         let Object::String(bytes) = self.doc.resolve(properties.get(b"ActualText")?).ok()? else {
             return None;
         };
         let text = font::pdf_text_string(&bytes);
-        (!text.is_empty()).then_some(text)
+        (!text.is_empty()).then(|| ActualText::new(text))
     }
 
     // ---- resources ----------------------------------------------------------
@@ -1430,18 +1412,16 @@ impl<'a> Interpreter<'a> {
 #[derive(Debug, PartialEq, Eq)]
 enum Sequence {
     Plain,
-    /// An `/ActualText` sequence. The `Option` is the replacement until a
-    /// showing operator inside the sequence takes it; afterwards the sequence
-    /// is still open and still suppresses text, which is what distinguishes
-    /// "not this sequence" from "this sequence, already spelled".
-    Actual(Option<String>),
+    /// An `/ActualText` sequence. Its association remains available to every
+    /// showing operator inside the sequence.
+    Actual(ActualText),
 }
 
 impl Sequence {
-    fn actual_text(&mut self) -> Option<&mut Option<String>> {
+    fn actual_text(&self) -> Option<ActualText> {
         match self {
             Sequence::Plain => None,
-            Sequence::Actual(text) => Some(text),
+            Sequence::Actual(text) => Some(text.clone()),
         }
     }
 }

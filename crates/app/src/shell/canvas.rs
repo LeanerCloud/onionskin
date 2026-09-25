@@ -961,8 +961,13 @@ impl CanvasModel {
                 .map_err(|error| error.to_string())?
                 .runs
                 .iter()
-                .filter(|run| !run.text.trim().is_empty())
-                .map(|run| (run.text.clone(), run.quads_for(0..run.text.len())))
+                .filter(|run| !run.decoded_text.trim().is_empty())
+                .map(|run| {
+                    (
+                        run.decoded_text.clone(),
+                        run.quads_for_decoded(0..run.decoded_text.len()),
+                    )
+                })
                 .collect();
             self.page_words.insert(page, words);
         }

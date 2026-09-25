@@ -1037,7 +1037,7 @@ fn booklet_sheet_range_prints_the_selected_physical_sheet(cx: &mut TestAppContex
         let labels = page_text
             .runs
             .iter()
-            .map(|run| run.text.trim())
+            .map(|run| run.decoded_text.trim())
             .filter(|text| text.starts_with("Page "))
             .collect::<Vec<_>>();
         let expected_labels = if page == 0 {
@@ -1050,7 +1050,7 @@ fn booklet_sheet_range_prints_the_selected_physical_sheet(cx: &mut TestAppContex
             let run = page_text
                 .runs
                 .iter()
-                .find(|run| run.text.contains(needle))
+                .find(|run| run.decoded_text.contains(needle))
                 .expect("text run");
             let x = run
                 .glyphs
@@ -1192,7 +1192,7 @@ fn booklet_sheet_range_pending_chooser_keeps_submitted_composition(cx: &mut Test
         let labels = parsed_page
             .runs
             .iter()
-            .map(|run| run.text.trim())
+            .map(|run| run.decoded_text.trim())
             .filter(|text| text.starts_with("Page "))
             .collect::<Vec<_>>();
         assert_eq!(labels, expected.to_vec(), "exact labels on side {page}");
@@ -1200,7 +1200,7 @@ fn booklet_sheet_range_pending_chooser_keeps_submitted_composition(cx: &mut Test
             let run = parsed_page
                 .runs
                 .iter()
-                .find(|run| run.text.contains(needle))
+                .find(|run| run.decoded_text.contains(needle))
                 .expect("text run");
             let x = run
                 .glyphs

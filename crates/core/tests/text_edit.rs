@@ -135,6 +135,212 @@ fn what_cannot_be_edited_is_refused() {
 }
 
 #[test]
+fn actual_text_rewrite_is_refused_before_page_edit() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources 5 0 R >>".to_vec(),
+        stream("BT /Span << /ActualText (XY) >> BDC /F1 10 Tf 20 100 Td (AB) Tj (CD) Tj EMC ET"),
+        FONT.to_vec(),
+    ]);
+    let doc = open(&bytes);
+    let lines = page_lines(&doc, 0).expect("reads");
+    let error = rewrite_lines(&doc, 0, &[(&lines[0], "replacement".to_owned())])
+        .expect_err("protected ActualText");
+    assert!(error.to_string().contains("cannot be edited"), "{error}");
+}
+
+#[test]
+fn forged_mapped_actual_text_line_is_refused() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources 5 0 R >>".to_vec(),
+        stream("BT /Span << /ActualText (XY) >> BDC /F1 10 Tf 20 100 Td (AB) Tj (CD) Tj EMC ET"),
+        FONT.to_vec(),
+    ]);
+    let doc = open(&bytes);
+    let mut line = page_lines(&doc, 0).expect("reads").remove(0);
+    for glyph in &mut line.glyphs {
+        glyph.range = Some(0..1);
+    }
+    let error =
+        rewrite_lines(&doc, 0, &[(&line, "replacement".to_owned())]).expect_err("forged mapping");
+    assert!(error.to_string().contains("cannot be written"), "{error}");
+}
+
+#[test]
+fn actual_text_refusal_preserves_session_and_safe_neighbors_round_trip() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources 5 0 R >>".to_vec(),
+        stream(
+            "BT /F1 10 Tf 1 0 0 1 10 100 Tm (L) Tj 1 0 0 1 50 100 Tm /Span << /ActualText (XY) >> BDC (AB) Tj (CD) Tj EMC 1 0 0 1 100 100 Tm (R) Tj ET",
+        ),
+        FONT.to_vec(),
+    ]);
+    let mut session = onionskin_core::Document::open_bytes(bytes.clone()).expect("opens");
+    let before_preview = session
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+        .expect("preview")
+        .to_vec();
+    let before_history = session.edit().history().reach();
+    let before_page =
+        onionskin_content::extract_page(session.structure().expect("structure"), 0).expect("page");
+    let protected_quads = before_page.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    let protected = {
+        let structure = session.structure().expect("structure");
+        find_in_lines(structure, 0..1, "AB", MatchOptions::default()).expect("finds")
+    };
+    assert_eq!(protected.len(), 1);
+    assert_eq!(protected[0].page, 0);
+    assert_eq!(protected[0].line, 1);
+    assert_eq!(protected[0].range, 0..2);
+    let protected_line = page_lines(session.structure().expect("structure"), 0).expect("lines")
+        [protected[0].line]
+        .text
+        .clone();
+    assert_eq!(&protected_line[protected[0].range.clone()], "AB");
+    let refusal = replace_matches(session.structure().expect("structure"), &protected, "NOPE")
+        .expect_err("protected replacement");
+    assert!(refusal.to_string().contains("cannot"), "{refusal}");
+    assert_eq!(session.edit().history().reach(), before_history);
+    assert_eq!(
+        session
+            .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+            .expect("preview")
+            .as_ref(),
+        before_preview.as_slice()
+    );
+
+    let ordinary_edits = {
+        let structure = session.structure().expect("structure");
+        let matches = find_in_lines(structure, 0..1, "L", MatchOptions::default())
+            .expect("ordinary neighbor");
+        assert_eq!(matches.len(), 1);
+        replace_matches(structure, &matches, "LATER").expect("neighbor")
+    };
+    session
+        .edit_content("Replace", |tx, _| {
+            ordinary_edits
+                .iter()
+                .try_for_each(|edit| write_page_edit(tx, edit))
+        })
+        .expect("ordinary neighbor edit");
+    let changed = session
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+        .expect("changed preview")
+        .to_vec();
+    assert_ne!(changed, before_preview);
+    assert_eq!(session.edit().history().reach(), before_history + 1);
+    assert!(session.undo().expect("undo"));
+    assert_eq!(
+        session
+            .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+            .expect("undo preview")
+            .as_ref(),
+        before_preview.as_slice()
+    );
+    assert!(session.redo().expect("redo"));
+    assert_eq!(
+        session
+            .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+            .expect("redo preview")
+            .as_ref(),
+        changed.as_slice()
+    );
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("neighbor.pdf");
+    let mut file = onionskin_core::DocumentFile::from_document(session);
+    file.save_as(&path).expect("save");
+    let mut reopened = onionskin_core::Document::open_path(&path).expect("reopen");
+    let reopened_lines =
+        page_lines(reopened.structure().expect("reopened structure"), 0).expect("reopened lines");
+    assert_eq!(
+        reopened_lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>(),
+        ["LATER", "ABCD", "R"]
+    );
+    let reopened_page =
+        onionskin_content::extract_page(reopened.structure().expect("structure"), 0)
+            .expect("reopened page");
+    assert_eq!(reopened_page.flatten().text, "LATER XY R");
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [65, 66, 67, 68]
+    );
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        protected_quads
+    );
+    let flat = reopened_page.flatten();
+    let piece = flat
+        .pieces()
+        .iter()
+        .find(|piece| piece.style_run == 1)
+        .expect("replacement piece");
+    assert_eq!(&flat.text[piece.range.clone()], "XY");
+    assert_eq!(
+        piece
+            .coverage_for(&reopened_page, piece.range.clone())
+            .len(),
+        2
+    );
+
+    let mut right_session = onionskin_core::Document::open_bytes(bytes).expect("opens right case");
+    let right_edits = {
+        let structure = right_session.structure().expect("structure");
+        let matches =
+            find_in_lines(structure, 0..1, "R", MatchOptions::default()).expect("right neighbor");
+        assert_eq!(matches.len(), 1);
+        replace_matches(structure, &matches, "RIGHT").expect("right replacement")
+    };
+    right_session
+        .edit_content("Replace", |tx, _| {
+            right_edits
+                .iter()
+                .try_for_each(|edit| write_page_edit(tx, edit))
+        })
+        .expect("right edit");
+    let right_dir = tempfile::tempdir().expect("temporary directory");
+    let right_path = right_dir.path().join("right.pdf");
+    let mut right_file = onionskin_core::DocumentFile::from_document(right_session);
+    right_file.save_as(&right_path).expect("right save");
+    let mut right_reopened =
+        onionskin_core::Document::open_path(&right_path).expect("right reopen");
+    let right_page =
+        onionskin_content::extract_page(right_reopened.structure().expect("structure"), 0)
+            .expect("right page");
+    assert_eq!(right_page.flatten().text, "L XY RIGHT");
+    assert_eq!(
+        right_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        [65, 66, 67, 68]
+    );
+    assert_eq!(
+        right_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        protected_quads
+    );
+}
+
+#[test]
 fn a_tool_asks_the_shell_to_edit_a_line_once() {
     let mut doc = onionskin_core::Document::open_bytes(tagged()).expect("opens");
     let request = onionskin_core::TextEditRequest {

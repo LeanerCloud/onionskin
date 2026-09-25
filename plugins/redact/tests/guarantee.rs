@@ -8,14 +8,14 @@
 //! decoded stream searched, and the old content streams looked for in the
 //! raw bytes.
 
-use onionskin_content::extract_page;
+use onionskin_content::{content as page_content_streams, extract_page, page, Tokenizer};
 use onionskin_core::redactions::RedactionLook;
 use onionskin_core::{Document, SearchOptions};
 use onionskin_corpus_testing::seed;
 use onionskin_cos::{BytesSource, Document as CosDocument, Object};
 use onionskin_redact::apply_redactions;
 use onionskin_redact::find::{find, Query};
-use onionskin_redact::mark::mark_found;
+use onionskin_redact::mark::{mark_found, mark_text};
 
 /// Redacts every occurrence of `word` in `bytes`, and proves it is gone.
 fn redact_and_prove(bytes: Vec<u8>, word: &str) {
@@ -45,10 +45,10 @@ fn redact_and_prove(bytes: Vec<u8>, word: &str) {
         let text = extract_page(&output, page).expect("extracts");
         for run in &text.runs {
             assert!(
-                !run.text.contains(word),
+                !run.decoded_text.contains(word),
                 "the redacted word must not be extracted from the output: page {} says {:?}",
                 page + 1,
-                run.text
+                run.decoded_text
             );
         }
     }
@@ -103,6 +103,70 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window == needle)
 }
 
+fn page_content(doc: &CosDocument) -> Vec<u8> {
+    let page = page(doc, 0).expect("page");
+    let mut warnings = Vec::new();
+    let content = page_content_streams(doc, &page, &mut warnings).expect("reads contents");
+    assert!(warnings.is_empty(), "content warnings: {warnings:?}");
+    content.bytes
+}
+
+fn marked_properties(data: &[u8]) -> Vec<onionskin_cos::Dict> {
+    let mut tokenizer = Tokenizer::new(data);
+    let mut dictionaries = Vec::new();
+    while let Some(operation) = tokenizer.next_operation() {
+        if operation.operator.is(b"BDC") {
+            if let Some(properties) = operation.tail(1).and_then(|tail| tail[0].as_dict()) {
+                dictionaries.push(properties.clone());
+            }
+        }
+    }
+    dictionaries
+}
+
+fn property_string<'a>(dict: &'a onionskin_cos::Dict, key: &[u8]) -> Option<&'a [u8]> {
+    match dict.get(key) {
+        Some(onionskin_cos::Object::String(value)) => Some(value.as_slice()),
+        _ => None,
+    }
+}
+
+fn placed_form_property_sets(
+    doc: &CosDocument,
+) -> Vec<(onionskin_cos::ObjRef, Vec<u8>, Vec<onionskin_cos::Dict>)> {
+    let page = doc.page(0).expect("page");
+    let resources_object = doc
+        .resolve(page.dict.get(b"Resources").expect("resources"))
+        .expect("resolves resources");
+    let resources = resources_object.as_dict().expect("resource dictionary");
+    let xobjects_object = doc
+        .resolve(resources.get(b"XObject").expect("xobjects"))
+        .expect("resolves xobjects");
+    let xobjects = xobjects_object.as_dict().expect("xobject dictionary");
+    let mut placed = Vec::new();
+    let content = page_content(doc);
+    let mut tokenizer = Tokenizer::new(&content);
+    while let Some(operation) = tokenizer.next_operation() {
+        if !operation.operator.is(b"Do") {
+            continue;
+        }
+        let Some(onionskin_cos::Object::Name(name)) = operation.operands.last() else {
+            continue;
+        };
+        let Some(reference) = xobjects
+            .get(name.as_bytes())
+            .and_then(|object| object.as_reference())
+        else {
+            continue;
+        };
+        let form_object = doc.get(reference.number).expect("form object");
+        let stream = form_object.object.as_stream().expect("form stream");
+        let decoded = doc.decode_stream(stream).expect("decodes form stream");
+        placed.push((reference, decoded.clone(), marked_properties(&decoded)));
+    }
+    placed
+}
+
 #[test]
 fn a_word_on_the_seeds_is_gone_after_redaction() {
     redact_and_prove(
@@ -139,6 +203,216 @@ fn a_word_however_it_is_drawn_is_gone_after_redaction() {
         ),
     ];
     redact_and_prove(pdf(&objects), "Confidential");
+}
+
+#[test]
+fn nested_actual_text_redaction_observes_open_ancestor_spelling() {
+    let content = "BT /F1 10 Tf 20 200 Td \
+        /Span << /ActualText (OUT) /Alt (outer-alt) /E (outer-event) >> BDC \
+        (A) Tj /Span << /ActualText (INNER) /Alt (inner-alt) /E (inner-event) >> BDC \
+        (H) Tj EMC (B) Tj EMC ET";
+    let original = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+        stream("", content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec(),
+    ]);
+    let mut outer = Document::open_bytes(original.clone()).expect("opens outer case");
+    let source = extract_page(
+        &CosDocument::open(Box::new(BytesSource::new(original.clone()))).expect("source"),
+        0,
+    )
+    .expect("extracts")
+    .clone();
+    assert_eq!(source.runs.len(), 3);
+    let outer_quad = source.runs[0].glyphs[0].quad;
+    let outer_case_a = source.runs[0].glyphs[0].quad;
+    let inner_and_b = [source.runs[1].glyphs[0].quad, source.runs[2].glyphs[0].quad];
+    let inner_case_b = source.runs[2].glyphs[0].quad;
+    mark_text(&mut outer, 0, &[outer_quad], &RedactionLook::default()).expect("marks outer A");
+    let applied = apply_redactions(&mut outer).expect("applies outer case");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let out = CosDocument::open(Box::new(BytesSource::new(applied.bytes.clone())))
+        .expect("reopens outer");
+    let page = extract_page(&out, 0).expect("extracts outer");
+    assert_eq!(page.flatten().text, "INNERB");
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.code)
+            .collect::<Vec<_>>(),
+        [72, 66]
+    );
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.quad)
+            .collect::<Vec<_>>(),
+        inner_and_b
+    );
+    let outer_properties = marked_properties(&page_content(&out));
+    assert_eq!(outer_properties.len(), 2);
+    assert!(!outer_properties[0].contains(b"ActualText"));
+    assert!(!outer_properties[0].contains(b"Alt"));
+    assert!(!outer_properties[0].contains(b"E"));
+    assert_eq!(
+        property_string(&outer_properties[1], b"ActualText"),
+        Some(b"INNER".as_slice())
+    );
+    assert_eq!(
+        property_string(&outer_properties[1], b"Alt"),
+        Some(b"inner-alt".as_slice())
+    );
+    assert_eq!(
+        property_string(&outer_properties[1], b"E"),
+        Some(b"inner-event".as_slice())
+    );
+
+    let mut inner = Document::open_bytes(original).expect("opens inner case");
+    mark_text(
+        &mut inner,
+        0,
+        &[source.runs[1].glyphs[0].quad],
+        &RedactionLook::default(),
+    )
+    .expect("marks inner H");
+    let applied = apply_redactions(&mut inner).expect("applies inner case");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let out = CosDocument::open(Box::new(BytesSource::new(applied.bytes.clone())))
+        .expect("reopens inner");
+    let page = extract_page(&out, 0).expect("extracts inner");
+    assert_eq!(page.flatten().text, "A B");
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.code)
+            .collect::<Vec<_>>(),
+        [65, 66]
+    );
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.quad)
+            .collect::<Vec<_>>(),
+        [outer_case_a, inner_case_b]
+    );
+    let inner_properties = marked_properties(&page_content(&out));
+    assert_eq!(inner_properties.len(), 2);
+    assert!(inner_properties.iter().all(|dict| {
+        !dict.contains(b"ActualText") && !dict.contains(b"Alt") && !dict.contains(b"E")
+    }));
+}
+
+fn repeated_form_pdf() -> Vec<u8> {
+    let page_content = "q /Fm0 Do Q q 1 0 0 1 0 -30 cm /Fm0 Do Q";
+    let form_content = "BT /F1 10 Tf 20 200 Td /Span << /ActualText (XY) /Alt (form-alt) /E (form-event) >> BDC (A) Tj (B) Tj EMC ET";
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> /XObject << /Fm0 6 0 R >> >> >>".to_vec(),
+        stream("", page_content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec(),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 300 300] /Resources << /Font << /F1 5 0 R >> >>", form_content),
+    ])
+}
+
+#[test]
+fn partial_repeated_form_redaction_keeps_second_occurrence() {
+    let original = repeated_form_pdf();
+    let mut doc = Document::open_bytes(original.clone()).expect("opens form");
+    let source_doc = CosDocument::open(Box::new(BytesSource::new(original))).expect("source");
+    let source = extract_page(&source_doc, 0).expect("extracts source");
+    let source_forms = placed_form_property_sets(&source_doc);
+    assert_eq!(source_forms.len(), 2);
+    assert_eq!(source_forms[0].0, source_forms[1].0);
+    assert_eq!(source_forms[0].1, source_forms[1].1);
+    assert_eq!(source.runs.len(), 4);
+    assert!(source.runs.iter().all(|run| run.glyphs.len() == 1));
+    assert_eq!(
+        source
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.code)
+            .collect::<Vec<_>>(),
+        [65, 66, 65, 66]
+    );
+    let second_a = source.runs[2].glyphs[0].quad;
+    let second_b = source.runs[3].glyphs[0].quad;
+    mark_text(
+        &mut doc,
+        0,
+        &[source.runs[0].glyphs[0].quad],
+        &RedactionLook::default(),
+    )
+    .expect("marks first A");
+    let applied = apply_redactions(&mut doc).expect("applies");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let out =
+        CosDocument::open(Box::new(BytesSource::new(applied.bytes.clone()))).expect("reopens form");
+    let page = extract_page(&out, 0).expect("extracts output");
+    assert_eq!(page.flatten().text, "B\nXY");
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.code)
+            .collect::<Vec<_>>(),
+        [66, 65, 66]
+    );
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| glyph.quad)
+            .collect::<Vec<_>>(),
+        [source.runs[1].glyphs[0].quad, second_a, second_b]
+    );
+    let form_properties = placed_form_property_sets(&out);
+    assert_eq!(
+        form_properties.len(),
+        2,
+        "both placements resolve through explicit forms"
+    );
+    assert_ne!(
+        form_properties[0].0, form_properties[1].0,
+        "the redacted first placement uses a distinct form resource"
+    );
+    assert_eq!(form_properties[0].2.len(), 1);
+    assert!(!form_properties[0].2[0].contains(b"ActualText"));
+    assert!(!form_properties[0].2[0].contains(b"Alt"));
+    assert!(!form_properties[0].2[0].contains(b"E"));
+    assert_eq!(form_properties[1].1, source_forms[1].1);
+    assert_eq!(form_properties[1].2.len(), 1);
+    assert_eq!(
+        property_string(&form_properties[1].2[0], b"ActualText"),
+        Some(b"XY".as_slice())
+    );
+    assert_eq!(
+        property_string(&form_properties[1].2[0], b"Alt"),
+        Some(b"form-alt".as_slice())
+    );
+    assert_eq!(
+        property_string(&form_properties[1].2[0], b"E"),
+        Some(b"form-event".as_slice())
+    );
 }
 
 fn stream(dict: &str, data: &str) -> Vec<u8> {

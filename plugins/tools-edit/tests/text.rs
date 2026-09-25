@@ -31,6 +31,19 @@ fn document() -> Document {
     Document::open_bytes(pdf(&objects)).expect("opens")
 }
 
+fn actual_text_document() -> Document {
+    Document::open_bytes(pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources 5 0 R >>".to_vec(),
+        content(
+            "BT /F1 10 Tf 1 0 0 1 10 100 Tm (left) Tj 1 0 0 1 50 100 Tm /Span << /ActualText (XY) >> BDC (AB) Tj (CD) Tj EMC 1 0 0 1 100 100 Tm (right) Tj ET",
+        ),
+        FONT.to_vec(),
+    ]))
+    .expect("opens")
+}
+
 fn lines(doc: &mut Document, page: usize) -> Vec<String> {
     onionskin_core::text_edit::page_lines(doc.structure().expect("reads"), page)
         .expect("lines")
@@ -101,6 +114,84 @@ fn a_line_is_rewritten_as_one_undo_step() {
 
     assert!(doc.undo().expect("undoes"));
     assert_eq!(lines(&mut doc, 0), ["Draft page 1", "The draft is final."]);
+}
+
+#[test]
+fn actual_text_neighbors_use_real_edit_and_replace_paths() {
+    let mut doc = actual_text_document();
+    let source_page = doc.page_text(0).expect("source page").clone();
+    let protected_codes = source_page.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+        .collect::<Vec<_>>();
+    let protected_quads = source_page.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    let (left_line, left_match) = line_at(&mut doc, 0, (12.0, 102.0)).expect("left line");
+    assert_eq!(left_match.text, "left");
+    edit_line(&mut doc, 0, left_line, "left", "LEFT").expect("left edit");
+    let (right_line, right_match) = line_at(&mut doc, 0, (102.0, 102.0)).expect("right line");
+    assert_eq!(right_match.text, "right");
+    edit_line(&mut doc, 0, right_line, "right", "RIGHT").expect("right edit");
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "RIGHT"]);
+
+    assert!(doc.undo().expect("undo right edit"));
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "right"]);
+    let before = doc
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+        .expect("preview")
+        .to_vec();
+    let history = doc.edit().history().reach();
+    let (protected_line, protected_match) =
+        line_at(&mut doc, 0, (52.0, 102.0)).expect("protected line");
+    assert_eq!(protected_match.text, "ABCD");
+    let refused_edit =
+        edit_line(&mut doc, 0, protected_line, "ABCD", "NOPE").expect_err("protected edit");
+    assert!(
+        refused_edit.to_string().contains("cannot"),
+        "{refused_edit}"
+    );
+    let found = find(&mut doc, "AB", MatchOptions::default()).expect("protected decoded text");
+    assert_eq!(found.len(), 1);
+    let refused = replace(&mut doc, &found, "NOPE", "Replace").expect_err("protected refusal");
+    assert!(refused.to_string().contains("cannot"), "{refused}");
+    assert_eq!(
+        doc.preview_bytes(onionskin_core::AnnotationFilter::DocumentOnly)
+            .expect("preview")
+            .as_ref(),
+        before.as_slice()
+    );
+    assert_eq!(doc.edit().history().reach(), history);
+    assert!(doc.redo().expect("redo right edit"));
+    assert_eq!(lines(&mut doc, 0), ["LEFT", "ABCD", "RIGHT"]);
+
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("actual-text.pdf");
+    let mut file = onionskin_core::DocumentFile::from_document(doc);
+    file.save_as(&path).expect("save");
+    let mut reopened = onionskin_core::DocumentFile::open(&path).expect("reopen");
+    assert_eq!(lines(reopened.document_mut(), 0), ["LEFT", "ABCD", "RIGHT"]);
+    let reopened_page = reopened
+        .document_mut()
+        .page_text(0)
+        .expect("reopened page")
+        .clone();
+    assert_eq!(reopened_page.flatten().text, "LEFT XY RIGHT");
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        protected_codes
+    );
+    assert_eq!(
+        reopened_page.runs[1..3]
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        protected_quads
+    );
 }
 
 #[test]

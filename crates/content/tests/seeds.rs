@@ -67,7 +67,7 @@ fn assert_seed_layout(name: &str, expected: &str) {
 
     assert_eq!(page.runs.len(), 1, "{name} draws one showing operator");
     let run = &page.runs[0];
-    assert_eq!(run.text, expected);
+    assert_eq!(run.decoded_text, expected);
     assert_eq!(run.size, SIZE);
     assert_eq!(run.glyphs.len(), expected.chars().count());
     assert!(
@@ -117,7 +117,7 @@ fn two_page_seed_lays_out_both_pages() {
     let doc = onionskin_cos::Document::open_path(&path).unwrap();
     let second = extract_page(&doc, 1).expect("second page extracts");
     assert_eq!(second.runs.len(), 1);
-    assert_eq!(second.runs[0].text, "Page two");
+    assert_eq!(second.runs[0].decoded_text, "Page two");
     assert_eq!(second.runs[0].page, 1);
     assert!(close(second.runs[0].glyphs[0].quad.corners[2].0, ORIGIN_X));
 }

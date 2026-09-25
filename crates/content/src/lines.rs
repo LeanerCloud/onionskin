@@ -107,14 +107,15 @@ pub fn text_lines(page: &PageText) -> Vec<TextLine> {
 
 fn append(line: &mut TextLine, index: usize, run: &TextRun) {
     let start = line.text.len();
-    line.text.push_str(&run.text);
+    line.text.push_str(&run.decoded_text);
     for (glyph_index, glyph) in run.glyphs.iter().enumerate() {
         line.glyphs.push(LineGlyph {
             at: (index, glyph_index),
             quad: glyph.quad,
-            range: match &glyph.mapping {
-                Mapping::Text(range) => Some(start + range.start..start + range.end),
-                Mapping::Unmapped => None,
+            range: match (&run.actual_text, &glyph.mapping) {
+                (Some(_), _) => None,
+                (None, Mapping::Text(range)) => Some(start + range.start..start + range.end),
+                (None, Mapping::Unmapped) => None,
             },
         });
     }
@@ -123,6 +124,9 @@ fn append(line: &mut TextLine, index: usize, run: &TextRun) {
 /// What joins `next` to the line `previous` ended, or `None` when `next`
 /// starts a new line.
 fn join(previous: &TextRun, next: &TextRun) -> Option<&'static str> {
+    if previous.actual_text.is_some() != next.actual_text.is_some() {
+        return None;
+    }
     let (last, first) = (previous.glyphs.last()?, next.glyphs.first()?);
     let from = last.quad.corners[3];
     let to = first.quad.corners[2];
@@ -147,8 +151,8 @@ fn join(previous: &TextRun, next: &TextRun) -> Option<&'static str> {
     if across.abs() > 0.5 * height || along > COLUMN_GAP * height || along < -0.5 * height {
         return None;
     }
-    let spaced =
-        previous.text.ends_with(char::is_whitespace) || next.text.starts_with(char::is_whitespace);
+    let spaced = previous.decoded_text.ends_with(char::is_whitespace)
+        || next.decoded_text.starts_with(char::is_whitespace);
     Some(if along > 0.2 * height && !spaced {
         " "
     } else {

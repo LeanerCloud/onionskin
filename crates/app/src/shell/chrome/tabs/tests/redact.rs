@@ -159,12 +159,7 @@ fn last_notice(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) 
 
 fn text_of(bytes: Vec<u8>) -> String {
     let mut doc = onionskin_core::Document::open_bytes(bytes).expect("opens");
-    doc.page_text(0)
-        .expect("extracts")
-        .runs
-        .iter()
-        .map(|run| run.text.clone())
-        .collect()
+    doc.page_text(0).expect("extracts").flatten().text
 }
 
 #[gpui::test]

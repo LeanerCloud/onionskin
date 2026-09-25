@@ -4,7 +4,7 @@
 use std::sync::OnceLock;
 
 use onionskin_content::{search, Flattened, PageText, SearchOptions};
-use onionskin_core::{Document, PageIndex, PageQuad};
+use onionskin_core::{Document, PageIndex, PageQuad, RunCoverage};
 use onionskin_plugin_api::CommandError;
 use regex::Regex;
 
@@ -133,9 +133,15 @@ pub fn find_on(text: &PageText, query: &Query) -> Vec<Found> {
 
 fn found(text: &PageText, flat: &Flattened, range: std::ops::Range<usize>) -> Option<Found> {
     let quads: Vec<PageQuad> = flat
-        .runs_for(text, range.clone())
-        .into_iter()
-        .flat_map(|(run, local)| run.quads_for(local))
+        .pieces()
+        .iter()
+        .flat_map(|piece| piece.coverage_for(text, range.clone()))
+        .flat_map(|covered| match covered.coverage {
+            RunCoverage::Decoded(local) => covered.run.quads_for_decoded(local),
+            RunCoverage::WholeActualText => {
+                covered.run.glyphs.iter().map(|glyph| glyph.quad).collect()
+            }
+        })
         .collect();
     (!quads.is_empty()).then(|| Found {
         page: text.page,

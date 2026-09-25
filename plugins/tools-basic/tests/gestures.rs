@@ -57,9 +57,11 @@ impl Fixture {
     }
 
     fn run_text(&mut self, page: usize) -> String {
-        self.doc.page_text(page).expect("page text extracts").runs[0]
+        self.doc
+            .page_text(page)
+            .expect("page text extracts")
+            .flatten()
             .text
-            .clone()
     }
 
     /// A drag too short to be a drag: under the tools' viewport-pixel

@@ -190,7 +190,7 @@ fn check_text(
                 out.problems.push(format!(
                     "page {}: text {:?} is still inside a redacted area",
                     expected.page + 1,
-                    run.text
+                    run.decoded_text
                 ));
                 break;
             }

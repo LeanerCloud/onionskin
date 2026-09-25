@@ -1,13 +1,15 @@
 //! Apply Redactions end to end: marks made through the plugin, applied,
 //! and the new file read back by a fresh parse.
 
-use onionskin_content::extract_page;
+use onionskin_content::{
+    content as page_content_streams, extract_page, page as load_page, Tokenizer,
+};
 use onionskin_core::images::{decode_image, ImageData};
 use onionskin_core::redactions::{Align, Overlay, RedactionLook};
 use onionskin_core::{Document, SearchOptions};
 use onionskin_cos::{BytesSource, Document as CosDocument, Object};
 use onionskin_redact::find::{find, Pattern, Query};
-use onionskin_redact::mark::{mark_found, mark_pages, mark_region, marks, unmark};
+use onionskin_redact::mark::{mark_found, mark_pages, mark_region, mark_text, marks, unmark};
 use onionskin_redact::{apply_redactions, RedactError};
 
 /// Numbered object bodies as a classic-xref PDF, object `n` at `objects[n - 1]`.
@@ -41,6 +43,15 @@ fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
 /// One 300 by 300 page drawing `content`, with Helvetica as /F1 and a grey
 /// 10 by 10 image as /Im0; `annots` and `extra` follow from object 7.
 fn page(content: &str, annots: &str, extra: &[Vec<u8>]) -> Vec<u8> {
+    page_with_font(
+        content,
+        annots,
+        extra,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    )
+}
+
+fn page_with_font(content: &str, annots: &str, extra: &[Vec<u8>], font: &[u8]) -> Vec<u8> {
     let mut objects = vec![
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
@@ -50,7 +61,7 @@ fn page(content: &str, annots: &str, extra: &[Vec<u8>]) -> Vec<u8> {
         )
         .into_bytes(),
         stream("", content.as_bytes()),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        font.to_vec(),
         stream(
             "/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8",
             &[128; 100],
@@ -76,7 +87,7 @@ fn text(bytes: &[u8]) -> String {
         .expect("extracts")
         .runs
         .iter()
-        .map(|run| run.text.clone())
+        .map(|run| run.decoded_text.clone())
         .collect::<Vec<_>>()
         .join("|")
 }
@@ -95,6 +106,231 @@ fn secret(doc: &mut Document) {
     .expect("finds");
     assert_eq!(found.len(), 1);
     mark_found(doc, &found, &RedactionLook::default()).expect("marks");
+}
+
+fn extracted(bytes: &[u8]) -> onionskin_content::PageText {
+    let doc = reopen(bytes);
+    extract_page(&doc, 0).expect("extracts")
+}
+
+fn page_content(doc: &CosDocument) -> Vec<u8> {
+    let page = load_page(doc, 0).expect("page");
+    let mut warnings = Vec::new();
+    let content = page_content_streams(doc, &page, &mut warnings).expect("reads contents");
+    assert!(warnings.is_empty(), "content warnings: {warnings:?}");
+    content.bytes
+}
+
+fn rewritten_properties(doc: &CosDocument) -> Vec<onionskin_cos::Dict> {
+    let content = page_content(doc);
+    let mut tokenizer = Tokenizer::new(&content);
+    let mut properties = Vec::new();
+    while let Some(operation) = tokenizer.next_operation() {
+        if operation.operator.is(b"BDC") {
+            if let Some(dict) = operation.tail(1).and_then(|tail| tail[0].as_dict()) {
+                properties.push(dict.clone());
+            }
+        }
+    }
+    properties
+}
+
+fn quad_bounds(
+    page: &onionskin_content::PageText,
+    runs: std::ops::Range<usize>,
+) -> Vec<onionskin_core::PageQuad> {
+    page.runs[runs]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect()
+}
+
+#[test]
+fn actual_text_find_marks_all_members_and_email_pattern() {
+    let content = "BT /F1 10 Tf 20 240 Td (left ) Tj \
+        /Span << /ActualText (XY) /Alt (xy-alt) /E (xy-event) >> BDC \
+        (AB) Tj (CD) Tj EMC ( prefix ) Tj \
+        /Span << /ActualText (prefix ada@example.com suffix) /Alt (mail-alt) /E (mail-event) >> BDC \
+        (EF) Tj (GH) Tj EMC ( right) Tj ET";
+    let mut doc = open(page(content, "", &[]));
+    let source = doc.page_text(0).expect("extracts").clone();
+    let expected_xy = quad_bounds(&source, 1..3);
+    let expected_mail = quad_bounds(&source, 4..6);
+
+    let xy = find(
+        &mut doc,
+        &Query::Text(
+            "X".to_owned(),
+            SearchOptions {
+                case_sensitive: true,
+                ..SearchOptions::default()
+            },
+        ),
+    )
+    .expect("finds XY");
+    assert_eq!(xy.len(), 1);
+    assert_eq!(xy[0].text, "X");
+    assert_eq!(xy[0].quads, expected_xy);
+    let y = find(
+        &mut doc,
+        &Query::Text(
+            "Y".to_owned(),
+            SearchOptions {
+                case_sensitive: true,
+                ..SearchOptions::default()
+            },
+        ),
+    )
+    .expect("finds Y");
+    assert_eq!(y.len(), 1);
+    assert_eq!(y[0].text, "Y");
+    assert_eq!(y[0].quads, expected_xy);
+    let mail = find(&mut doc, &Query::Pattern(Pattern::EmailAddresses)).expect("finds email");
+    assert_eq!(mail.len(), 1);
+    assert_eq!(mail[0].text, "ada@example.com");
+    assert_eq!(mail[0].quads, expected_mail);
+    mark_found(&mut doc, &xy, &RedactionLook::default()).expect("marks XY");
+    mark_found(&mut doc, &mail, &RedactionLook::default()).expect("marks email");
+
+    let applied = apply_redactions(&mut doc).expect("applies");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let reopened = extracted(&applied.bytes);
+    assert_eq!(
+        reopened.flatten().text,
+        [
+            source.runs[0].decoded_text.as_str(),
+            source.runs[3].decoded_text.as_str(),
+            source.runs[6].decoded_text.as_str()
+        ]
+        .concat()
+    );
+    assert_eq!(
+        reopened
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        source.runs[0..1]
+            .iter()
+            .chain(&source.runs[3..4])
+            .chain(&source.runs[6..7])
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        reopened
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>(),
+        source.runs[0..1]
+            .iter()
+            .chain(&source.runs[3..4])
+            .chain(&source.runs[6..7])
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect::<Vec<_>>()
+    );
+    assert!(rewritten_properties(&reopen(&applied.bytes))
+        .iter()
+        .all(|dict| {
+            !dict.contains(b"ActualText") && !dict.contains(b"Alt") && !dict.contains(b"E")
+        }));
+}
+
+#[test]
+fn manual_partial_actual_text_redaction_keeps_other_member_geometry() {
+    let content = "BT /F1 10 Tf 20 200 Td /Span << /ActualText (XY) /Alt (alt) /E (event) >> BDC \
+        (AB) Tj (CD) Tj EMC ET";
+    let mut doc = open(page_with_font(
+        content,
+        "",
+        &[],
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+    ));
+    let source = doc.page_text(0).expect("extracts").clone();
+    let expected = [
+        source.runs[0].glyphs[1].quad,
+        source.runs[1].glyphs[0].quad,
+        source.runs[1].glyphs[1].quad,
+    ];
+    mark_text(
+        &mut doc,
+        0,
+        &[source.runs[0].glyphs[0].quad],
+        &RedactionLook::default(),
+    )
+    .expect("marks only A");
+    let marks_before_apply = marks(&mut doc).expect("reads mark");
+    assert_eq!(marks_before_apply.len(), 1);
+    assert_eq!(
+        marks_before_apply[0].quads.as_slice(),
+        &[source.runs[0].glyphs[0].quad]
+    );
+    assert!(
+        marks_before_apply[0].look.overlay.is_none(),
+        "blank overlay"
+    );
+    let selected = source.runs[0].glyphs[0].quad.corners;
+    let selected_bounds = (
+        selected
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::INFINITY, f64::min),
+        selected
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::NEG_INFINITY, f64::max),
+        selected
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::INFINITY, f64::min),
+        selected
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::NEG_INFINITY, f64::max),
+    );
+    for quad in [
+        source.runs[0].glyphs[1].quad,
+        source.runs[1].glyphs[0].quad,
+        source.runs[1].glyphs[1].quad,
+    ] {
+        let center = (
+            quad.corners.iter().map(|(x, _)| *x).sum::<f64>() / 4.0,
+            quad.corners.iter().map(|(_, y)| *y).sum::<f64>() / 4.0,
+        );
+        assert!(
+            !(selected_bounds.0 <= center.0
+                && center.0 <= selected_bounds.1
+                && selected_bounds.2 <= center.1
+                && center.1 <= selected_bounds.3)
+        );
+    }
+    let applied = apply_redactions(&mut doc).expect("applies");
+    assert!(
+        applied.verification.passed(),
+        "{:?}",
+        applied.verification.problems
+    );
+    let after = extracted(&applied.bytes);
+    assert_eq!(after.flatten().text, "BCD");
+    let glyphs: Vec<_> = after.runs.iter().flat_map(|run| &run.glyphs).collect();
+    assert_eq!(
+        glyphs.iter().map(|glyph| glyph.code).collect::<Vec<_>>(),
+        [66, 67, 68]
+    );
+    assert_eq!(
+        glyphs.iter().map(|glyph| glyph.quad).collect::<Vec<_>>(),
+        expected
+    );
+    assert!(rewritten_properties(&reopen(&applied.bytes))
+        .iter()
+        .all(|dict| {
+            !dict.contains(b"ActualText") && !dict.contains(b"Alt") && !dict.contains(b"E")
+        }));
 }
 
 #[test]

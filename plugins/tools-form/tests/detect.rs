@@ -121,3 +121,42 @@ BT /F1 12 Tf 72 650 Td (Name: ________) Tj ET";
     assert!(plain.form().expect("reads").fields.is_empty());
     assert_eq!(NewField::Text.base_name(), "Text");
 }
+
+#[test]
+fn literal_underscores_still_make_a_field_when_actual_text_is_unrelated() {
+    let content = "BT /F1 12 Tf 72 700 Td (Name: ) Tj \
+        /Span << /ActualText (replacement) >> BDC (__________) Tj EMC ET";
+    let mut doc = Document::open_bytes(page(content)).expect("opens");
+    let found = detect_page(&mut doc, 0).expect("detects");
+    assert_eq!(found.len(), 1, "literal underscores remain visual evidence");
+    assert_eq!(found[0].kind, NewField::Text);
+    assert_eq!(found[0].label.as_deref(), Some("Name"));
+}
+
+#[test]
+fn replacement_underscores_do_not_fabricate_a_field_over_literal_word() {
+    let content = "BT /F1 12 Tf 72 700 Td /Span << /ActualText (__________) >> BDC \
+        (word) Tj EMC ET";
+    let mut doc = Document::open_bytes(page(content)).expect("opens");
+    assert!(
+        detect_page(&mut doc, 0).expect("detects").is_empty(),
+        "replacement text is not a drawn underscore field"
+    );
+}
+
+#[test]
+fn literal_labels_are_named_once_not_from_repeated_replacement_text() {
+    let content = "BT /F1 12 Tf 72 700 Td /Span << /ActualText (Name: Name: ________) >> BDC \
+        (Name: ________) Tj EMC ET";
+    let mut doc = Document::open_bytes(page(content)).expect("opens");
+    let found = detect_page(&mut doc, 0).expect("detects");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].kind, NewField::Text);
+    assert_eq!(found[0].label.as_deref(), Some("Name"));
+    assert_eq!(detect_fields(&mut doc).expect("adds"), 1);
+    assert_eq!(
+        doc.form().expect("reads").fields[0].name,
+        "Name",
+        "the literal label is not repeated from ActualText"
+    );
+}

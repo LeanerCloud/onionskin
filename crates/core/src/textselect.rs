@@ -8,7 +8,7 @@
 
 use std::ops::RangeInclusive;
 
-use onionskin_content::{Glyph, Mapping, PageText, TextRun};
+use onionskin_content::{Glyph, Mapping, PageText, SelectedRun, TextRun};
 
 use crate::{PagePoint, PageQuad, TextSelection, TextSpan};
 
@@ -70,7 +70,10 @@ fn min_max(values: [f64; 4]) -> (f64, f64) {
         })
 }
 
-/// The quads and the text for a run of glyphs.
+/// The quads and the text for a run of glyphs. Touching an ActualText glyph
+/// expands the whole occurrence; geometry and copied text use those members.
+/// `order` must be `glyph_order(page)` for the same unchanged page, and
+/// `range` must be valid for that order.
 ///
 /// The text comes from flattening a copy of the page clipped to the
 /// selection, so the separator rules that decide where a space or a line
@@ -81,24 +84,23 @@ pub fn selection_for(
     range: RangeInclusive<usize>,
 ) -> TextSelection {
     let selected = &order[range];
-    let mut quads = Vec::with_capacity(selected.len());
-    let mut runs: Vec<TextRun> = Vec::new();
-    let mut group: Option<(usize, usize, usize)> = None;
-
-    for &(run, glyph) in selected {
-        quads.push(page.runs[run].glyphs[glyph].quad);
-        group = match group {
-            Some((current, first, _)) if current == run => Some((run, first, glyph)),
-            Some((current, first, last)) => {
-                runs.push(clip_run(&page.runs[current], first, last));
-                Some((run, glyph, glyph))
+    let members = page.selection_members(selected);
+    let quads = members
+        .iter()
+        .flat_map(|member| page.runs[member.run].glyphs[member.glyphs.clone()].iter())
+        .map(|glyph| glyph.quad)
+        .collect();
+    let runs: Vec<TextRun> = members
+        .into_iter()
+        .map(|member: SelectedRun| {
+            let run = &page.runs[member.run];
+            if run.actual_text.is_some() {
+                run.clone()
+            } else {
+                clip_run(run, member.glyphs.start, member.glyphs.end - 1)
             }
-            None => Some((run, glyph, glyph)),
-        };
-    }
-    if let Some((run, first, last)) = group {
-        runs.push(clip_run(&page.runs[run], first, last));
-    }
+        })
+        .collect();
 
     let clipped = PageText {
         page: page.page,
@@ -121,8 +123,10 @@ pub fn styled_text(page: &PageText) -> (String, Vec<TextSpan>) {
     let flattened = page.flatten();
     let mut spans: Vec<TextSpan> = Vec::new();
     let mut at = 0;
-    for (range, index) in flattened.pieces() {
-        let run = &page.runs[*index];
+    for piece in flattened.pieces() {
+        let range = &piece.range;
+        let index = piece.style_run;
+        let run = &page.runs[index];
         if range.start > at {
             if let Some(last) = spans.last_mut() {
                 last.text.push_str(&flattened.text[at..range.start]);
@@ -153,7 +157,7 @@ fn clip_run(run: &TextRun, first: usize, last: usize) -> TextRun {
     let (text, base) = match (start, end) {
         // Every glyph unmapped, or a mapping that does not name a slice of
         // this run's text: keep the quads, claim no characters.
-        (Some(start), Some(end)) => match run.text.get(start..end) {
+        (Some(start), Some(end)) => match run.decoded_text.get(start..end) {
             Some(text) => (text.to_string(), start),
             None => (String::new(), 0),
         },
@@ -161,7 +165,7 @@ fn clip_run(run: &TextRun, first: usize, last: usize) -> TextRun {
     };
 
     TextRun {
-        text,
+        decoded_text: text,
         glyphs: glyphs
             .iter()
             .map(|glyph| Glyph {

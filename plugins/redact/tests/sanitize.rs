@@ -127,7 +127,7 @@ fn hidden_information_is_removed_and_the_page_is_kept() {
         .expect("extracts")
         .runs
         .iter()
-        .map(|run| run.text.clone())
+        .map(|run| run.decoded_text.clone())
         .collect();
     assert!(
         text.contains("Visible") && text.contains("Layer shown"),

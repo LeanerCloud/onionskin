@@ -73,7 +73,8 @@ pub use layout::{
 };
 pub use onionskin_content::placements::ImagePlacement;
 pub use onionskin_content::{
-    Glyph, LineGlyph, Mapping, MatchMode, PageText, SearchOptions, TextLine, TextRun,
+    CoveredRun, FlatPiece, Glyph, LineGlyph, Mapping, MatchMode, PageText, RunCoverage,
+    SearchOptions, SelectedRun, TextLine, TextRun,
 };
 /// Re-exported because a [`Layer`] is named by the object its dictionary
 /// lives in, and the shell has to be able to name one back.

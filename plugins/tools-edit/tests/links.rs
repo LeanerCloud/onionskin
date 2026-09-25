@@ -16,10 +16,15 @@ use onionskin_tools_edit::links::{
     create_link, create_links_from_urls, delete_link, edit_link, find_link, remove_web_links,
 };
 use onionskin_tools_edit::{EditToolsPlugin, LinkTool};
+use std::ops::Range;
 
 /// Two Letter pages; the first says `text` in Helvetica at (72, 700).
 fn document(text: &str) -> Document {
     let content = format!("BT /F1 12 Tf 72 700 Td ({text}) Tj ET");
+    document_with_content(&content)
+}
+
+fn document_with_content(content: &str) -> Document {
     Document::open_bytes(pdf(&[
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>".to_vec(),
@@ -34,6 +39,36 @@ fn document(text: &str) -> Document {
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
     ]))
     .expect("opens")
+}
+
+fn bounds(page: &onionskin_core::PageText, runs: Range<usize>) -> [f64; 4] {
+    let mut rect = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for run in &page.runs[runs] {
+        for glyph in &run.glyphs {
+            for &(x, y) in &glyph.quad.corners {
+                rect[0] = rect[0].min(x);
+                rect[1] = rect[1].min(y);
+                rect[2] = rect[2].max(x);
+                rect[3] = rect[3].max(y);
+            }
+        }
+    }
+    rect
+}
+
+fn assert_rect_rounded(actual: [f64; 4], expected: [f64; 4]) {
+    // Link rectangles are serialized by the PDF writer to six decimals.
+    for (index, (actual, expected)) in actual.into_iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).abs() <= 1e-6,
+            "rect coordinate {index}: actual {actual} expected {expected}"
+        );
+    }
 }
 
 const RECT: [f64; 4] = [100.0, 100.0, 200.0, 150.0];
@@ -134,6 +169,133 @@ fn web_addresses_in_the_text_become_links_once() {
         create_links_from_urls(&mut doc, &[4]),
         Err(CommandError::Page { page: 4, .. })
     ));
+}
+
+#[test]
+fn a_replacement_url_spanning_operators_links_all_members_only_once() {
+    let mut doc = document_with_content(
+        "BT /F1 12 Tf 72 700 Td (before ) Tj \
+         /Span << /ActualText (https://example.com) >> BDC (AB) Tj (CD) Tj EMC \
+         ( after) Tj ET",
+    );
+    let page = doc.page_text(0).expect("extracts").clone();
+    assert_eq!(
+        page.flatten().text,
+        "before https://example.com after",
+        "the semantic replacement is the URL"
+    );
+    assert_eq!(
+        page.runs.len(),
+        4,
+        "ordinary neighbors and both members remain"
+    );
+    assert_eq!(page.runs[1].decoded_text, "AB");
+    assert_eq!(page.runs[2].decoded_text, "CD");
+    let expected = bounds(&page, 1..3);
+    let neighbor = page.runs[0].glyphs[0].quad.corners;
+    let neighbor_center = (
+        neighbor.iter().map(|(x, _)| *x).sum::<f64>() / 4.0,
+        neighbor.iter().map(|(_, y)| *y).sum::<f64>() / 4.0,
+    );
+
+    assert_eq!(create_links_from_urls(&mut doc, &[0]).expect("creates"), 1);
+    let links = doc.links().expect("reads");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].page, 0);
+    assert_eq!(
+        links[0].target,
+        LinkTarget::Web("https://example.com".into())
+    );
+    assert_rect_rounded(links[0].rect, expected);
+    assert!(
+        !links[0].contains(neighbor_center),
+        "ordinary neighbor is excluded"
+    );
+}
+
+#[test]
+fn repeated_replacement_urls_get_separate_links_and_bounds() {
+    let mut doc = document_with_content(
+        "BT /F1 12 Tf 72 700 Td (left ) Tj \
+         /Span << /ActualText (https://example.com) >> BDC (AB) Tj (CD) Tj EMC \
+         ( middle ) Tj /Span << /ActualText (https://example.com) >> BDC (EF) Tj (GH) Tj EMC \
+         ( right) Tj ET",
+    );
+    let page = doc.page_text(0).expect("extracts").clone();
+    assert_eq!(
+        page.flatten().text,
+        "left https://example.com middle https://example.com right"
+    );
+    assert_eq!(create_links_from_urls(&mut doc, &[0]).expect("creates"), 2);
+    let links = doc.links().expect("reads");
+    assert_eq!(links.len(), 2);
+    assert_eq!(
+        links[0].target,
+        LinkTarget::Web("https://example.com".into())
+    );
+    assert_eq!(
+        links[1].target,
+        LinkTarget::Web("https://example.com".into())
+    );
+    assert_eq!(links[0].page, 0);
+    assert_eq!(links[1].page, 0);
+    assert_rect_rounded(links[0].rect, bounds(&page, 1..3));
+    assert_rect_rounded(links[1].rect, bounds(&page, 4..6));
+    assert_ne!(
+        links[0].rect, links[1].rect,
+        "occurrences keep separate geometry"
+    );
+}
+
+#[test]
+fn a_decoded_url_replaced_by_non_url_does_not_get_a_link() {
+    let mut doc = document_with_content(
+        "BT /F1 12 Tf 72 700 Td /Span << /ActualText (not a URL) >> BDC \
+         (https://example.com) Tj EMC ET",
+    );
+    assert_eq!(
+        doc.page_text(0).expect("extracts").flatten().text,
+        "not a URL"
+    );
+    assert_eq!(create_links_from_urls(&mut doc, &[0]).expect("scans"), 0);
+    assert!(doc.links().expect("reads").is_empty());
+}
+
+#[test]
+fn created_web_links_survive_undo_redo_and_saved_readback() {
+    let mut doc = document_with_content(
+        "BT /F1 12 Tf 72 700 Td (before ) Tj \
+         /Span << /ActualText (https://example.com) >> BDC (AB) Tj (CD) Tj EMC \
+         ( after) Tj ET",
+    );
+    let page = doc.page_text(0).expect("extracts").clone();
+    let expected_rect = bounds(&page, 1..3);
+    let expected_target = LinkTarget::Web("https://example.com".into());
+    assert_eq!(create_links_from_urls(&mut doc, &[0]).expect("creates"), 1);
+    let links = doc.links().expect("reads");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, expected_target);
+    assert_eq!(links[0].page, 0);
+    assert_rect_rounded(links[0].rect, expected_rect);
+    assert!(doc.undo().expect("undoes link creation"));
+    assert!(doc.links().expect("reads").is_empty());
+    assert!(doc.redo().expect("redoes link creation"));
+    let links = doc.links().expect("reads after redo");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, expected_target);
+    assert_eq!(links[0].page, 0);
+    assert_rect_rounded(links[0].rect, expected_rect);
+    let saved = doc
+        .preview_bytes(onionskin_core::AnnotationFilter::DocumentAndMarkups)
+        .expect("serializes")
+        .as_ref()
+        .clone();
+    let mut reopened = Document::open_bytes(saved).expect("reopens");
+    let links = reopened.links().expect("reads saved links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, expected_target);
+    assert_eq!(links[0].page, 0);
+    assert_rect_rounded(links[0].rect, expected_rect);
 }
 
 struct Fixture {

@@ -243,7 +243,7 @@ fn text(document: &mut Document, page: usize) -> String {
         .expect("text extracts")
         .runs
         .iter()
-        .map(|run| run.text.as_str())
+        .map(|run| run.decoded_text.as_str())
         .collect::<String>()
 }
 

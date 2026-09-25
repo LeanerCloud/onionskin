@@ -479,7 +479,7 @@ fn texts_of(path: &Path) -> Vec<String> {
                 .expect("extracts")
                 .runs
                 .iter()
-                .map(|run| run.text.as_str())
+                .map(|run| run.decoded_text.as_str())
                 .collect::<String>()
                 .trim()
                 .to_owned()

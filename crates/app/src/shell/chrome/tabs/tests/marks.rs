@@ -64,7 +64,7 @@ fn page_texts(window: gpui::WindowHandle<ShellFrame>, cx: &mut TestAppContext) -
                             .expect("extracts")
                             .runs
                             .iter()
-                            .map(|run| run.text.clone())
+                            .map(|run| run.decoded_text.clone())
                             .collect();
                         runs.sort();
                         runs.join(" | ")

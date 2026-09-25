@@ -14,11 +14,12 @@
 //! needs a bidi implementation. Folding the presentation forms (below) covers
 //! the single-run case; `known-issues.md` carries the rest.
 
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use unicode_normalization::UnicodeNormalization as _;
 
-use crate::run::{ByteProvenance, PageText, TextRun};
+use crate::run::{ActualText, ByteProvenance, Glyph, PageText, TextRun};
 use crate::{PageIndex, PageQuad};
 
 /// Acrobat's "Return Results Containing", for the current document.
@@ -58,13 +59,38 @@ pub struct Match {
     pub provenance: Vec<ByteProvenance>,
 }
 
-/// A page's runs joined into one string, with the map back to the runs.
+#[derive(Clone, Debug)]
+enum PieceMembers {
+    Decoded(usize),
+    ActualText(Vec<usize>),
+}
+
+/// One semantic piece of a flattened page.
+#[derive(Clone, Debug)]
+pub struct FlatPiece {
+    pub range: Range<usize>,
+    pub style_run: usize,
+    members: PieceMembers,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunCoverage {
+    Decoded(Range<usize>),
+    WholeActualText,
+}
+
+#[derive(Debug)]
+pub struct CoveredRun<'a> {
+    pub run: &'a TextRun,
+    pub coverage: RunCoverage,
+}
+
+/// A page's runs joined into one string, with the map back to semantic pieces.
 #[derive(Clone, Debug, Default)]
 pub struct Flattened {
     pub page: PageIndex,
     pub text: String,
-    /// `(range in `text`, index into the page's runs)`, in document order.
-    pieces: Vec<(Range<usize>, usize)>,
+    pieces: Vec<FlatPiece>,
 }
 
 impl PageText {
@@ -76,30 +102,44 @@ impl PageText {
 }
 
 impl Flattened {
-    /// `(range in the text, index into the page's runs)` for every run that
-    /// wrote text, in order. What lies between two pieces is a separator
-    /// the join added.
-    pub fn pieces(&self) -> &[(Range<usize>, usize)] {
+    /// Semantic pieces in page order.
+    ///
+    /// Ranges index [`Flattened::text`]; `style_run` supplies representative
+    /// text style. [`FlatPiece::coverage_for`] supplies member geometry.
+    /// Gaps between ranges are inserted separators.
+    pub fn pieces(&self) -> &[FlatPiece] {
         &self.pieces
     }
+}
 
-    /// Runs overlapping a byte range of [`Flattened::text`], each with that
-    /// range expressed in the run's own text.
-    pub fn runs_for<'a>(
-        &'a self,
-        page: &'a PageText,
-        range: Range<usize>,
-    ) -> Vec<(&'a TextRun, Range<usize>)> {
-        self.pieces
-            .iter()
-            .filter(|(piece, _)| piece.start < range.end && range.start < piece.end)
-            .filter_map(|(piece, index)| {
-                let run = page.runs.get(*index)?;
-                let local = range.start.saturating_sub(piece.start)
-                    ..(range.end.min(piece.end) - piece.start);
-                Some((run, local))
-            })
-            .collect()
+impl FlatPiece {
+    pub fn coverage_for<'a>(&self, page: &'a PageText, range: Range<usize>) -> Vec<CoveredRun<'a>> {
+        let start = range.start.max(self.range.start);
+        let end = range.end.min(self.range.end);
+        if start >= end {
+            return Vec::new();
+        }
+        match &self.members {
+            PieceMembers::Decoded(index) => page
+                .runs
+                .get(*index)
+                .into_iter()
+                .map(|run| CoveredRun {
+                    run,
+                    coverage: RunCoverage::Decoded(
+                        start - self.range.start..end - self.range.start,
+                    ),
+                })
+                .collect(),
+            PieceMembers::ActualText(indices) => indices
+                .iter()
+                .filter_map(|index| page.runs.get(*index))
+                .map(|run| CoveredRun {
+                    run,
+                    coverage: RunCoverage::WholeActualText,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -116,27 +156,85 @@ pub fn flatten(page: &PageText) -> Flattened {
         page: page.page,
         ..Default::default()
     };
-    let mut previous: Option<&TextRun> = None;
+    let mut actual_pieces: HashMap<ActualText, usize> = HashMap::new();
     for (index, run) in page.runs.iter().enumerate() {
-        if run.text.is_empty() {
-            continue;
+        if let Some(actual) = &run.actual_text {
+            if let Some(&piece) = actual_pieces.get(actual) {
+                if let PieceMembers::ActualText(indices) = &mut out.pieces[piece].members {
+                    indices.push(index);
+                }
+            } else {
+                actual_pieces.insert(actual.clone(), out.pieces.len());
+                out.pieces.push(FlatPiece {
+                    range: 0..0,
+                    style_run: index,
+                    members: PieceMembers::ActualText(vec![index]),
+                });
+            }
+        } else if !run.decoded_text.is_empty() {
+            out.pieces.push(FlatPiece {
+                range: 0..0,
+                style_run: index,
+                members: PieceMembers::Decoded(index),
+            });
         }
+    }
+
+    let mut previous = None;
+    for index in 0..out.pieces.len() {
+        let piece = &out.pieces[index];
+        let (text, glyph) = piece_start_edge(page, piece);
         if let Some(previous) = previous {
-            out.text.push_str(separator(previous, run));
+            let gap = separator(
+                piece_end_edge(page, &out, previous),
+                PieceEdge { text, glyph },
+            );
+            out.text.push_str(gap);
         }
         let start = out.text.len();
-        out.text.push_str(&run.text);
-        out.pieces.push((start..out.text.len(), index));
-        previous = Some(run);
+        out.text.push_str(text);
+        out.pieces[index].range = start..out.text.len();
+        previous = Some(index);
     }
     out
 }
 
-fn separator(previous: &TextRun, next: &TextRun) -> &'static str {
+struct PieceEdge<'a> {
+    text: &'a str,
+    glyph: Option<&'a Glyph>,
+}
+
+fn piece_end_edge<'a>(page: &'a PageText, flat: &'a Flattened, index: usize) -> PieceEdge<'a> {
+    let piece = &flat.pieces[index];
+    let run_index = match &piece.members {
+        PieceMembers::Decoded(run) => *run,
+        PieceMembers::ActualText(runs) => *runs.last().unwrap(),
+    };
+    let run = &page.runs[run_index];
+    PieceEdge {
+        text: &flat.text[piece.range.clone()],
+        glyph: run.glyphs.last(),
+    }
+}
+
+fn piece_start_edge<'a>(page: &'a PageText, piece: &'a FlatPiece) -> (&'a str, Option<&'a Glyph>) {
+    let run_index = match &piece.members {
+        PieceMembers::Decoded(run) => *run,
+        PieceMembers::ActualText(runs) => runs[0],
+    };
+    let run = &page.runs[run_index];
+    let text = run
+        .actual_text
+        .as_ref()
+        .map_or(run.decoded_text.as_str(), ActualText::as_str);
+    (text, run.glyphs.first())
+}
+
+fn separator(previous: PieceEdge<'_>, next: PieceEdge<'_>) -> &'static str {
     if previous.text.ends_with(char::is_whitespace) || next.text.starts_with(char::is_whitespace) {
         return "";
     }
-    let (Some(last), Some(first)) = (previous.glyphs.last(), next.glyphs.first()) else {
+    let (Some(last), Some(first)) = (previous.glyph, next.glyph) else {
         return "";
     };
     // Lower-right of the glyph just drawn, lower-left of the one about to be.
@@ -287,10 +385,20 @@ fn find_all(
 
         let mut quads = Vec::new();
         let mut provenance = Vec::new();
-        for (run, local) in flat.runs_for(page, range.clone()) {
-            quads.extend(run.quads_for(local));
-            if !provenance.contains(&run.provenance) {
-                provenance.push(run.provenance);
+        let mut seen_provenance = HashSet::new();
+        for piece in flat.pieces() {
+            for covered in piece.coverage_for(page, range.clone()) {
+                match covered.coverage {
+                    RunCoverage::Decoded(local) => {
+                        quads.extend(covered.run.quads_for_decoded(local))
+                    }
+                    RunCoverage::WholeActualText => {
+                        quads.extend(covered.run.glyphs.iter().map(|glyph| glyph.quad));
+                    }
+                }
+                if seen_provenance.insert(covered.run.provenance) {
+                    provenance.push(covered.run.provenance);
+                }
             }
         }
         out.push(Match {
@@ -392,7 +500,8 @@ mod tests {
             .collect();
         TextRun {
             page: 0,
-            text: text.to_string(),
+            decoded_text: text.to_string(),
+            actual_text: None,
             glyphs,
             provenance: ByteProvenance {
                 stream: ObjRef::new(1, 0),

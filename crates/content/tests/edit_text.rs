@@ -180,6 +180,197 @@ fn text_no_font_can_draw_is_refused_and_a_missing_line_too() {
 }
 
 #[test]
+fn actual_text_lines_are_protected_from_public_editing() {
+    let content = "BT /F1 10 Tf 20 100 Td /Span << /ActualText (XY) >> BDC (AB) Tj (CD) Tj EMC ET";
+    let bytes = one_page(content, FONT, &[helvetica()]);
+    let (_, before) = lines(&bytes);
+    assert_eq!(before.len(), 1);
+    assert!(before[0].glyphs.iter().all(|glyph| glyph.range.is_none()));
+
+    let refused = edit(&bytes, &before[0], "replacement").expect_err("protected");
+    assert!(matches!(refused, EditError::ActualText));
+}
+
+#[test]
+fn protected_segments_isolate_editable_neighbors() {
+    let content = "BT /F1 10 Tf 1 0 0 1 10 100 Tm (left) Tj 1 0 0 1 50 100 Tm /Span << /ActualText (XY) >> BDC (AB) Tj (CD) Tj EMC 1 0 0 1 100 100 Tm (right) Tj ET";
+    let bytes = one_page(content, FONT, &[helvetica()]);
+    let (page_text, before) = lines(&bytes);
+    assert_eq!(
+        before
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>(),
+        ["left", "ABCD", "right"]
+    );
+    assert!(before[1].glyphs.iter().all(|glyph| glyph.range.is_none()));
+
+    let protected_codes = page_text.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+        .collect::<Vec<_>>();
+    let protected_quads = page_text.runs[1..3]
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect::<Vec<_>>();
+    let protected_actual = page_text.runs[1].actual_text.is_some();
+    let baseline_flat = page_text.flatten();
+    let baseline_piece = baseline_flat
+        .pieces()
+        .iter()
+        .find(|piece| piece.style_run == 1)
+        .expect("baseline replacement piece");
+    assert_eq!(&baseline_flat.text[baseline_piece.range.clone()], "XY");
+    assert_eq!(
+        baseline_piece
+            .coverage_for(&page_text, baseline_piece.range.clone())
+            .len(),
+        2
+    );
+    let assert_preserved = |edited: &EditedPage, expected: &str| {
+        let edited_content = String::from_utf8(edited.content.bytes.clone()).expect("ascii");
+        let page = extract_page(
+            &open_bytes(one_page(&edited_content, FONT, &[helvetica()])),
+            0,
+        )
+        .expect("reopens");
+        assert_eq!(page.flatten().text, expected);
+        assert_eq!(
+            page.runs[1..3]
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+                .collect::<Vec<_>>(),
+            protected_codes
+        );
+        assert_eq!(
+            page.runs[1..3]
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+                .collect::<Vec<_>>(),
+            protected_quads
+        );
+        assert_eq!(page.runs[1].actual_text.is_some(), protected_actual);
+        let flat = page.flatten();
+        let piece = flat
+            .pieces()
+            .iter()
+            .find(|piece| piece.style_run == 1)
+            .expect("replacement piece");
+        assert_eq!(&flat.text[piece.range.clone()], "XY");
+        let coverage = piece.coverage_for(&page, piece.range.clone());
+        assert_eq!(coverage.len(), 2);
+        assert!(coverage.iter().all(|member| matches!(
+            member.coverage,
+            onionskin_content::RunCoverage::WholeActualText
+        )));
+    };
+
+    let left_only = edit(&bytes, &before[0], "LEFT").expect("left remains editable");
+    assert_preserved(&left_only, "LEFT XY right");
+    let right_only = edit(&bytes, &before[2], "RIGHT").expect("right remains editable");
+    assert_preserved(&right_only, "left XY RIGHT");
+    let both = edit_all(
+        &bytes,
+        &[
+            line_edit(&before[0], "LEFT"),
+            line_edit(&before[2], "RIGHT"),
+        ],
+    )
+    .expect("ordinary neighbors remain editable");
+    assert_preserved(&both, "LEFT XY RIGHT");
+}
+
+#[test]
+fn every_actual_text_target_and_invalid_target_is_refused() {
+    let content = "BT /F1 10 Tf 10 100 Td (L) Tj /Span << /ActualText (XY) >> BDC (AB) Tj (CD) Tj EMC 20 0 Td (R) Tj ET";
+    let bytes = one_page(content, FONT, &[helvetica()]);
+    let doc = open_bytes(bytes.clone());
+    let loaded = page(&doc, 0).expect("page");
+    let extracted = extract_page(&doc, 0).expect("extracts");
+    let targets = [
+        vec![(1, 0)],
+        vec![(2, 0)],
+        vec![(1, 0), (2, 0)],
+        vec![(0, 0), (1, 0)],
+    ];
+    for glyphs in targets {
+        let error = edit_lines(
+            &doc,
+            &loaded,
+            &[LineEdit {
+                glyphs,
+                text: "replacement".into(),
+                style: TextStyle {
+                    size: Some(14.0),
+                    ..TextStyle::default()
+                },
+            }],
+            "OSF",
+        )
+        .expect_err("ActualText target");
+        assert!(matches!(error, EditError::ActualText));
+    }
+    let mixed = edit_lines(
+        &doc,
+        &loaded,
+        &[
+            LineEdit {
+                glyphs: vec![(0, 0)],
+                text: "LEFT".into(),
+                style: TextStyle::default(),
+            },
+            LineEdit {
+                glyphs: vec![(1, 0)],
+                text: "blocked".into(),
+                style: TextStyle::default(),
+            },
+        ],
+        "OSF",
+    )
+    .expect_err("mixed batch");
+    assert!(matches!(mixed, EditError::ActualText));
+    let style_only = edit_lines(
+        &doc,
+        &loaded,
+        &[LineEdit {
+            glyphs: vec![(1, 0), (1, 1)],
+            text: "AB".into(),
+            style: TextStyle {
+                size: Some(14.0),
+                ..TextStyle::default()
+            },
+        }],
+        "OSF",
+    )
+    .expect_err("style-only ActualText target");
+    assert!(matches!(style_only, EditError::ActualText));
+    let invalid_glyph = edit_lines(
+        &doc,
+        &loaded,
+        &[LineEdit {
+            glyphs: vec![(1, 99)],
+            text: "replacement".into(),
+            style: TextStyle::default(),
+        }],
+        "OSF",
+    )
+    .expect_err("invalid glyph");
+    assert!(matches!(invalid_glyph, EditError::NotFound));
+    let invalid = edit_lines(
+        &doc,
+        &loaded,
+        &[LineEdit {
+            glyphs: vec![(extracted.runs.len() + 1, 0)],
+            text: "replacement".into(),
+            style: TextStyle::default(),
+        }],
+        "OSF",
+    )
+    .expect_err("invalid target");
+    assert!(matches!(invalid, EditError::NotFound));
+}
+
+#[test]
 fn lines_join_runs_along_a_baseline_and_part_at_columns_and_new_lines() {
     let content = "BT /F1 10 Tf 20 100 Td (One) Tj 25 0 Td (two) Tj 150 0 Td (Far) Tj \
                    -175 -20 Td (Below) Tj ET";

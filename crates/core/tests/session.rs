@@ -66,7 +66,10 @@ fn page_text_search_and_state_use_core_types() {
     let options = SearchOptions::default();
 
     let text = doc.page_text(0).expect("page text extracts");
-    assert!(text.runs.iter().any(|run| run.text.contains("Hello")));
+    assert!(text
+        .runs
+        .iter()
+        .any(|run| run.decoded_text.contains("Hello")));
 
     let matches = doc
         .search_page(0, "Onionskin", options)
