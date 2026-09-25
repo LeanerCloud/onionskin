@@ -302,13 +302,20 @@ pub(in crate::shell) fn apply_page_display(
 /// command line or from File > Open. Decision 10 says a repaired file opens;
 /// it does not say it opens silently.
 pub(in crate::shell) fn repair_notice(path: &Path, provenance: &Provenance) -> Option<String> {
+    let label = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    repair_notice_label(&label, provenance)
+}
+
+pub(in crate::shell) fn repair_notice_label(
+    label: &str,
+    provenance: &Provenance,
+) -> Option<String> {
     let report = provenance.report()?;
     Some(format!(
-        "{} was repaired to open it: {}",
-        path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned()
-        ),
+        "{label} was repaired to open it: {}",
         report.summary()
     ))
 }
@@ -1056,7 +1063,13 @@ where
             |window, cx| {
                 let tabs = prepared
                     .into_iter()
-                    .map(|(path, model)| (path, cx.new(|_cx| Canvas::new(model, theme))))
+                    .map(|(path, model)| {
+                        let title = path.file_name().map_or_else(
+                            || path.display().to_string(),
+                            |name| name.to_string_lossy().into_owned(),
+                        );
+                        (title, cx.new(|_cx| Canvas::new(model, theme)))
+                    })
                     .collect();
                 cx.new(|cx| ShellFrame::new(tabs, shell_view_state, settings, window, cx))
             },

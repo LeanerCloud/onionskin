@@ -62,10 +62,128 @@ fn a_protected_document_asks_for_its_password_and_opens_with_it(cx: &mut TestApp
                 std::path::absolute(&path).ok()
             );
 
-            frame.pending_passwords.push_back(path.clone());
+            frame.pending_passwords.push_back(
+                crate::shell::chrome::password_dialog::OpenTarget::File(path.clone()),
+            );
+            frame.ask_next_password(window, cx);
+            let input = frame.password_prompt().expect("retry prompt").input.clone();
+            type_into(&input, "secret", cx);
+            frame.run_activation(Activation::Password(PasswordAction::Open), window, cx);
+            assert_eq!(tab_count(frame), before + 1, "file retry deduplicates");
+
+            frame.pending_passwords.push_back(
+                crate::shell::chrome::password_dialog::OpenTarget::File(path.clone()),
+            );
             frame.ask_next_password(window, cx);
             frame.run_activation(Activation::Password(PasswordAction::Cancel), window, cx);
             assert!(frame.password_prompt().is_none(), "Cancel leaves it closed");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn an_encrypted_attachment_retries_from_captured_bytes_and_can_be_cancelled(
+    cx: &mut TestAppContext,
+) {
+    let encrypted = std::fs::read(fixture("r6-aes-256-user-password.pdf")).expect("reads");
+    let parent = crate::shell::fixtures::attached_pdf_with_payload("locked.pdf", &encrypted);
+    let second_parent = crate::shell::fixtures::attached_pdf_with_payload("locked.pdf", &encrypted);
+    let (window, _) = bound_window_from_bytes(
+        vec![("parent.pdf", parent), ("other.pdf", second_parent)],
+        cx,
+    );
+    let recents_before = window
+        .update(cx, |frame, _window, _cx| {
+            frame.settings.recents.documents().len()
+        })
+        .unwrap();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(
+                crate::shell::panes::PaneAction::Select(
+                    crate::shell::panes::NavigationPane::Attachments,
+                ),
+                cx,
+            );
+            frame.run_activation(
+                Activation::Pane(crate::shell::panes::PaneAction::Attachment(
+                    crate::shell::panes::AttachmentAction::Open(0),
+                )),
+                window,
+                cx,
+            );
+            assert_eq!(tab_count(frame), 2);
+            frame.run_activation(Activation::ActivateTab(0), window, cx);
+            frame.run_tab_command(TabCommand::Close, 0, cx).unwrap();
+            assert_eq!(tab_count(frame), 1);
+            frame.ask_next_password(window, cx);
+            let prompt = frame.password_prompt().expect("attachment prompt");
+            let input = prompt.input.clone();
+            type_into(&input, "wrong", cx);
+            frame.run_activation(Activation::Password(PasswordAction::Open), window, cx);
+            assert!(frame.password_prompt().expect("retry").wrong);
+            type_into(&input, "secret", cx);
+            frame.run_activation(Activation::Password(PasswordAction::Open), window, cx);
+            assert_eq!(tab_count(frame), 2);
+            let child = frame.tabs.active().expect("child");
+            assert_eq!(child.title(), "locked.pdf");
+            assert_eq!(child.canvas.read(cx).model.path(), None);
+            frame.run_activation(Activation::ActivateTab(0), window, cx);
+            let parent = frame.active_canvas().expect("parent").clone();
+            frame.navigation.reread(&parent, cx);
+            frame.run_activation(
+                Activation::Pane(crate::shell::panes::PaneAction::Attachment(
+                    crate::shell::panes::AttachmentAction::Open(0),
+                )),
+                window,
+                cx,
+            );
+            frame.ask_next_password(window, cx);
+            frame.run_activation(Activation::Password(PasswordAction::Cancel), window, cx);
+            assert_eq!(tab_count(frame), 2);
+            assert_eq!(frame.settings.recents.documents().len(), recents_before);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn an_encrypted_attachment_retains_permission_refusals(cx: &mut TestAppContext) {
+    let encrypted = std::fs::read(fixture("r6-aes-256-print-only.pdf")).expect("reads");
+    let parent = crate::shell::fixtures::attached_pdf_with_payload("restricted.pdf", &encrypted);
+    let (window, _) = bound_window_from_bytes(vec![("parent.pdf", parent)], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(
+                crate::shell::panes::PaneAction::Select(
+                    crate::shell::panes::NavigationPane::Attachments,
+                ),
+                cx,
+            );
+            frame.run_activation(
+                Activation::Pane(crate::shell::panes::PaneAction::Attachment(
+                    crate::shell::panes::AttachmentAction::Open(0),
+                )),
+                window,
+                cx,
+            );
+            assert_eq!(tab_count(frame), 2);
+            let child = frame.tabs.active().expect("restricted child");
+            assert!(child.canvas.read(cx).model.edit_refusal().is_some());
+            assert!(child.canvas.read(cx).model.security_refusal().is_some());
+            assert!(child.canvas.update(cx, |canvas, _| {
+                canvas.model.document_mut().render_page_now(0, 1.0).is_ok()
+            }));
+            assert_eq!(child.canvas.read(cx).model.path(), None);
+            frame
+                .run_main_menu_command(MenuCommand::OrganizePages, window, cx)
+                .expect("opens page organizer");
+            let tree = frame.accessible(window, cx);
+            assert!(
+                tree.find(&"organize-insert-blank".into())
+                    .expect("Insert Blank Page command")
+                    .state
+                    .disabled
+            );
         })
         .unwrap();
 }

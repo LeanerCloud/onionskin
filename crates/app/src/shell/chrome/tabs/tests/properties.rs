@@ -321,6 +321,41 @@ fn the_security_tab_is_read_only_in_the_tree_and_the_dialog_leaves_it_on_close(
 }
 
 #[gpui::test]
+fn detached_attachment_properties_have_no_filesystem_facts_but_keep_metadata(
+    cx: &mut TestAppContext,
+) {
+    let (window, _) = bound_window_from_bytes(
+        vec![("parent.pdf", crate::shell::fixtures::attached_pdf_pdf())],
+        cx,
+    );
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(
+                    crate::shell::panes::AttachmentAction::Open(0),
+                )),
+                window,
+                cx,
+            );
+            frame
+                .run_main_menu_command(MenuCommand::Properties, window, cx)
+                .expect("properties");
+            let facts = &frame.properties_dialog().expect("dialog").facts;
+            assert_eq!(facts.file[0], ("Location", "—".to_owned()));
+            assert_eq!(facts.file[1], ("File Size", "—".to_owned()));
+            assert_eq!(facts.file[2], ("Pages", "1".to_owned()));
+            assert!(facts.fonts.is_ok());
+            assert_eq!(facts.edit_refusal, None);
+            let author = with_document(frame, cx, |document| {
+                document.info().expect("metadata").description.author
+            });
+            assert_eq!(author.as_deref(), Some("Ana Pop"));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn an_encrypted_document_shows_its_permissions_and_cannot_apply(cx: &mut TestAppContext) {
     let bytes = std::fs::read(onionskin_corpus_testing::encrypted_fixture(
         "r6-aes-256-print-only.pdf",

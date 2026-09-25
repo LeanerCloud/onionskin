@@ -71,7 +71,7 @@ fn page_count(frame: &ShellFrame, cx: &App) -> usize {
 fn dirty(frame: &ShellFrame, cx: &mut Context<ShellFrame>, window: &mut Window) -> bool {
     let tree = frame.accessible(window, cx);
     let tab = tree
-        .find(&tab_element_id(&frame.tabs.active().expect("a tab").source).into())
+        .find(&tab_element_id(frame.tabs.active().expect("a tab").canvas.entity_id()).into())
         .expect("the tab is described");
     tab.description.as_deref() == Some("Unsaved changes")
 }
@@ -218,6 +218,21 @@ fn save_as_writes_the_chosen_file_and_the_tab_follows_it(cx: &mut TestAppContext
     let original = std::fs::read(dir.path().join("two-page.pdf")).expect("reads");
     let copy = dir.path().join("copy.pdf");
     window.update(cx, delete_page).unwrap();
+    press(window, &bindings, "file.save-as", cx);
+    let rejected = dir.path().join("missing").join("rejected.pdf");
+    cx.simulate_new_path_selection(move |_| Some(rejected));
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            let tab = frame.tabs.active().expect("active");
+            assert_eq!(tab.title(), "two-page.pdf");
+            assert_eq!(
+                tab.canvas.read(cx).model.path(),
+                Some(dir.path().join("two-page.pdf"))
+            );
+            assert!(dirty(frame, cx, window));
+        })
+        .unwrap();
     press(window, &bindings, "file.save-as", cx);
     assert!(cx.did_prompt_for_new_path());
     let chosen = copy.clone();

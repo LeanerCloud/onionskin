@@ -94,7 +94,7 @@ fn the_summary_is_written_where_the_user_says_and_opened(cx: &mut TestAppContext
         .update(cx, |frame, _, cx| {
             assert_eq!(frame.dialog, None);
             let tab = frame.tabs.active().expect("the summary's tab");
-            assert_eq!(tab.source, output);
+            assert_eq!(tab.canvas.read(cx).model.path(), Some(output.clone()));
             assert_eq!(
                 tab.canvas.read(cx).model.view_state().page_count,
                 3,

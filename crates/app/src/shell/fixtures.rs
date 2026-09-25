@@ -86,7 +86,17 @@ pub(in crate::shell) fn attachment_pdf() -> Vec<u8> {
 /// PDF whose one page says "heron". For Advanced Search, which finds the
 /// word only when it searches attachments.
 pub(in crate::shell) fn attached_pdf_pdf() -> Vec<u8> {
-    let annex = text_pdf("heron");
+    attached_pdf_with_word("heron")
+}
+
+/// One page saying "cover", with a PDF attachment containing `word`.
+pub(in crate::shell) fn attached_pdf_with_word(word: &str) -> Vec<u8> {
+    let annex = text_pdf(word);
+    attached_pdf_with_payload("annex.pdf", &annex)
+}
+
+/// One page saying "cover", with an arbitrary embedded PDF payload.
+pub(in crate::shell) fn attached_pdf_with_payload(name: &str, annex: &[u8]) -> Vec<u8> {
     let mut embedded = format!(
         "<< /Type /EmbeddedFile /Subtype /application#2Fpdf /Length {} >>\nstream\n",
         annex.len()
@@ -94,15 +104,19 @@ pub(in crate::shell) fn attached_pdf_pdf() -> Vec<u8> {
     .into_bytes();
     embedded.extend_from_slice(&annex);
     embedded.extend_from_slice(b"\nendstream");
+    let filespec = format!("<< /Type /Filespec /F ({name}) /UF ({name}) /EF << /F 7 0 R >> >>");
+    let catalog = format!(
+        "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [({name}) 6 0 R] >> >> >>"
+    );
     pdf_with_trailer(
         &[
-            b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(annex.pdf) 6 0 R] >> >> >>",
+            catalog.as_bytes(),
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
                /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
             b"<< /Length 35 >>\nstream\nBT /F1 12 Tf 20 40 Td (cover) Tj ET\nendstream",
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-            b"<< /Type /Filespec /F (annex.pdf) /UF (annex.pdf) /EF << /F 7 0 R >> >>",
+            filespec.as_bytes(),
             &embedded,
             b"<< /Author (Ana Pop) /CreationDate (D:20250301) >>",
         ],
@@ -117,14 +131,18 @@ fn text_pdf(word: &str) -> Vec<u8> {
         "<< /Length {} >>\nstream\n{content}\nendstream",
         content.len()
     );
-    pdf(&[
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
+    pdf_with_trailer(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] \
            /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-        stream.as_bytes(),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ])
+            stream.as_bytes(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Author (Ana Pop) >>",
+        ],
+        "/Info 6 0 R ",
+    )
 }
 
 /// `count` empty pages, for the thumbnails pane's laziness: a document long

@@ -152,13 +152,17 @@ impl ShellFrame {
 
     /// Save as PDF: where the printed file goes.
     fn prompt_for_print_file(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        let Some(source) = self.tabs.active().map(|tab| tab.source.clone()) else {
+        let Some(tab) = self.tabs.active() else {
             return;
         };
+        let source = tab.path(cx);
+        let title = tab.title().to_owned();
         let directory = source
-            .parent()
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let chosen = cx.prompt_for_new_path(&directory, Some(&printed_name(&source)));
+        let suggested = printed_name(source.as_deref().unwrap_or_else(|| Path::new(&title)));
+        let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
         cx.spawn(async move |frame, cx| {
             let output = match chosen.await {
                 Ok(Ok(Some(output))) => output,

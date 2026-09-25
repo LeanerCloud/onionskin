@@ -127,11 +127,17 @@ impl ShellFrame {
             return;
         };
         let extension = codec.extension();
+        let source = tab.path(cx);
+        let title = tab.title().to_owned();
         let directory = tab
-            .source
-            .parent()
+            .path(cx)
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let suggested = format!("{}.{extension}", tab_title(&tab.source));
+        let suggested = format!(
+            "{}.{extension}",
+            tab_title(source.as_deref().unwrap_or_else(|| Path::new(&title)))
+        );
         let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |frame, cx| {

@@ -10,7 +10,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use gpui::{AppContext as _, Context, Entity, Window};
+use gpui::{App, AppContext as _, Context, Entity, Window};
 
 use super::context::ContextMenuState;
 use super::export::ExportState;
@@ -20,6 +20,7 @@ use super::tab_title;
 use crate::shell::canvas::CanvasViewState;
 use crate::shell::chrome::accessible::ShellAccessibility;
 use crate::shell::chrome::page_controls::{PageEntryError, PAGE_ENTRY_ID};
+use crate::shell::chrome::password_dialog::OpenTarget;
 use crate::shell::chrome::quick_actions::QuickActionsState;
 use crate::shell::chrome::rail::RailState;
 use crate::shell::chrome::side_panel::SidePanelState;
@@ -56,23 +57,21 @@ impl fmt::Display for TabError {
 impl std::error::Error for TabError {}
 
 pub(super) struct DocumentTab {
-    pub(super) source: PathBuf,
     pub(super) title: String,
     pub(super) canvas: Entity<Canvas>,
 }
 
 impl DocumentTab {
-    pub(super) fn new(source: PathBuf, canvas: Entity<Canvas>) -> Self {
-        let title = tab_title(&source);
-        Self {
-            source,
-            title,
-            canvas,
-        }
+    pub(super) fn new(title: String, canvas: Entity<Canvas>) -> Self {
+        Self { title, canvas }
     }
 
     pub(super) fn title(&self) -> &str {
         &self.title
+    }
+
+    pub(super) fn path(&self, cx: &App) -> Option<PathBuf> {
+        self.canvas.read(cx).model.path()
     }
 }
 
@@ -83,11 +82,15 @@ pub(super) struct TabState<T> {
 
 impl TabState<DocumentTab> {
     /// Point a tab at the file its document now belongs to, after a Save As.
-    pub(super) fn retitle(&mut self, index: usize, source: PathBuf) {
+    pub(super) fn retitle(&mut self, index: usize, source: PathBuf) -> bool {
         if let Some(tab) = self.tabs.get_mut(index) {
-            tab.title = tab_title(&source);
-            tab.source = source;
+            let title = tab_title(&source);
+            if tab.title != title {
+                tab.title = title;
+                return true;
+            }
         }
+        false
     }
 }
 
@@ -272,7 +275,7 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) password_prompt: Option<crate::shell::chrome::password_dialog::PasswordPrompt>,
     /// Encrypted documents still to ask a password for, in the order they
     /// were opened.
-    pub(super) pending_passwords: std::collections::VecDeque<std::path::PathBuf>,
+    pub(super) pending_passwords: std::collections::VecDeque<OpenTarget>,
     /// Protect Using Password, while it is open.
     pub(super) protect: Option<crate::shell::chrome::protect_dialog::ProtectState>,
     /// A form field's Properties, while open.
@@ -344,7 +347,7 @@ pub(super) fn close_other_tabs<T>(
 
 impl ShellFrame {
     pub(in crate::shell) fn new(
-        tabs: Vec<(PathBuf, Entity<Canvas>)>,
+        tabs: Vec<(String, Entity<Canvas>)>,
         mut shell_view_state: ShellViewState,
         mut settings: ShellSettings,
         window: &mut Window,
@@ -430,7 +433,7 @@ impl ShellFrame {
         .detach();
         let document_tabs: Vec<_> = tabs
             .into_iter()
-            .map(|(source, canvas)| DocumentTab::new(source, canvas))
+            .map(|(title, canvas)| DocumentTab::new(title, canvas))
             .collect();
         for tab in &document_tabs {
             cx.observe(&tab.canvas, |frame, _, cx| {

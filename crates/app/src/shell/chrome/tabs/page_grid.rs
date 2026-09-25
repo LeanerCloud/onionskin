@@ -274,12 +274,15 @@ impl ShellFrame {
         let Some(tab) = self.tabs.active() else {
             return;
         };
-        let source = tab.source.clone();
+        let source = tab.path(cx);
+        let title = tab.title().to_owned();
+        let display = source.as_deref().unwrap_or_else(|| Path::new(&title));
         let directory = source
-            .parent()
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         if action == OrganizeAction::Extract {
-            let chosen = cx.prompt_for_new_path(&directory, Some(&extracted_name(&source, &pages)));
+            let chosen = cx.prompt_for_new_path(&directory, Some(&extracted_name(display, &pages)));
             cx.spawn(async move |frame, cx| {
                 let Ok(Ok(Some(output))) = chosen.await else {
                     return;

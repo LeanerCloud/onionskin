@@ -1127,7 +1127,13 @@ mod tests {
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
-                vec![(path, canvas)],
+                vec![(
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    canvas,
+                )],
                 shell_view,
                 ShellSettings::defaults(),
                 window,

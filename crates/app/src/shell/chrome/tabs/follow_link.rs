@@ -109,11 +109,21 @@ impl ShellFrame {
     /// A linked file opens here if it is a PDF beside this one, or at the
     /// path it names; Onionskin opens nothing else.
     fn open_linked_file(&mut self, file: &str, cx: &mut Context<Self>) {
-        let folder = self
+        let folder = if Path::new(file).is_absolute() {
+            PathBuf::new()
+        } else if let Some(folder) = self
             .tabs
             .active()
-            .and_then(|tab| tab.source.parent().map(Path::to_path_buf))
-            .unwrap_or_default();
+            .and_then(|tab| tab.path(cx))
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+        {
+            folder
+        } else {
+            self.notices
+                .push("Save this document before following a relative link".to_owned());
+            cx.notify();
+            return;
+        };
         let path = linked_path(&folder, file);
         let is_pdf = path
             .extension()

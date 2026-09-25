@@ -118,7 +118,7 @@ fn the_clipboards_image_becomes_a_document_in_a_new_tab(cx: &mut TestAppContext)
             assert!(frame.notices.is_empty(), "{:?}", frame.notices);
             assert_eq!(frame.tabs.tabs().len(), 2, "the new document opened");
             let tab = frame.tabs.active().expect("active");
-            assert_eq!(tab.source, output);
+            assert_eq!(tab.canvas.read(cx).model.path(), Some(output.clone()));
             assert_eq!(tab.canvas.read(cx).model.view_state().page_count, 1);
         })
         .unwrap();
@@ -181,11 +181,17 @@ fn a_chosen_image_file_becomes_a_document_named_after_it(cx: &mut TestAppContext
     let chosen = output.clone();
     cx.simulate_new_path_selection(move |_| Some(chosen));
     cx.run_until_parked();
-    window
-        .update(cx, |frame, _, _| {
-            assert_eq!(frame.tabs.active().expect("active").source, output);
+    let actual_path = window
+        .update(cx, |frame, _, cx| {
+            frame
+                .tabs
+                .active()
+                .expect("active")
+                .canvas
+                .update(cx, |canvas, _| canvas.model.path())
         })
         .unwrap();
+    assert_eq!(actual_path, Some(output.clone()));
 
     let missing = dir.path().join("gone.png");
     window

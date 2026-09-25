@@ -92,8 +92,9 @@ impl ShellFrame {
             return;
         };
         let directory = tab
-            .source
-            .parent()
+            .path(cx)
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let extracted = selected_image_file(tab.canvas.read(cx));
         let image = match extracted {

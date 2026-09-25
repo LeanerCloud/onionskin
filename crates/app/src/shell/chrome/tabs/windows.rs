@@ -12,6 +12,7 @@ use gpui::{
     WindowOptions,
 };
 use onionskin_core::ViewSize;
+use std::path::Path;
 
 use super::ShellFrame;
 use crate::shell::Canvas;
@@ -26,7 +27,7 @@ impl ShellFrame {
         let Some(tab) = self.tabs.active() else {
             return;
         };
-        let source = tab.source.clone();
+        let title = tab.title().to_owned();
         let canvas = tab.canvas.clone();
         let model = canvas.update(cx, |canvas, _| {
             let size = canvas.model.viewport().size();
@@ -66,7 +67,7 @@ impl ShellFrame {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(window_title(&source).into()),
+                    title: Some(window_title(&title).into()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -77,7 +78,7 @@ impl ShellFrame {
                 let canvas = cx.new(|_| Canvas::new(model, theme));
                 cx.new(|cx| {
                     ShellFrame::new(
-                        vec![(source, canvas)],
+                        vec![(title, canvas)],
                         shell_view_state,
                         settings,
                         window,
@@ -95,8 +96,8 @@ impl ShellFrame {
 }
 
 /// "report.pdf", as a second window on it is titled.
-fn window_title(source: &std::path::Path) -> String {
-    source.file_name().map_or_else(
+fn window_title(title: &str) -> String {
+    Path::new(title).file_name().map_or_else(
         || "Onionskin".to_owned(),
         |name| name.to_string_lossy().into_owned(),
     )
@@ -119,10 +120,7 @@ mod tests {
 
     #[test]
     fn a_window_is_titled_with_its_documents_name() {
-        assert_eq!(
-            window_title(std::path::Path::new("/tmp/report.pdf")),
-            "report.pdf"
-        );
-        assert_eq!(window_title(std::path::Path::new("/")), "Onionskin");
+        assert_eq!(window_title("/tmp/report.pdf"), "report.pdf");
+        assert_eq!(window_title("/"), "Onionskin");
     }
 }

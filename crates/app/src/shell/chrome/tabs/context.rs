@@ -28,7 +28,13 @@ impl ShellFrame {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
-        if tab_context_entries(index, self.tabs.tabs().len()).is_err() {
+        let has_path = self
+            .tabs
+            .tabs()
+            .get(index)
+            .and_then(|tab| tab.path(cx))
+            .is_some();
+        if tab_context_entries(index, self.tabs.tabs().len(), has_path).is_err() {
             eprintln!(
                 "onionskin: {}",
                 TabError::OutOfRange {
@@ -169,7 +175,13 @@ impl ShellFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.shell_view_state.tokens();
-        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len())
+        let has_path = self
+            .tabs
+            .tabs()
+            .get(menu.tab_index)
+            .and_then(|tab| tab.path(cx))
+            .is_some();
+        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len(), has_path)
             .expect("context-menu targets are validated when opened");
         let size = gpui::size(
             px(TAB_CONTEXT_MENU_WIDTH),
@@ -354,6 +366,7 @@ pub(super) fn context_menu_origin(
 pub(in crate::shell::chrome) fn tab_context_entries(
     tab_index: usize,
     tab_count: usize,
+    has_path: bool,
 ) -> Result<Vec<TabContextEntry>, TabError> {
     use MenuAvailability::{Disabled, Enabled};
 
@@ -391,13 +404,21 @@ pub(in crate::shell::chrome) fn tab_context_entries(
             command: TabCommand::RevealPath,
             label: "Show Containing Folder",
             tab_index,
-            availability: Enabled,
+            availability: if has_path {
+                Enabled
+            } else {
+                Disabled("This document has no file path")
+            },
         },
         TabContextEntry {
             command: TabCommand::CopyPath,
             label: "Copy Path",
             tab_index,
-            availability: Enabled,
+            availability: if has_path {
+                Enabled
+            } else {
+                Disabled("This document has no file path")
+            },
         },
     ])
 }
@@ -498,7 +519,13 @@ mod tests {
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
-                vec![(path, canvas)],
+                vec![(
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    canvas,
+                )],
                 shell_view,
                 ShellSettings::defaults(),
                 window,
@@ -642,7 +669,7 @@ mod tests {
 
     #[test]
     fn every_tab_context_action_targets_the_clicked_tab() {
-        let entries = tab_context_entries(2, 3).unwrap();
+        let entries = tab_context_entries(2, 3, true).unwrap();
 
         assert_eq!(entries.len(), 5);
         assert!(entries.iter().all(|entry| entry.tab_index == 2));
@@ -651,7 +678,7 @@ mod tests {
 
     #[test]
     fn close_others_explains_why_it_is_disabled_for_a_single_tab() {
-        let entry = tab_context_entries(0, 1)
+        let entry = tab_context_entries(0, 1, true)
             .unwrap()
             .into_iter()
             .find(|entry| entry.command == TabCommand::CloseOthers)
@@ -664,9 +691,24 @@ mod tests {
     }
 
     #[test]
+    fn path_actions_are_disabled_without_a_file_path() {
+        let entries = tab_context_entries(0, 1, false).unwrap();
+        for command in [TabCommand::RevealPath, TabCommand::CopyPath] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.command == command)
+                .expect("path command");
+            assert_eq!(
+                entry.availability,
+                MenuAvailability::Disabled("This document has no file path")
+            );
+        }
+    }
+
+    #[test]
     fn an_out_of_range_context_target_fails_loudly() {
         assert!(matches!(
-            tab_context_entries(2, 2),
+            tab_context_entries(2, 2, true),
             Err(TabError::OutOfRange { index: 2, count: 2 })
         ));
     }

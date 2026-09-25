@@ -1,8 +1,6 @@
 //! A document's security in the frame: asking for the password an encrypted
 //! document opens with, Protect Using Password, and Remove Security.
 
-use std::path::PathBuf;
-
 use gpui::{AppContext as _, Context, Focusable as _, Window};
 
 use super::ShellFrame;
@@ -46,14 +44,14 @@ impl ShellFrame {
         if self.dialog.is_some() {
             return;
         }
-        let Some(path) = self.pending_passwords.pop_front() else {
+        let Some(target) = self.pending_passwords.pop_front() else {
             return;
         };
         self.show_dialog(ShellDialog::DocumentPassword, window, cx);
         let input = self.password_field(PASSWORD_ID, "Password", cx);
         window.focus(&input.focus_handle(cx));
         self.password_prompt = Some(PasswordPrompt {
-            path,
+            target,
             input,
             wrong: false,
         });
@@ -73,8 +71,8 @@ impl ShellFrame {
             return;
         }
         let password = prompt.input.read(cx).query().to_owned();
-        let path: PathBuf = prompt.path.clone();
-        match self.open_with_password(&path, &password, cx) {
+        let target = prompt.target.clone();
+        match self.open_with_password(&target, &password, cx) {
             Ok(()) => self.close_dialog(window, cx),
             Err(None) => {
                 if let Some(prompt) = self.password_prompt.as_mut() {

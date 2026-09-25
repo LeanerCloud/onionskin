@@ -7,8 +7,6 @@
 //! here it is refused, and Save puts the file where the user can open it
 //! themselves.
 
-use std::path::{Path, PathBuf};
-
 use gpui::{Context, Focusable as _, Window};
 
 use super::ShellFrame;
@@ -18,16 +16,6 @@ use crate::shell::dialog::ShellDialog;
 /// Said when a listed attachment is not a PDF.
 pub(in crate::shell) const NOT_A_PDF: &str =
     "Only PDF attachments open here. Save the attachment to open it with another program.";
-
-/// Where an opened attachment is written: its own folder under the
-/// temporary directory, so two attachments with one name do not collide.
-pub(in crate::shell) fn opened_attachment_path(
-    root: &Path,
-    stream: u32,
-    file_name: &str,
-) -> PathBuf {
-    root.join(format!("{stream}")).join(file_name)
-}
 
 impl ShellFrame {
     pub(in crate::shell) fn description_dialog(&self) -> Option<&DescriptionState> {
@@ -42,24 +30,11 @@ impl ShellFrame {
         let Some(canvas) = self.active_canvas().cloned() else {
             return;
         };
-        let bytes = canvas.update(cx, |canvas, _| canvas.model.attachment_bytes(index));
-        let bytes = match bytes {
-            Ok(bytes) if bytes.starts_with(b"%PDF") => bytes,
-            Ok(_) => return self.say(NOT_A_PDF.to_owned(), cx),
+        let bytes = match canvas.update(cx, |canvas, _| canvas.model.attachment_bytes(index)) {
+            Ok(bytes) => bytes,
             Err(error) => return self.say(error.to_string(), cx),
         };
-        let root = std::env::temp_dir()
-            .join("onionskin-attachments")
-            .join(std::process::id().to_string());
-        let path = opened_attachment_path(&root, attachment.stream, &attachment.file_name());
-        let written = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, bytes));
-        match written {
-            Ok(()) => self.open_documents(&[path], cx),
-            Err(error) => self.say(format!("The attachment could not be opened: {error}"), cx),
-        }
+        self.open_attachment_bytes(attachment.file_name(), bytes, cx);
     }
 
     fn say(&mut self, notice: String, cx: &mut Context<Self>) {
@@ -134,18 +109,5 @@ impl ShellFrame {
             state.form.include_attachments = true;
         }
         cx.notify();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_opened_attachment_gets_a_folder_of_its_own() {
-        assert_eq!(
-            opened_attachment_path(Path::new("/t"), 12, "report.pdf"),
-            Path::new("/t/12/report.pdf")
-        );
     }
 }

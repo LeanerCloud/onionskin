@@ -1037,7 +1037,7 @@ mod tests {
         cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
-                vec![(PathBuf::from("fixture.pdf"), canvas)],
+                vec![("fixture.pdf".to_owned(), canvas)],
                 shell_view,
                 ShellSettings::defaults(),
                 window,

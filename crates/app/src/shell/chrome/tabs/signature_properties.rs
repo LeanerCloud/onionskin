@@ -173,10 +173,10 @@ impl ShellFrame {
 
     /// Write the version `field`'s signature signed and open it.
     fn view_signed_version(&mut self, field: &str, cx: &mut Context<Self>) {
-        let Some((source, canvas)) = self
+        let Some((title, canvas)) = self
             .tabs
             .active()
-            .map(|tab| (tab.source.clone(), tab.canvas.clone()))
+            .map(|tab| (tab.title().to_owned(), tab.canvas.clone()))
         else {
             return;
         };
@@ -186,7 +186,7 @@ impl ShellFrame {
             return;
         };
         let directory = std::env::temp_dir().join("onionskin-signed-versions");
-        let path = signed_version_path(&directory, &source, field);
+        let path = signed_version_path(&directory, Path::new(&title), field);
         let written =
             std::fs::create_dir_all(&directory).and_then(|()| std::fs::write(&path, bytes));
         match written {

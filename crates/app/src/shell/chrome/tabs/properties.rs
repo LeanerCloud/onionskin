@@ -35,14 +35,16 @@ impl ShellFrame {
     }
 
     pub(super) fn open_properties_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((path, canvas)) = self
+        let Some((title, path, canvas)) = self
             .tabs
             .active()
-            .map(|tab| (tab.source.clone(), tab.canvas.clone()))
+            .map(|tab| (tab.title().to_owned(), tab.path(cx), tab.canvas.clone()))
         else {
             return;
         };
-        let read = canvas.update(cx, |canvas, _| read_source(&mut canvas.model, &path));
+        let read = canvas.update(cx, |canvas, _| {
+            read_source(&mut canvas.model, &title, path.as_deref())
+        });
         match read {
             Ok(source) => {
                 self.show_dialog(ShellDialog::Properties, window, cx);
@@ -222,12 +224,15 @@ impl ShellFrame {
 }
 
 /// Everything the dialog shows, read once when it opens.
-fn read_source(model: &mut CanvasModel, path: &Path) -> Result<PropertiesSource, String> {
+fn read_source(
+    model: &mut CanvasModel,
+    title: &str,
+    path: Option<&Path>,
+) -> Result<PropertiesSource, String> {
     let page_count = model.view_state().page_count;
     let edit_refusal = model.edit_refusal();
-    let failed = |error: onionskin_core::Error| {
-        format!("{}'s properties could not be read: {error}", path.display())
-    };
+    let failed =
+        |error: onionskin_core::Error| format!("{title}'s properties could not be read: {error}");
     let mut document = model.document_mut();
     let info = document.info().map_err(failed)?;
     let view = document.initial_view().map_err(failed)?;
@@ -243,13 +248,13 @@ fn read_source(model: &mut CanvasModel, path: &Path) -> Result<PropertiesSource,
     let file = vec![
         (
             "Location",
-            path.parent()
+            path.and_then(Path::parent)
                 .map_or_else(|| NOT_SET.to_owned(), |dir| dir.display().to_string()),
         ),
         (
             "File Size",
-            std::fs::metadata(path)
-                .map_or_else(|_| NOT_SET.to_owned(), |meta| size_label(meta.len())),
+            path.and_then(|path| std::fs::metadata(path).ok())
+                .map_or_else(|| NOT_SET.to_owned(), |meta| size_label(meta.len())),
         ),
         ("Pages", page_count.to_string()),
         ("Created", date(info.created.as_deref())),

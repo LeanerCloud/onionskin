@@ -39,8 +39,9 @@ impl ShellFrame {
             return;
         }
         let directory = tab
-            .source
-            .parent()
+            .path(cx)
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let chosen = cx.prompt_for_new_path(&directory, Some(SUGGESTED));
         cx.spawn(async move |frame, cx| {

@@ -196,15 +196,17 @@ impl ShellFrame {
             return;
         };
         let origin = canvas.entity_id();
+        let title = self
+            .tabs
+            .active()
+            .map(|tab| tab.title().to_owned())
+            .unwrap_or_else(|| "Untitled.pdf".to_owned());
         let current = canvas.read(cx).model.path();
         let directory = current
             .as_deref()
             .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let suggested = current.as_deref().and_then(Path::file_name).map_or_else(
-            || "Untitled.pdf".to_owned(),
-            |name| name.to_string_lossy().into_owned(),
-        );
+        let suggested = save_as_suggestion(current.as_deref(), &title);
         let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
         cx.spawn(async move |frame, cx| {
             let Ok(Ok(Some(path))) = chosen.await else {
@@ -233,8 +235,8 @@ impl ShellFrame {
             canvas.handle_change(Ok(true), cx);
             outcome.map_err(|error| format!("{} was not saved: {error}", path.display()))
         });
-        if result.is_ok() {
-            self.tabs.retitle(index, path.to_path_buf());
+        if let Some(actual_path) = canvas.read(cx).model.path() {
+            self.tabs.retitle(index, actual_path);
         }
         self.report(result, cx);
     }
@@ -543,6 +545,13 @@ fn save(canvas: &Entity<Canvas>, cx: &mut Context<ShellFrame>) -> Result<(), Str
     })
 }
 
+fn save_as_suggestion(current: Option<&Path>, title: &str) -> String {
+    current.and_then(Path::file_name).map_or_else(
+        || title.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
 /// The name Reduce File Size suggests for the copy.
 fn reduced_name(current: &Path) -> String {
     let stem = current
@@ -577,4 +586,19 @@ fn reduce_document(document: &mut onionskin_core::Document, path: &Path) -> Resu
 #[cfg(not(feature = "commands-core"))]
 fn reduce_document(_: &mut onionskin_core::Document, _: &Path) -> Result<String, String> {
     Err(super::NO_CORE_COMMANDS.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_as_suggestion;
+    use std::path::Path;
+
+    #[test]
+    fn pathless_save_uses_the_document_display_name() {
+        assert_eq!(save_as_suggestion(None, "annex.pdf"), "annex.pdf");
+        assert_eq!(
+            save_as_suggestion(Some(Path::new("/tmp/report.pdf")), "annex.pdf"),
+            "report.pdf"
+        );
+    }
 }

@@ -118,7 +118,15 @@ fn a_row_opens_its_properties_and_the_signed_version(cx: &mut TestAppContext) {
         .update(cx, |frame, _, cx| {
             assert_eq!(frame.dialog, None);
             assert_eq!(frame.tabs.tabs().len(), 2, "the signed version opened");
-            let signed = frame.tabs.active().expect("a tab").source.clone();
+            let signed = frame
+                .tabs
+                .active()
+                .expect("a tab")
+                .canvas
+                .read(cx)
+                .model
+                .path()
+                .expect("signed version path");
             let name = signed.file_name().unwrap().to_string_lossy().into_owned();
             assert_eq!(name, "annotated-after (signed version, Signature1).pdf");
             let expected = std::fs::read(signed_fixture("rsa-sha256.pdf")).unwrap();

@@ -82,7 +82,8 @@ use super::super::home::{render_home, HomeView};
 use super::super::panes::NavigationPanesState;
 use super::super::panes::{self, PaneAction};
 use super::super::Canvas;
-use super::super::{record_opened, repair_notice};
+use super::super::{record_opened, repair_notice_label};
+use super::password_dialog::OpenTarget;
 
 use self::export::{export_progress_label, ExportPhaseValue};
 use self::frame_state::{activate_tab, close_other_tabs, close_tab, DocumentTab};
@@ -307,9 +308,16 @@ impl ShellFrame {
                 Ok(source) => opened.push(source),
                 // Asked for once the frame renders, where there is a window
                 // to show the prompt in.
-                Err(OpenFailure::NeedsPassword(path)) => {
-                    if !self.pending_passwords.contains(&path) {
-                        self.pending_passwords.push_back(path);
+                Err(OpenFailure::NeedsPassword(target)) => {
+                    if !self
+                        .pending_passwords
+                        .iter()
+                        .any(|pending| match (pending, &target) {
+                            (OpenTarget::File(left), OpenTarget::File(right)) => left == right,
+                            _ => false,
+                        })
+                    {
+                        self.pending_passwords.push_back(target);
                     }
                 }
                 Err(OpenFailure::Failed(failure)) => self.notices.push(failure),
@@ -322,7 +330,7 @@ impl ShellFrame {
     /// open it, and `Err(Some(why))` when it would not open anyway.
     pub(super) fn open_with_password(
         &mut self,
-        path: &Path,
+        target: &OpenTarget,
         password: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), Option<String>> {
@@ -331,13 +339,51 @@ impl ShellFrame {
             .into_iter()
             .map(|canvas| canvas.entity_id())
             .collect();
-        match self.open_document(path, password, cx) {
-            Ok(source) => {
-                self.after_opening(&before, &[source], cx);
+        let result = match target {
+            OpenTarget::File(path) => self
+                .open_document(path, password, cx)
+                .map(|source| Some(source)),
+            OpenTarget::Attachment { .. } => self.open_target(target, password, cx).map(|_| None),
+        };
+        match result {
+            Ok(Some(source)) => {
+                self.after_opening(&before, std::slice::from_ref(&source), cx);
+                Ok(())
+            }
+            Ok(None) => {
+                self.after_opening(&before, &[], cx);
                 Ok(())
             }
             Err(OpenFailure::NeedsPassword(_)) => Err(None),
             Err(OpenFailure::Failed(failure)) => Err(Some(failure)),
+        }
+    }
+
+    pub(super) fn open_attachment_bytes(
+        &mut self,
+        name: String,
+        bytes: Vec<u8>,
+        cx: &mut Context<Self>,
+    ) {
+        if !bytes.starts_with(b"%PDF") {
+            self.notices
+                .push(crate::shell::chrome::tabs::attachment_commands::NOT_A_PDF.to_owned());
+            cx.notify();
+            return;
+        }
+        let target = OpenTarget::Attachment {
+            name,
+            bytes: Arc::new(bytes),
+        };
+        let before: Vec<_> = self
+            .canvases()
+            .into_iter()
+            .map(|canvas| canvas.entity_id())
+            .collect();
+        match self.open_target(&target, "", cx) {
+            Ok(()) => self.after_opening(&before, &[], cx),
+            Err(OpenFailure::NeedsPassword(target)) => self.pending_passwords.push_back(target),
+            Err(OpenFailure::Failed(failure)) => self.notices.push(failure),
         }
     }
 
@@ -382,21 +428,61 @@ impl ShellFrame {
         let source = std::path::absolute(path).map_err(|error| {
             OpenFailure::Failed(format!("{} could not be resolved: {error}", path.display()))
         })?;
-        if let Some(index) = self.tabs.tabs().iter().position(|tab| tab.source == source) {
+        if let Some(index) = self
+            .tabs
+            .tabs()
+            .iter()
+            .position(|tab| tab.path(cx).as_deref() == Some(source.as_path()))
+        {
             // Already open. Acrobat raises the tab rather than opening the
             // document twice, and two tabs over one file would be two
             // independent view states over one document.
             self.activate(index, cx);
             return Ok(source);
         }
-        let document =
-            Document::open_path_with_password(&source, password).map_err(|error| match error {
-                onionskin_core::Error::NeedsPassword => OpenFailure::NeedsPassword(source.clone()),
-                error => OpenFailure::Failed(format!(
-                    "{} could not be opened: {error}",
-                    source.display()
-                )),
-            })?;
+        let target = OpenTarget::File(source.clone());
+        self.open_target(&target, password, cx)
+            .map(|()| source.clone())
+            .map_err(|error| error)?;
+        Ok(source)
+    }
+
+    fn open_target(
+        &mut self,
+        target: &OpenTarget,
+        password: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), OpenFailure> {
+        let document = match target {
+            OpenTarget::File(source) => Document::open_path_with_password(source, password),
+            OpenTarget::Attachment { bytes, .. } => {
+                Document::open_shared_with_password(Arc::clone(bytes), password)
+            }
+        }
+        .map_err(|error| match error {
+            onionskin_core::Error::NeedsPassword => OpenFailure::NeedsPassword(target.clone()),
+            error => OpenFailure::Failed(format!(
+                "{} could not be opened: {error}",
+                target.display_name()
+            )),
+        })?;
+        let display_name = match target {
+            OpenTarget::File(path) => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            OpenTarget::Attachment { name, .. } => name.clone(),
+        };
+        self.install_document(document, display_name, cx)
+            .map_err(OpenFailure::Failed)
+    }
+
+    fn install_document(
+        &mut self,
+        document: Document,
+        display_name: String,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let mut model = CanvasModel::new(
             document,
             crate::build_registry(),
@@ -405,16 +491,14 @@ impl ShellFrame {
                 height: crate::shell::WINDOW_HEIGHT,
             },
         )
-        .map_err(|error| {
-            OpenFailure::Failed(format!("{} could not be opened: {error}", source.display()))
-        })?;
+        .map_err(|error| format!("{display_name} could not be opened: {error}"))?;
         self.settings.configure(&mut model);
-        let repaired = repair_notice(&source, &model.provenance());
+        let repaired = repair_notice_label(&display_name, &model.provenance());
         if let Err(error) = crate::shell::apply_page_display(&mut model, &self.settings.preferences)
         {
             self.notices.push(format!(
                 "{} opened at the default view: {error}",
-                source.display()
+                display_name
             ));
         }
         self.notices.extend(repaired);
@@ -424,10 +508,10 @@ impl ShellFrame {
             frame.canvas_view_changed(cx);
         })
         .detach();
-        self.tabs.push(DocumentTab::new(source.clone(), canvas));
+        self.tabs.push(DocumentTab::new(display_name, canvas));
         self.tool_search.search_feedback = None;
         self.open_initial_pane(cx);
-        Ok(source)
+        Ok(())
     }
 
     /// Run a command the registry holds against the active document.
@@ -558,12 +642,14 @@ impl ShellFrame {
                 cx.notify();
             }
             TabCommand::RevealPath => {
-                cx.reveal_path(self.tab_source(index)?);
+                let path = self.tab_source(index, cx)?;
+                cx.reveal_path(&path);
                 cx.notify();
             }
             TabCommand::CopyPath => {
+                let path = self.tab_source(index, cx)?;
                 cx.write_to_clipboard(ClipboardItem::new_string(
-                    self.tab_source(index)?.to_string_lossy().into_owned(),
+                    path.to_string_lossy().into_owned(),
                 ));
                 cx.notify();
             }
@@ -571,14 +657,21 @@ impl ShellFrame {
         Ok(())
     }
 
-    fn tab_source(&self, index: usize) -> Result<&Path, TabError> {
+    fn tab_source(&self, index: usize, cx: &Context<Self>) -> Result<PathBuf, TabError> {
         self.tabs
             .tabs()
             .get(index)
-            .map(|tab| tab.source.as_path())
-            .ok_or(TabError::OutOfRange {
-                index,
-                count: self.tabs.tabs().len(),
+            .and_then(|tab| tab.path(cx))
+            .ok_or(TabError::Unavailable("This document has no file path"))
+            .or_else(|error| {
+                if self.tabs.tabs().get(index).is_none() {
+                    Err(TabError::OutOfRange {
+                        index,
+                        count: self.tabs.tabs().len(),
+                    })
+                } else {
+                    Err(error)
+                }
             })
     }
 
@@ -678,10 +771,21 @@ impl ShellFrame {
         }
     }
 
+    fn refresh_tab_titles(&mut self, cx: &App) -> bool {
+        let mut changed = false;
+        for index in 0..self.tabs.tabs().len() {
+            if let Some(path) = self.tabs.tabs()[index].path(cx) {
+                changed |= self.tabs.retitle(index, path);
+            }
+        }
+        changed
+    }
+
     fn canvas_view_changed(&mut self, cx: &mut Context<Self>) {
         // The canvas notifies whenever its poll loop applies anything, which
         // is the only signal a thumbnail has landed: it answers on its own
         // channel and changes nothing the view state would show.
+        let titles_changed = self.refresh_tab_titles(cx);
         self.collect_thumbnails(cx);
         self.collect_link_request(cx);
         self.collect_redaction_request(cx);
@@ -695,6 +799,9 @@ impl ShellFrame {
             // A running walk reports new hits without moving the view, and the
             // bar's count has to follow them.
             if self.find.is_open() {
+                cx.notify();
+            }
+            if titles_changed {
                 cx.notify();
             }
             return;
@@ -711,12 +818,16 @@ impl ShellFrame {
     fn follow_document_edits(&mut self, cx: &mut Context<Self>) {
         // A save or a roll back changes the file's versions without always
         // moving the edit epoch, so the skins look for themselves.
+        let titles_changed = self.refresh_tab_titles(cx);
         self.refresh_skins(cx);
         let Some(canvas) = self.tabs.active().map(|tab| tab.canvas.clone()) else {
             return;
         };
         let epoch = Some(canvas.read(cx).model.edit_epoch());
         if self.observed_edit_epoch == epoch {
+            if titles_changed {
+                cx.notify();
+            }
             return;
         }
         self.observed_edit_epoch = epoch;
@@ -1315,10 +1426,10 @@ impl ShellFrame {
             }
         }
         let canvas = self.tabs.active().map(|tab| tab.canvas.clone());
-        let directory = self
-            .tabs
-            .active()
-            .and_then(|tab| tab.source.parent().map(Path::to_path_buf));
+        let directory = self.tabs.active().and_then(|tab| {
+            tab.path(cx)
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+        });
         panes::apply(&mut self.navigation, canvas.as_ref(), directory, action, cx);
         self.follow_chosen_comment(cx);
     }
@@ -1421,7 +1532,7 @@ impl ShellFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OpenFailure {
     /// It is encrypted, and the password given, if any, does not open it.
-    NeedsPassword(PathBuf),
+    NeedsPassword(OpenTarget),
     /// Anything else, said for the notice bar.
     Failed(String),
 }
@@ -1458,7 +1569,7 @@ impl Render for ShellFrame {
             let active = self.tabs.active_index() == Some(index);
             tab_bar = tab_bar.child(
                 div()
-                    .id(tab_element_id(&tab.source))
+                    .id(tab_element_id(tab.canvas.entity_id()))
                     .px_3()
                     .h_full()
                     .flex()
@@ -1843,8 +1954,8 @@ fn tab_title(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn tab_element_id(path: &Path) -> Arc<Path> {
-    Arc::from(path)
+fn tab_element_id(entity_id: EntityId) -> gpui::ElementId {
+    gpui::ElementId::from(("document-tab", entity_id))
 }
 
 /// The encoded image on the clipboard, for any caller that makes something
@@ -2419,7 +2530,13 @@ mod tests {
         let window = cx.add_window(move |window, cx| {
             let tabs = tabs
                 .into_iter()
-                .map(|(path, model)| (path, cx.new(|_| Canvas::new(model, theme))))
+                .map(|(path, model)| {
+                    let title = path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    );
+                    (title, cx.new(|_| Canvas::new(model, theme)))
+                })
                 .collect();
             ShellFrame::new(tabs, shell_view, settings, window, cx)
         });
@@ -3014,7 +3131,13 @@ mod tests {
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
-                vec![(path, canvas)],
+                vec![(
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    canvas,
+                )],
                 shell_view,
                 ShellSettings::defaults(),
                 window,
@@ -3174,7 +3297,10 @@ mod tests {
         let second = PathBuf::from("/second/report.pdf");
 
         assert_eq!(tab_title(&first), tab_title(&second));
-        assert_ne!(tab_element_id(&first), tab_element_id(&second));
+        assert_ne!(
+            tab_element_id(EntityId::from(1u64)),
+            tab_element_id(EntityId::from(2u64))
+        );
     }
 
     #[test]
@@ -3258,7 +3384,13 @@ mod tests {
         let (frame, cx) = cx.add_window_view(move |window, cx| {
             let canvas = cx.new(|_| Canvas::new(model, theme));
             ShellFrame::new(
-                vec![(path, canvas)],
+                vec![(
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    canvas,
+                )],
                 shell_view,
                 ShellSettings::defaults(),
                 window,

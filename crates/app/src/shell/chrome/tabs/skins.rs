@@ -121,11 +121,19 @@ impl ShellFrame {
                 return;
             }
         };
-        let source = tab.source.clone();
+        let source = tab.path(cx);
+        let title = tab.title().to_owned();
         let directory = source
-            .parent()
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let chosen = cx.prompt_for_new_path(&directory, Some(&copy_name(&source, index)));
+        let chosen = cx.prompt_for_new_path(
+            &directory,
+            Some(&copy_name(
+                source.as_deref().unwrap_or_else(|| Path::new(&title)),
+                index,
+            )),
+        );
         cx.spawn(async move |frame, cx| {
             let Ok(Ok(Some(output))) = chosen.await else {
                 return;

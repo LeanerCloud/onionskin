@@ -190,7 +190,7 @@ impl ShellFrame {
             root = root.child(self.accessible_recent_menu());
         }
         if let Some(menu) = self.context_menus.tab_context_menu {
-            root = root.child(self.accessible_tab_context_menu(menu));
+            root = root.child(self.accessible_tab_context_menu(menu, cx));
         }
         if self.context_menus.canvas_context_menu.is_some() {
             root = root.child(self.accessible_canvas_context_menu(cx));
@@ -243,7 +243,7 @@ impl ShellFrame {
                 .enumerate()
                 .map(|(index, tab)| {
                     let element = A11yElement::new(
-                        tab_element_id(&tab.source),
+                        tab_element_id(tab.canvas.entity_id()),
                         Role::Tab,
                         tab.title().to_owned(),
                     )
@@ -325,8 +325,18 @@ impl ShellFrame {
         )
     }
 
-    pub(super) fn accessible_tab_context_menu(&self, menu: TabContextMenu) -> A11yElement {
-        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len())
+    pub(super) fn accessible_tab_context_menu(
+        &self,
+        menu: TabContextMenu,
+        cx: &App,
+    ) -> A11yElement {
+        let has_path = self
+            .tabs
+            .tabs()
+            .get(menu.tab_index)
+            .and_then(|tab| tab.path(cx))
+            .is_some();
+        let entries = tab_context_entries(menu.tab_index, self.tabs.tabs().len(), has_path)
             .expect("context-menu targets are validated when opened");
         A11yElement::new("tab-context-menu", Role::Menu, "Tab Commands").with_children(
             entries

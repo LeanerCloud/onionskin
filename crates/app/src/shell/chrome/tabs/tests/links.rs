@@ -9,6 +9,7 @@ use crate::shell::chrome::accessible::Activation;
 use crate::shell::chrome::link_dialog::{LinkAction, TargetKind};
 use crate::shell::chrome::web_link_dialog::{WebLinkAction, BLOCKED};
 use crate::shell::dialog::ShellDialog;
+use crate::shell::panes::{AttachmentAction, NavigationPane, PaneAction};
 use onionskin_core::links::{LinkLook, LinkTarget};
 use onionskin_core::{LinkRequest, PagePoint, PageRect};
 
@@ -288,7 +289,34 @@ fn a_clicked_link_is_changed_to_a_web_page_that_asks_before_it_opens(cx: &mut Te
 
 #[gpui::test]
 fn file_and_other_links_say_what_they_cannot_do(cx: &mut TestAppContext) {
-    let window = window(cx);
+    let dir = tempfile::tempdir().expect("dir");
+    let retained_dir = dir.keep();
+    let path = retained_dir.join("links.pdf");
+    let expected_path = path.clone();
+    std::fs::write(&path, document()).expect("writes");
+    let model = CanvasModel::new(
+        Document::open_path(&path).expect("opens"),
+        crate::build_registry(),
+        ViewSize {
+            width: 800.0,
+            height: 600.0,
+        },
+    )
+    .expect("builds");
+    let window = bound_window_with_models(
+        vec![(path, model)],
+        crate::config::ConfigPaths::default(),
+        cx,
+    )
+    .0;
+    window
+        .update(cx, |frame, _window, cx| {
+            assert_eq!(
+                frame.active_canvas().expect("a tab").read(cx).model.path(),
+                Some(expected_path)
+            );
+        })
+        .unwrap();
     linked(window, LinkTarget::File("notes.txt".into()), cx);
     request(window, LinkRequest::Follow(INSIDE), cx);
     assert!(notices(window, cx)
@@ -329,6 +357,48 @@ fn file_and_other_links_say_what_they_cannot_do(cx: &mut TestAppContext) {
         })
         .unwrap();
     assert!(error.expect("said").contains("not a page"));
+}
+
+#[gpui::test]
+fn pathless_attachment_refuses_relative_links_but_opens_absolute_pdfs(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("dir");
+    let absolute = dir.path().join("linked.pdf");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/seeds/hello.pdf"),
+        &absolute,
+    )
+    .expect("copies");
+    let window = bound_window_from_bytes(
+        vec![("parent.pdf", crate::shell::fixtures::attached_pdf_pdf())],
+        cx,
+    )
+    .0;
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Attachments), cx);
+            frame.run_activation(
+                Activation::Pane(PaneAction::Attachment(AttachmentAction::Open(0))),
+                window,
+                cx,
+            );
+            let before = frame.tabs.tabs().len();
+            frame.follow(LinkTarget::File("relative.pdf".into()), window, cx);
+            assert_eq!(frame.tabs.tabs().len(), before);
+            assert!(frame
+                .notices
+                .last()
+                .is_some_and(|notice| notice.contains("Save this document")));
+            frame.follow(
+                LinkTarget::File(absolute.to_string_lossy().into_owned()),
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    let count = window
+        .update(cx, |frame, _, _| frame.tabs.tabs().len())
+        .unwrap();
+    assert_eq!(count, 3);
 }
 
 #[gpui::test]

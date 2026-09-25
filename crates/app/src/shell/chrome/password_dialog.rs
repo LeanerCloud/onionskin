@@ -6,6 +6,7 @@
 //! permissions, the permissions password with all of them.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use accesskit::Role;
 use gpui::{div, px, Context, Entity, ParentElement as _, Styled as _};
@@ -16,6 +17,23 @@ use super::{SearchInput, ShellFrame, ThemeTokens};
 
 /// The password field's id.
 pub(in crate::shell) const PASSWORD_ID: &str = "document-password";
+
+/// A protected document waiting for its password, retaining attachment bytes
+/// across a parent-tab switch or retry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::shell) enum OpenTarget {
+    File(PathBuf),
+    Attachment { name: String, bytes: Arc<Vec<u8>> },
+}
+
+impl OpenTarget {
+    pub(in crate::shell) fn display_name(&self) -> String {
+        match self {
+            Self::File(path) => path.to_string_lossy().into_owned(),
+            Self::Attachment { name, .. } => name.clone(),
+        }
+    }
+}
 
 /// What a control in the prompt does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +49,7 @@ const BUTTONS: [(&str, &str, PasswordAction); 2] = [
 
 /// The prompt's state in the frame.
 pub(in crate::shell) struct PasswordPrompt {
-    pub(in crate::shell) path: PathBuf,
+    pub(in crate::shell) target: OpenTarget,
     pub(in crate::shell) input: Entity<SearchInput>,
     /// Whether the last password tried was wrong.
     pub(in crate::shell) wrong: bool,
@@ -40,13 +58,13 @@ pub(in crate::shell) struct PasswordPrompt {
 impl PasswordPrompt {
     /// What the prompt says above the field.
     pub(in crate::shell) fn message(&self) -> String {
-        message_for(&self.path)
+        message_for(&self.target.display_name())
     }
 }
 
-fn message_for(path: &std::path::Path) -> String {
-    let name = path.file_name().map_or_else(
-        || path.display().to_string(),
+fn message_for(name: &str) -> String {
+    let name = PathBuf::from(name).file_name().map_or_else(
+        || name.to_owned(),
         |name| name.to_string_lossy().into_owned(),
     );
     format!("'{name}' is protected. Enter a password to open it.")
@@ -118,9 +136,9 @@ mod tests {
     #[test]
     fn the_message_names_the_document() {
         assert_eq!(
-            message_for(std::path::Path::new("/a/b/plan.pdf")),
+            message_for("/a/b/plan.pdf"),
             "'plan.pdf' is protected. Enter a password to open it."
         );
-        assert!(message_for(std::path::Path::new("/")).contains("'/'"));
+        assert!(message_for("/").contains("'/'"));
     }
 }

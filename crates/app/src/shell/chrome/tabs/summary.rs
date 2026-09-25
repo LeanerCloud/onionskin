@@ -42,13 +42,16 @@ impl ShellFrame {
     /// Where the summary goes: beside the document, named after it, unless
     /// the user says otherwise.
     fn prompt_for_summary_output(&mut self, cx: &mut Context<Self>) {
-        let Some(source) = self.tabs.active().map(|tab| tab.source.clone()) else {
+        let Some(tab) = self.tabs.active() else {
             return;
         };
+        let source = tab.path(cx);
+        let title = tab.title().to_owned();
         let directory = source
-            .parent()
+            .as_deref()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let suggested = summary_name(&source);
+        let suggested = summary_name(source.as_deref().unwrap_or_else(|| Path::new(&title)));
         let chosen = cx.prompt_for_new_path(&directory, Some(&suggested));
         cx.spawn(async move |frame, cx| {
             let Ok(Ok(Some(output))) = chosen.await else {

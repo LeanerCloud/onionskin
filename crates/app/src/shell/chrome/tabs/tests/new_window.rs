@@ -129,6 +129,26 @@ fn each_window_keeps_its_own_view(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn save_as_updates_the_shared_new_window_title_and_path(cx: &mut TestAppContext) {
+    let (first, second) = two_windows(cx);
+    let dir = tempfile::tempdir().expect("dir");
+    let destination = dir.path().join("shared-copy.pdf");
+    let expected = destination.clone();
+    first
+        .update(cx, |frame, _window, cx| frame.save_active_as(cx))
+        .unwrap();
+    cx.simulate_new_path_selection(move |_| Some(destination));
+    cx.run_until_parked();
+    second
+        .update(cx, |frame, _window, cx| {
+            let tab = frame.tabs.active().expect("shared tab");
+            assert_eq!(tab.title(), "shared-copy.pdf");
+            assert_eq!(tab.canvas.read(cx).model.path(), Some(expected.clone()));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn closing_one_of_two_windows_asks_nothing_and_the_last_one_asks(cx: &mut TestAppContext) {
     let (first, second) = two_windows(cx);
     delete_second_page(first, cx);
