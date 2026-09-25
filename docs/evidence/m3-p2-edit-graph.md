@@ -105,3 +105,26 @@ full-corpus acceptance claim. The bounded save sweep recorded 192 clean and 5
 repaired cases; optional and capped corpus inputs were not a full-corpus run.
 The optional `qpdf --check` attachment check was unavailable, while the
 mandatory pypdf 6.10.0 readback ran and passed.
+
+## Slice 2 null-Info save and reopen verification (2026-09-25)
+
+This slice was verified against unchanged production at integrated base
+`e00eacea330349ae9917d2cd47c69d6c72a4b79f`. The literal fixture and the
+scan-repaired fixture both cover a null `/Info` entry. Each test groups the
+properties that matter: exact undo and redo, all saved objects, trailer
+equality after removing only the validated `OnionskinSection` stamp, `Info`
+reference identity, and `Info` and XMP field readback after save and reopen.
+
+The initial EPG0SA result rejected the planned save oracle because it required
+byte identity and treated the intentional save stamp as unchanged content. It
+was an oracle correction, not a production bugfix. The final save oracle checks
+the saved object graph and trailer while validating the stamp separately.
+
+The bounded run passed 63 tests in the six-target surrounding suite, including
+the two new scenarios, plus one exact generation-stamp test, for 64 distinct
+tests. The two new scenarios also passed in separate exact runs. The run was
+headless and made no GUI or full-corpus claim.
+The full revised-baseline evidence is
+`/tmp/claude/onionskin-transaction-slice2-revised-baseline.mCO84O`.
+The optional `qpdf --check` attachment check was unavailable. The mandatory
+pypdf 6.10.0 readback ran and passed.

@@ -831,6 +831,543 @@ fn orphan_scan_errors_restore_the_overlay_and_redo_tail() {
     assert_eq!(edit.history().entry(1), Some(&b_entry));
 }
 
+fn literal_info_null_document() -> Vec<u8> {
+    let mut bytes = common::pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>"
+            .to_vec(),
+        common::stream(""),
+    ]);
+    let old = b"trailer\n<< /Size 5 /Root 1 0 R >>\n";
+    let new = b"trailer\n<< /Size 5 /Root 1 0 R /Info null >>\n";
+    let matches: Vec<usize> = bytes
+        .windows(old.len())
+        .enumerate()
+        .filter_map(|(index, window)| (window == old).then_some(index))
+        .collect();
+    assert_eq!(matches.len(), 1);
+    bytes.splice(matches[0]..matches[0] + old.len(), new.iter().copied());
+    assert!(bytes
+        .windows(b"/Info null".len())
+        .any(|window| window == b"/Info null"));
+    bytes
+}
+
+#[test]
+fn literal_info_null_preserves_original_bytes_through_undo_redo() {
+    let original = literal_info_null_document();
+    let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+    let strict = open(&original);
+    assert!(strict.provenance().is_clean());
+    assert!(strict.trailer().get(b"Info").is_none());
+    assert_eq!(document.page_count(), 1);
+    assert_eq!(document.bytes().as_ref(), &original);
+    assert!(document.edit().overlay().is_empty());
+    assert_eq!(document.edit().history().reach(), 0);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    assert!(document.edit().history().is_at_saved_mark());
+    let (edit, base) = document.edit_mut();
+    assert!(section(base, edit).is_none());
+    let baseline_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("baseline preview")
+        .to_vec();
+    assert_eq!(baseline_preview, original);
+    assert_eq!(
+        document.info().expect("baseline info").description,
+        Default::default()
+    );
+    assert!(document.xmp().expect("baseline xmp").is_none());
+
+    let properties = onionskin_core::metadata::PropertiesEdit {
+        description: onionskin_core::metadata::Description {
+            title: Some("created".into()),
+            subject: Some("grouped".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    document
+        .edit_document("Document Properties", |tx| {
+            onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+        })
+        .expect("properties commit");
+    assert_eq!(document.edit().history().reach(), 1);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    let edited_ref = document
+        .structure()
+        .expect("edited structure")
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("edited Info reference");
+    let edited_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit).expect("edited section")
+    };
+    let edited_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("edited preview")
+        .to_vec();
+    assert_eq!(edited_preview, append(&original, edited_section.clone()));
+    assert_eq!(document.bytes().as_ref(), &original);
+    let reopened = open(&edited_preview);
+    assert_eq!(
+        reopened
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let info = reopened.get(edited_ref.number).expect("edited Info object");
+    assert_eq!(
+        info.object.as_dict().and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        info.object.as_dict().and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    assert_eq!(
+        document.info().expect("edited info").description,
+        properties.description
+    );
+    let edited_xmp = document.xmp().expect("edited xmp").expect("edited XMP");
+    assert_eq!(edited_xmp.title.as_deref(), Some("created"));
+    assert_eq!(edited_xmp.subject.as_deref(), Some("grouped"));
+    let edited_overlay = document.edit().overlay().clone();
+
+    assert!(document.undo().expect("undo"));
+    assert_eq!(document.edit().history().reach(), 0);
+    assert_eq!(document.edit().history().redo_reach(), 1);
+    assert!(document.edit().history().is_at_saved_mark());
+    assert!(document.edit().overlay().is_empty());
+    assert!(document.edit().trailer_edits().is_empty());
+    let undone_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit)
+    };
+    assert!(undone_section.is_none());
+    let undone_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("undone preview")
+        .to_vec();
+    assert_eq!(undone_preview, baseline_preview);
+    assert_eq!(document.bytes().as_ref(), &original);
+    let undone = open(&undone_preview);
+    assert!(undone.trailer().get(b"Info").is_none());
+    assert!(undone.xref().get(edited_ref.number).is_none());
+    assert_eq!(
+        document.info().expect("undone info").description,
+        Default::default()
+    );
+    assert!(document.xmp().expect("undone xmp").is_none());
+
+    assert!(document.redo().expect("redo"));
+    assert_eq!(document.edit().history().reach(), 1);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    assert_eq!(document.edit().overlay(), &edited_overlay);
+    let redone_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit).expect("redone section")
+    };
+    assert_eq!(redone_section, edited_section);
+    let redone_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("redone preview")
+        .to_vec();
+    assert_eq!(redone_preview, edited_preview);
+    assert_eq!(
+        open(&redone_preview)
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let redone_info = open(&redone_preview)
+        .get(edited_ref.number)
+        .expect("redone Info object");
+    assert_eq!(
+        redone_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        redone_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    assert_eq!(
+        document.info().expect("redone info").description,
+        properties.description
+    );
+    let redone_xmp = document.xmp().expect("redone xmp").expect("redone XMP");
+    assert_eq!(redone_xmp.title.as_deref(), Some("created"));
+    assert_eq!(redone_xmp.subject.as_deref(), Some("grouped"));
+
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("literal-null-info.pdf");
+    let mut file = DocumentFile::from_document(document);
+    let expected_start = {
+        let (_, base) = file.edit_mut();
+        base.next_section_start().expect("section start")
+    };
+    let outcome = file.save_as(&path).expect("save");
+    assert_eq!(outcome.sections_appended, 1);
+    assert!(outcome.saved_as);
+    let saved_bytes = std::fs::read(&path).expect("saved bytes");
+    assert!(saved_bytes.starts_with(&original));
+    let redone = open(&redone_preview);
+    let saved = open(&saved_bytes);
+    assert!(saved.provenance().is_clean());
+    let redone_numbers: Vec<u32> = redone.xref().iter().map(|(number, _)| number).collect();
+    let saved_numbers: Vec<u32> = saved.xref().iter().map(|(number, _)| number).collect();
+    assert_eq!(saved_numbers, redone_numbers);
+    for number in redone_numbers {
+        if number == 0 {
+            continue;
+        }
+        let expected = redone.get(number).expect("redone object");
+        let actual = saved.get(number).expect("saved object");
+        assert_eq!(actual.objref, expected.objref);
+        assert_eq!(actual.object, expected.object);
+    }
+    let expected_trailer = redone.trailer().clone();
+    assert!(!expected_trailer.contains(b"OnionskinSection"));
+    let mut saved_trailer = saved.trailer().clone();
+    let stamp = saved_trailer
+        .remove(b"OnionskinSection")
+        .expect("save stamp");
+    assert_eq!(saved_trailer, expected_trailer);
+    let stamp = stamp.as_dict().expect("save stamp dictionary");
+    assert_eq!(
+        stamp.get(b"Start"),
+        Some(&Object::Integer(expected_start as i64))
+    );
+    assert_eq!(
+        stamp.get(b"Producer"),
+        Some(&string(&format!("Onionskin {}", env!("CARGO_PKG_VERSION"))))
+    );
+    let Some(Object::String(date)) = stamp.get(b"Date") else {
+        panic!("save date")
+    };
+    assert!(date.starts_with(b"D:"));
+    assert_eq!(
+        saved.trailer().get(b"Info").and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let saved_info = saved.get(edited_ref.number).expect("saved Info object");
+    assert_eq!(
+        saved_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        saved_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    let mut reopened_file = Document::open_path(&path).expect("path reopen");
+    assert_eq!(
+        reopened_file.info().expect("saved info").description,
+        properties.description
+    );
+    let saved_xmp = reopened_file.xmp().expect("saved xmp").expect("saved XMP");
+    assert_eq!(saved_xmp.title.as_deref(), Some("created"));
+    assert_eq!(saved_xmp.subject.as_deref(), Some("grouped"));
+    assert!(file.edit().history().is_at_saved_mark());
+    assert!(!file.is_dirty());
+}
+
+#[test]
+fn scan_repaired_info_null_survives_undo_and_recreates_on_redo() {
+    let mut original = literal_info_null_document();
+    let matches: Vec<usize> = original
+        .windows(b"startxref".len())
+        .enumerate()
+        .filter_map(|(index, window)| (window == b"startxref").then_some(index))
+        .collect();
+    assert_eq!(matches.len(), 1);
+    original[matches[0]..matches[0] + b"startxref".len()].copy_from_slice(b"badxref!!");
+    assert!(original
+        .windows(b"/Info null".len())
+        .any(|window| window == b"/Info null"));
+    let repaired =
+        onionskin_cos::Document::open_repairing(Box::new(BytesSource::new(original.clone())))
+            .expect("repairing fixture opens");
+    let report = repaired.1.report().expect("repair report");
+    assert!(report.rebuilt_by_scan);
+    assert!(report
+        .reasons
+        .iter()
+        .any(|reason| matches!(reason, onionskin_cos::RepairReason::MissingStartxref)));
+    assert_eq!(repaired.0.trailer().get(b"Info"), Some(&Object::Null));
+    assert!(repaired.0.xref().get(5).is_none());
+    let mut document = Document::open_bytes(original.clone()).expect("core fixture opens");
+    assert_eq!(document.page_count(), 1);
+    let baseline_section = {
+        let (edit, base) = document.edit_mut();
+        let report = base.provenance().report().expect("core repair report");
+        assert!(report.rebuilt_by_scan);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|reason| matches!(reason, onionskin_cos::RepairReason::MissingStartxref)));
+        assert_eq!(base.trailer().get(b"Info"), Some(&Object::Null));
+        assert!(base.xref().get(5).is_none());
+        section(base, edit).expect("repair section")
+    };
+    assert!(document.edit().overlay().is_empty());
+    assert_eq!(document.edit().history().reach(), 0);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    assert!(document.edit().history().is_at_saved_mark());
+    assert_eq!(
+        document.info().expect("baseline info").description,
+        Default::default()
+    );
+    assert!(document.xmp().expect("baseline xmp").is_none());
+    let baseline_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("repair preview")
+        .to_vec();
+    assert_eq!(
+        baseline_preview,
+        append(&original, baseline_section.clone())
+    );
+    let baseline_reopened = open(&baseline_preview);
+    assert!(baseline_reopened.provenance().is_clean());
+    assert!(baseline_reopened.trailer().get(b"Info").is_none());
+    assert!(baseline_reopened.xref().get(5).is_none());
+    assert_eq!(document.bytes().as_ref(), &original);
+
+    let properties = onionskin_core::metadata::PropertiesEdit {
+        description: onionskin_core::metadata::Description {
+            title: Some("created".into()),
+            subject: Some("grouped".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    document
+        .edit_document("Document Properties", |tx| {
+            onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+        })
+        .expect("properties commit");
+    let edited_ref = document
+        .structure()
+        .expect("edited structure")
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("edited Info reference");
+    let edited_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit).expect("edited section")
+    };
+    let edited_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("edited preview")
+        .to_vec();
+    assert_eq!(edited_preview, append(&original, edited_section.clone()));
+    assert_eq!(document.bytes().as_ref(), &original);
+    assert_eq!(document.edit().history().reach(), 1);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    let edited_reopened = open(&edited_preview);
+    assert_eq!(
+        edited_reopened
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let edited_info = edited_reopened
+        .get(edited_ref.number)
+        .expect("edited Info object");
+    assert_eq!(
+        edited_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        edited_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    let edited_overlay = document.edit().overlay().clone();
+    assert_eq!(
+        document.info().expect("edited info").description,
+        properties.description
+    );
+    let edited_xmp = document.xmp().expect("edited xmp").expect("edited XMP");
+    assert_eq!(edited_xmp.title.as_deref(), Some("created"));
+    assert_eq!(edited_xmp.subject.as_deref(), Some("grouped"));
+
+    assert!(document.undo().expect("undo"));
+    assert_eq!(document.edit().history().reach(), 0);
+    assert_eq!(document.edit().history().redo_reach(), 1);
+    assert!(document.edit().history().is_at_saved_mark());
+    let undone_section = {
+        let (edit, base) = document.edit_mut();
+        Some(section(base, edit).expect("repair section after undo"))
+    };
+    assert_eq!(undone_section, Some(baseline_section.clone()));
+    let undone_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("undone preview")
+        .to_vec();
+    assert_eq!(undone_preview, baseline_preview);
+    let undone = open(&undone_preview);
+    assert!(undone.trailer().get(b"Info").is_none());
+    assert!(undone.xref().get(edited_ref.number).is_none());
+    assert_eq!(document.bytes().as_ref(), &original);
+    let (edit, base) = document.edit_mut();
+    assert_eq!(base.trailer().get(b"Info"), Some(&Object::Null));
+    assert!(section(base, edit).is_some());
+    assert!(document.edit().overlay().is_empty());
+    assert!(document.edit().trailer_edits().is_empty());
+    assert_eq!(
+        document.info().expect("undone info").description,
+        Default::default()
+    );
+    assert!(document.xmp().expect("undone xmp").is_none());
+
+    assert!(document.redo().expect("redo"));
+    assert_eq!(document.edit().history().reach(), 1);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    assert_eq!(document.edit().overlay(), &edited_overlay);
+    let redone_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit).expect("redone section")
+    };
+    assert_eq!(redone_section, edited_section);
+    let redone_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("redone preview")
+        .to_vec();
+    assert_eq!(redone_preview, edited_preview);
+    assert_eq!(
+        open(&redone_preview)
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let redone_info = open(&redone_preview)
+        .get(edited_ref.number)
+        .expect("redone Info object");
+    assert_eq!(
+        redone_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        redone_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    assert_eq!(
+        document.info().expect("redone info").description,
+        properties.description
+    );
+    let redone_xmp = document.xmp().expect("redone xmp").expect("redone XMP");
+    assert_eq!(redone_xmp.title.as_deref(), Some("created"));
+    assert_eq!(redone_xmp.subject.as_deref(), Some("grouped"));
+
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("repaired-null-info.pdf");
+    let mut file = DocumentFile::from_document(document);
+    let expected_start = {
+        let (_, base) = file.edit_mut();
+        base.next_section_start().expect("section start")
+    };
+    let outcome = file.save_as(&path).expect("save");
+    assert_eq!(outcome.sections_appended, 1);
+    assert!(outcome.saved_as);
+    let saved_bytes = std::fs::read(&path).expect("saved bytes");
+    assert!(saved_bytes.starts_with(&original));
+    let redone = open(&redone_preview);
+    let saved = open(&saved_bytes);
+    assert!(saved.provenance().is_clean());
+    let redone_numbers: Vec<u32> = redone.xref().iter().map(|(number, _)| number).collect();
+    let saved_numbers: Vec<u32> = saved.xref().iter().map(|(number, _)| number).collect();
+    assert_eq!(saved_numbers, redone_numbers);
+    for number in redone_numbers {
+        if number == 0 {
+            continue;
+        }
+        let expected = redone.get(number).expect("redone object");
+        let actual = saved.get(number).expect("saved object");
+        assert_eq!(actual.objref, expected.objref);
+        assert_eq!(actual.object, expected.object);
+    }
+    let expected_trailer = redone.trailer().clone();
+    assert!(!expected_trailer.contains(b"OnionskinSection"));
+    let mut saved_trailer = saved.trailer().clone();
+    let stamp = saved_trailer
+        .remove(b"OnionskinSection")
+        .expect("save stamp");
+    assert_eq!(saved_trailer, expected_trailer);
+    let stamp = stamp.as_dict().expect("save stamp dictionary");
+    assert_eq!(
+        stamp.get(b"Start"),
+        Some(&Object::Integer(expected_start as i64))
+    );
+    assert_eq!(
+        stamp.get(b"Producer"),
+        Some(&string(&format!("Onionskin {}", env!("CARGO_PKG_VERSION"))))
+    );
+    let Some(Object::String(date)) = stamp.get(b"Date") else {
+        panic!("save date")
+    };
+    assert!(date.starts_with(b"D:"));
+    assert_eq!(
+        saved.trailer().get(b"Info").and_then(Object::as_reference),
+        Some(edited_ref)
+    );
+    let saved_info = saved.get(edited_ref.number).expect("saved Info object");
+    assert_eq!(
+        saved_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Title")),
+        Some(&string("created"))
+    );
+    assert_eq!(
+        saved_info
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Subject")),
+        Some(&string("grouped"))
+    );
+    let mut reopened_file = Document::open_path(&path).expect("path reopen");
+    assert_eq!(
+        reopened_file.info().expect("saved info").description,
+        properties.description
+    );
+    let saved_xmp = reopened_file.xmp().expect("saved xmp").expect("saved XMP");
+    assert_eq!(saved_xmp.title.as_deref(), Some("created"));
+    assert_eq!(saved_xmp.subject.as_deref(), Some("grouped"));
+    assert!(file.edit().history().is_at_saved_mark());
+    assert!(!file.is_dirty());
+}
+
 // ---------------------------------------------------------------------------
 // The trailer
 // ---------------------------------------------------------------------------
