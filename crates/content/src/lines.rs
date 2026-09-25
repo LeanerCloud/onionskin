@@ -4,9 +4,9 @@
 //! enough to read as one piece of text. Runs join a line under the rule
 //! `search::flatten` uses for its separators (the same baseline, and a gap
 //! forward of less than a column's width), with one addition: a jump of more
-//! than three line heights forward starts a new line, because two columns
-//! drawn on one baseline are two pieces of text, and editing one must not
-//! rewrite the other.
+//! than three line heights forward starts a new line. Editing also splits
+//! between ordinary and ActualText-protected runs, so protected replacement
+//! text and ordinary text are never rewritten as one editable target.
 
 use std::ops::Range;
 
@@ -22,7 +22,8 @@ pub struct LineGlyph {
     /// `(run, glyph)` in the page's extraction order.
     pub at: (usize, usize),
     pub quad: PageQuad,
-    /// What it spelled in [`TextLine::text`], or `None` when unmapped.
+    /// What it spelled in [`TextLine::text`], or `None` when unmapped or
+    /// ActualText-protected.
     pub range: Option<Range<usize>>,
 }
 
@@ -35,8 +36,8 @@ pub struct TextLine {
 }
 
 impl TextLine {
-    /// Whether every glyph says what character it is: a line with one that
-    /// does not cannot be rewritten, since its text is not known.
+    /// Whether every glyph maps to editable decoded text. ActualText-protected
+    /// and unmapped glyphs return false.
     pub fn is_mapped(&self) -> bool {
         self.glyphs.iter().all(|glyph| glyph.range.is_some())
     }

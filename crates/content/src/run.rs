@@ -159,6 +159,10 @@ pub struct PageText {
 }
 
 impl PageText {
+    /// Expands a valid ordered contiguous slice from this unchanged page to
+    /// include every run belonging to each touched ActualText occurrence.
+    /// Ordinary glyphs remain clipped, and returned ranges are nonempty and in
+    /// page order.
     pub fn selection_members(&self, selected: &[(usize, usize)]) -> Vec<SelectedRun> {
         let mut selected_ranges = HashMap::new();
         let mut associations = HashSet::new();

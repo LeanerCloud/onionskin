@@ -7,12 +7,11 @@
 //! a highlight lands on the right glyphs and a redaction rewrites the right
 //! bytes.
 //!
-//! One thing it does not do, and the reason it is only half of the bidi story:
-//! a hit has to sit in one run. A producer that emits a right-to-left line as
-//! several visually ordered runs stores it in an order no substring search over
-//! the joined text can find, and reordering visual runs back to logical order
-//! needs a bidi implementation. Folding the presentation forms (below) covers
-//! the single-run case; `known-issues.md` carries the rest.
+//! Pages are flattened into semantic pieces in extraction order before
+//! matching, so a hit may cross showing operators or ActualText members. The
+//! search does not reorder visually ordered right-to-left runs back to logical
+//! order; that needs a bidi implementation. Folding the presentation forms
+//! (below) covers the single-run case; `known-issues.md` carries the rest.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -45,7 +44,11 @@ pub struct SearchOptions {
     pub include_comments: bool,
 }
 
-/// One hit, with everything a caller needs to draw it and to change it.
+/// One hit with conservative display geometry and source provenance.
+///
+/// ActualText substring matches cover every glyph in the owned replacement
+/// span. The geometry is suitable for display and conservative redaction
+/// coverage; it is not a precise editable range.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Match {
     pub page: PageIndex,
@@ -94,8 +97,8 @@ pub struct Flattened {
 }
 
 impl PageText {
-    /// The page's text with the runs joined, and the map back from a byte
-    /// offset in that string to the run it came from.
+    /// The page's text with the runs joined, and the map from a byte offset
+    /// in that string to its semantic piece and member coverage.
     pub fn flatten(&self) -> Flattened {
         flatten(self)
     }
@@ -113,6 +116,8 @@ impl Flattened {
 }
 
 impl FlatPiece {
+    /// `range` indexes [`Flattened::text`]. `page` must be the same unchanged
+    /// extraction used to build this [`Flattened`] value.
     pub fn coverage_for<'a>(&self, page: &'a PageText, range: Range<usize>) -> Vec<CoveredRun<'a>> {
         let start = range.start.max(self.range.start);
         let end = range.end.min(self.range.end);
