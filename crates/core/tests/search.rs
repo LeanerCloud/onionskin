@@ -1,6 +1,8 @@
 //! P9's document-level search: off the calling thread, incremental, agreeing
 //! with the per-page search, and loud about a page it could not read.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -74,6 +76,80 @@ fn every_page_agrees_with_the_per_page_search() {
         expected.iter().map(Vec::len).sum::<usize>()
     );
     assert!(doc.search().failures().is_empty());
+}
+
+#[test]
+fn actual_text_worker_search_covers_every_member() {
+    let content =
+        "BT /F1 10 Tf 10 100 Td /Span << /ActualText (XY) >> BDC (AB) Tj 1 0 0 1 100 50 Tm (CD) Tj EMC ET";
+    let mut doc = Document::open_bytes(common::pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_vec(),
+        common::stream(content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec(),
+    ]))
+    .expect("fixture opens");
+    let page = doc.page_text(0).expect("page text reads").clone();
+    assert_eq!(page.runs.len(), 2);
+    assert_eq!(page.runs[0].glyphs.len(), 2);
+    assert_eq!(page.runs[1].glyphs.len(), 2);
+    assert_eq!(page.runs[0].decoded_text, "AB");
+    assert_eq!(page.runs[1].decoded_text, "CD");
+    assert_eq!(
+        page.runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+            .collect::<Vec<_>>(),
+        vec![65, 66, 67, 68]
+    );
+    assert_eq!(page.runs[0].font_name, "Courier");
+    assert_eq!(page.runs[1].font_name, "Courier");
+    assert_eq!(page.runs[0].size, 10.0);
+    assert_eq!(page.runs[1].size, 10.0);
+    assert!(page.runs[0].actual_text.is_some());
+    assert_eq!(page.runs[0].actual_text, page.runs[1].actual_text);
+    for (run, expected) in [
+        (&page.runs[0], b"(AB) Tj" as &[u8]),
+        (&page.runs[1], b"(CD) Tj"),
+    ] {
+        assert_eq!(run.provenance.stream, onionskin_cos::ObjRef::new(4, 0));
+        let start = run.provenance.decoded.start as usize;
+        let end = run.provenance.decoded.end as usize;
+        assert_eq!(&content.as_bytes()[start..end], expected);
+    }
+    let source_quads: Vec<_> = page
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+        .collect();
+    let expected_corners = [
+        [(10.0, 107.5), (16.0, 107.5), (10.0, 97.5), (16.0, 97.5)],
+        [(16.0, 107.5), (22.0, 107.5), (16.0, 97.5), (22.0, 97.5)],
+        [(100.0, 57.5), (106.0, 57.5), (100.0, 47.5), (106.0, 47.5)],
+        [(106.0, 57.5), (112.0, 57.5), (106.0, 47.5), (112.0, 47.5)],
+    ];
+    assert_eq!(source_quads.len(), expected_corners.len());
+    for (quad, expected) in source_quads.iter().zip(expected_corners) {
+        for (&actual, &expected) in quad.corners.iter().zip(expected.iter()) {
+            assert!((actual.0 - expected.0).abs() <= 1e-9);
+            assert!((actual.1 - expected.1).abs() <= 1e-9);
+        }
+    }
+
+    for needle in ["XY", "X", "Y"] {
+        drain(&mut doc, needle, SearchOptions::default(), 0);
+        assert!(!doc.search().is_running());
+        assert_eq!(doc.search().searched_pages(), 1);
+        assert!(doc.search().failures().is_empty());
+        assert_eq!(doc.search().len(), 1);
+        let matches = doc.search().matches_on(0);
+        assert_eq!(matches.len(), 1);
+        let hit = &matches[0];
+        assert_eq!(hit.page, 0);
+        assert_eq!(hit.text, needle);
+        assert_eq!(hit.quads, source_quads);
+    }
 }
 
 #[test]

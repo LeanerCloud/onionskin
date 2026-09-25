@@ -450,3 +450,190 @@ fn actual_text_partial_ordinary_neighbors_remain_clipped() {
         assert_eq!(joined, selection.text);
     }
 }
+
+#[test]
+fn actual_text_nested_members_do_not_select_the_hole() {
+    let mut doc = Document::open_bytes(actual_text_page(
+        "BT /F1 10 Tf 10 100 Td /Span << /ActualText (OUT) >> BDC (A) Tj /Span << /ActualText (INNER) >> BDC (H) Tj EMC (B) Tj EMC ET",
+    ))
+    .expect("opens");
+    let page = doc.page_text(0).expect("reads").clone();
+    let order = glyph_order(&page);
+    assert_eq!(order, vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(page.runs.len(), 3);
+    assert!(page.runs.iter().all(|run| run.glyphs.len() == 1));
+    assert_eq!(page.runs[0].decoded_text, "A");
+    assert_eq!(page.runs[1].decoded_text, "H");
+    assert_eq!(page.runs[2].decoded_text, "B");
+    assert!(page.runs.iter().all(|run| run.font_name == "Courier"));
+    assert!(page.runs.iter().all(|run| run.size == 10.0));
+    assert!(page.runs.iter().all(|run| run.actual_text.is_some()));
+    assert_eq!(page.runs[0].actual_text, page.runs[2].actual_text);
+    assert_ne!(page.runs[0].actual_text, page.runs[1].actual_text);
+    let expected_corners = [
+        [(10.0, 107.5), (16.0, 107.5), (10.0, 97.5), (16.0, 97.5)],
+        [(16.0, 107.5), (22.0, 107.5), (16.0, 97.5), (22.0, 97.5)],
+        [(22.0, 107.5), (28.0, 107.5), (22.0, 97.5), (28.0, 97.5)],
+    ];
+    let verified_quads = verified_source_quads(&page, &expected_corners);
+    let expected_quads = vec![verified_quads[0], verified_quads[2]];
+    let selections = [
+        selection_for(&page, &order, 0..=0),
+        selection_for(&page, &order, 2..=2),
+    ];
+    assert_eq!(
+        selections
+            .iter()
+            .map(|selection| selection.quads.clone())
+            .collect::<Vec<_>>(),
+        vec![expected_quads.clone(), expected_quads]
+    );
+    for selection in &selections {
+        assert_eq!(selection.page, 0);
+        assert_eq!(selection.text, "OUT");
+        assert_eq!(selection.spans.len(), 1);
+        assert_eq!(selection.spans[0].text, "OUT");
+        assert_eq!(selection.spans[0].font, "Courier");
+        assert_eq!(selection.spans[0].size, 10.0);
+        let joined: String = selection
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect();
+        assert_eq!(joined, selection.text);
+    }
+}
+
+#[test]
+fn actual_text_separated_geometry_keeps_member_quads() {
+    let mut doc = Document::open_bytes(actual_text_page(
+        "BT /F1 10 Tf 10 100 Td /Span << /ActualText (XY) >> BDC (AB) Tj 1 0 0 1 100 50 Tm (CD) Tj EMC ET",
+    ))
+    .expect("opens");
+    let page = doc.page_text(0).expect("reads").clone();
+    let order = glyph_order(&page);
+    assert_eq!(order, vec![(0, 0), (0, 1), (1, 0), (1, 1)]);
+    assert_eq!(page.runs.len(), 2);
+    assert_eq!(page.runs[0].glyphs.len(), 2);
+    assert_eq!(page.runs[1].glyphs.len(), 2);
+    assert_eq!(page.runs[0].decoded_text, "AB");
+    assert_eq!(page.runs[1].decoded_text, "CD");
+    assert_eq!(page.runs[0].font_name, "Courier");
+    assert_eq!(page.runs[1].font_name, "Courier");
+    assert_eq!(page.runs[0].size, 10.0);
+    assert_eq!(page.runs[1].size, 10.0);
+    assert!(page.runs[0].actual_text.is_some());
+    assert_eq!(page.runs[0].actual_text, page.runs[1].actual_text);
+    let expected_corners = [
+        [(10.0, 107.5), (16.0, 107.5), (10.0, 97.5), (16.0, 97.5)],
+        [(16.0, 107.5), (22.0, 107.5), (16.0, 97.5), (22.0, 97.5)],
+        [(100.0, 57.5), (106.0, 57.5), (100.0, 47.5), (106.0, 47.5)],
+        [(106.0, 57.5), (112.0, 57.5), (106.0, 47.5), (112.0, 47.5)],
+    ];
+    let expected_quads = verified_source_quads(&page, &expected_corners);
+    let indexed = selection_for(&page, &order, 2..=2);
+    let point = PagePoint {
+        page: 0,
+        x: 103.0,
+        y: 52.0,
+    };
+    let dragged = select_between(&page, point, point).expect("selects");
+    let selections = [indexed, dragged];
+    assert_eq!(
+        selections
+            .iter()
+            .map(|selection| selection.quads.clone())
+            .collect::<Vec<_>>(),
+        vec![expected_quads.clone(), expected_quads]
+    );
+    for selection in &selections {
+        assert_eq!(selection.page, 0);
+        assert_eq!(selection.text, "XY");
+        assert_eq!(selection.spans.len(), 1);
+        assert_eq!(selection.spans[0].text, "XY");
+        assert_eq!(selection.spans[0].font, "Courier");
+        assert_eq!(selection.spans[0].size, 10.0);
+        let joined: String = selection
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect();
+        assert_eq!(joined, selection.text);
+    }
+}
+
+#[test]
+fn actual_text_unmapped_continuation_remains_selectable() {
+    let mut doc = Document::open_bytes(common::pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >> /Contents 4 0 R >>".to_vec(),
+        common::stream(
+            "BT /F1 10 Tf 10 100 Td /Span << /ActualText (XY) >> BDC (A) Tj /F3 10 Tf (A) Tj EMC ET",
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>".to_vec(),
+        b"<< /Type /Font /Subtype /TrueType /BaseFont /Sub /FirstChar 65 /LastChar 65 /Widths [500] /Encoding << /Differences [65 /g5] >> >>".to_vec(),
+    ]))
+    .expect("opens");
+    let page = doc.page_text(0).expect("reads").clone();
+    let order = glyph_order(&page);
+    assert_eq!(order, vec![(0, 0), (1, 0)]);
+    assert_eq!(page.runs.len(), 2);
+    assert_eq!(page.runs[0].glyphs.len(), 1);
+    assert_eq!(page.runs[1].glyphs.len(), 1);
+    assert_eq!(page.runs[0].decoded_text, "A");
+    assert!(page.runs[1].decoded_text.is_empty());
+    assert_eq!(page.runs[0].glyphs[0].code, 65);
+    assert_eq!(page.runs[1].glyphs[0].code, 65);
+    assert!(!page.runs[0].glyphs[0].is_unmapped());
+    assert!(page.runs[1].glyphs[0].is_unmapped());
+    assert_eq!(page.runs[0].font_name, "Courier");
+    assert_eq!(page.runs[1].font_name, "Sub");
+    assert_eq!(page.runs[0].size, 10.0);
+    assert_eq!(page.runs[1].size, 10.0);
+    assert!(page.runs[0].actual_text.is_some());
+    assert_eq!(page.runs[0].actual_text, page.runs[1].actual_text);
+    assert!(!page.has_unmapped());
+    assert_eq!(
+        page.warnings
+            .iter()
+            .filter(|warning| matches!(warning, onionskin_content::Warning::UnmappedGlyphs { font, count: 1 } if font == "Sub"))
+            .count(),
+        1
+    );
+    let expected_corners = [
+        [(10.0, 107.5), (16.0, 107.5), (10.0, 97.5), (16.0, 97.5)],
+        [(16.0, 107.5), (21.0, 107.5), (16.0, 97.5), (21.0, 97.5)],
+    ];
+    let expected_quads = verified_source_quads(&page, &expected_corners);
+    let indexed = selection_for(&page, &order, 1..=1);
+    let point = PagePoint {
+        page: 0,
+        x: 18.0,
+        y: 102.0,
+    };
+    let dragged = select_between(&page, point, point).expect("selects");
+    let selections = [indexed, dragged];
+    assert_eq!(
+        selections
+            .iter()
+            .map(|selection| selection.quads.clone())
+            .collect::<Vec<_>>(),
+        vec![expected_quads.clone(), expected_quads]
+    );
+    for selection in &selections {
+        assert_eq!(selection.page, 0);
+        assert_eq!(selection.text, "XY");
+        assert_eq!(selection.spans.len(), 1);
+        assert_eq!(selection.spans[0].text, "XY");
+        assert_eq!(selection.spans[0].font, "Courier");
+        assert_eq!(selection.spans[0].size, 10.0);
+        let joined: String = selection
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect();
+        assert_eq!(joined, selection.text);
+    }
+}
