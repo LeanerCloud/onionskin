@@ -9,8 +9,8 @@ use onionskin_core::{
     Attachment, Document, ExportSnapshot, FitMode, GeometryError, Layer, ObjRef, OutlineItem,
     PageAlignment, PageGeometry, PageGeometryResponse, PageIndex, PageLayoutMode, PagePlacement,
     PagePoint, PageQuad, PageRect, PageRenderRect, Provenance, RenderRequest, RenderResponse,
-    SearchOptions, SearchState, ThumbnailRequest, ThumbnailResponse, ViewHistory, ViewPoint,
-    ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
+    RunCoverage, SearchOptions, SearchState, ThumbnailRequest, ThumbnailResponse, ViewHistory,
+    ViewPoint, ViewRect, ViewRotation, ViewSize, Viewport, ViewportError,
 };
 use onionskin_plugin_api::{
     CodecPlugin, CommandCtx, CommandError, ExportError, ExportOutputKind, ExportRequest, Overlay,
@@ -60,11 +60,11 @@ pub struct PageOutline {
     pub text: Result<Vec<TextOutline>, String>,
 }
 
-/// One run of text on a page.
+/// One semantic piece of text on a page.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextOutline {
     pub text: String,
-    /// `None` when the run's quads name a page the layout is not placing, so
+    /// `None` when the piece's quads name a page the layout is not placing, so
     /// there is no rectangle to give rather than a wrong one.
     pub rect: Option<ViewRect>,
 }
@@ -941,34 +941,44 @@ impl CanvasModel {
         Ok(pages)
     }
 
-    /// One entry per run of text on a page, with the rectangle it occupies.
+    /// One entry per semantic text piece on a page, with the rectangle it occupies.
     ///
     /// A page is not one label: a screen reader that gets the whole page as a
-    /// single string cannot navigate it. Runs are what the extractor already
-    /// produces and what the selection tool already works in, so they are the
-    /// unit here too.
+    /// single string cannot navigate it. Pieces preserve replacement text and
+    /// member geometry, so they are the unit here too.
     ///
-    /// The words and their page-space quads are cached because they do not
-    /// change while the document is open, and this runs on every frame; only
-    /// the mapping into the view is redone, because that is what scrolling
-    /// changes.
+    /// The words and their page-space quads are cached until the page text is
+    /// invalidated, and this runs on every frame; only the mapping into the
+    /// view is redone, because that is what scrolling changes.
     fn page_runs(&mut self, page: PageIndex) -> Result<Vec<TextOutline>, String> {
         if !self.page_words.contains_key(&page) {
-            let words = self
-                .document
-                .borrow_mut()
-                .page_text(page)
-                .map_err(|error| error.to_string())?
-                .runs
-                .iter()
-                .filter(|run| !run.decoded_text.trim().is_empty())
-                .map(|run| {
-                    (
-                        run.decoded_text.clone(),
-                        run.quads_for_decoded(0..run.decoded_text.len()),
-                    )
-                })
-                .collect();
+            let words = {
+                let mut document = self.document.borrow_mut();
+                let text = document
+                    .page_text(page)
+                    .map_err(|error| error.to_string())?;
+                let flat = text.flatten();
+                flat.pieces()
+                    .iter()
+                    .filter_map(|piece| {
+                        let label = &flat.text[piece.range.clone()];
+                        if label.trim().is_empty() {
+                            return None;
+                        }
+                        let quads = piece
+                            .coverage_for(text, piece.range.clone())
+                            .into_iter()
+                            .flat_map(|covered| match covered.coverage {
+                                RunCoverage::Decoded(local) => covered.run.quads_for_decoded(local),
+                                RunCoverage::WholeActualText => {
+                                    covered.run.glyphs.iter().map(|glyph| glyph.quad).collect()
+                                }
+                            })
+                            .collect();
+                        Some((label.to_owned(), quads))
+                    })
+                    .collect()
+            };
             self.page_words.insert(page, words);
         }
         // Split from the insert above so the borrow of `document` ends before
@@ -5890,6 +5900,34 @@ mod tests {
         );
     }
 
+    fn assert_quad_bounds(quads: &[PageQuad], expected: &[(f64, f64, f64, f64)]) {
+        assert_eq!(quads.len(), expected.len());
+        for (quad, &(x0, x1, y0, y1)) in quads.iter().zip(expected.iter()) {
+            let (actual_x0, actual_x1) = quad
+                .corners
+                .iter()
+                .map(|(x, _)| *x)
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), x| {
+                    (min.min(x), max.max(x))
+                });
+            let (actual_y0, actual_y1) = quad
+                .corners
+                .iter()
+                .map(|(_, y)| *y)
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), y| {
+                    (min.min(y), max.max(y))
+                });
+            for (actual, expected) in [
+                (actual_x0, x0),
+                (actual_x1, x1),
+                (actual_y0, y0),
+                (actual_y1, y1),
+            ] {
+                assert!((actual - expected).abs() < 1e-4, "{actual} != {expected}");
+            }
+        }
+    }
+
     #[test]
     fn replacing_a_tile_replaces_its_gpui_image() {
         let mut store = TileStore::new();
@@ -6841,6 +6879,159 @@ mod tests {
         let page = described[0].rect;
         assert!(rect.origin.x >= page.origin.x - 1.0);
         assert!(rect.origin.y >= page.origin.y - 1.0);
+    }
+
+    #[test]
+    fn actual_text_accessibility_uses_all_member_geometry() {
+        let mut model = model_from(assembled_pdf(
+            &["BT /F1 10 Tf 10 100 Td /Span << /ActualText (XY) >> BDC (AB) Tj 1 0 0 1 100 50 Tm (CD) Tj EMC ET"],
+            1,
+        ));
+        settle_geometry(&mut model);
+        let page = model
+            .document
+            .borrow_mut()
+            .page_text(0)
+            .expect("page text reads")
+            .clone();
+        assert_eq!(page.runs.len(), 2);
+        assert!(page.runs.iter().all(|run| run.glyphs.len() == 2));
+        assert_eq!(
+            page.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.code))
+                .collect::<Vec<_>>(),
+            vec![65, 66, 67, 68]
+        );
+        assert_eq!(page.runs[0].decoded_text, "AB");
+        assert_eq!(page.runs[1].decoded_text, "CD");
+        assert!(page.runs[0].actual_text.is_some());
+        assert_eq!(page.runs[0].actual_text, page.runs[1].actual_text);
+        let source_quads: Vec<_> = page
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect();
+        let expected_bounds = [
+            (10.0, 16.67, 97.5, 107.5),
+            (16.67, 23.34, 97.5, 107.5),
+            (100.0, 107.22, 47.5, 57.5),
+            (107.22, 114.44, 47.5, 57.5),
+        ];
+        assert_quad_bounds(&source_quads, &expected_bounds);
+
+        let described = model.accessible_pages(true).expect("the pages describe");
+        assert_eq!(described.len(), 1);
+        let labels = described[0].text.as_ref().expect("the text reads");
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].text, "XY");
+        let cached = model.page_words.get(&0).expect("page text is cached");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].0, "XY");
+        assert_eq!(cached[0].1, source_quads);
+        let expected_rect = union_rect(
+            &model
+                .viewport
+                .page_quad_rects(0, &cached[0].1)
+                .expect("source quads map"),
+        )
+        .expect("source quads have bounds");
+        assert_rect_close(
+            labels[0].rect.expect("the label has a rectangle"),
+            expected_rect,
+        );
+    }
+
+    #[test]
+    fn actual_text_accessibility_keeps_repeated_form_occurrences_separate() {
+        let form_content =
+            "BT /F1 10 Tf 10 100 Td /Span << /ActualText (XY) >> BDC (A) Tj (B) Tj EMC ET";
+        let form_stream = format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Length {} >>\nstream\n{}\nendstream",
+            form_content.len(),
+            form_content
+        );
+        let page_content = "q /Fm Do Q q 1 0 0 1 0 -30 cm /Fm Do Q";
+        let page_stream = format!(
+            "<< /Length {} >>\nstream\n{}\nendstream",
+            page_content.len(),
+            page_content
+        );
+        let mut model = model_from(crate::shell::fixtures::pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /XObject << /Fm 6 0 R >> >> /Contents 4 0 R >>",
+            page_stream.as_bytes(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+            form_stream.as_bytes(),
+        ]));
+        settle_geometry(&mut model);
+        let page = model
+            .document
+            .borrow_mut()
+            .page_text(0)
+            .expect("page text reads")
+            .clone();
+        assert_eq!(page.runs.len(), 4);
+        assert!(page.runs.iter().all(|run| run.glyphs.len() == 1));
+        assert_eq!(
+            page.runs
+                .iter()
+                .map(|run| run.glyphs[0].code)
+                .collect::<Vec<_>>(),
+            vec![65, 66, 65, 66]
+        );
+        assert_eq!(
+            page.runs
+                .iter()
+                .map(|run| run.decoded_text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "A", "B"]
+        );
+        assert!(page.runs.iter().all(|run| run.actual_text.is_some()));
+        assert_eq!(page.runs[0].actual_text, page.runs[1].actual_text);
+        assert_eq!(page.runs[2].actual_text, page.runs[3].actual_text);
+        assert_ne!(page.runs[0].actual_text, page.runs[2].actual_text);
+        assert_eq!(page.runs[0].provenance, page.runs[2].provenance);
+        assert_eq!(page.runs[1].provenance, page.runs[3].provenance);
+        let source_quads: Vec<_> = page
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.quad))
+            .collect();
+        let expected_bounds = [
+            (10.0, 16.0, 97.5, 107.5),
+            (16.0, 22.0, 97.5, 107.5),
+            (10.0, 16.0, 67.5, 77.5),
+            (16.0, 22.0, 67.5, 77.5),
+        ];
+        assert_quad_bounds(&source_quads, &expected_bounds);
+
+        let described = model.accessible_pages(true).expect("the pages describe");
+        assert_eq!(described.len(), 1);
+        let labels = described[0].text.as_ref().expect("the text reads");
+        assert_eq!(labels.len(), 2);
+        assert!(labels.iter().all(|label| label.text == "XY"));
+        assert_ne!(labels[0].rect, labels[1].rect);
+        let cached = model.page_words.get(&0).expect("page text is cached");
+        assert_eq!(cached.len(), 2);
+        assert_eq!(cached[0].0, "XY");
+        assert_eq!(cached[1].0, "XY");
+        assert_eq!(cached[0].1, source_quads[0..2].to_vec());
+        assert_eq!(cached[1].1, source_quads[2..4].to_vec());
+        for (label, quads) in labels.iter().zip([&cached[0].1, &cached[1].1]) {
+            let expected_rect = union_rect(
+                &model
+                    .viewport
+                    .page_quad_rects(0, quads)
+                    .expect("source quads map"),
+            )
+            .expect("source quads have bounds");
+            assert_rect_close(
+                label.rect.expect("the label has a rectangle"),
+                expected_rect,
+            );
+        }
     }
 
     /// A page whose text will not read reports why, rather than reading as a

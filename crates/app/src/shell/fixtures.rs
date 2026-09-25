@@ -9,7 +9,7 @@
 
 /// Assemble numbered objects, in order, into a document whose `/Root` is
 /// object 1 and whose cross-reference table is correct.
-fn pdf(objects: &[&[u8]]) -> Vec<u8> {
+pub(in crate::shell) fn pdf(objects: &[&[u8]]) -> Vec<u8> {
     pdf_with_trailer(objects, "")
 }
 
