@@ -69,3 +69,39 @@ three relations rather than printing them.
 - Nothing here exercises a save path end to end beyond appending one section to
   a byte buffer and reopening it. P3 owns the save, and the `edit, save, undo,
   save` object-graph comparison the plan assigns to P3 is still P3's to write.
+
+## macOS headless rollback verification (2026-09-25)
+
+This section records the uncommitted candidate at base `27a9953` with source
+diff `7cd231cea2fd44b61b1208a20230dd528acd99face4ad4b70235e700ba336cb9`.
+It preserves the historical Linux evidence above; it does not replace it or
+claim GUI, native-app, full-corpus, hosted-CI, or Windows verification.
+
+The rollback correction restores the exact overlay representation captured at
+transaction entry. It restores whether each object or trailer slot was absent,
+present, or explicitly cleared, while also restoring the reservation counter.
+The retained history, redo tail, epoch, dirty state, and original bytes remain
+unchanged after closure errors and orphan-scan errors.
+
+The retained macOS headless evidence is:
+
+- Baseline `/tmp/claude/onionskin-transaction-slice1-baseline.z8Eh7I`: one
+  exact test passed and the document projection test produced the intended
+  unchanged-production RED at the exact overlay assertion.
+- Supplemental baseline
+  `/tmp/claude/onionskin-transaction-supplemental-baseline.2uJqe6`: both exact
+  tests produced the intended REDs. The first exposed leaked base-object and
+  absent-trailer membership; the second exposed the orphan-scan rollback leak.
+- GREEN run `/tmp/claude/onionskin-transaction-abort-green.HtNZTv`: all four
+  exact rollback tests passed, and the bounded 13-target core suite passed 136
+  tests, including those same four tests. The exact tests cover redo and counter restoration,
+  epoch and preview stability, fresh section projection, strict COS reopen,
+  and the public save/reopen path. The orphan fixture separately proves that
+  the closure body completed before the malformed reachable object caused the
+  orphan scan error.
+
+The tests are headless. They do not exercise native UI behavior or establish a
+full-corpus acceptance claim. The bounded save sweep recorded 192 clean and 5
+repaired cases; optional and capped corpus inputs were not a full-corpus run.
+The optional `qpdf --check` attachment check was unavailable, while the
+mandatory pypdf 6.10.0 readback ran and passed.

@@ -116,14 +116,14 @@ impl EditSession {
             index: BTreeMap::new(),
         };
         let outcome = body(&mut tx).and_then(|value| tx.drop_orphans().map(|()| value));
-        let changes = tx.finish();
         match outcome {
             Err(error) => {
-                rollback(&mut self.overlay, &changes);
+                tx.abort();
                 self.overlay.set_next_number(reserved_before);
                 Err(error)
             }
             Ok(value) => {
+                let changes = tx.finish();
                 self.epoch += 1;
                 self.overlay.collapse(base)?;
                 let kept: Vec<Change> = changes.into_iter().filter(|c| !c.is_noop()).collect();
@@ -212,7 +212,7 @@ pub struct Transaction<'a> {
     base: &'a CosDocument,
     overlay: &'a mut Overlay,
     changes: Vec<Change>,
-    index: BTreeMap<ChangeKey, usize>,
+    index: BTreeMap<ChangeKey, (usize, bool)>,
 }
 
 impl<'a> Transaction<'a> {
@@ -276,13 +276,30 @@ impl<'a> Transaction<'a> {
     /// first write's `before`, which is the state before the transaction, and
     /// takes the later `after`.
     fn record(&mut self, change: Change) {
+        let key = change.key();
+        let was_in_overlay = self
+            .index
+            .get(&key)
+            .map_or_else(|| self.overlay.contains_key(&key), |(_, present)| *present);
         self.overlay.apply(&change);
-        match self.index.get(&change.key()) {
-            Some(&at) => self.changes[at] = merge(&self.changes[at], change),
+        match self.index.get(&key) {
+            Some((at, _)) => self.changes[*at] = merge(&self.changes[*at], change),
             None => {
-                self.index.insert(change.key(), self.changes.len());
+                self.index.insert(key, (self.changes.len(), was_in_overlay));
                 self.changes.push(change);
             }
+        }
+    }
+
+    fn abort(self) {
+        let Transaction {
+            overlay,
+            changes,
+            index,
+            ..
+        } = self;
+        for (_, (at, was_in_overlay)) in index {
+            overlay.revert_transaction(&changes[at], was_in_overlay);
         }
     }
 

@@ -10,7 +10,11 @@
 
 use std::collections::BTreeMap;
 
-use onionskin_core::{Change, DocumentEdit, EditSession, ObjectState};
+mod common;
+
+use onionskin_core::{
+    AnnotationFilter, Change, Document, DocumentEdit, DocumentFile, EditSession, Error, ObjectState,
+};
 use onionskin_corpus_testing::seed;
 use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, Object, PendingEdit};
 
@@ -330,6 +334,501 @@ fn an_aborted_transaction_leaves_the_overlay_and_the_counter_unchanged() {
         1,
         "an aborted transaction records no entry"
     );
+}
+
+#[test]
+fn closure_errors_preserve_an_applied_overlay_and_its_redo_tail() {
+    let original = original_bytes();
+    let (base, mut edit) = session();
+    set_description(&mut edit, &base, "A");
+    set_description(&mut edit, &base, "B");
+    let b_overlay = edit.overlay().clone();
+    let b_section = section(&base, &edit).expect("B has a section");
+
+    assert!(edit.undo(&base).expect("undo B"));
+    assert_eq!(edit.history().reach(), 1);
+    assert_eq!(edit.history().redo_reach(), 1);
+    let info = edit
+        .trailer_edits()
+        .get(&onionskin_cos::Name::new("Info"))
+        .and_then(Option::as_ref)
+        .and_then(Object::as_reference)
+        .expect("A names Info");
+    assert_eq!(
+        edit.overlay()
+            .object(info.number)
+            .and_then(|state| state.object.as_dict())
+            .and_then(|dict| dict.get(b"Description")),
+        Some(&string("A"))
+    );
+    let a_section = section(&base, &edit).expect("A has a section");
+    let projected_a = open(&append(&original, a_section));
+    let info = projected_a
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("A names Info in the projection");
+    assert_eq!(
+        projected_a
+            .get(info.number)
+            .expect("A Info object")
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Description")),
+        Some(&string("A"))
+    );
+
+    let before_overlay = edit.overlay().clone();
+    let before_epoch = edit.epoch();
+    let before_section = section(&base, &edit);
+    let before_history = edit.history().clone();
+    let before_trailer = edit.trailer_edits();
+    let before_dirty = edit.is_dirty();
+    let outcome: Result<(), Error> = edit.transact(&base, "Aborted", |tx| {
+        let info = tx
+            .trailer_value(b"Info")
+            .and_then(|value| value.as_reference())
+            .expect("Info remains reachable");
+        let state = tx.object(info.number)?.expect("the Info object");
+        let mut dict = state.object.as_dict().cloned().expect("Info dictionary");
+        dict.set(onionskin_cos::Name::new("Description"), string("discarded"));
+        tx.put_object(info.number, state.generation, Object::Dict(dict))?;
+        let reserved = tx.reserve();
+        tx.put_object(reserved, 0, marker(10))?;
+        Err(Error::Io(std::io::Error::other("closure failed")))
+    });
+    match outcome {
+        Err(Error::Io(error)) => assert_eq!(error.to_string(), "closure failed"),
+        other => panic!("expected the closure error, got {other:?}"),
+    }
+
+    assert_eq!(edit.overlay(), &before_overlay);
+    assert_eq!(edit.epoch(), before_epoch);
+    assert_eq!(section(&base, &edit), before_section);
+    assert_eq!(edit.trailer_edits(), before_trailer);
+    assert_eq!(edit.is_dirty(), before_dirty);
+    let history = edit.history();
+    assert_eq!(history.reach(), before_history.reach());
+    assert_eq!(history.redo_reach(), before_history.redo_reach());
+    assert_eq!(history.can_undo(), before_history.can_undo());
+    assert_eq!(history.can_redo(), before_history.can_redo());
+    assert_eq!(history.resident_bytes(), before_history.resident_bytes());
+    assert_eq!(history.forgotten(), before_history.forgotten());
+    assert_eq!(
+        history.forgot_saved_mark(),
+        before_history.forgot_saved_mark()
+    );
+    assert_eq!(
+        history.is_at_saved_mark(),
+        before_history.is_at_saved_mark()
+    );
+    assert_eq!(history.undo_label(), before_history.undo_label());
+    assert_eq!(history.redo_label(), before_history.redo_label());
+    for index in 0..history.reach() + history.redo_reach() {
+        assert_eq!(history.entry(index), before_history.entry(index));
+    }
+
+    assert!(edit.redo(&base).expect("redo B"));
+    assert_eq!(edit.overlay(), &b_overlay);
+    assert_eq!(section(&base, &edit), Some(b_section.clone()));
+    assert_eq!(edit.history().reach(), 2);
+    assert_eq!(edit.history().redo_reach(), 0);
+    let reopened = open(&append(&original, b_section));
+    let info = reopened
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("B names Info");
+    assert_eq!(
+        reopened
+            .get(info.number)
+            .expect("B Info object")
+            .object
+            .as_dict()
+            .and_then(|dict| dict.get(b"Description")),
+        Some(&string("B"))
+    );
+    assert!((0..edit.history().reach())
+        .all(|index| { edit.history().entry(index).expect("entry").label() != "Aborted" }));
+}
+
+#[test]
+fn closure_errors_preserve_document_projection_and_redo_through_save() {
+    let original = original_bytes();
+    let mut document = Document::open_bytes(original.clone()).expect("opens");
+    assert!(open(&original).trailer().get(b"Info").is_none());
+
+    let b_ref = document
+        .edit_document("Set B", |tx| {
+            let number = tx.reserve();
+            let mut dict = Dict::new();
+            dict.set(Name::new("Title"), string("B"));
+            tx.put_object(number, 0, Object::Dict(dict))?;
+            tx.set_trailer(
+                Name::new("Info"),
+                Some(Object::Ref(onionskin_core::ObjRef::new(number, 0))),
+            )?;
+            Ok(onionskin_core::ObjRef::new(number, 0))
+        })
+        .expect("set B");
+    let b_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("B preview")
+        .to_vec();
+    let b_overlay = document.edit().overlay().clone();
+    let b_entry = document.edit().history().entry(0).expect("B entry").clone();
+    assert!(document.undo().expect("undo B"));
+    assert_eq!(document.edit().history().reach(), 0);
+    assert_eq!(document.edit().history().redo_reach(), 1);
+    assert!(document.edit().history().is_at_saved_mark());
+    assert!(!document.is_dirty());
+    assert!(document
+        .structure()
+        .expect("structure")
+        .trailer()
+        .get(b"Info")
+        .is_none());
+    assert_eq!(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("original preview")
+            .as_ref(),
+        original.as_slice()
+    );
+
+    let before_overlay = document.edit().overlay().clone();
+    let before_history = document.edit().history().clone();
+    let before_epoch = document.edit().epoch();
+    let before_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("primed preview")
+        .to_vec();
+    let before_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit)
+    };
+    assert!(before_section.is_none());
+    let before_bytes = document.bytes().as_ref().clone();
+    let before_trailer = document.edit().trailer_edits();
+    let before_dirty = document.is_dirty();
+    let outcome: Result<(), Error> = document.edit_document("Aborted", |tx| {
+        let root = tx
+            .trailer_value(b"Root")
+            .and_then(|value| value.as_reference())
+            .expect("Root");
+        let state = tx.object(root.number)?.expect("catalog");
+        let mut catalog = state.object.as_dict().cloned().expect("catalog dictionary");
+        catalog.set(Name::new("PageMode"), Object::name("UseOutlines"));
+        tx.put_object(root.number, state.generation, Object::Dict(catalog))?;
+        let number = tx.reserve();
+        let mut dict = Dict::new();
+        dict.set(Name::new("Title"), string("discarded"));
+        tx.put_object(number, 0, Object::Dict(dict))?;
+        tx.set_trailer(
+            Name::new("Info"),
+            Some(Object::Ref(onionskin_core::ObjRef::new(number, 0))),
+        )?;
+        Err(Error::Io(std::io::Error::other("closure failed")))
+    });
+    match outcome {
+        Err(Error::Io(error)) => assert_eq!(error.to_string(), "closure failed"),
+        other => panic!("expected the closure error, got {other:?}"),
+    }
+    assert_eq!(document.edit().overlay(), &before_overlay);
+    assert_eq!(document.edit().epoch(), before_epoch);
+    assert_eq!(document.edit().trailer_edits(), before_trailer);
+    assert_eq!(document.bytes().as_ref(), &before_bytes);
+    assert_eq!(document.is_dirty(), before_dirty);
+    let history = document.edit().history();
+    assert_eq!(history.reach(), before_history.reach());
+    assert_eq!(history.redo_reach(), before_history.redo_reach());
+    assert_eq!(history.can_undo(), before_history.can_undo());
+    assert_eq!(history.can_redo(), before_history.can_redo());
+    assert_eq!(history.resident_bytes(), before_history.resident_bytes());
+    assert_eq!(history.forgotten(), before_history.forgotten());
+    assert_eq!(
+        history.forgot_saved_mark(),
+        before_history.forgot_saved_mark()
+    );
+    assert_eq!(
+        history.is_at_saved_mark(),
+        before_history.is_at_saved_mark()
+    );
+    assert_eq!(history.undo_label(), before_history.undo_label());
+    assert_eq!(history.redo_label(), before_history.redo_label());
+    for index in 0..history.reach() + history.redo_reach() {
+        assert_eq!(history.entry(index), before_history.entry(index));
+    }
+    assert_eq!(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("preview after abort")
+            .as_ref(),
+        before_preview.as_slice()
+    );
+    let fresh_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit)
+    };
+    assert!(fresh_section.is_none());
+    let reopened = open(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("preview")
+            .as_ref(),
+    );
+    assert!(reopened.trailer().get(b"Info").is_none());
+
+    assert!(document.redo().expect("redo B"));
+    assert_eq!(document.edit().history().reach(), 1);
+    assert_eq!(document.edit().history().redo_reach(), 0);
+    assert_eq!(document.edit().history().undo_label(), Some("Set B"));
+    assert_eq!(document.edit().overlay(), &b_overlay);
+    assert_eq!(document.edit().history().entry(0), Some(&b_entry));
+    assert_eq!(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("B preview after redo")
+            .as_ref(),
+        b_preview.as_slice()
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("B info")
+            .description
+            .title
+            .as_deref(),
+        Some("B")
+    );
+    let reopened = open(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("preview")
+            .as_ref(),
+    );
+    assert_eq!(
+        reopened
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(b_ref)
+    );
+    assert_eq!(document.bytes().as_ref(), &before_bytes);
+
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("redo.pdf");
+    let mut file = DocumentFile::from_document(document);
+    file.save_as(&path).expect("save");
+    let mut saved = Document::open_path(&path).expect("reopen saved");
+    assert_eq!(
+        saved
+            .info()
+            .expect("saved info")
+            .description
+            .title
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        saved
+            .structure()
+            .expect("saved structure")
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(b_ref)
+    );
+    let saved_bytes = std::fs::read(&path).expect("saved bytes");
+    let strict_saved = open(&saved_bytes);
+    assert_eq!(
+        strict_saved
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(b_ref)
+    );
+    assert!(saved_bytes.starts_with(&original));
+    assert!(file.edit().history().is_at_saved_mark());
+    assert!(!file.is_dirty());
+}
+
+#[test]
+fn closure_errors_restore_first_write_membership_and_cleared_trailers() {
+    let original = original_bytes();
+    let (seed_base, mut seed_edit) = session();
+    seed_edit
+        .transact(&seed_base, "Probe", |tx| {
+            tx.set_trailer(Name::new("AbortProbe"), Some(Object::Integer(1)))
+        })
+        .expect("probe trailer");
+    let local_base = open(&append(
+        &original,
+        section(&seed_base, &seed_edit).expect("probe section"),
+    ));
+    let mut edit = EditSession::for_base(&local_base);
+    edit.transact(&local_base, "Setup", |tx| {
+        tx.set_trailer(Name::new("AbortProbe"), None)?;
+        let state = tx.object(1)?.expect("catalog");
+        let mut catalog = state.object.as_dict().cloned().expect("catalog dictionary");
+        catalog.set(Name::new("PageMode"), Object::name("UseOutlines"));
+        tx.put_object(1, state.generation, Object::Dict(catalog))
+    })
+    .expect("setup");
+    assert_eq!(
+        edit.trailer_edits().get(&Name::new("AbortProbe")),
+        Some(&None)
+    );
+    let before_overlay = edit.overlay().clone();
+    let before_epoch = edit.epoch();
+    let before_section = section(&local_base, &edit);
+    let before_history = edit.history().clone();
+    let before_trailer = edit.trailer_edits();
+    let outcome: Result<(), Error> = edit.transact(&local_base, "Aborted", |tx| {
+        for value in [1, 2] {
+            let state = tx.object(1)?.expect("catalog");
+            let mut catalog = state.object.as_dict().cloned().expect("catalog dictionary");
+            catalog.set(Name::new("Probe"), Object::Integer(value));
+            tx.put_object(1, state.generation, Object::Dict(catalog))?;
+        }
+        for value in [1, 2] {
+            let state = tx.object(2)?.expect("page tree");
+            let mut pages = state
+                .object
+                .as_dict()
+                .cloned()
+                .expect("page tree dictionary");
+            pages.set(Name::new("Probe"), Object::Integer(value));
+            tx.put_object(2, state.generation, Object::Dict(pages))?;
+        }
+        let number = tx.reserve();
+        tx.put_object(number, 0, marker(1))?;
+        tx.put_object(number, 0, marker(2))?;
+        let info = tx.reserve();
+        tx.put_object(info, 0, marker(3))?;
+        tx.set_trailer(
+            Name::new("Info"),
+            Some(Object::Ref(onionskin_core::ObjRef::new(info, 0))),
+        )?;
+        tx.set_trailer(Name::new("Info"), None)?;
+        tx.set_trailer(Name::new("AbortProbe"), Some(Object::Integer(2)))?;
+        tx.set_trailer(Name::new("AbortProbe"), None)?;
+        Err(Error::Io(std::io::Error::other("closure failed")))
+    });
+    match outcome {
+        Err(Error::Io(error)) => assert_eq!(error.to_string(), "closure failed"),
+        other => panic!("expected the closure error, got {other:?}"),
+    }
+    assert_eq!(edit.overlay(), &before_overlay);
+    assert_eq!(edit.epoch(), before_epoch);
+    assert_eq!(section(&local_base, &edit), before_section);
+    assert_eq!(edit.trailer_edits(), before_trailer);
+    assert!(!edit.trailer_edits().contains_key(&Name::new("Info")));
+    assert_eq!(
+        edit.trailer_edits().get(&Name::new("AbortProbe")),
+        Some(&None)
+    );
+    let history = edit.history();
+    assert_eq!(history.reach(), before_history.reach());
+    assert_eq!(history.redo_reach(), before_history.redo_reach());
+    assert_eq!(history.can_undo(), before_history.can_undo());
+    assert_eq!(history.can_redo(), before_history.can_redo());
+    assert_eq!(history.resident_bytes(), before_history.resident_bytes());
+    assert_eq!(history.forgotten(), before_history.forgotten());
+    assert_eq!(
+        history.forgot_saved_mark(),
+        before_history.forgot_saved_mark()
+    );
+    assert_eq!(
+        history.is_at_saved_mark(),
+        before_history.is_at_saved_mark()
+    );
+    assert_eq!(history.undo_label(), before_history.undo_label());
+    assert_eq!(history.redo_label(), before_history.redo_label());
+    for index in 0..history.reach() + history.redo_reach() {
+        assert_eq!(history.entry(index), before_history.entry(index));
+    }
+}
+
+#[test]
+fn orphan_scan_errors_restore_the_overlay_and_redo_tail() {
+    let bytes = common::pdf(&[
+        b"<< /Type /Catalog /Broken 2 0 R >>".to_vec(),
+        b"(".to_vec(),
+    ]);
+    let base = open(&bytes);
+    let (offset, detail) = match base.get(2) {
+        Err(onionskin_cos::Error::Syntax { offset, detail }) => (offset, detail),
+        other => panic!("expected the malformed object to fail with Syntax, got {other:?}"),
+    };
+    let mut edit = EditSession::for_base(&base);
+    let catalog = |tx: &mut onionskin_core::Transaction<'_>, value| {
+        let state = tx.object(1)?.expect("catalog");
+        let mut dict = state.object.as_dict().cloned().expect("catalog dictionary");
+        dict.set(Name::new("Probe"), Object::Integer(value));
+        tx.put_object(1, state.generation, Object::Dict(dict))
+    };
+    edit.transact(&base, "A", |tx| catalog(tx, 1)).expect("A");
+    edit.transact(&base, "B", |tx| catalog(tx, 2)).expect("B");
+    let b_overlay = edit.overlay().clone();
+    let b_entry = edit.history().entry(1).expect("B entry").clone();
+    assert!(edit.undo(&base).expect("undo B"));
+    let before_overlay = edit.overlay().clone();
+    let before_epoch = edit.epoch();
+    let before_dirty = edit.is_dirty();
+    let before_history = edit.history().clone();
+    let mut body_completed = false;
+    let outcome = edit.transact(&base, "Aborted", |tx| {
+        catalog(tx, 3)?;
+        let number = tx.reserve();
+        tx.put_object(number, 0, marker(10))?;
+        tx.set_trailer(
+            Name::new("Info"),
+            Some(Object::Ref(onionskin_core::ObjRef::new(number, 0))),
+        )?;
+        body_completed = true;
+        Ok(())
+    });
+    match outcome {
+        Err(Error::Cos(onionskin_cos::Error::Syntax {
+            offset: actual_offset,
+            detail: actual_detail,
+        })) => {
+            assert_eq!(actual_offset, offset);
+            assert_eq!(actual_detail, detail);
+        }
+        other => panic!("expected orphan scan Syntax, got {other:?}"),
+    }
+    assert!(
+        body_completed,
+        "the closure completed before orphan scanning"
+    );
+    assert_eq!(edit.overlay(), &before_overlay);
+    assert_eq!(edit.epoch(), before_epoch);
+    assert_eq!(edit.is_dirty(), before_dirty);
+    let history = edit.history();
+    assert_eq!(history.reach(), before_history.reach());
+    assert_eq!(history.redo_reach(), before_history.redo_reach());
+    assert_eq!(history.can_undo(), before_history.can_undo());
+    assert_eq!(history.can_redo(), before_history.can_redo());
+    assert_eq!(history.resident_bytes(), before_history.resident_bytes());
+    assert_eq!(history.forgotten(), before_history.forgotten());
+    assert_eq!(
+        history.forgot_saved_mark(),
+        before_history.forgot_saved_mark()
+    );
+    assert_eq!(
+        history.is_at_saved_mark(),
+        before_history.is_at_saved_mark()
+    );
+    assert_eq!(history.undo_label(), before_history.undo_label());
+    assert_eq!(history.redo_label(), before_history.redo_label());
+    for index in 0..history.reach() + history.redo_reach() {
+        assert_eq!(history.entry(index), before_history.entry(index));
+    }
+    assert!(edit.redo(&base).expect("redo B"));
+    assert_eq!(edit.overlay(), &b_overlay);
+    assert_eq!(edit.history().entry(1), Some(&b_entry));
 }
 
 // ---------------------------------------------------------------------------

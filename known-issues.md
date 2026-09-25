@@ -8,6 +8,24 @@ audit onward: resolved entries are retained with an explicit resolution note so
 their history is not erased. See `docs/audits/m2-forward-audit.md` for stable
 source IDs, severity, ownership, and required proof.
 
+## transaction-collapse-error-atomicity Transaction collapse error atomicity
+
+**Severity**: medium
+
+**Discovered**: 2026-09-25
+
+**Area**: `crates/core/src/edit`
+
+Source review identified two unverified failure-atomicity concerns outside the
+transaction-abort correction: a successful transaction whose collapse fails,
+and undo/redo whose collapse fails. They have not been reproduced and are not
+covered by the current fix.
+
+**Workaround**: none documented.
+
+**Fix plan**: reproduce each failure with a focused test, then design and
+independently review an atomic correction before changing the collapse paths.
+
 ## Upstream (hayro) - blocking or shaping our work
 
 - Appearance-state rendering (/AP dict + /AS): FIXED on hayro's unreleased

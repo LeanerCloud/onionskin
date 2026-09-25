@@ -185,6 +185,13 @@ impl Overlay {
             .map(|value| TrailerState::from_value(value.as_ref()))
     }
 
+    pub(super) fn contains_key(&self, key: &ChangeKey) -> bool {
+        match key {
+            ChangeKey::Object(number) => self.states.contains_key(number),
+            ChangeKey::TrailerKey(key) => self.trailer.contains_key(key),
+        }
+    }
+
     /// A number no object in the base or the overlay uses. Handing one out is
     /// the only thing that produces a `before: None`.
     pub fn reserve(&mut self) -> u32 {
@@ -242,6 +249,21 @@ impl Overlay {
             Change::Object { number, before, .. } => self.put_object(*number, before.clone()),
             Change::TrailerKey { key, before, .. } => {
                 self.put_trailer(key.clone(), before.clone());
+            }
+        }
+    }
+
+    pub(super) fn revert_transaction(&mut self, change: &Change, was_in_overlay: bool) {
+        if was_in_overlay {
+            self.revert(change);
+            return;
+        }
+        match change {
+            Change::Object { number, .. } => {
+                self.states.remove(number);
+            }
+            Change::TrailerKey { key, .. } => {
+                self.trailer.remove(key);
             }
         }
     }
