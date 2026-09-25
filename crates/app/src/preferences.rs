@@ -950,9 +950,21 @@ mod tests {
         assert!(preferences.trusted_sites.contains("a.example"));
         let (_, errors) = parse(r#"{"web_links": "sometimes", "trusted_sites": [3]}"#);
         assert_eq!(errors.len(), 2);
-        assert!(
-            errors[0].contains("\"ask\", \"allow\", \"block\""),
-            "{errors:?}"
+        let web_links_error = errors
+            .iter()
+            .find(|error| error.contains(" sets web_links to"))
+            .expect("invalid web_links diagnostic");
+        assert_eq!(
+            web_links_error,
+            "/tmp/preferences.json sets web_links to \"sometimes\"; it takes one of \"ask\", \"allow\", \"block\""
+        );
+        let trusted_sites_error = errors
+            .iter()
+            .find(|error| error.contains(" sets trusted_sites to"))
+            .expect("invalid trusted_sites diagnostic");
+        assert_eq!(
+            trusted_sites_error,
+            "/tmp/preferences.json sets trusted_sites to [3]; it takes one of a list of host names in quotes"
         );
         let labels: Vec<_> = WebLinks::ALL.iter().map(|links| links.label()).collect();
         assert_eq!(labels, ["Ask", "Always allow", "Never"]);
