@@ -2417,6 +2417,449 @@ fn catalog_edits_preserve_unrelated_malformed_info() {
 }
 
 // ---------------------------------------------------------------------------
+// Chunk 3B: selector identity and accepted generations
+// ---------------------------------------------------------------------------
+
+/// An `/Info` fixture whose selector and the target's object-header generation
+/// are set independently, so the accepted and refused generation cases are
+/// expressible without a second PDF writer. Every substitution is equal-length,
+/// so offsets and `startxref` stay valid.
+fn generation_fixture(info: &str, header_generation: u16) -> Vec<u8> {
+    let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
+    let mut bytes = info_target_document(info, ordinary);
+    if header_generation != 0 {
+        let from = b"4 0 obj";
+        let to = format!("4 {header_generation} obj");
+        let at = bytes
+            .windows(from.len())
+            .position(|window| window == from)
+            .expect("the fourth object header");
+        bytes.splice(at..at + from.len(), to.into_bytes());
+    }
+    bytes
+}
+
+/// The byte offset of object `object`'s xref row, which is always 20 bytes and
+/// always preceded by the free head row for object 0.
+fn xref_row_at(bytes: &[u8], object: u32) -> usize {
+    let marker = b"\nxref\n0 ";
+    let at = bytes
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .expect("an xref table")
+        + marker.len();
+    let mut cursor = at;
+    while bytes[cursor].is_ascii_digit() {
+        cursor += 1;
+    }
+    let row = cursor + 1 + 20 * object as usize;
+    assert_eq!(
+        &bytes[row + 17..row + 20],
+        b"n \n",
+        "object {object} is an in-use row"
+    );
+    row
+}
+
+/// Rewrites only the five generation digits of object `object`'s xref row,
+/// leaving its offset alone so the file still opens without repair.
+fn with_xref_generation(bytes: &[u8], object: u32, generation: u16) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let row = xref_row_at(&out, object);
+    out.splice(row + 11..row + 16, format!("{generation:05}").into_bytes());
+    out
+}
+
+/// Frees object `object`: the row's offset and generation are written as the
+/// writer writes a free row, which needs no meaningful offset.
+fn with_xref_free(bytes: &[u8], object: u32) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let row = xref_row_at(&out, object);
+    out.splice(row..row + 20, b"0000000000 00001 f \n".to_vec());
+    out
+}
+
+#[test]
+fn invalid_info_reference_selectors_are_refused_without_mutation() {
+    let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
+    let cases = [
+        // name, Info selector, the selector as a reference, xref generation
+        // the live row carries
+        ("missing", "9 0 R", Some(ObjRef::new(9, 0)), None),
+        ("free", "4 0 R", Some(ObjRef::new(4, 0)), None),
+        ("zero", "0 0 R", Some(ObjRef::new(0, 0)), None),
+        (
+            "selector-generation-mismatch",
+            "4 7 R",
+            Some(ObjRef::new(4, 7)),
+            Some(0),
+        ),
+    ];
+
+    for (fixture, info, expected_ref, xref_generation) in cases {
+        for properties_route in [false, true] {
+            let route = if properties_route {
+                "properties"
+            } else {
+                "generic"
+            };
+            let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
+            let original = if fixture == "free" {
+                with_xref_free(&info_target_document(info, ordinary), 4)
+            } else {
+                info_target_document(info, ordinary)
+            };
+            let original_cos = open(&original);
+            assert_eq!(
+                original_cos.page_count().expect("one page"),
+                1,
+                "{fixture} {route} pages"
+            );
+            // The malformed selector is preserved exactly as the file wrote it.
+            assert_eq!(
+                original_cos
+                    .trailer()
+                    .get(b"Info")
+                    .and_then(Object::as_reference),
+                expected_ref,
+                "{fixture} {route} malformed selector"
+            );
+            match fixture {
+                "missing" => assert!(
+                    original_cos.xref().get(9).is_none(),
+                    "{fixture} {route} has no row 9"
+                ),
+                "free" => assert!(
+                    matches!(original_cos.xref().get(4), Some(XrefEntry::Free { .. })),
+                    "{fixture} {route} row 4 is free"
+                ),
+                "zero" => assert!(
+                    matches!(original_cos.xref().get(0), Some(XrefEntry::Free { .. })),
+                    "{fixture} {route} row 0 is free"
+                ),
+                "selector-generation-mismatch" => {
+                    assert_info_fixture(
+                        &original_cos,
+                        info,
+                        &Object::Ref(expected_ref.expect("a reference selector")),
+                        expected_ref,
+                        xref_generation,
+                        Some(ObjRef::new(4, 0)),
+                    );
+                }
+                _ => {}
+            }
+            let original_objects: Vec<_> = (1..=4)
+                .map(|number| original_cos.get(number).expect("fixture object").object)
+                .collect();
+            let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+            let before_preview = document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("primed preview")
+                .to_vec();
+            let before_overlay = document.edit().overlay().clone();
+            let before_epoch = document.edit().epoch();
+            let before_history = document.edit().history().clone();
+            let before_trailer = document.edit().trailer_edits();
+            let before_dirty = document.is_dirty();
+            let before_bytes = document.bytes().as_ref().clone();
+            let before_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            let properties = onionskin_core::metadata::PropertiesEdit {
+                description: onionskin_core::metadata::Description {
+                    title: Some("accepted".to_owned()),
+                    subject: Some("grouped".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let outcome: Result<(), Error> = if properties_route {
+                document.edit_document("Document Properties", |tx| {
+                    onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                })
+            } else {
+                let (edit, base) = document.edit_mut();
+                edit.apply(
+                    base,
+                    DocumentEdit::SetInfoField {
+                        key: Name::new("Title"),
+                        value: Some(string("accepted")),
+                    },
+                )
+            };
+            assert!(
+                outcome.is_err(),
+                "{fixture} {route} must refuse the selector during the edit: {outcome:?}"
+            );
+
+            assert_eq!(
+                document.edit().overlay(),
+                &before_overlay,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.edit().epoch(), before_epoch, "{fixture} {route}");
+            assert_eq!(
+                document.edit().trailer_edits(),
+                before_trailer,
+                "{fixture} {route}"
+            );
+            assert_eq!(
+                document.bytes().as_ref(),
+                &before_bytes,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.is_dirty(), before_dirty, "{fixture} {route}");
+            assert_history_unchanged(&before_history, document.edit().history(), fixture, route);
+            let fresh_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            assert_eq!(fresh_section, before_section, "{fixture} {route}");
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("preview after refusal")
+                    .as_ref(),
+                before_preview.as_slice(),
+                "{fixture} {route} preview"
+            );
+            let reopened = open(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("fresh preview")
+                    .as_ref(),
+            );
+            assert_eq!(
+                reopened.trailer().get(b"Info"),
+                original_cos.trailer().get(b"Info"),
+                "{fixture} {route} Info trailer"
+            );
+            for (index, expected) in original_objects.iter().enumerate() {
+                assert_eq!(
+                    &reopened
+                        .get((index + 1) as u32)
+                        .expect("reopened object")
+                        .object,
+                    expected,
+                    "{fixture} {route} object {}",
+                    index + 1
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn info_selector_generation_survives_edit_undo_redo_and_save() {
+    let cases = [
+        // name, Info selector, the object header's generation, the xref row's
+        // generation
+        ("valid-nonzero", "4 7 R", 7, 7),
+        ("advisory-header-mismatch", "4 0 R", 7, 0),
+    ];
+
+    for (fixture, info, header_generation, row_generation) in cases {
+        for properties_route in [false, true] {
+            let route = if properties_route {
+                "properties"
+            } else {
+                "generic"
+            };
+            let original = if row_generation == 0 {
+                generation_fixture(info, header_generation)
+            } else {
+                with_xref_generation(
+                    &generation_fixture(info, header_generation),
+                    4,
+                    row_generation,
+                )
+            };
+            let original_cos = open(&original);
+            assert_eq!(
+                original_cos.page_count().expect("one page"),
+                1,
+                "{fixture} {route} pages"
+            );
+            // The selector and the live row agree; only the header may disagree,
+            // and the write must use the row's generation rather than the
+            // header's.
+            let selector = ObjRef::new(4, row_generation);
+            assert_info_fixture(
+                &original_cos,
+                info,
+                &Object::Ref(selector),
+                Some(selector),
+                Some(row_generation),
+                Some(ObjRef::new(4, header_generation)),
+            );
+            let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+            let properties = onionskin_core::metadata::PropertiesEdit {
+                description: onionskin_core::metadata::Description {
+                    title: Some("accepted".to_owned()),
+                    subject: Some("grouped".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            if properties_route {
+                document
+                    .edit_document("Document Properties", |tx| {
+                        onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                    })
+                    .unwrap_or_else(|error| panic!("{fixture} {route} edit: {error:?}"));
+            } else {
+                let (edit, base) = document.edit_mut();
+                edit.apply(
+                    base,
+                    DocumentEdit::SetInfoField {
+                        key: Name::new("Title"),
+                        value: Some(string("accepted")),
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{fixture} {route} edit: {error:?}"));
+            }
+            assert_eq!(
+                document.edit().history().reach(),
+                1,
+                "{fixture} {route} one history entry"
+            );
+            assert_eq!(
+                document.bytes().as_ref(),
+                &original,
+                "{fixture} {route} bytes"
+            );
+            let edited_preview = document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("edited preview")
+                .to_vec();
+            let edited_overlay = document.edit().overlay().clone();
+            let edited_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            let edited = open(&edited_preview);
+            assert_eq!(
+                edited.trailer().get(b"Info").and_then(Object::as_reference),
+                Some(selector),
+                "{fixture} {route} edited Info reference"
+            );
+            match edited.xref().get(4).expect("edited row 4") {
+                XrefEntry::InFile { generation, .. } => {
+                    assert_eq!(
+                        generation, row_generation,
+                        "{fixture} {route} edited row generation"
+                    )
+                }
+                other => panic!("{fixture} {route} edited row is {other:?}"),
+            }
+            assert_eq!(
+                edited.get(4).expect("edited object").objref,
+                selector,
+                "{fixture} {route} emitted header generation"
+            );
+            let info = edited
+                .get(4)
+                .expect("Info object")
+                .object
+                .as_dict()
+                .cloned()
+                .expect("Info dictionary");
+            assert_eq!(
+                info.get(b"Title"),
+                Some(&string("accepted")),
+                "{fixture} {route} title"
+            );
+            assert_eq!(
+                info.get(b"Subject"),
+                Some(&string(if properties_route {
+                    "grouped"
+                } else {
+                    "before"
+                })),
+                "{fixture} {route} subject"
+            );
+            if properties_route {
+                let xmp = document.xmp().expect("XMP reads").expect("XMP packet");
+                assert_eq!(
+                    xmp.title.as_deref(),
+                    Some("accepted"),
+                    "{fixture} {route} XMP"
+                );
+                assert_eq!(
+                    xmp.subject.as_deref(),
+                    Some("grouped"),
+                    "{fixture} {route} XMP subject"
+                );
+            }
+
+            assert!(document.undo().expect("undo"), "{fixture} {route} undo");
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("original preview")
+                    .as_ref(),
+                original.as_slice(),
+                "{fixture} {route} undo restores the original"
+            );
+            let undone_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            assert!(
+                undone_section.is_none(),
+                "{fixture} {route} undo leaves no section"
+            );
+            assert!(document.redo().expect("redo"), "{fixture} {route} redo");
+            assert_eq!(
+                document.edit().overlay(),
+                &edited_overlay,
+                "{fixture} {route} redone overlay"
+            );
+            let redone_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            assert_eq!(
+                redone_section, edited_section,
+                "{fixture} {route} redone section"
+            );
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("redo preview")
+                    .as_ref(),
+                edited_preview.as_slice(),
+                "{fixture} {route} redone preview"
+            );
+
+            let dir = tempfile::tempdir().expect("save directory");
+            let path = dir.path().join("generation.pdf");
+            let mut file = DocumentFile::from_document(document);
+            file.save_as(&path)
+                .unwrap_or_else(|error| panic!("{fixture} {route} save: {error:?}"));
+            let saved_bytes = std::fs::read(&path).expect("saved bytes");
+            assert!(
+                saved_bytes.starts_with(&original),
+                "{fixture} {route} saved bytes keep the original"
+            );
+            let saved = open(&saved_bytes);
+            assert_eq!(
+                saved.trailer().get(b"Info").and_then(Object::as_reference),
+                Some(selector),
+                "{fixture} {route} saved Info reference"
+            );
+            assert_eq!(
+                saved.get(4).expect("saved object").objref,
+                selector,
+                "{fixture} {route} saved header generation"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
