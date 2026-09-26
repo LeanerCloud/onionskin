@@ -13,10 +13,13 @@ use std::collections::BTreeMap;
 mod common;
 
 use onionskin_core::{
-    AnnotationFilter, Change, Document, DocumentEdit, DocumentFile, EditSession, Error, ObjectState,
+    AnnotationFilter, Change, Document, DocumentEdit, DocumentFile, EditSession, Error, History,
+    ObjectState,
 };
 use onionskin_corpus_testing::seed;
-use onionskin_cos::{BytesSource, Dict, Document as CosDocument, Name, Object, PendingEdit};
+use onionskin_cos::{
+    BytesSource, Dict, Document as CosDocument, Name, ObjRef, Object, PendingEdit, XrefEntry,
+};
 
 /// `minimal.pdf` is a four-object document with a catalog, a page tree, one
 /// page and **no `/Info`**, which is what makes it the fixture for every
@@ -1591,9 +1594,960 @@ fn a_history_past_its_bound_drops_oldest_and_says_so() {
     );
 }
 
+#[test]
+fn non_dictionary_info_targets_are_refused_without_mutation() {
+    let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
+    let cases = [
+        (
+            "direct-string",
+            "(wrong shape)",
+            ordinary.clone(),
+            string("wrong shape"),
+            None,
+        ),
+        (
+            "direct-integer",
+            "42",
+            ordinary.clone(),
+            Object::Integer(42),
+            None,
+        ),
+        (
+            "direct-name",
+            "/Wrong",
+            ordinary.clone(),
+            Object::name("Wrong"),
+            None,
+        ),
+        (
+            "direct-array",
+            "[]",
+            ordinary.clone(),
+            Object::Array(Vec::new()),
+            None,
+        ),
+        (
+            "indirect-integer",
+            "4 0 R",
+            b"42".to_vec(),
+            Object::Ref(ObjRef::new(4, 0)),
+            Some(ObjRef::new(4, 0)),
+        ),
+        (
+            "indirect-stream",
+            "4 0 R",
+            common::stream("opaque metadata target"),
+            Object::Ref(ObjRef::new(4, 0)),
+            Some(ObjRef::new(4, 0)),
+        ),
+    ];
+
+    for (fixture, info, target, expected_info, expected_ref) in cases {
+        for properties_route in [false, true] {
+            let route = if properties_route {
+                "properties"
+            } else {
+                "generic"
+            };
+            let original = info_target_document(info, target.clone());
+            let original_cos = open(&original);
+            assert_eq!(
+                original_cos.page_count().expect("one page"),
+                1,
+                "{fixture} {route} pages"
+            );
+            assert_info_fixture(
+                &original_cos,
+                info,
+                &expected_info,
+                expected_ref,
+                expected_ref.map(|target| target.generation),
+                expected_ref,
+            );
+            let original_objects: Vec<_> = (1..=4)
+                .map(|number| original_cos.get(number).expect("fixture object").object)
+                .collect();
+            let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+            let before_preview = document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("primed preview")
+                .to_vec();
+            let before_overlay = document.edit().overlay().clone();
+            let before_epoch = document.edit().epoch();
+            let before_history = document.edit().history().clone();
+            let before_trailer = document.edit().trailer_edits();
+            let before_dirty = document.is_dirty();
+            let before_bytes = document.bytes().as_ref().clone();
+            let before_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            let properties = onionskin_core::metadata::PropertiesEdit {
+                description: onionskin_core::metadata::Description {
+                    title: Some("accepted".to_owned()),
+                    subject: Some("grouped".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let outcome: Result<(), Error> = if properties_route {
+                document.edit_document("Document Properties", |tx| {
+                    onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                })
+            } else {
+                let (edit, base) = document.edit_mut();
+                edit.apply(
+                    base,
+                    DocumentEdit::SetInfoField {
+                        key: Name::new("Title"),
+                        value: Some(string("accepted")),
+                    },
+                )
+            };
+            if fixture == "indirect-stream" && !properties_route {
+                assert!(
+                    matches!(outcome, Err(Error::NotADictionary { number: 4 })),
+                    "{fixture} {route} must reject the stream target directly: {outcome:?}"
+                );
+            } else {
+                assert!(
+                    outcome.is_err(),
+                    "{fixture} {route} must refuse during the edit: {outcome:?}"
+                );
+            }
+
+            assert_eq!(
+                document.edit().overlay(),
+                &before_overlay,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.edit().epoch(), before_epoch, "{fixture} {route}");
+            assert_eq!(
+                document.edit().trailer_edits(),
+                before_trailer,
+                "{fixture} {route}"
+            );
+            assert_eq!(
+                document.bytes().as_ref(),
+                &before_bytes,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.is_dirty(), before_dirty, "{fixture} {route}");
+            assert_history_unchanged(&before_history, document.edit().history(), fixture, route);
+            let fresh_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            assert_eq!(fresh_section, before_section, "{fixture} {route}");
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("preview after refusal")
+                    .as_ref(),
+                before_preview.as_slice(),
+                "{fixture} {route} preview"
+            );
+            let reopened = open(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("fresh preview")
+                    .as_ref(),
+            );
+            assert_eq!(
+                reopened.trailer().get(b"Info"),
+                original_cos.trailer().get(b"Info"),
+                "{fixture} {route} Info trailer"
+            );
+            for (index, expected) in original_objects.iter().enumerate() {
+                assert_eq!(
+                    &reopened
+                        .get((index + 1) as u32)
+                        .expect("reopened object")
+                        .object,
+                    expected,
+                    "{fixture} {route} object {}",
+                    index + 1
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn structural_info_aliases_are_refused_without_mutation() {
+    let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
+    let cases = [
+        ("root-alias", "1 0 R", ObjRef::new(1, 0), 0),
+        ("pages-alias", "2 0 R", ObjRef::new(2, 0), 0),
+        ("page-alias", "3 0 R", ObjRef::new(3, 0), 0),
+        ("root-generation-mismatch", "1 7 R", ObjRef::new(1, 7), 0),
+    ];
+
+    for (fixture, info, expected_ref, target_generation) in cases {
+        for properties_route in [false, true] {
+            let route = if properties_route {
+                "properties"
+            } else {
+                "generic"
+            };
+            let original = info_target_document(info, ordinary.clone());
+            let original_cos = open(&original);
+            assert_eq!(
+                original_cos.page_count().expect("one page"),
+                1,
+                "{fixture} {route} pages"
+            );
+            assert_info_fixture(
+                &original_cos,
+                info,
+                &Object::Ref(expected_ref),
+                Some(expected_ref),
+                Some(target_generation),
+                Some(ObjRef::new(expected_ref.number, target_generation)),
+            );
+            let original_objects: Vec<_> = (1..=4)
+                .map(|number| original_cos.get(number).expect("fixture object").object)
+                .collect();
+            let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+            let before_preview = document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("primed preview")
+                .to_vec();
+            let before_overlay = document.edit().overlay().clone();
+            let before_epoch = document.edit().epoch();
+            let before_history = document.edit().history().clone();
+            let before_trailer = document.edit().trailer_edits();
+            let before_dirty = document.is_dirty();
+            let before_bytes = document.bytes().as_ref().clone();
+            let before_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            let properties = onionskin_core::metadata::PropertiesEdit {
+                description: onionskin_core::metadata::Description {
+                    title: Some("accepted".to_owned()),
+                    subject: Some("grouped".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let outcome: Result<(), Error> = if properties_route {
+                document.edit_document("Document Properties", |tx| {
+                    onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                })
+            } else {
+                let (edit, base) = document.edit_mut();
+                edit.apply(
+                    base,
+                    DocumentEdit::SetInfoField {
+                        key: Name::new("Title"),
+                        value: Some(string("accepted")),
+                    },
+                )
+            };
+            assert!(
+                outcome.is_err(),
+                "{fixture} {route} must refuse the structural alias during the edit: {outcome:?}"
+            );
+
+            assert_eq!(
+                document.edit().overlay(),
+                &before_overlay,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.edit().epoch(), before_epoch, "{fixture} {route}");
+            assert_eq!(
+                document.edit().trailer_edits(),
+                before_trailer,
+                "{fixture} {route}"
+            );
+            assert_eq!(
+                document.bytes().as_ref(),
+                &before_bytes,
+                "{fixture} {route}"
+            );
+            assert_eq!(document.is_dirty(), before_dirty, "{fixture} {route}");
+            assert_history_unchanged(&before_history, document.edit().history(), fixture, route);
+            let fresh_section = {
+                let (edit, base) = document.edit_mut();
+                section(base, edit)
+            };
+            assert_eq!(fresh_section, before_section, "{fixture} {route}");
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("preview after refusal")
+                    .as_ref(),
+                before_preview.as_slice(),
+                "{fixture} {route} preview"
+            );
+            let reopened = open(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("fresh preview")
+                    .as_ref(),
+            );
+            assert_eq!(
+                reopened.trailer().get(b"Info"),
+                original_cos.trailer().get(b"Info"),
+                "{fixture} {route} Info trailer"
+            );
+            for (index, expected) in original_objects.iter().enumerate() {
+                assert_eq!(
+                    &reopened
+                        .get((index + 1) as u32)
+                        .expect("reopened object")
+                        .object,
+                    expected,
+                    "{fixture} {route} object {}",
+                    index + 1
+                );
+            }
+        }
+    }
+}
+
+/// Initial view first on purpose: the Properties dialog writes properties
+/// first, so this reversed order probes transaction rollback, not the dialog's
+/// sequence.
+#[test]
+fn properties_refusal_rolls_back_an_earlier_catalog_write() {
+    let original = info_target_document("1 0 R", b"<< /Title (old) >>".to_vec());
+    let original_cos = open(&original);
+    assert_info_fixture(
+        &original_cos,
+        "1 0 R",
+        &Object::Ref(ObjRef::new(1, 0)),
+        Some(ObjRef::new(1, 0)),
+        Some(0),
+        Some(ObjRef::new(1, 0)),
+    );
+    let original_objects: Vec<_> = (1..=4)
+        .map(|number| original_cos.get(number).expect("fixture object").object)
+        .collect();
+    let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+    let before_preview = document
+        .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+        .expect("primed preview")
+        .to_vec();
+    let before_overlay = document.edit().overlay().clone();
+    let before_epoch = document.edit().epoch();
+    let before_history = document.edit().history().clone();
+    let before_trailer = document.edit().trailer_edits();
+    let before_dirty = document.is_dirty();
+    let before_bytes = document.bytes().as_ref().clone();
+    let before_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit)
+    };
+    let properties = onionskin_core::metadata::PropertiesEdit {
+        description: onionskin_core::metadata::Description {
+            title: Some("accepted".to_owned()),
+            subject: Some("grouped".to_owned()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let outcome: Result<(), Error> = document.edit_document("Document Properties", |tx| {
+        onionskin_core::metadata::write_initial_view(
+            tx,
+            &onionskin_core::metadata::InitialView {
+                mode: Some(onionskin_core::metadata::PageMode::UseOutlines),
+                ..Default::default()
+            },
+        )
+        .expect("the earlier initial-view write succeeds");
+        let root = tx
+            .trailer_value(b"Root")
+            .and_then(|value| value.as_reference())
+            .expect("Root after initial view");
+        let catalog = tx
+            .object(root.number)
+            .expect("catalog lookup after initial view")
+            .expect("catalog after initial view");
+        assert_eq!(
+            catalog
+                .object
+                .as_dict()
+                .and_then(|dict| dict.get(b"PageMode")),
+            Some(&Object::name("UseOutlines")),
+            "the earlier initial-view write reached the catalog"
+        );
+        onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+    });
+    assert!(
+        outcome.is_err(),
+        "the Root alias must refuse after the catalog write: {outcome:?}"
+    );
+    assert_eq!(document.edit().overlay(), &before_overlay);
+    assert_eq!(document.edit().epoch(), before_epoch);
+    assert_eq!(document.edit().trailer_edits(), before_trailer);
+    assert_eq!(document.bytes().as_ref(), &before_bytes);
+    assert_eq!(document.is_dirty(), before_dirty);
+    assert_history_unchanged(
+        &before_history,
+        document.edit().history(),
+        "root-alias",
+        "properties",
+    );
+    let fresh_section = {
+        let (edit, base) = document.edit_mut();
+        section(base, edit)
+    };
+    assert_eq!(fresh_section, before_section);
+    assert_eq!(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("preview after refusal")
+            .as_ref(),
+        before_preview.as_slice()
+    );
+    let reopened = open(
+        document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("fresh preview")
+            .as_ref(),
+    );
+    assert_eq!(
+        reopened.trailer().get(b"Info"),
+        original_cos.trailer().get(b"Info")
+    );
+    for (index, expected) in original_objects.iter().enumerate() {
+        assert_eq!(
+            &reopened
+                .get((index + 1) as u32)
+                .expect("reopened object")
+                .object,
+            expected,
+            "object {}",
+            index + 1
+        );
+    }
+}
+
+#[test]
+fn custom_info_keys_do_not_make_a_dictionary_structural() {
+    let target =
+        b"<< /Title (old) /Pages (custom) /Kids (custom) /Parent (custom) /Type (custom) >>"
+            .to_vec();
+    for properties_route in [false, true] {
+        let route = if properties_route {
+            "properties"
+        } else {
+            "generic"
+        };
+        let original = info_target_document("4 0 R", target.clone());
+        let original_cos = open(&original);
+        assert_info_fixture(
+            &original_cos,
+            "4 0 R",
+            &Object::Ref(ObjRef::new(4, 0)),
+            Some(ObjRef::new(4, 0)),
+            Some(0),
+            Some(ObjRef::new(4, 0)),
+        );
+        let original_preview = original.clone();
+        let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+        let properties = onionskin_core::metadata::PropertiesEdit {
+            description: onionskin_core::metadata::Description {
+                title: Some("accepted".to_owned()),
+                subject: Some("grouped".to_owned()),
+                ..Default::default()
+            },
+            custom: ["Pages", "Kids", "Parent", "Type"]
+                .into_iter()
+                .map(|key| (key.to_owned(), "custom".to_owned()))
+                .collect(),
+        };
+        if properties_route {
+            document
+                .edit_document("Document Properties", |tx| {
+                    onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                })
+                .unwrap_or_else(|error| {
+                    panic!("{route} must accept custom structural-looking keys: {error:?}")
+                });
+        } else {
+            let (edit, base) = document.edit_mut();
+            edit.apply(
+                base,
+                DocumentEdit::SetInfoField {
+                    key: Name::new("Title"),
+                    value: Some(string("accepted")),
+                },
+            )
+            .unwrap_or_else(|error| {
+                panic!("{route} must accept custom structural-looking keys: {error:?}")
+            });
+        }
+        let edited_preview = document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("edited preview")
+            .to_vec();
+        let edited = open(&edited_preview);
+        assert_eq!(
+            edited.trailer().get(b"Info").and_then(Object::as_reference),
+            Some(ObjRef::new(4, 0)),
+            "{route} keeps the original Info reference"
+        );
+        let info = edited
+            .get(4)
+            .expect("Info object")
+            .object
+            .as_dict()
+            .cloned()
+            .expect("Info dictionary");
+        assert_eq!(
+            info.get(b"Title"),
+            Some(&string("accepted")),
+            "{route} title"
+        );
+        for key in [b"Pages".as_slice(), b"Kids", b"Parent", b"Type"] {
+            assert_eq!(
+                info.get(key),
+                Some(&string("custom")),
+                "{route} preserves custom key {}",
+                String::from_utf8_lossy(key)
+            );
+        }
+        if properties_route {
+            assert_eq!(
+                document
+                    .xmp()
+                    .expect("XMP reads")
+                    .expect("properties writes XMP")
+                    .title
+                    .as_deref(),
+                Some("accepted")
+            );
+        }
+        assert!(document.undo().expect("undo succeeds"));
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("original preview")
+                .as_ref(),
+            original_preview.as_slice(),
+            "{route} undo restores the original"
+        );
+        assert!(document.redo().expect("redo succeeds"));
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("redo preview")
+                .as_ref(),
+            edited_preview.as_slice(),
+            "{route} redo restores the accepted edit"
+        );
+    }
+}
+
+#[test]
+fn properties_edit_reuses_new_unsaved_info() {
+    let original = original_bytes();
+    let mut document = Document::open_bytes(original.clone()).expect("opens");
+    let first = onionskin_core::metadata::PropertiesEdit {
+        description: onionskin_core::metadata::Description {
+            title: Some("A".to_owned()),
+            subject: Some("first".to_owned()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let second = onionskin_core::metadata::PropertiesEdit {
+        description: onionskin_core::metadata::Description {
+            title: Some("B".to_owned()),
+            subject: Some("second".to_owned()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    document
+        .edit_document("Document Properties", |tx| {
+            onionskin_core::metadata::write_properties(tx, &first, 1_789_999_500)
+        })
+        .expect("first properties edit");
+    let first_ref = document
+        .structure()
+        .expect("first structure")
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("first Info reference");
+    let (_, base) = document.edit_mut();
+    assert!(
+        base.xref().get(first_ref.number).is_none(),
+        "the first Info object is only in the overlay"
+    );
+    document
+        .edit_document("Document Properties", |tx| {
+            onionskin_core::metadata::write_properties(tx, &second, 1_789_999_500)
+        })
+        .expect("second properties edit");
+    assert_eq!(document.edit().history().reach(), 2);
+    let second_ref = document
+        .structure()
+        .expect("second structure")
+        .trailer()
+        .get(b"Info")
+        .and_then(Object::as_reference)
+        .expect("second Info reference");
+    assert_eq!(
+        second_ref, first_ref,
+        "the unsaved Info reference is reused"
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("second Info")
+            .description
+            .title
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("second Info")
+            .description
+            .subject
+            .as_deref(),
+        Some("second")
+    );
+    assert_eq!(
+        document
+            .xmp()
+            .expect("second XMP")
+            .expect("second packet")
+            .title
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        document
+            .xmp()
+            .expect("second XMP")
+            .expect("second packet")
+            .subject
+            .as_deref(),
+        Some("second")
+    );
+    assert_eq!(document.bytes().as_ref(), &original);
+    assert!(document.undo().expect("undo second"));
+    assert_eq!(
+        document
+            .structure()
+            .expect("first structure after undo")
+            .trailer()
+            .get(b"Info")
+            .and_then(Object::as_reference),
+        Some(first_ref)
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("first Info")
+            .description
+            .title
+            .as_deref(),
+        Some("A")
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("first Info")
+            .description
+            .subject
+            .as_deref(),
+        Some("first")
+    );
+    assert_eq!(
+        document
+            .xmp()
+            .expect("first XMP")
+            .expect("first packet")
+            .subject
+            .as_deref(),
+        Some("first")
+    );
+    assert!(document.redo().expect("redo second"));
+    assert_eq!(
+        document
+            .info()
+            .expect("redo Info")
+            .description
+            .title
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        document
+            .info()
+            .expect("redo Info")
+            .description
+            .subject
+            .as_deref(),
+        Some("second")
+    );
+    assert_eq!(document.bytes().as_ref(), &original);
+}
+
+#[test]
+fn catalog_edits_preserve_unrelated_malformed_info() {
+    let cases = [
+        ("missing", "9 0 R", b"<< /Title (old) >>".to_vec(), None),
+        (
+            "generation-mismatch",
+            "4 7 R",
+            b"<< /Title (old) >>".to_vec(),
+            Some(ObjRef::new(4, 7)),
+        ),
+    ];
+    for (fixture, info, target, expected_ref) in cases {
+        for properties_route in [false, true] {
+            let route = if properties_route {
+                "properties"
+            } else {
+                "generic"
+            };
+            let original = info_target_document(info, target.clone());
+            let original_cos = open(&original);
+            let expected_info = original_cos
+                .trailer()
+                .get(b"Info")
+                .expect("Info selector")
+                .clone();
+            if fixture == "missing" {
+                assert!(original_cos.xref().get(9).is_none(), "missing target xref");
+                assert_info_fixture(&original_cos, info, &expected_info, None, None, None);
+            } else {
+                assert_info_fixture(
+                    &original_cos,
+                    info,
+                    &expected_info,
+                    expected_ref,
+                    Some(0),
+                    Some(ObjRef::new(4, 0)),
+                );
+            }
+            let original_audit = original_cos.audit_references().expect("original audit");
+            let mut document = Document::open_bytes(original.clone()).expect("opens");
+            if properties_route {
+                document
+                    .edit_document("Initial View", |tx| {
+                        onionskin_core::metadata::write_initial_view(
+                            tx,
+                            &onionskin_core::metadata::InitialView {
+                                mode: Some(onionskin_core::metadata::PageMode::UseOutlines),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .unwrap_or_else(|error| panic!("{fixture} {route} edit: {error:?}"));
+            } else {
+                let (edit, base) = document.edit_mut();
+                edit.apply(
+                    base,
+                    DocumentEdit::SetCatalogEntry {
+                        key: Name::new("PageMode"),
+                        value: Some(Object::name("UseOutlines")),
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{fixture} {route} edit: {error:?}"));
+            }
+            let edited_preview = document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("edited preview")
+                .to_vec();
+            let edited = open(&edited_preview);
+            assert_eq!(
+                onionskin_core::metadata::read_initial_view(&edited)
+                    .expect("edited initial view")
+                    .mode,
+                Some(onionskin_core::metadata::PageMode::UseOutlines),
+                "{fixture} {route} PageMode"
+            );
+            assert_eq!(edited.trailer().get(b"Info"), Some(&expected_info));
+            assert_eq!(
+                edited.audit_references().expect("edited audit"),
+                original_audit
+            );
+            assert!(document.undo().expect("undo catalog edit"));
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("original preview")
+                    .as_ref(),
+                original.as_slice(),
+                "{fixture} {route} undo"
+            );
+            assert!(document.redo().expect("redo catalog edit"));
+            assert_eq!(
+                document
+                    .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                    .expect("redo preview")
+                    .as_ref(),
+                edited_preview.as_slice(),
+                "{fixture} {route} redo"
+            );
+            let dir = tempfile::tempdir().expect("save directory");
+            let path = dir.path().join("catalog.pdf");
+            let mut file = DocumentFile::from_document(document);
+            file.save_as(&path)
+                .unwrap_or_else(|error| panic!("{fixture} {route} save: {error:?}"));
+            let saved_bytes = std::fs::read(&path).expect("saved bytes");
+            assert!(
+                saved_bytes.starts_with(&original),
+                "{fixture} {route} prefix"
+            );
+            let saved_cos = open(&saved_bytes);
+            assert_eq!(
+                onionskin_core::metadata::read_initial_view(&saved_cos)
+                    .expect("saved initial view")
+                    .mode,
+                Some(onionskin_core::metadata::PageMode::UseOutlines)
+            );
+            assert_eq!(saved_cos.trailer().get(b"Info"), Some(&expected_info));
+            assert_eq!(
+                saved_cos.audit_references().expect("saved audit"),
+                original_audit
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn info_target_document(info: &str, target: Vec<u8>) -> Vec<u8> {
+    let mut bytes = common::pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
+        target,
+    ]);
+    let marker = b">>\nstartxref";
+    assert_eq!(
+        bytes
+            .windows(marker.len())
+            .filter(|window| *window == marker)
+            .count(),
+        1,
+        "the fixture has one final trailer marker"
+    );
+    let at = bytes
+        .windows(marker.len())
+        .rposition(|window| window == marker)
+        .expect("the final trailer marker is present");
+    bytes.splice(at..at, format!("/Info {info} ").bytes());
+    bytes
+}
+
+/// Asserts a fixture's `/Info` selector and, when it names a live target, the
+/// row and header generations that target actually carries. A selector's
+/// generation may disagree with both, which is what the mismatch fixtures
+/// exist to pin, so the caller states the row and header rather than letting
+/// them be inferred from the selector.
+fn assert_info_fixture(
+    document: &CosDocument,
+    info: &str,
+    expected: &Object,
+    expected_ref: Option<ObjRef>,
+    xref_generation: Option<u16>,
+    parsed_header: Option<ObjRef>,
+) {
+    let selected = document
+        .trailer()
+        .get(b"Info")
+        .expect("fixture Info selector");
+    assert_eq!(selected, expected, "fixture Info value {info}");
+    let (Some(expected), Some(xref_generation), Some(parsed_header)) =
+        (expected_ref, xref_generation, parsed_header)
+    else {
+        // The selector names no live row; the caller asserts that itself.
+        return;
+    };
+    assert_eq!(
+        selected.as_reference(),
+        Some(expected),
+        "fixture selector {info}"
+    );
+    match document
+        .xref()
+        .get(expected.number)
+        .expect("target xref row")
+    {
+        XrefEntry::InFile { generation, .. } => {
+            assert_eq!(generation, xref_generation, "xref generation {info}");
+        }
+        XrefEntry::InObjectStream { .. } => {
+            assert_eq!(xref_generation, 0, "object-stream generation {info}")
+        }
+        XrefEntry::Free { .. } => panic!("fixture target {info} is free"),
+    }
+    assert_eq!(
+        document.get(expected.number).expect("parsed target").objref,
+        parsed_header,
+        "parsed header generation {info}"
+    );
+}
+
+fn assert_history_unchanged(before: &History, after: &History, fixture: &str, route: &str) {
+    assert_eq!(after.reach(), before.reach(), "{fixture} {route} reach");
+    assert_eq!(
+        after.redo_reach(),
+        before.redo_reach(),
+        "{fixture} {route} redo reach"
+    );
+    assert_eq!(
+        after.can_undo(),
+        before.can_undo(),
+        "{fixture} {route} can undo"
+    );
+    assert_eq!(
+        after.can_redo(),
+        before.can_redo(),
+        "{fixture} {route} can redo"
+    );
+    assert_eq!(
+        after.resident_bytes(),
+        before.resident_bytes(),
+        "{fixture} {route} resident bytes"
+    );
+    assert_eq!(
+        after.forgotten(),
+        before.forgotten(),
+        "{fixture} {route} forgotten"
+    );
+    assert_eq!(
+        after.forgot_saved_mark(),
+        before.forgot_saved_mark(),
+        "{fixture} {route} forgotten saved mark"
+    );
+    assert_eq!(
+        after.is_at_saved_mark(),
+        before.is_at_saved_mark(),
+        "{fixture} {route} saved mark"
+    );
+    assert_eq!(
+        after.undo_label(),
+        before.undo_label(),
+        "{fixture} {route} undo label"
+    );
+    assert_eq!(
+        after.redo_label(),
+        before.redo_label(),
+        "{fixture} {route} redo label"
+    );
+    for index in 0..after.reach() + after.redo_reach() {
+        assert_eq!(
+            after.entry(index),
+            before.entry(index),
+            "{fixture} {route} history entry {index}"
+        );
+    }
+}
 
 fn append(bytes: &[u8], section: Vec<u8>) -> Vec<u8> {
     let mut out = bytes.to_vec();
