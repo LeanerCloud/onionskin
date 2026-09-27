@@ -57,7 +57,7 @@ they say "Onionskin implements N of M rows".
 
 ## Totals
 
-**403 rows: 83 planned / 44 partial / 80 out-of-scope. 196 implemented.**
+**403 rows: 83 planned / 43 partial / 80 out-of-scope. 197 implemented.**
 
 323 rows (implemented plus planned and partial) are the parity target. The other 80 are the
 deliberate no. By milestone: M2 67, M3 96, M4 5, M5 52, M6 46, post-1.0 57.
@@ -447,7 +447,7 @@ keeps a native menu bar on macOS). Onionskin follows the same structure.
 | Place a stamp | implemented | M3 | Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Standard business stamps (Approved, Draft, Confidential, ...) | implemented | M3 | 12 stamps, artwork generated in-house from one table. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Sign Here stamp category | implemented | M3 | 5 stamps. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
-| Dynamic stamps (name, date, time from identity and clock) | partial | M3 | 5 stamps filled natively from the clock, in UTC, with the name from Preferences > Commenting; local time is not offered. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md, docs/evidence/m3-p20b-comment-surfaces.md. |
+| Dynamic stamps (name, date, time from identity and clock) | implemented | M3 | 5 stamps filled natively from the clock in the author's local time, read from the platform's own timezone conversion and printed with its offset (`+05:30`, `-03:00`), with the name from Preferences > Commenting. A blank name is left out. The offset is read from `localtime_r` rather than a bundled database, so it tracks the machine's zone including DST; the renderer takes the offset as a parameter, so a half-hour zone is a unit test. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md, docs/evidence/m3-p20b-comment-surfaces.md, docs/evidence/m3-shell-leftovers.md. |
 | Create a custom stamp | implemented | M3 | From a PDF page or an image, stored under the tool's data folder. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Manage stamps (delete stamps and categories) | implemented | M3 | Edit > Stamps…; only custom stamps can be deleted, and an emptied category's folder is removed. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |
 | Paste clipboard image as stamp | implemented | M3 | Edit menu and the Stamps dialog; each paste replaces `Pasted/Clipboard Image`. Evidence: docs/evidence/m3-p10-stamps-attachments-summary.md. |

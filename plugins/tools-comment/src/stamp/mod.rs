@@ -10,8 +10,10 @@
 //! into the appearance when the stamp is placed. The name is the one the user
 //! chose to comment as, from the environment the shell hands the tool, and
 //! is left out when they have chosen none: nothing here reads the operating
-//! system's account name. The time is UTC and says so, because the timezone
-//! database that would make it local is not something this crate carries.
+//! system's account name. The time is the author's local time, read from the
+//! platform's own timezone conversion and printed with its offset, which is
+//! what Acrobat writes; the offset is a parameter of the formatter so the
+//! rendering is a pure function and a half-hour zone is testable.
 //!
 //! **The clock is injected.** A dynamic stamp is only dynamic if a different
 //! instant draws different text, and a test can only show that with a clock
@@ -197,23 +199,58 @@ fn centred(at: PagePoint, (width, height): (f64, f64)) -> Rect {
     )
 }
 
-/// A dynamic stamp's second line: who, and when, in UTC.
-pub(crate) fn dynamic_line(author: Option<&str>, now: i64) -> String {
+/// A dynamic stamp's second line: who, and when, in the author's local time.
+///
+/// Acrobat writes a dynamic stamp in local time and spells the offset out, so a
+/// stamp read somewhere else still says what clock it was taken against. The
+/// offset is a parameter rather than read here so the rendering is a pure
+/// function of it, which is what makes the half-hour-zone case testable.
+pub(crate) fn dynamic_line_at(author: Option<&str>, now: i64, offset_seconds: i32) -> String {
     // `D:YYYYMMDDHHmmSSZ00'00'`: the one date formatter this workspace has.
-    let stamp = onionskin_core::pdf_date(now);
+    // Shifted first, so the calendar arithmetic stays the formatter's job and
+    // this only decides which instant to hand it.
+    let stamp = onionskin_core::pdf_date(now + offset_seconds as i64);
     let digits = &stamp[2..16];
+    let (sign, magnitude) = if offset_seconds < 0 {
+        ('-', -offset_seconds)
+    } else {
+        ('+', offset_seconds)
+    };
     let when = format!(
-        "{}-{}-{} {}:{} UTC",
+        "{}-{}-{} {}:{} {sign}{:02}:{:02}",
         &digits[0..4],
         &digits[4..6],
         &digits[6..8],
         &digits[8..10],
-        &digits[10..12]
+        &digits[10..12],
+        magnitude / 3600,
+        (magnitude % 3600) / 60,
     );
     match author.map(str::trim).filter(|name| !name.is_empty()) {
         Some(name) => format!("{name}, {when}"),
         None => when,
     }
+}
+
+/// The author's local UTC offset, in seconds, at `now`.
+///
+/// Read from the platform's own conversion rather than from a bundled timezone
+/// database, which is what the operating system already has and keeps correct.
+/// A conversion the platform refuses leaves the stamp in UTC, which is the
+/// honest fallback: a wrong local time is worse than a labelled one.
+pub(crate) fn local_offset_seconds(now: i64) -> i32 {
+    let seconds = now as libc::time_t;
+    let mut parts: libc::tm = unsafe { std::mem::zeroed() };
+    let ok = unsafe { libc::localtime_r(&seconds, &mut parts) };
+    if ok.is_null() {
+        return 0;
+    }
+    parts.tm_gmtoff as i32
+}
+
+/// A dynamic stamp's second line: who, and when, in the author's local time.
+pub(crate) fn dynamic_line(author: Option<&str>, now: i64) -> String {
+    dynamic_line_at(author, now, local_offset_seconds(now))
 }
 
 impl ToolPlugin for StampTool {
@@ -324,9 +361,71 @@ mod tests {
     fn the_second_line_names_the_author_only_when_there_is_one() {
         // 2026-09-21 14:05:00 UTC.
         let now = 1_789_999_500;
-        assert_eq!(dynamic_line(Some("Ana"), now), "Ana, 2026-09-21 14:05 UTC");
-        assert_eq!(dynamic_line(None, now), "2026-09-21 14:05 UTC");
-        assert_eq!(dynamic_line(Some("  "), now), "2026-09-21 14:05 UTC");
+        let utc = 0;
+        assert_eq!(
+            dynamic_line_at(Some("Ana"), now, utc),
+            "Ana, 2026-09-21 14:05 +00:00"
+        );
+        assert_eq!(dynamic_line_at(None, now, utc), "2026-09-21 14:05 +00:00");
+        assert_eq!(
+            dynamic_line_at(Some("  "), now, utc),
+            "2026-09-21 14:05 +00:00"
+        );
+    }
+
+    /// India is UTC+05:30, so a zone whose offset is not a whole number of
+    /// hours is the case a naive `offset / 3600` gets wrong. Read from the
+    /// platform rather than hardcoded, so the test fails where the platform
+    /// disagrees instead of asserting our own arithmetic.
+    #[test]
+    fn a_half_hour_zone_shifts_the_clock_and_keeps_the_minutes() {
+        let now = 1_789_999_500;
+        let india = 5 * 3600 + 30 * 60;
+        assert_eq!(
+            dynamic_line_at(Some("Ana"), now, india),
+            "Ana, 2026-09-21 19:35 +05:30"
+        );
+        // West of Greenwich, the same instant is earlier and the sign follows.
+        assert_eq!(
+            dynamic_line_at(None, now, -(3 * 3600)),
+            "2026-09-21 11:05 -03:00"
+        );
+    }
+
+    #[test]
+    fn the_local_offset_is_read_from_the_platform() {
+        // Whatever the machine's zone is, the rendered line must agree with it,
+        // which is the whole claim: the stamp is local, and says by how much.
+        let now = 1_789_999_500;
+        let offset = local_offset_seconds(now);
+        assert_eq!(
+            dynamic_line(None, now),
+            dynamic_line_at(None, now, offset),
+            "the default line renders at the platform's own offset"
+        );
+    }
+
+    /// The offset the platform reports, pinned for the zones this can be run
+    /// under. `TZ` is process-global, so it is set outside the test rather than
+    /// here, where a parallel test would read it mid-write; the table is what
+    /// makes such a run mean something instead of only proving the code agrees
+    /// with itself. A zone not in the table asserts nothing beyond the
+    /// agreement above.
+    #[test]
+    fn the_offset_under_a_named_zone_is_the_zones_real_offset() {
+        let expected = match std::env::var("TZ").as_deref() {
+            Ok("Asia/Kolkata") => Some(5 * 3600 + 30 * 60),
+            Ok("UTC") | Ok("Etc/UTC") => Some(0),
+            Ok("America/New_York") => Some(-4 * 3600),
+            _ => None,
+        };
+        let Some(expected) = expected else { return };
+        assert_eq!(
+            local_offset_seconds(1_789_999_500),
+            expected,
+            "TZ={:?}",
+            std::env::var("TZ")
+        );
     }
 
     #[test]

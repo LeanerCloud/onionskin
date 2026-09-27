@@ -10,6 +10,9 @@ onionskin-core.workspace = true
 # A custom stamp's source is opened to take its page out.
 onionskin-cos.workspace = true
 onionskin-plugin-api.workspace = true
+# `localtime_r`, for the local UTC offset a dynamic stamp is written at. Already
+# in the lockfile, so this is a manifest edge rather than a new build.
+libc = "0.2"
 
 # The gesture tests drive the real lifecycle against real documents.
 [dev-dependencies]
