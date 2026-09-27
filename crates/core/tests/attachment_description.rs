@@ -12,7 +12,9 @@ fn document() -> Vec<u8> {
     common::pdf(&[
         b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a.txt) 5 0 R (b.txt) << /Type /Filespec /F (b.txt) /EF << /F 7 0 R >> >>] >> >> >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [4 0 R] >>".to_vec(),
+        // `/Resources` is present and empty because `qpdf --check` warns about a
+        // page without one, and this fixture is checked by qpdf.
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> /Annots [4 0 R] >>".to_vec(),
         b"<< /Type /Annot /Subtype /FileAttachment /Rect [10 10 30 30] /FS << /Type /Filespec /F (c.txt) /Desc (old) /EF << /F 8 0 R >> >> >>".to_vec(),
         b"<< /Type /Filespec /F (a.txt) /EF << /F 6 0 R >> >>".to_vec(),
         common::stream("alpha"),
