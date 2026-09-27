@@ -208,8 +208,10 @@ pub(crate) fn resolve(tx: &Transaction<'_>, object: Option<&Object>) -> Result<O
     }
 }
 
+/// The document's catalog. A trailer that names no catalog is not a document
+/// with an odd page tree, so this says which of the two it is.
 pub(crate) fn catalog_ref(tx: &Transaction<'_>) -> Result<ObjRef> {
     tx.trailer_value(b"Root")
         .and_then(|object| object.as_reference())
-        .ok_or(Error::NoPageTree)
+        .ok_or(Error::NoCatalog)
 }

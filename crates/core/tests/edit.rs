@@ -1664,6 +1664,8 @@ fn non_dictionary_info_targets_are_refused_without_mutation() {
                 expected_ref.map(|target| target.generation),
                 expected_ref,
             );
+            // The `free` case deliberately has no object 4, so what is compared
+            // is each object's state including its absence.
             let original_objects: Vec<_> = (1..=4)
                 .map(|number| original_cos.get(number).expect("fixture object").object)
                 .collect();
@@ -1849,6 +1851,18 @@ fn structural_info_aliases_are_refused_without_mutation() {
                 outcome.is_err(),
                 "{fixture} {route} must refuse the structural alias during the edit: {outcome:?}"
             );
+            // The contract refuses a structural alias "even if the selected
+            // generation differs", so a structural cause is reported ahead of a
+            // generation mismatch. The one fixture where both apply pins that
+            // order: reordering the checks and never breaking `is_err` would
+            // still violate the contract.
+            if expected_ref.generation != target_generation {
+                assert!(
+                    matches!(outcome, Err(Error::StructuralInfoTarget { .. })),
+                    "{fixture} {route} must report the structural alias, not the generation: \
+                     {outcome:?}"
+                );
+            }
 
             assert_eq!(
                 document.edit().overlay(),
@@ -2481,7 +2495,6 @@ fn with_xref_free(bytes: &[u8], object: u32) -> Vec<u8> {
 
 #[test]
 fn invalid_info_reference_selectors_are_refused_without_mutation() {
-    let ordinary = b"<< /Title (old) /Subject (before) >>".to_vec();
     let cases = [
         // name, Info selector, the selector as a reference, xref generation
         // the live row carries
@@ -2549,8 +2562,10 @@ fn invalid_info_reference_selectors_are_refused_without_mutation() {
                 }
                 _ => {}
             }
+            // The `free` case deliberately has no object 4, so what is compared
+            // is each object's state including its absence.
             let original_objects: Vec<_> = (1..=4)
-                .map(|number| original_cos.get(number).expect("fixture object").object)
+                .map(|number| (number, original_cos.get(number).ok()))
                 .collect();
             let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
             let before_preview = document
@@ -2636,15 +2651,11 @@ fn invalid_info_reference_selectors_are_refused_without_mutation() {
                 original_cos.trailer().get(b"Info"),
                 "{fixture} {route} Info trailer"
             );
-            for (index, expected) in original_objects.iter().enumerate() {
+            for (number, expected) in &original_objects {
                 assert_eq!(
-                    &reopened
-                        .get((index + 1) as u32)
-                        .expect("reopened object")
-                        .object,
+                    &reopened.get(*number).ok(),
                     expected,
-                    "{fixture} {route} object {}",
-                    index + 1
+                    "{fixture} {route} object {number}"
                 );
             }
         }

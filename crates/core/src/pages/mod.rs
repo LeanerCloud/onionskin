@@ -63,6 +63,30 @@ mod rewrite;
 
 pub(crate) use rewrite::{catalog_ref, dict_at, resolve};
 
+/// Every object number that is part of the document's structure: the catalog,
+/// the page tree root, every intermediate `/Pages` node and every page.
+///
+/// The catalog is not reachable from the walk, so it is added here. A page-tree
+/// failure is propagated rather than swallowed: a caller asking this question
+/// is asking whether some other object number is structure, and an incomplete
+/// answer would let a structural target through.
+pub(crate) fn structural_numbers(
+    tx: &crate::edit::Transaction<'_>,
+) -> crate::Result<std::collections::BTreeSet<u32>> {
+    let catalog = catalog_ref(tx)?;
+    let mut resolve = rewrite::resolver(tx);
+    let root = match resolve(catalog.number)? {
+        Some(onionskin_cos::Object::Dict(dict)) => dict
+            .get(b"Pages")
+            .and_then(onionskin_cos::Object::as_reference),
+        _ => None,
+    }
+    .ok_or(crate::Error::NoPageTree)?;
+    let mut numbers = inherit::node_numbers(root, &mut resolve)?;
+    numbers.insert(catalog.number);
+    Ok(numbers)
+}
+
 /// The resources page `page` has, its own or inherited.
 pub(crate) fn inherited_resources(
     tx: &crate::edit::Transaction<'_>,

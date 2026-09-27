@@ -60,7 +60,7 @@ pub(crate) fn current_page_count(overlay: &Overlay, base: &CosDocument) -> Resul
         TrailerState::Set(object) => object.as_reference(),
         TrailerState::Cleared => None,
     }
-    .ok_or(Error::NoPageTree)?;
+    .ok_or(Error::NoCatalog)?;
     let mut resolve = |number: u32| -> Result<Option<Object>> {
         Ok(overlay
             .capture_object(base, number)?

@@ -22,7 +22,6 @@ use onionskin_cos::{Dict, Name, ObjRef, Object};
 use super::{Result, Transaction};
 use crate::session::Error;
 
-const INFO: &[u8] = b"Info";
 const ROOT: &[u8] = b"Root";
 
 /// One structured edit. `None` as a value removes the key, which is how the
@@ -56,14 +55,23 @@ impl DocumentEdit {
 /// write **and** one trailer write, which is why `Change::TrailerKey` is not
 /// speculative: without it an undo drops the object and leaves the trailer
 /// naming it.
+///
+/// The selector is resolved by [`super::info`], which refuses a target this
+/// document did not write as a document-information dictionary. A direct
+/// dictionary is treated as absent here, exactly as before: the verb writes the
+/// one field it was given and does not copy the other keys across.
 fn write_info_field(tx: &mut Transaction<'_>, key: &Name, value: Option<&Object>) -> Result<()> {
-    match info_reference(tx)? {
-        Some(objref) => {
-            let dict = dict_at(tx, objref.number)?;
+    match super::info::info_target(tx)? {
+        super::info::InfoTarget::Write {
+            number,
+            generation,
+            mut dict,
+        } => {
             let updated = with_entry(dict, key, value);
-            tx.put_object(objref.number, objref.generation, Object::Dict(updated))
+            dict = updated;
+            tx.put_object(number, generation, Object::Dict(dict))
         }
-        None => {
+        super::info::InfoTarget::Create { .. } => {
             let number = tx.reserve();
             let dict = with_entry(Dict::new(), key, value);
             tx.put_object(number, 0, Object::Dict(dict))?;
@@ -79,15 +87,9 @@ fn set_catalog_entry(tx: &mut Transaction<'_>, key: &Name, value: Option<&Object
     tx.put_object(objref.number, objref.generation, Object::Dict(updated))
 }
 
-/// The live `/Info` reference: the overlay's trailer if it has one, else the
-/// base's. Reading the base alone would miss an `/Info` this session created.
-fn info_reference(tx: &Transaction<'_>) -> Result<Option<ObjRef>> {
-    match tx.trailer_value(INFO) {
-        Some(Object::Ref(objref)) => Ok(Some(objref)),
-        Some(_) | None => Ok(None),
-    }
-}
-
+/// The document's catalog, which a catalog edit writes through. It resolves
+/// `/Root` alone: a catalog edit must not start validating an unrelated
+/// malformed `/Info`, which is `set_catalog_entry`'s whole job.
 fn catalog_reference(tx: &Transaction<'_>) -> Result<ObjRef> {
     match tx.trailer_value(ROOT) {
         Some(Object::Ref(objref)) => Ok(objref),

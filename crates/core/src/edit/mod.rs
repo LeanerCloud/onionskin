@@ -7,6 +7,9 @@
 //! the only way in is [`EditSession::transact`].
 
 mod history;
+// `pub(crate)`, not private: `crate::metadata`'s properties writer resolves the
+// same selector and is not a descendant of this module.
+pub(crate) mod info;
 mod overlay;
 mod verb;
 

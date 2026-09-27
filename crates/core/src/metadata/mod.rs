@@ -160,10 +160,10 @@ pub fn write_properties(tx: &mut Transaction<'_>, edit: &PropertiesEdit, now: i6
 
 /// The new `/Info`, returned for the XMP writer to take the dates from.
 fn write_info(tx: &mut Transaction<'_>, edit: &PropertiesEdit, modified: &str) -> Result<Dict> {
-    let existing = tx.trailer_value(b"Info");
-    let mut dict = match resolve(tx, existing.as_ref())? {
-        Some(Object::Dict(dict)) => dict,
-        _ => Dict::new(),
+    let target = crate::edit::info::info_target(tx)?;
+    let mut dict = match &target {
+        crate::edit::info::InfoTarget::Write { dict, .. } => dict.clone(),
+        crate::edit::info::InfoTarget::Create { seed } => seed.clone().unwrap_or_default(),
     };
     let description = &edit.description;
     for (key, value) in [
@@ -190,14 +190,16 @@ fn write_info(tx: &mut Transaction<'_>, edit: &PropertiesEdit, modified: &str) -
         Object::String(modified.as_bytes().to_vec()),
     );
 
-    match existing {
-        Some(Object::Ref(holder)) => {
-            tx.put_object(holder.number, holder.generation, Object::Dict(dict.clone()))?;
+    match target {
+        crate::edit::info::InfoTarget::Write {
+            number, generation, ..
+        } => {
+            tx.put_object(number, generation, Object::Dict(dict.clone()))?;
         }
-        _ => {
-            // No `/Info`, or a direct one: a new object, and the trailer
-            // pointed at it. The trailer key is part of the transaction, so
-            // an undo removes it again.
+        crate::edit::info::InfoTarget::Create { .. } => {
+            // No usable `/Info`: a new object, and the trailer pointed at it.
+            // The trailer key is part of the transaction, so an undo removes it
+            // again.
             let number = tx.reserve();
             tx.put_object(number, 0, Object::Dict(dict.clone()))?;
             tx.set_trailer(Name::new("Info"), Some(Object::Ref(ObjRef::new(number, 0))))?;

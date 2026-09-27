@@ -91,6 +91,30 @@ pub enum Error {
         depth: usize,
         visits: usize,
     },
+    /// The page tree revisits an object already on its own path, so a walk of
+    /// it cannot say which objects it reaches.
+    CyclicPageTree {
+        number: u32,
+    },
+    /// The trailer's `/Info` is a direct value that is not a dictionary.
+    /// Replacing it would discard whatever the document actually wrote there.
+    MalformedInfoTarget,
+    /// The trailer's `/Info` names an object this document does not have: a
+    /// free row, a row for an object that is not there, or object zero.
+    MissingInfoTarget {
+        selector: onionskin_cos::ObjRef,
+    },
+    /// The trailer's `/Info` names a generation the live object no longer has.
+    MismatchedInfoTarget {
+        selector: onionskin_cos::ObjRef,
+        current: u16,
+    },
+    /// The trailer's `/Info` names the catalog, the page tree, or a page: the
+    /// document's own structure, which a document-information write would
+    /// destroy.
+    StructuralInfoTarget {
+        number: u32,
+    },
     /// Refused by `core::protection`: an edit, or a read-out into another
     /// document, of an encrypted document.
     Protected(crate::protection::Refusal),
@@ -170,6 +194,31 @@ impl fmt::Display for Error {
                 f,
                 "the page tree is too large to rewrite: depth {depth}, {visits} nodes visited"
             ),
+            Error::CyclicPageTree { number } => write!(
+                f,
+                "the page tree comes back to object {number}, so Onionskin cannot tell which \
+                 objects are part of the document's structure"
+            ),
+            Error::MalformedInfoTarget => write!(
+                f,
+                "/Info is not a dictionary, so Onionskin will not replace what the document put \
+                 there"
+            ),
+            Error::MissingInfoTarget { selector } => write!(
+                f,
+                "/Info points at object {} {}, which this document does not have",
+                selector.number, selector.generation
+            ),
+            Error::MismatchedInfoTarget { selector, current } => write!(
+                f,
+                "/Info names generation {} of object {}, which is now generation {current}",
+                selector.generation, selector.number
+            ),
+            Error::StructuralInfoTarget { number } => write!(
+                f,
+                "object {number} is part of this document's structure, so /Info was not written \
+                 there"
+            ),
             Error::NoSuchAttachment { index, count } => write!(
                 f,
                 "attachment {index} is outside a document with {count} attachments"
@@ -236,6 +285,11 @@ impl std::error::Error for Error {
             | Error::NoPageTree
             | Error::RepeatedPage { .. }
             | Error::PageTreeTooLarge { .. }
+            | Error::CyclicPageTree { .. }
+            | Error::MalformedInfoTarget
+            | Error::MissingInfoTarget { .. }
+            | Error::MismatchedInfoTarget { .. }
+            | Error::StructuralInfoTarget { .. }
             | Error::NoSuchPage { .. }
             | Error::PageBoxTooSmall { .. }
             | Error::InvalidMargin(_)

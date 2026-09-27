@@ -101,6 +101,26 @@ impl Leaf {
     }
 }
 
+/// What a walk does when the page tree revisits a node already on its own path.
+/// A cycle is a loop, and a page-tree reader has always terminated it. A caller
+/// that must know it saw the whole tree cannot: it is told instead.
+enum CyclePolicy {
+    Truncate,
+    Report,
+}
+
+/// One traversal of the page tree, and what its visitor is called with. Every
+/// node is visited exactly once. The dictionary is supplied only for a leaf,
+/// which is the only node whose dictionary a caller needs, so neither visitor
+/// pays for a clone of an internal node's dictionary.
+struct Descent<'v> {
+    visit: &'v mut dyn FnMut(ObjRef, Option<Dict>, &Inheritable),
+    /// When false the walk skips accumulating inheritable entries, because the
+    /// only visitor that reads them is `walk`.
+    wants_inheritance: bool,
+    cycle: CyclePolicy,
+}
+
 /// Every leaf of the page tree rooted at `root`, in document order.
 ///
 /// `resolve` reads an object by number from wherever the caller's current view
@@ -111,13 +131,26 @@ pub(crate) fn walk(
     resolve: &mut dyn FnMut(u32) -> Result<Option<Object>>,
 ) -> Result<Vec<Leaf>> {
     let mut leaves = Vec::new();
+    let mut descent = Descent {
+        visit: &mut |objref, dict, inherited| {
+            if let Some(dict) = dict {
+                leaves.push(Leaf {
+                    objref,
+                    dict,
+                    inherited: inherited.clone(),
+                });
+            }
+        },
+        wants_inheritance: true,
+        cycle: CyclePolicy::Truncate,
+    };
     let mut path = BTreeSet::new();
     let mut visits = 0usize;
     descend(
         root,
         &Inheritable::default(),
         resolve,
-        &mut leaves,
+        &mut descent,
         &mut path,
         &mut visits,
         0,
@@ -125,11 +158,45 @@ pub(crate) fn walk(
     Ok(leaves)
 }
 
+/// Every object number the page tree rooted at `root` reaches: the root, every
+/// intermediate `/Pages` node and every leaf, including a node that does not
+/// resolve to a dictionary. A page-tree reader cannot be built on leaves alone,
+/// because an intermediate node is as much document structure as a page is.
+///
+/// A cycle is reported rather than truncated: a caller asking this question is
+/// asking whether a number is structure, and a walk that stopped at a cycle has
+/// an incomplete answer, which would let a structural target through.
+pub(crate) fn node_numbers(
+    root: ObjRef,
+    resolve: &mut dyn FnMut(u32) -> Result<Option<Object>>,
+) -> Result<BTreeSet<u32>> {
+    let mut numbers = BTreeSet::new();
+    let mut descent = Descent {
+        visit: &mut |objref, _, _| {
+            numbers.insert(objref.number);
+        },
+        wants_inheritance: false,
+        cycle: CyclePolicy::Report,
+    };
+    let mut path = BTreeSet::new();
+    let mut visits = 0usize;
+    descend(
+        root,
+        &Inheritable::default(),
+        resolve,
+        &mut descent,
+        &mut path,
+        &mut visits,
+        0,
+    )?;
+    Ok(numbers)
+}
+
 fn descend(
     node: ObjRef,
     inherited: &Inheritable,
     resolve: &mut dyn FnMut(u32) -> Result<Option<Object>>,
-    leaves: &mut Vec<Leaf>,
+    descent: &mut Descent<'_>,
     path: &mut BTreeSet<u32>,
     visits: &mut usize,
     depth: usize,
@@ -144,15 +211,28 @@ fn descend(
     // A path set rather than a visited set: a node legitimately shared between
     // two branches still walks, while a cycle terminates.
     if !path.insert(node.number) {
-        return Ok(());
+        return match descent.cycle {
+            CyclePolicy::Truncate => Ok(()),
+            CyclePolicy::Report => Err(Error::CyclicPageTree {
+                number: node.number,
+            }),
+        };
     }
     let Some(Object::Dict(dict)) = resolve(node.number)? else {
+        (descent.visit)(node, None, inherited);
         path.remove(&node.number);
         return Ok(());
     };
 
-    let mut inherited = inherited.clone();
-    inherited.absorb(&dict);
+    let absorbed;
+    let here: &Inheritable = if descent.wants_inheritance {
+        let mut own = inherited.clone();
+        own.absorb(&dict);
+        absorbed = own;
+        &absorbed
+    } else {
+        inherited
+    };
 
     // A node with `/Kids` is internal even when it also claims `/Type /Page`,
     // which some producers do; a node without them is a leaf whatever it
@@ -161,18 +241,15 @@ fn descend(
     let kids = match resolve_entry(&dict, b"Kids", resolve)? {
         Some(Object::Array(kids)) => kids,
         _ => {
-            leaves.push(Leaf {
-                objref: node,
-                dict,
-                inherited,
-            });
+            (descent.visit)(node, Some(dict), here);
             path.remove(&node.number);
             return Ok(());
         }
     };
+    (descent.visit)(node, None, here);
     for kid in kids {
         if let Some(kid) = kid.as_reference() {
-            descend(kid, &inherited, resolve, leaves, path, visits, depth + 1)?;
+            descend(kid, here, resolve, descent, path, visits, depth + 1)?;
         }
     }
     path.remove(&node.number);
