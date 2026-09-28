@@ -315,6 +315,53 @@ pub fn set_bookmark_destination(
     tree.store(tx)
 }
 
+/// Set the bookmark at `path`'s style: `/F` for bold and italic, and `/C` for
+/// the colour.
+///
+/// `/F` is ISO 32000-1 12.3.3's bit field, and the bits are worth rather than
+/// flags: italic is 1, bold is 2, so both together are 3. Reading them as flags
+/// would make "bold, not italic" mean italic instead.
+///
+/// A colour of `None` removes `/C`, which is how a bookmark goes back to the
+/// colour its renderer would otherwise choose. Colours are 0..1 floats, which
+/// is what `/C` carries.
+pub fn set_bookmark_style(
+    tx: &mut Transaction<'_>,
+    path: &[usize],
+    bold: bool,
+    italic: bool,
+    colour: Option<[f64; 3]>,
+) -> Result<()> {
+    let mut tree = Tree::load(tx)?;
+    let at = tree.find(path)?;
+    if at == 0 {
+        return Err(Error::NoSuchBookmark(Vec::new()));
+    }
+    let mut flags = 0i64;
+    if italic {
+        flags |= 1;
+    }
+    if bold {
+        flags |= 2;
+    }
+    let dict = &mut tree.nodes[at].dict;
+    if flags == 0 {
+        dict.remove(b"F");
+    } else {
+        dict.set(Name::new("F"), Object::Integer(flags));
+    }
+    match colour {
+        Some(rgb) => dict.set(
+            Name::new("C"),
+            Object::Array(rgb.map(|channel| Object::Real(channel)).into()),
+        ),
+        None => {
+            dict.remove(b"C");
+        }
+    }
+    tree.store(tx)
+}
+
 /// Delete the bookmark at `path` and every bookmark under it.
 pub fn delete_bookmark(tx: &mut Transaction<'_>, path: &[usize]) -> Result<()> {
     let mut tree = Tree::load(tx)?;

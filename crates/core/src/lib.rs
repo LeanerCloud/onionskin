@@ -85,6 +85,7 @@ pub use onionskin_cos::{ObjRef, Provenance};
 pub use onionskin_render::{BaseRaster, PageRender, PageSvg};
 pub use outline::write::{
     add_bookmark, delete_bookmark, move_bookmark, rename_bookmark, set_bookmark_destination,
+    set_bookmark_style,
 };
 pub use outline::OutlineItem;
 pub use page::{
