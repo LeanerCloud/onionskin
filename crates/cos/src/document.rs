@@ -14,7 +14,7 @@ use crate::filters;
 use crate::object::{
     Dict, Holder, Name, ObjRef, Object, Origin, PageNode, Parsed, RecoveredBoundary, Span, Stream,
 };
-use crate::parse::{LexError, Lexer};
+use crate::parse::{self, LexError, Lexer};
 use crate::reader::Reader;
 use crate::repair::{self, Provenance, RepairReason, RepairReport};
 use crate::source::{FileSource, Source};
@@ -431,6 +431,22 @@ impl Document {
 
     pub fn xref(&self) -> &Xref {
         &self.xref
+    }
+
+    /// The version in the `%PDF-` header, e.g. `"1.7"`, or `None` when the
+    /// header does not spell one out. A catalog's `/Version` can raise the
+    /// effective version above this, so a caller reporting the document's
+    /// version reads both.
+    pub fn header_version(&self) -> Option<String> {
+        let head = self.reader.read(0, 32).ok()?;
+        let at = parse::find(&head, b"%PDF-")?;
+        let text = head.get(at + 5..)?;
+        let end = text
+            .iter()
+            .position(|byte| !byte.is_ascii_digit() && *byte != b'.')
+            .unwrap_or(text.len());
+        let version = std::str::from_utf8(&text[..end]).ok()?;
+        (!version.is_empty()).then(|| version.to_owned())
     }
 
     /// Length of the original bytes. Everything a save appends starts here, so

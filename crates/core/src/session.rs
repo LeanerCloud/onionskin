@@ -641,6 +641,13 @@ impl Document {
         crate::metadata::read_initial_view(self.structure()?)
     }
 
+    /// What the file says about itself: version, page size, whether it is
+    /// tagged, and whether it is linearized. Read from the base, since none of
+    /// these are editable from the Description tab.
+    pub fn document_facts(&self) -> crate::metadata::DocumentFacts {
+        crate::metadata::document_facts(&self.cos)
+    }
+
     /// Run a page-organization edit as one undoable step, handing it the
     /// structure tree as this session currently has it.
     ///

@@ -245,6 +245,7 @@ fn read_source(
     );
     let text = |value: Option<&str>| value.map_or_else(|| NOT_SET.to_owned(), str::to_owned);
     let date = |value: Option<&str>| value.map_or_else(|| NOT_SET.to_owned(), date_label);
+    let document_facts = document.document_facts();
     let file = vec![
         (
             "Location",
@@ -257,6 +258,10 @@ fn read_source(
                 .map_or_else(|| NOT_SET.to_owned(), |meta| size_label(meta.len())),
         ),
         ("Pages", page_count.to_string()),
+        ("PDF Version", text(document_facts.version.as_deref())),
+        ("Page Size", text(document_facts.page_size.as_deref())),
+        ("Tagged", yes_no(document_facts.tagged)),
+        ("Fast Web View", yes_no(document_facts.linearized)),
         ("Created", date(info.created.as_deref())),
         ("Modified", date(info.modified.as_deref())),
         ("Application", text(info.creator.as_deref())),
@@ -275,6 +280,12 @@ fn read_source(
             edit_refusal,
         },
     })
+}
+
+/// A fact the file either states or does not, which is how Acrobat words
+/// these rather than as a value that might be missing.
+fn yes_no(value: bool) -> String {
+    if value { "Yes" } else { "No" }.to_owned()
 }
 
 /// A reason as the dialog prints it: a sentence, capitalised.

@@ -18,7 +18,9 @@ fn document(config_inline: bool) -> Vec<u8> {
     common::pdf(&[
         catalog.as_bytes().to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>".to_vec(),
+        // `/Resources` is present and empty because `qpdf --check` warns about a
+        // page without one, and this fixture is checked by qpdf.
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
         b"<< /Type /OCG /Name (Stamp) >>".to_vec(),
         b"<< /Type /OCG /Name (Notes) /Intent [/View /Design] >>".to_vec(),
         b"<< /OCGs [4 0 R 5 0 R] /D 7 0 R >>".to_vec(),

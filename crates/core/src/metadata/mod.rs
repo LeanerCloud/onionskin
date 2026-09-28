@@ -14,6 +14,7 @@
 //! the transaction.
 
 pub mod criteria;
+pub mod facts;
 pub mod fonts;
 pub mod view;
 pub mod xmp;
@@ -21,6 +22,7 @@ pub mod xmp;
 use onionskin_cos::{Dict, Document as CosDocument, Name, ObjRef, Object, Stream};
 
 pub use criteria::{matches_all, CriterionError, PropertyCriterion, PropertyField, PropertyTest};
+pub use facts::{document_facts, DocumentFacts};
 pub use fonts::{document_fonts, FontEntry};
 pub use view::{read_initial_view, write_initial_view, InitialView, OpenFit, PageLayout, PageMode};
 pub use xmp::XmpFields;
