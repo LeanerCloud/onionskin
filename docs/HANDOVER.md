@@ -33,7 +33,7 @@ out-of-scope. 196 implemented.** The guarantee test
 | `556e0c6` docs: WP3 evidence (`m6-trust.md`) and parity | WP3 | done |
 | `c1860fc` app: Zoom To takes a typed magnification | WP2 | done |
 | `6610142` Layer Properties: name, intent, default state | WP2 | done |
-| `59cf44c` **wip:** attachments' Edit Description | WP2 | **unfinished** |
+| `b64b5cf` **wip:** attachments' Edit Description | WP2 | **unfinished** |
 
 Evidence for each finished package is in `docs/evidence/`:
 `m6-signature-validation.md`, `m6-trust.md`, `m3-shell-leftovers.md`
@@ -41,7 +41,7 @@ Evidence for each finished package is in `docs/evidence/`:
 
 ## Pick up here: WP2, attachments' Edit Description
 
-`59cf44c` builds, and `cargo test -p onionskin-core --test
+`b64b5cf` builds, and `cargo test -p onionskin-core --test
 attachment_description` plus the app's attachment tests pass. To finish:
 
 1. A window test that opens the Attachments pane's menu, Edit
