@@ -157,6 +157,28 @@ independently review an atomic correction before changing the collapse paths.
   asserts the `/ParentTree` directly; the invariant should also flag a slot
   whose element has no `/Pg` and no kids.
 
+- **Resolved 2026-09-27: guarantee 4 was never broken.** It was reported as
+  failing on `main` across three sessions, and as the most important open item
+  in the repository. It was not a signature defect: the `pdfsig` binary could
+  not start, because poppler was linked against
+  `/opt/homebrew/opt/nss/lib/libnss3.dylib` and the nss keg held only static
+  libraries, so pdfsig died in dyld with an empty stdout and exit 134.
+  `crates/core/tests/signatures.rs` skipped only when the binary was ABSENT, so
+  a pdfsig that started and then failed reached the assertion with nothing to
+  match and read as "not a valid signature". Reinstalling nss restores pdfsig
+  and `pdftotext`, which the same poppler install had also killed, and all five
+  signature tests pass with the oracle agreeing on every case. The helper now
+  skips loudly when pdfsig exits non-zero instead of reading that as a verdict,
+  and `ONIONSKIN_REQUIRE_PDFSIG` makes the skip a failure. A broken shared
+  library being indistinguishable from a broken signature was the worst shape a
+  verification oracle can have, and it read as a product defect for a day.
+
+- **A poppler install that cannot load `libnss3.dylib` takes every oracle
+  built on it down at once.** `pdfsig` and `pdftotext` both come from poppler,
+  and both died together while each was read as an independent symptom. Check
+  `pdfsig -nocert corpus/signed/rsa-sha256.pdf` for a `dyld` error before
+  believing anything those tools say.
+
 - Historical corpus proof scripts are retained references, not acceptance tools:
   `tripwire.sh` mutates its checkout's workflow and masks the guarantee test's
   exit status, `rerun.sh` deletes each command's raw log and treats an empty
