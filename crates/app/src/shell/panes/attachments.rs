@@ -696,3 +696,43 @@ mod tests {
         assert_eq!(broken[0].label, failure);
     }
 }
+
+/// The attachment policy matrix, in one place: every command against both
+/// document states, so the rule is stated rather than implied by the cases
+/// above it.
+///
+/// The rule is that a command which only READS the attachment is always
+/// available, and one that WRITES is off with the document's own reason. That
+/// is why Open and Save survive a protected document: a user who cannot edit
+/// the file can still read what is attached to it, and refusing to save an
+/// attachment out would strand them. Editing the description and deleting are
+/// edits, and are refused for the same reason every other edit in the shell
+/// is.
+#[test]
+fn every_command_against_both_document_states_is_stated() {
+    const REFUSAL: Option<&str> = Some("this document does not allow editing");
+    for command in AttachmentCommand::ALL {
+        let reads_only = matches!(command, AttachmentCommand::Open | AttachmentCommand::Save);
+        assert!(
+            command.availability(None).is_enabled(),
+            "{}: available on a document that may be edited",
+            command.label()
+        );
+        assert_eq!(
+            command.availability(REFUSAL).is_enabled(),
+            reads_only,
+            "{}: a command that {} the attachment is {} on a document that may not be edited",
+            command.label(),
+            if reads_only { "only reads" } else { "writes" },
+            if reads_only { "still available" } else { "off" },
+        );
+        if !reads_only {
+            assert_eq!(
+                command.availability(REFUSAL).reason(),
+                REFUSAL,
+                "{}: off with the document's own reason",
+                command.label()
+            );
+        }
+    }
+}

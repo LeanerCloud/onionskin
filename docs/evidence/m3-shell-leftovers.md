@@ -136,3 +136,27 @@ the order they landed; the headline is updated with each.
   `ONIONSKIN_REQUIRE_OUTLINE_ORACLE`. The pikepdf half matters more than it
   looks: our reader and our writer could agree on the same misreading of `/F`,
   and an independent reader cannot.
+
+## The attachment policy matrix (M3)
+
+- **Claim:** the Attachments pane's commands have a stated policy, not an
+  implied one, which is what the row said was missing.
+- **The policy:** a command that only READS an attachment stays available on a
+  document that may not be edited; a command that WRITES is off with the
+  document's own reason. Open and Save read. Delete and Edit Description write.
+  A reader who cannot edit the file can still read what is attached to it, and
+  refusing to save an attachment out would strand them, which is the opposite of
+  what a protection bit is for.
+- **Runs:** `every_command_against_both_document_states_is_stated` walks all
+  four row commands against both document states, so all eight cells are
+  pinned: available when the document may be edited, and either still available
+  or off with the document's reason when it may not. The behaviour matrix around
+  it is covered by the window tests that were already there: a PDF opens in a
+  tab, a non-PDF is refused, a malformed one is refused without a traversal
+  name, same-named attachments from two documents open as independent copies,
+  and Save writes the bytes out.
+- **Headline:** the row moves to implemented, 197 to 198, which
+  `acrobat_parity_headline_matches_every_inventory_row` checked. It caught a
+  wrong count first: the headline was written from two rows having moved rather
+  than from the rows themselves, and one of them (the Bookmarks row) had in
+  fact stayed partial.
