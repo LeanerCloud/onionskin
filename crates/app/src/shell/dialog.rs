@@ -64,6 +64,7 @@ pub(in crate::shell) enum ShellDialog {
     SignatureProperties,
     /// The Attachments pane's Edit Description.
     AttachmentDescription,
+    BookmarkProperties,
     /// Edit > Watermark, Background, Header & Footer or Bates Numbering.
     #[cfg_attr(not(feature = "tools-edit"), allow(dead_code))]
     Marks(onionskin_core::pages::MarkKind),
@@ -117,6 +118,7 @@ impl ShellDialog {
             Self::WebLink => "Open Web Link",
             Self::SignatureProperties => "Signature Properties",
             Self::AttachmentDescription => "Edit Description",
+            Self::BookmarkProperties => "Bookmark Properties",
             #[cfg(feature = "redact")]
             Self::Redact(panel) => panel.title(),
             #[cfg(feature = "tools-form")]
@@ -336,6 +338,10 @@ pub(in crate::shell) fn accessible(
         ShellDialog::AttachmentDescription => frame
             .description_dialog()
             .map(|state| super::chrome::description_dialog::accessible(state, cx))
+            .unwrap_or_default(),
+        ShellDialog::BookmarkProperties => frame
+            .bookmark_properties()
+            .map(super::chrome::bookmark_properties::accessible)
             .unwrap_or_default(),
         ShellDialog::SignatureProperties => super::chrome::signature_properties::accessible(
             frame
@@ -634,6 +640,11 @@ pub(in crate::shell) fn render_dialog(
         ShellDialog::Signature { .. } => gpui::div().into_any_element(),
         ShellDialog::AttachmentDescription => match frame.description_dialog() {
             Some(state) => super::chrome::description_dialog::render(state, focused, theme, cx)
+                .into_any_element(),
+            None => div().into_any_element(),
+        },
+        ShellDialog::BookmarkProperties => match frame.bookmark_properties() {
+            Some(state) => super::chrome::bookmark_properties::render(state, focused, theme, cx)
                 .into_any_element(),
             None => div().into_any_element(),
         },

@@ -56,6 +56,17 @@ impl ShellFrame {
                     self.open_bookmark_title(row.path, &row.title, window, cx);
                 }
             }
+            BookmarksCommand::Properties => {
+                // The style of the title the menu was opened on, refused with
+                // the document's own reason when it may not be edited.
+                if let Some(row) = target {
+                    let refusal = self
+                        .active_canvas()
+                        .map(|canvas| canvas.read(cx).model.edit_refusal())
+                        .flatten();
+                    self.open_bookmark_properties(row.path, &row.title, refusal, window, cx);
+                }
+            }
             _ => {}
         }
         cx.notify();

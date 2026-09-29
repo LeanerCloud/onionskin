@@ -27,16 +27,19 @@ pub(in crate::shell) enum BookmarksCommand {
     Indent,
     Outdent,
     Delete,
+    /// The style a reader honours: `/F` and `/C`.
+    Properties,
 }
 
 impl BookmarksCommand {
-    pub(in crate::shell) const ALL: [Self; 6] = [
+    pub(in crate::shell) const ALL: [Self; 7] = [
         Self::New,
         Self::Rename,
         Self::SetDestination,
         Self::Indent,
         Self::Outdent,
         Self::Delete,
+        Self::Properties,
     ];
 
     pub(in crate::shell) fn label(self) -> &'static str {
@@ -47,6 +50,7 @@ impl BookmarksCommand {
             Self::Indent => "Nest Under Bookmark Above",
             Self::Outdent => "Move Out One Level",
             Self::Delete => "Delete Bookmark",
+            Self::Properties => "Properties…",
         }
     }
 
@@ -163,8 +167,10 @@ pub(super) fn run(
                         delete_bookmark(tx, &path)
                     });
                 }
-                // Run by the frame, which asks for the title first.
-                BookmarksCommand::New | BookmarksCommand::Rename => {}
+                // Run by the frame: it opens the dialog, or asks for the
+                // title first, or toggles the pane's own wrapping.
+                BookmarksCommand::New | BookmarksCommand::Rename | BookmarksCommand::Properties => {
+                }
             }
         }
     }

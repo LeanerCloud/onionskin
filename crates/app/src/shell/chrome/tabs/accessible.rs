@@ -479,7 +479,9 @@ impl ShellFrame {
                 self.open_layer_properties(window, cx);
             }
             Activation::Pane(PaneAction::Bookmark(BookmarkAction::Run(
-                command @ (BookmarksCommand::New | BookmarksCommand::Rename),
+                command @ (BookmarksCommand::New
+                | BookmarksCommand::Rename
+                | BookmarksCommand::Properties),
             ))) => self.run_bookmark_dialog_command(command, window, cx),
             Activation::Pane(PaneAction::Attachment(AttachmentAction::Add)) => {
                 self.prompt_for_attachment(cx);
@@ -560,6 +562,9 @@ impl ShellFrame {
             Activation::Protect(action) => self.run_protect_action(action, window, cx),
             Activation::WebLink(action) => self.run_web_link_action(action, window, cx),
             Activation::Description(_) => self.submit_description(window, cx),
+            Activation::BookmarkProperties(action) => {
+                self.run_bookmark_properties_action(action, window, cx)
+            }
             Activation::LayerProperties(action) => {
                 self.run_layer_properties_action(action, window, cx)
             }

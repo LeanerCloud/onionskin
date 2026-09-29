@@ -254,6 +254,8 @@ pub(in crate::shell) struct ShellFrame {
     pub(super) web_link: Option<crate::shell::chrome::web_link_dialog::WebLinkPrompt>,
     /// Edit Description's attachment and text.
     pub(super) description: Option<crate::shell::chrome::description_dialog::DescriptionState>,
+    pub(super) bookmark_properties:
+        Option<crate::shell::chrome::bookmark_properties::BookmarkPropertiesState>,
     /// Layer Properties' layer and settings.
     pub(super) layer_properties:
         Option<crate::shell::chrome::layer_properties_dialog::LayerPropertiesState>,
@@ -496,6 +498,7 @@ impl ShellFrame {
             signature_properties: None,
             layer_properties: None,
             description: None,
+            bookmark_properties: None,
             #[cfg(feature = "tools-edit")]
             link_dialog: None,
             #[cfg(feature = "tools-fill-sign")]

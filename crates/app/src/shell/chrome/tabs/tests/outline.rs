@@ -1010,3 +1010,61 @@ fn search_attachments_opens_advanced_search_over_them(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Bookmark Properties on a real window: the pane's menu opens the dialog, the
+/// style is chosen, Apply writes it, and Undo takes it back. The bytes are
+/// checked by the core test, which is where pikepdf reads them.
+#[gpui::test]
+fn bookmark_properties_writes_the_style_from_the_dialog(cx: &mut TestAppContext) {
+    use crate::shell::chrome::bookmark_properties::BookmarkPropertiesAction;
+    let bytes = crate::shell::fixtures::outline_pdf();
+    let (window, _) = bound_window_from_bytes(vec![("outline.pdf", bytes)], cx);
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            assert!(
+                !outline(frame, cx).is_empty(),
+                "the fixture carries bookmarks to style"
+            );
+            open_menu(frame, Some(0), cx);
+            run(frame, BookmarksCommand::Properties, window, cx);
+            assert_eq!(frame.dialog, Some(ShellDialog::BookmarkProperties));
+
+            // Bold and Red, which is palette entry 0, and NOT italic: the bit
+            // field is 2 rather than 1, and the core test pins that reading.
+            frame.run_activation(
+                Activation::BookmarkProperties(BookmarkPropertiesAction::ToggleBold),
+                window,
+                cx,
+            );
+            frame.run_activation(
+                Activation::BookmarkProperties(BookmarkPropertiesAction::Colour(Some(0))),
+                window,
+                cx,
+            );
+            frame.run_activation(
+                Activation::BookmarkProperties(BookmarkPropertiesAction::Apply),
+                window,
+                cx,
+            );
+            assert_eq!(frame.dialog, None, "Apply closes the dialog");
+            assert!(
+                frame.navigation.bookmarks().is_some(),
+                "the outline survives the edit"
+            );
+
+            // The write is proved by the document being dirty; what the bytes say is
+            // the core test's job, where pikepdf reads them back.
+            let canvas = frame.active_canvas().cloned().expect("a canvas");
+            assert!(
+                canvas.read(cx).model.document_mut().is_dirty(),
+                "Apply wrote the bookmark's style"
+            );
+            frame.run_main_menu_command(MenuCommand::Undo, window, cx);
+            assert!(
+                !canvas.read(cx).model.document_mut().is_dirty(),
+                "Undo takes the style back"
+            );
+        })
+        .unwrap();
+}

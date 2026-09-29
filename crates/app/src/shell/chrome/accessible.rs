@@ -223,6 +223,7 @@ pub(in crate::shell) enum Activation {
     WebLink(crate::shell::chrome::web_link_dialog::WebLinkAction),
     /// Edit Description's OK.
     Description(crate::shell::chrome::description_dialog::DescriptionAction),
+    BookmarkProperties(crate::shell::chrome::bookmark_properties::BookmarkPropertiesAction),
     /// A control in Layer Properties.
     LayerProperties(crate::shell::chrome::layer_properties_dialog::LayerPropertiesAction),
     /// The Security Settings pane: Document Properties on its Security tab.

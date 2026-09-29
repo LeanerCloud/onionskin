@@ -2,6 +2,7 @@ mod accessible;
 mod advanced_search;
 mod attachment_commands;
 mod auto_scroll;
+mod bookmark_properties_commands;
 mod context;
 mod create;
 mod crop;
