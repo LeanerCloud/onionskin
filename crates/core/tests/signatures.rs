@@ -153,15 +153,33 @@ fn a_note_saved_here_keeps_an_approval_signature_valid() {
 }
 
 /// pdfsig checks the cryptography only: every signature's bytes and key.
+///
+/// A pdfsig that cannot RUN is not a verdict. This skipped only when the binary
+/// was absent, so a pdfsig that started and then failed, which is what a broken
+/// shared library looks like, arrived here with empty stdout and was read as
+/// "not a valid signature". Guarantee 4 then failed for a missing dylib. A tool
+/// that did not do its job says so instead, and `ONIONSKIN_REQUIRE_PDFSIG`
+/// turns that into a failure rather than a skip.
 fn pdfsig_agrees(path: &std::path::Path, valid: bool) {
+    let required = std::env::var_os("ONIONSKIN_REQUIRE_PDFSIG").is_some();
     let Ok(output) = std::process::Command::new("pdfsig")
         .arg("-nocert")
         .arg(path)
         .output()
     else {
-        eprintln!("pdfsig is not installed: skipping the independent check");
+        assert!(!required, "pdfsig is required for this test");
+        eprintln!("skipping pdfsig: not installed");
         return;
     };
+    if !output.status.success() {
+        assert!(!required, "pdfsig is required for this test");
+        eprintln!(
+            "skipping pdfsig: it exited {:?} with no verdict, stderr {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return;
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
         text.contains("Signature is Valid") && !text.contains("Digest Mismatch"),
