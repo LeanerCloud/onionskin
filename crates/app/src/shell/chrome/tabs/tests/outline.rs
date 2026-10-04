@@ -698,7 +698,7 @@ fn same_named_attachments_from_different_documents_open_independent_copies(
             let tree = frame.accessible(_window, cx);
             for child in &children {
                 let node = tree
-                    .find(&tab_element_id(child.canvas.entity_id()).into())
+                    .find(&tab_element_id(child.canvas.entity_id()))
                     .expect("same-name attachment tab node");
                 assert_eq!(node.label.as_str(), "annex.pdf");
             }
@@ -747,7 +747,7 @@ fn a_detached_attachment_save_as_uses_its_name_and_becomes_path_backed(cx: &mut 
             assert_eq!(
                 frame
                     .accessible(window, cx)
-                    .find(&tab_element_id(child_id).into())
+                    .find(&tab_element_id(child_id))
                     .and_then(|tab| tab.description.as_deref()),
                 Some("Unsaved changes")
             );
@@ -765,7 +765,7 @@ fn a_detached_attachment_save_as_uses_its_name_and_becomes_path_backed(cx: &mut 
             assert_eq!(
                 frame
                     .accessible(_window, cx)
-                    .find(&tab_element_id(tab.canvas.entity_id()).into())
+                    .find(&tab_element_id(tab.canvas.entity_id()))
                     .and_then(|tab| tab.description.as_deref()),
                 Some("Unsaved changes")
             );
@@ -793,7 +793,7 @@ fn a_detached_attachment_save_as_uses_its_name_and_becomes_path_backed(cx: &mut 
             assert_eq!(
                 frame
                     .accessible(_window, cx)
-                    .find(&tab_element_id(tab.canvas.entity_id()).into())
+                    .find(&tab_element_id(tab.canvas.entity_id()))
                     .and_then(|tab| tab.description.as_deref()),
                 Some("Unsaved changes")
             );
@@ -1060,7 +1060,9 @@ fn bookmark_properties_writes_the_style_from_the_dialog(cx: &mut TestAppContext)
                 canvas.read(cx).model.document_mut().is_dirty(),
                 "Apply wrote the bookmark's style"
             );
-            frame.run_main_menu_command(MenuCommand::Undo, window, cx);
+            frame
+                .run_main_menu_command(MenuCommand::Undo, window, cx)
+                .expect("undo runs");
             assert!(
                 !canvas.read(cx).model.document_mut().is_dirty(),
                 "Undo takes the style back"

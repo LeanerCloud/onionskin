@@ -71,7 +71,9 @@ fn page_count(frame: &ShellFrame, cx: &App) -> usize {
 fn dirty(frame: &ShellFrame, cx: &mut Context<ShellFrame>, window: &mut Window) -> bool {
     let tree = frame.accessible(window, cx);
     let tab = tree
-        .find(&tab_element_id(frame.tabs.active().expect("a tab").canvas.entity_id()).into())
+        .find(&tab_element_id(
+            frame.tabs.active().expect("a tab").canvas.entity_id(),
+        ))
         .expect("the tab is described");
     tab.description.as_deref() == Some("Unsaved changes")
 }

@@ -62,8 +62,7 @@ impl ShellFrame {
                 if let Some(row) = target {
                     let refusal = self
                         .active_canvas()
-                        .map(|canvas| canvas.read(cx).model.edit_refusal())
-                        .flatten();
+                        .and_then(|canvas| canvas.read(cx).model.edit_refusal());
                     self.open_bookmark_properties(row.path, &row.title, refusal, window, cx);
                 }
             }

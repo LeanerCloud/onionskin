@@ -102,7 +102,7 @@ pub(in crate::shell) fn attached_pdf_with_payload(name: &str, annex: &[u8]) -> V
         annex.len()
     )
     .into_bytes();
-    embedded.extend_from_slice(&annex);
+    embedded.extend_from_slice(annex);
     embedded.extend_from_slice(b"\nendstream");
     let filespec = format!("<< /Type /Filespec /F ({name}) /UF ({name}) /EF << /F 7 0 R >> >>");
     let catalog = format!(

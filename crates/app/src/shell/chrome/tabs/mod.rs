@@ -341,9 +341,7 @@ impl ShellFrame {
             .map(|canvas| canvas.entity_id())
             .collect();
         let result = match target {
-            OpenTarget::File(path) => self
-                .open_document(path, password, cx)
-                .map(|source| Some(source)),
+            OpenTarget::File(path) => self.open_document(path, password, cx).map(Some),
             OpenTarget::Attachment { .. } => self.open_target(target, password, cx).map(|_| None),
         };
         match result {
@@ -443,8 +441,7 @@ impl ShellFrame {
         }
         let target = OpenTarget::File(source.clone());
         self.open_target(&target, password, cx)
-            .map(|()| source.clone())
-            .map_err(|error| error)?;
+            .map(|()| source.clone())?;
         Ok(source)
     }
 
@@ -664,14 +661,14 @@ impl ShellFrame {
             .get(index)
             .and_then(|tab| tab.path(cx))
             .ok_or(TabError::Unavailable("This document has no file path"))
-            .or_else(|error| {
+            .map_err(|error| {
                 if self.tabs.tabs().get(index).is_none() {
-                    Err(TabError::OutOfRange {
+                    TabError::OutOfRange {
                         index,
                         count: self.tabs.tabs().len(),
-                    })
+                    }
                 } else {
-                    Err(error)
+                    error
                 }
             })
     }
