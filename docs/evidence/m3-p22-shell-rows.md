@@ -289,9 +289,10 @@ frames is GPUI's behaviour on macOS, read from its source, not a test here.
   - a broken attached PDF is named in `skipped` and a blank query searches
     nothing;
   - property criteria over the document's own `/Info`.
-- `chrome::advanced_search` unit tests, 6: criterion cycling, an option that
-  changes nothing, outcome lines, attachment summaries, the criterion rows
-  appearing only while used, and every control's state following its action.
+- `chrome::advanced_search` unit tests, 7: criterion cycling, an option that
+  changes nothing, the stem option reaching the form and toggling back, outcome
+  lines, attachment summaries, the criterion rows appearing only while used,
+  and every control's state following its action.
 - Window tests `tabs::tests::advanced_search`, 3:
   - `a_word_only_an_attachment_has_is_found_when_attachments_are_included`:
     opened by its keystroke, the Include PDF Attachments checkbox is
@@ -309,6 +310,12 @@ frames is GPUI's behaviour on macOS, read from its source, not a test here.
   at 163 planned / 135 implemented.
 - **Lint.** `cargo clippy` for core and for the app in the four feature
   sets: clean. `cargo fmt --all --check`: clean.
+  **Correction, added with the stemming work.** The clippy claim above was not
+  true when it was written. The app's `shell` feature set carried eleven
+  findings, none in code this section had touched, because the default-feature
+  gate does not compile the shell at all. A green default-feature run says
+  nothing about the window tests, and reading it as if it covered them is the
+  same mistake as a silent oracle.
 
 **Mutations run.**
 
@@ -324,8 +331,70 @@ frames is GPUI's behaviour on macOS, read from its source, not a test here.
 - The attachment search runs on the main thread when Search is pressed.
   It is bounded by two levels and 1,000 hits, but a very large attachment
   would pause the window while it is read.
-- One criterion line, where Acrobat allows several. Stemming, and searching
-  across folders or indexes (the post-1.0 row), are not offered.
+- One criterion line, where Acrobat allows several. Searching across folders or
+  indexes (the post-1.0 row) is not offered.
+
+### Word stemming (added later; `Match Word Stems`)
+
+Advanced Search offers a **Match Word Stems** checkbox, and Preferences has a
+**Match word stems** switch. Off by default, so nothing changes for a user who
+never asks for it.
+
+The algorithm is Porter2, the English algorithm the Snowball site specifies,
+taken from `rust-stemmers` rather than hand-rolled: the algorithm is subtle and
+its failure mode is a silently wrong search rather than a crash. It adds one
+package; `serde` and `serde_derive` were already in the lockfile.
+
+A stemmed query compares whole words by stem rather than searching for the stem
+as a substring. That is a deliberate choice with two consequences worth
+stating:
+
+- A hit names the word the page drew, not the stem it matched on. Querying
+  `run` against `running` reports `0..7` and seven quads, so a highlight covers
+  the word and a redaction rewrites all of it. Matching stems as substrings
+  cannot express this, because a stem is shorter than the word it came from
+  and the fold's offset map has no way to say that one stem byte stands for
+  seven source characters.
+- Stemming is whole-word, so it does *not* match inside a longer word.
+  Querying `cat` finds `cats` but not `concatenate`, which reduces to
+  `concaten`. The literal search does match `cat` inside `concatenate`; that
+  difference is the point of the option.
+
+What the unit tests pin, all in `crates/content/src/search.rs`:
+
+| Test | Claim |
+| --- | --- |
+| `stemming_is_off_unless_asked_for` | `connection` finds one word literally and all three with stemming on |
+| `a_stemmed_search_finds_every_word_reducing_to_the_same_stem` | `connect`, `connected`, `connection`, in document order |
+| `a_stemmed_hit_covers_the_whole_word_it_matched` | the range and quads cover all of `running` |
+| `stemming_does_not_match_a_stem_inside_a_longer_word` | `cat` misses `concatenate`, finds `cats` |
+| `a_stemmed_phrase_matches_a_run_of_words_in_order` | order matters, as for a literal phrase |
+| `any_and_all_of_the_words_ignore_order_when_stemming` | `AllWords` still means the page |
+| `a_stemmed_hit_keeps_a_ligature_word_intact` | a folded ligature still reports the glyphs drawn |
+| `comment_text_answers_the_same_stemmed_question` | comment text answers the same question as a page |
+| `a_stemmed_search_of_a_needle_with_no_words_finds_nothing` | a needle of punctuation finds nothing |
+
+Two facts about the stemmer were read off it rather than assumed, because both
+contradict the obvious guess: `runner` does **not** reduce to `run`, and
+`happier` does **not** reduce to `happi`. `concatenate` reduces to `concaten`,
+which is what the whole-word test above rests on.
+
+**Negative control.** Anchoring a stemmed word's range at its first source
+character instead of its last, which is what a naive implementation would do,
+fails `a_stemmed_hit_covers_the_whole_word_it_matched`,
+`a_stemmed_hit_keeps_a_ligature_word_intact`,
+`a_stemmed_phrase_matches_a_run_of_words_in_order` and
+`a_stemmed_search_finds_every_word_reducing_to_the_same_stem`.
+
+**Not claimed.**
+
+- Stemming is English-only. A query in another language stems by the English
+  rules, which mostly means its words are left alone.
+- Punctuation inside a word ends it, so `don't` is read as the two words `don`
+  and `t`. That is the same boundary `Whole words only` uses.
+- The find bar's own menu has no stemming control. Advanced Search and
+  Preferences carry it, because Acrobat's find toolbar has no such control to
+  mirror.
 
 ## Copy with formatting / Export Selection As (row 31, `partial`)
 

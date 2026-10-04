@@ -2,10 +2,10 @@
 //!
 //! Deliberately dumb: a literal substring search over the page's runs in
 //! document order, with the options Acrobat's find bar and the current-document
-//! half of its Advanced Search have. No stemming, no fuzzy matching, no layout
-//! analysis. What it does owe the caller is exact provenance for every hit, so
-//! a highlight lands on the right glyphs and a redaction rewrites the right
-//! bytes.
+//! half of its Advanced Search have, plus word stemming behind its own option.
+//! No fuzzy matching, no layout analysis. What it does owe the caller is exact
+//! provenance for every hit, so a highlight lands on the right glyphs and a
+//! redaction rewrites the right bytes.
 //!
 //! Pages are flattened into semantic pieces in extraction order before
 //! matching, so a hit may cross showing operators or ActualText members. The
@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use rust_stemmers::{Algorithm, Stemmer};
 use unicode_normalization::UnicodeNormalization as _;
 
 use crate::run::{ActualText, ByteProvenance, Glyph, PageText, TextRun};
@@ -38,6 +39,9 @@ pub struct SearchOptions {
     pub case_sensitive: bool,
     /// The match must not be flanked by an alphanumeric character.
     pub whole_word: bool,
+    /// Compare word stems rather than words, so a query for `run` also finds
+    /// `running`. Whole-word by construction, so `whole_word` adds nothing here.
+    pub stem: bool,
     pub mode: MatchMode,
     /// Also look in the comments' text. The page walk here reads page text
     /// only; the session adds the comment hits, from the edited document.
@@ -283,6 +287,13 @@ fn separator(previous: PieceEdge<'_>, next: PieceEdge<'_>) -> &'static str {
 /// the same case folding, whole-word rule and Phrase / Any / All modes. For a
 /// comment's text, which has no glyphs to highlight, so a yes is all there is.
 pub fn text_matches(text: &str, needle: &str, options: SearchOptions) -> bool {
+    if options.stem {
+        let mut stemmer = Stemmer::create(Algorithm::English);
+        let (folded, map) = fold(text, options.case_sensitive);
+        let words = page_stem_words(&mut stemmer, &folded, &map, text);
+        let stems = needle_stems(&mut stemmer, needle, options.case_sensitive);
+        return !stems.is_empty() && !match_words(&words, &stems, options.mode).is_empty();
+    }
     let (folded, _) = fold(text, options.case_sensitive);
     let found = |word: &str| {
         let (word, _) = fold(word, options.case_sensitive);
@@ -317,6 +328,9 @@ pub fn search_flattened(
 ) -> Vec<Match> {
     if needle.is_empty() {
         return Vec::new();
+    }
+    if options.stem {
+        return stemmed_matches(page, flat, needle, options);
     }
     // The page folds once however many words are searched for: the fold walks
     // every character of the page, and a three-word search would otherwise
@@ -388,32 +402,180 @@ fn find_all(
             continue;
         }
 
-        let mut quads = Vec::new();
-        let mut provenance = Vec::new();
-        let mut seen_provenance = HashSet::new();
-        for piece in flat.pieces() {
-            for covered in piece.coverage_for(page, range.clone()) {
-                match covered.coverage {
-                    RunCoverage::Decoded(local) => {
-                        quads.extend(covered.run.quads_for_decoded(local))
-                    }
-                    RunCoverage::WholeActualText => {
-                        quads.extend(covered.run.glyphs.iter().map(|glyph| glyph.quad));
-                    }
-                }
-                if seen_provenance.insert(covered.run.provenance) {
-                    provenance.push(covered.run.provenance);
+        out.push(match_at(page, flat, range));
+    }
+    out
+}
+
+/// The hit for `range`: the source text over it, and the geometry and
+/// provenance of every glyph inside it.
+fn match_at(page: &PageText, flat: &Flattened, range: Range<usize>) -> Match {
+    let mut quads = Vec::new();
+    let mut provenance = Vec::new();
+    let mut seen_provenance = HashSet::new();
+    for piece in flat.pieces() {
+        for covered in piece.coverage_for(page, range.clone()) {
+            match covered.coverage {
+                RunCoverage::Decoded(local) => quads.extend(covered.run.quads_for_decoded(local)),
+                RunCoverage::WholeActualText => {
+                    quads.extend(covered.run.glyphs.iter().map(|glyph| glyph.quad));
                 }
             }
+            if seen_provenance.insert(covered.run.provenance) {
+                provenance.push(covered.run.provenance);
+            }
         }
-        out.push(Match {
-            page: page.page,
-            text: flat.text[range.clone()].to_string(),
-            range,
-            quads,
-            provenance,
-        });
     }
+    Match {
+        page: page.page,
+        text: flat.text[range.clone()].to_string(),
+        range,
+        quads,
+        provenance,
+    }
+}
+
+/// One word of the folded text, as a stemmed search compares it.
+struct StemWord {
+    /// The word's bytes in the text it was folded from.
+    range: Range<usize>,
+    stem: String,
+}
+
+/// The words of `folded`, with their byte ranges in it. The boundaries are the
+/// ones [`is_whole_word`] uses, so a stemmed search is whole-word throughout
+/// and needs no separate whole-word rule.
+fn folded_words(folded: &str) -> Vec<(Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (offset, ch) in folded.char_indices() {
+        if is_word_char(ch) {
+            start.get_or_insert(offset);
+        } else if let Some(from) = start.take() {
+            out.push((from..offset, &folded[from..offset]));
+        }
+    }
+    if let Some(from) = start {
+        out.push((from..folded.len(), &folded[from..]));
+    }
+    out
+}
+
+/// A word's stem, or the word itself when the stemmer reduces it to nothing.
+/// An empty stem would then compare equal to every other empty one, so every
+/// word of that shape would match every query.
+fn stem_of(stemmer: &mut Stemmer, word: &str) -> String {
+    let reduced = stemmer.stem(word);
+    if reduced.is_empty() {
+        word.to_owned()
+    } else {
+        reduced.into_owned()
+    }
+}
+
+/// Every word of `folded`, with the range it covers in `source`.
+///
+/// The range comes from the fold's offset map, which is exact here because
+/// `fold` runs one character at a time and neither normalization nor
+/// lowercasing ever drops a character: a word's folded bytes come from as many
+/// source characters as they have. A stemmer offers no such guarantee, which
+/// is why stems are compared as whole words here and not searched as
+/// substrings.
+fn page_stem_words(
+    stemmer: &mut Stemmer,
+    folded: &str,
+    map: &[usize],
+    source: &str,
+) -> Vec<StemWord> {
+    folded_words(folded)
+        .into_iter()
+        .map(|(range, word)| {
+            let first = map[range.start];
+            let last = map[range.end - 1];
+            let width = source[last..].chars().next().map_or(0, char::len_utf8);
+            StemWord {
+                range: first..(last + width).min(source.len()),
+                stem: stem_of(stemmer, word),
+            }
+        })
+        .collect()
+}
+
+/// The needle's words, stemmed, in the order the user typed them.
+fn needle_stems(stemmer: &mut Stemmer, needle: &str, case_sensitive: bool) -> Vec<String> {
+    let (folded, _) = fold(needle, case_sensitive);
+    folded_words(&folded)
+        .into_iter()
+        .map(|(_, word)| stem_of(stemmer, word))
+        .collect()
+}
+
+/// The words whose stem is `stem`.
+fn stems_of<'a>(words: &'a [StemWord], stem: &'a str) -> impl Iterator<Item = &'a StemWord> {
+    words.iter().filter(move |word| word.stem == stem)
+}
+
+/// Which words answer `needle`, as ranges in the text the words came from.
+///
+/// `Phrase` matches a run of consecutive words, so count and order both matter.
+/// `AllWords` reports nothing unless every needle stem is present, which is
+/// what makes it a claim about the page rather than about the needle.
+fn match_words(words: &[StemWord], needle: &[String], mode: MatchMode) -> Vec<Range<usize>> {
+    match mode {
+        MatchMode::Phrase => {
+            let mut out = Vec::new();
+            if needle.is_empty() || needle.len() > words.len() {
+                return out;
+            }
+            for start in 0..=words.len() - needle.len() {
+                let run = &words[start..start + needle.len()];
+                if run
+                    .iter()
+                    .zip(needle)
+                    .all(|(word, stem)| word.stem == *stem)
+                {
+                    out.push(run[0].range.start..run[run.len() - 1].range.end);
+                }
+            }
+            out
+        }
+        MatchMode::AnyWord => needle
+            .iter()
+            .flat_map(|stem| stems_of(words, stem).map(|word| word.range.clone()))
+            .collect(),
+        MatchMode::AllWords => {
+            let mut out = Vec::new();
+            for stem in needle {
+                let found: Vec<Range<usize>> = stems_of(words, stem)
+                    .map(|word| word.range.clone())
+                    .collect();
+                if found.is_empty() {
+                    return Vec::new();
+                }
+                out.extend(found);
+            }
+            out
+        }
+    }
+}
+
+/// Every hit on the page for a stemmed query, in document order.
+fn stemmed_matches(
+    page: &PageText,
+    flat: &Flattened,
+    needle: &str,
+    options: SearchOptions,
+) -> Vec<Match> {
+    let mut stemmer = Stemmer::create(Algorithm::English);
+    let (folded, map) = fold(&flat.text, options.case_sensitive);
+    let words = page_stem_words(&mut stemmer, &folded, &map, &flat.text);
+    let needle = needle_stems(&mut stemmer, needle, options.case_sensitive);
+    let mut out: Vec<Match> = match_words(&words, &needle, options.mode)
+        .into_iter()
+        .map(|range| match_at(page, flat, range))
+        .collect();
+    out.sort_by_key(|hit| (hit.range.start, hit.range.end));
+    out.dedup_by(|a, b| a.range == b.range);
     out
 }
 
@@ -525,6 +687,18 @@ mod tests {
             page: 0,
             runs,
             warnings: Vec::new(),
+        }
+    }
+
+    /// Stemming on, everything else default. The stems below are the ones
+    /// Porter2 actually produces, read off the stemmer rather than assumed:
+    /// `connect`, `connected`, `connection` and `connecting` all reduce to
+    /// `connect`, while `runner` and `happier` do not reduce to `run` and
+    /// `happi` respectively.
+    fn stemming() -> SearchOptions {
+        SearchOptions {
+            stem: true,
+            ..SearchOptions::default()
         }
     }
 
@@ -746,6 +920,7 @@ mod tests {
         let options = SearchOptions {
             case_sensitive: false,
             whole_word: true,
+            stem: false,
             mode: MatchMode::AnyWord,
             include_comments: false,
         };
@@ -785,5 +960,118 @@ mod tests {
     fn overlapping_occurrences_are_all_found() {
         let p = page(vec![run("aaaa", 0.0, 0.0)]);
         assert_eq!(search(&p, "aa", SearchOptions::default()).len(), 3);
+    }
+
+    #[test]
+    fn stemming_is_off_unless_asked_for() {
+        let p = page(vec![run("connect connected connection", 0.0, 0.0)]);
+        assert_eq!(search(&p, "connection", SearchOptions::default()).len(), 1);
+        assert_eq!(search(&p, "connection", stemming()).len(), 3);
+    }
+
+    #[test]
+    fn a_stemmed_search_finds_every_word_reducing_to_the_same_stem() {
+        let p = page(vec![run("connect connected connection", 0.0, 0.0)]);
+        let hits = search(&p, "connect", stemming());
+        assert_eq!(
+            hits.iter().map(|hit| hit.text.as_str()).collect::<Vec<_>>(),
+            vec!["connect", "connected", "connection"]
+        );
+    }
+
+    /// The hit names the word the page drew, not the shortened form it matched
+    /// on. A stem is shorter than the word it came from, so a hit range built
+    /// from the stem's own bytes would cover three of `running`'s seven
+    /// characters, and the highlight and any redaction would both be short.
+    #[test]
+    fn a_stemmed_hit_covers_the_whole_word_it_matched() {
+        let p = page(vec![run("the running dogs", 0.0, 0.0)]);
+        let hits = search(&p, "run", stemming());
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "running");
+        assert_eq!(hits[0].range, "the ".len().."the running".len());
+        assert_eq!(hits[0].quads.len(), "running".len());
+    }
+
+    /// The literal search matches `cat` inside `concatenate`; a stemmed one
+    /// must not, because `concatenate` reduces to `concaten`. This is what
+    /// whole-word matching buys, and it is why stems are compared as words
+    /// rather than searched for as substrings.
+    #[test]
+    fn stemming_does_not_match_a_stem_inside_a_longer_word() {
+        let p = page(vec![run("concatenate", 0.0, 0.0)]);
+        // `cat` is a literal substring of `concatenate`, but the word reduces
+        // to `concaten`, so a stemmed search for `cat` must not match it.
+        assert_eq!(search(&p, "cat", SearchOptions::default()).len(), 1);
+        assert!(search(&p, "cat", stemming()).is_empty());
+
+        // Two words that really do reduce to the same stem do match, so the
+        // refusal above is about the stem and not about the word being long.
+        let cats = page(vec![run("cats", 0.0, 0.0)]);
+        assert_eq!(search(&cats, "cat", stemming()).len(), 1);
+    }
+
+    #[test]
+    fn a_stemmed_phrase_matches_a_run_of_words_in_order() {
+        let p = page(vec![run("running walking stops", 0.0, 0.0)]);
+
+        let hits = search(&p, "run walk", stemming());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "running walking");
+        assert_eq!(hits[0].quads.len(), "running walking".len());
+        // Order matters, as it does for a literal phrase.
+        assert!(search(&p, "walk run", stemming()).is_empty());
+    }
+
+    #[test]
+    fn any_and_all_of_the_words_ignore_order_when_stemming() {
+        let both = page(vec![run("connected walking", 0.0, 0.0)]);
+        let options = SearchOptions {
+            mode: MatchMode::AllWords,
+            ..stemming()
+        };
+        assert_eq!(search(&both, "walk connect", options).len(), 2);
+
+        // All of the words is still a claim about the page: one absent word
+        // and nothing is reported, even though the other one is present.
+        let partial = page(vec![run("connected", 0.0, 0.0)]);
+        assert!(search(&partial, "connect walk", options).is_empty());
+
+        let any = SearchOptions {
+            mode: MatchMode::AnyWord,
+            ..stemming()
+        };
+        assert_eq!(search(&partial, "connect walk", any).len(), 1);
+    }
+
+    #[test]
+    fn a_stemmed_hit_keeps_a_ligature_word_intact() {
+        // The page draws `office` as five glyphs, one of which is a two-letter
+        // ligature. Folding expands that ligature to two characters, so the
+        // word's folded length and its drawn length disagree; the hit has to
+        // come back as the three the page actually used.
+        let p = page(vec![run("of\u{FB01}ce", 0.0, 0.0)]);
+
+        let hits = search(&p, "office", stemming());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "of\u{FB01}ce");
+        assert_eq!(hits[0].range, 0.."of\u{FB01}ce".len());
+        assert_eq!(hits[0].quads.len(), 5);
+    }
+
+    #[test]
+    fn comment_text_answers_the_same_stemmed_question() {
+        let options = stemming();
+        assert!(text_matches("the runner connected", "connect", options));
+        assert!(!text_matches("the runner", "connect", options));
+        assert!(!text_matches("the runner connected", "run", options));
+    }
+
+    #[test]
+    fn a_stemmed_search_of_a_needle_with_no_words_finds_nothing() {
+        let p = page(vec![run("connect", 0.0, 0.0)]);
+        assert!(search(&p, "  --  ", stemming()).is_empty());
+        assert!(!text_matches("connect", "  --  ", stemming()));
     }
 }

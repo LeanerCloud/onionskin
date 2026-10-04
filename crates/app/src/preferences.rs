@@ -477,6 +477,7 @@ impl Preferences {
             self.search.case_sensitive.into(),
         );
         file.insert("search_whole_word".into(), self.search.whole_word.into());
+        file.insert("search_stem".into(), self.search.stem.into());
         file.insert("search_mode".into(), mode_key(self.search.mode).into());
         if let Some(author) = &self.commenting_author {
             file.insert("commenting_author".into(), author.clone().into());
@@ -538,6 +539,7 @@ fn apply(
         "search_mode" => preferences.search.mode = named(path, setting, value, MODES, parse_mode)?,
         "search_case_sensitive" => preferences.search.case_sensitive = flag(path, setting, value)?,
         "search_whole_word" => preferences.search.whole_word = flag(path, setting, value)?,
+        "search_stem" => preferences.search.stem = flag(path, setting, value)?,
         "line_weights" => preferences.line_weights = flag(path, setting, value)?,
         "javascript" => preferences.javascript = flag(path, setting, value)?,
         "autocomplete" => preferences.autocomplete = flag(path, setting, value)?,
@@ -900,6 +902,7 @@ mod tests {
             search: SearchOptions {
                 case_sensitive: true,
                 whole_word: true,
+                stem: true,
                 mode: MatchMode::AllWords,
                 include_comments: false,
             },

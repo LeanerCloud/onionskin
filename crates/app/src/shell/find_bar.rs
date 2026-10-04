@@ -68,12 +68,16 @@ pub(in crate::shell) enum FindDirection {
     Previous,
 }
 
-/// The options the bar can change. Case and whole word are Acrobat's find
-/// toolbar checkboxes; the three modes are its Return Results Containing.
+/// The options the find surface can change. Case and whole word are Acrobat's
+/// find toolbar checkboxes; the three modes are its Return Results Containing.
+/// Stemming is ours, and only Advanced Search offers it, because Acrobat's
+/// find toolbar has no such control to mirror.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum FindOption {
     CaseSensitive,
     WholeWord,
+    /// Compare word stems, so a query for `run` also finds `running`.
+    Stem,
     /// Also look in the comments' text.
     IncludeComments,
     Mode(MatchMode),
@@ -233,6 +237,7 @@ impl FindBarState {
                 self.options.case_sensitive = !self.options.case_sensitive;
             }
             FindOption::WholeWord => self.options.whole_word = !self.options.whole_word,
+            FindOption::Stem => self.options.stem = !self.options.stem,
             FindOption::IncludeComments => {
                 self.options.include_comments = !self.options.include_comments;
             }
@@ -245,6 +250,7 @@ impl FindBarState {
         match option {
             FindOption::CaseSensitive => self.options.case_sensitive,
             FindOption::WholeWord => self.options.whole_word,
+            FindOption::Stem => self.options.stem,
             FindOption::IncludeComments => self.options.include_comments,
             FindOption::Mode(mode) => self.options.mode == mode,
         }

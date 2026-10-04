@@ -53,6 +53,19 @@ fn an_option_that_changes_nothing_says_so() {
     assert!(form.options.whole_word);
 }
 
+#[test]
+fn the_stem_option_reaches_the_form_and_toggles_back() {
+    let mut form = AdvancedForm::new(SearchOptions::default());
+    assert!(!form.options.stem, "off unless asked for");
+
+    // A toggle, like the find bar's other option checkboxes: every press
+    // reports a change, and the second one clears it again.
+    assert!(form.apply(AdvancedAction::Option(FindOption::Stem)));
+    assert!(form.options.stem);
+    assert!(form.apply(AdvancedAction::Option(FindOption::Stem)));
+    assert!(!form.options.stem);
+}
+
 fn outcome(criteria: CriteriaOutcome, attachments: Option<AttachmentSearch>) -> Outcome {
     Outcome {
         criteria,

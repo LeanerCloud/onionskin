@@ -30,7 +30,7 @@ pub(in crate::shell) use view::{accessible, render};
 /// What the dialog's controls do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum AdvancedAction {
-    /// A find option: case, whole word, comments, or the match mode.
+    /// A find option: case, whole word, stems, comments, or the match mode.
     Option(FindOption),
     IncludeAttachments,
     /// Turn the additional criterion on or off.

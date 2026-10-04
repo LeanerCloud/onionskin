@@ -47,6 +47,7 @@ pub(in crate::shell) enum PreferenceChange {
     ClearEntries,
     SearchCaseSensitive(bool),
     SearchWholeWord(bool),
+    SearchStem(bool),
     SearchMode(MatchMode),
     /// Trust Manager: what a web link does.
     WebLinks(WebLinks),
@@ -260,6 +261,10 @@ pub(in crate::shell) fn category_rows(
                     preferences.search.case_sensitive,
                     PreferenceChange::SearchCaseSensitive,
                 ),
+            },
+            PreferenceRow {
+                label: "Match word stems".to_owned(),
+                choices: switch(preferences.search.stem, PreferenceChange::SearchStem),
             },
             PreferenceRow {
                 label: "Return results containing".to_owned(),

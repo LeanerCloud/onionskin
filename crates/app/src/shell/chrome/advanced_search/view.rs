@@ -88,6 +88,12 @@ fn rows(form: &AdvancedForm, lines: &[String]) -> Vec<Row> {
             AdvancedAction::Option(FindOption::CaseSensitive),
         ),
         check(
+            "advanced-stem",
+            "Match Word Stems",
+            options.stem,
+            AdvancedAction::Option(FindOption::Stem),
+        ),
+        check(
             "advanced-comments",
             "Include Comments",
             options.include_comments,

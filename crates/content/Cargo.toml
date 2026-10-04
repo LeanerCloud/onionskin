@@ -22,3 +22,10 @@ ttf-parser = { version = "0.25", default-features = false, features = [
 # would be worse than the dependency, and NFKC is the definition of the fold
 # rather than an approximation of it.
 unicode-normalization = "0.1"
+
+# Snowball stemming, for Advanced Search's word stems. Porter2 is what the
+# Snowball site specifies for English, so it is what this gets rather than the
+# older original Porter, which differs on real words. The algorithm is subtle
+# and its failure mode is silent, so it is taken from the reference port rather
+# than hand-rolled; `serde` and `serde_derive` are already in the lockfile.
+rust-stemmers = "1.2"
