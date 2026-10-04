@@ -22,6 +22,36 @@ use onionskin_tools_comment::{AttachFileTool, LibraryError, StampLibrary, StampT
 const MONDAY: i64 = 1_789_999_500;
 const TUESDAY: i64 = MONDAY + 86_400 + 3 * 3600 + 17 * 60;
 
+/// The `when` half of a dynamic line for `instant`, as the platform would spell
+/// it. Deliberately not the tool's own rendering: reusing that would make the
+/// assertion agree with the code by construction, and the text depends on the
+/// machine's zone, so it cannot be hardcoded either.
+fn local_when(instant: i64) -> String {
+    let seconds = instant as libc::time_t;
+    let mut parts: libc::tm = unsafe { std::mem::zeroed() };
+    let offset = unsafe {
+        if libc::localtime_r(&seconds, &mut parts).is_null() {
+            panic!("the platform will not convert {instant}");
+        }
+        parts.tm_gmtoff as i64
+    };
+    let (sign, magnitude) = if offset < 0 {
+        ('-', -offset)
+    } else {
+        ('+', offset)
+    };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} {sign}{:02}:{:02}",
+        parts.tm_year as i64 + 1900,
+        parts.tm_mon as i64 + 1,
+        parts.tm_mday as i64,
+        parts.tm_hour as i64,
+        parts.tm_min as i64,
+        magnitude / 3600,
+        (magnitude % 3600) / 60,
+    )
+}
+
 struct Fixture {
     doc: Document,
     viewport: Viewport,
@@ -478,7 +508,7 @@ fn a_dynamic_stamp_says_who_and_the_injected_clocks_time() {
     let monday = on_monday.last_appearance();
     let text = String::from_utf8_lossy(&monday);
     assert!(
-        text.contains("(Jos\\351, 2026-09-21 14:05 UTC)"),
+        text.contains(&format!("(Jos\\351, {})", local_when(MONDAY))),
         "the name, in WinAnsi, and the clock's date: {text}"
     );
 
@@ -487,7 +517,7 @@ fn a_dynamic_stamp_says_who_and_the_injected_clocks_time() {
     assert!(tool.choose("dynamic-approved"));
     on_tuesday.click(&mut tool, (300.0, 400.0));
     let tuesday = String::from_utf8_lossy(&on_tuesday.last_appearance()).into_owned();
-    assert!(tuesday.contains("2026-09-22 17:22 UTC"), "{tuesday}");
+    assert!(tuesday.contains(&local_when(TUESDAY)), "{tuesday}");
     assert_ne!(
         on_monday.pixels(),
         on_tuesday.pixels(),
@@ -502,7 +532,7 @@ fn with_no_name_chosen_a_dynamic_stamp_carries_only_the_time_and_no_author() {
     assert!(tool.choose("dynamic-reviewed"));
     fixture.click(&mut tool, (300.0, 400.0));
     let text = String::from_utf8_lossy(&fixture.last_appearance()).into_owned();
-    assert!(text.contains("(2026-09-21 14:05 UTC)"), "{text}");
+    assert!(text.contains(&local_when(MONDAY)), "{text}");
     assert_eq!(fixture.annotations()[0].author, None);
 }
 
