@@ -101,7 +101,7 @@ fn classify(before: Option<&Object>, after: Option<&Object>) -> Option<Change> {
         Object::Stream(stream) => &stream.dict,
         // A bare array or number is part of something: the field list, a
         // page's comments, a stream's length.
-        _ => return Some(Change::Annotation).filter(|_| is_reference_list(object)),
+        _ => return is_reference_list(object).then_some(Change::Annotation),
     };
     Some(dict_change(dict, before, after))
 }

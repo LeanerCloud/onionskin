@@ -88,7 +88,7 @@ pub fn create_links_from_urls(
             let piece_text = &flattened.text[piece.range.clone()];
             for (range, url) in find_urls(piece_text) {
                 let global = piece.range.start + range.start..piece.range.start + range.end;
-                let Some(rect) = bounds(&text, piece, &global) else {
+                let Some(rect) = bounds(text, piece, &global) else {
                     continue;
                 };
                 let centre = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0);

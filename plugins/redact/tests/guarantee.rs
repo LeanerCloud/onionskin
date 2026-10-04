@@ -348,8 +348,7 @@ fn whole_outer_actual_text_redaction_preserves_inner_semantics() {
         "{:?}",
         applied.verification.problems
     );
-    let out =
-        CosDocument::open(Box::new(BytesSource::new(applied.bytes))).expect("reopens output");
+    let out = CosDocument::open(Box::new(BytesSource::new(applied.bytes))).expect("reopens output");
     let page = extract_page(&out, 0).expect("extracts output");
     assert_eq!(page.flatten().text, "INNER");
     assert_eq!(

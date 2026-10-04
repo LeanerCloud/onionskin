@@ -50,7 +50,10 @@ fn each_sheet_is_rendered_at_the_asked_resolution_with_both_pages_on_it() {
     );
     assert_eq!(sheet.points, (width, height));
     assert_eq!(sheet.bgra.len(), (sheet.width * sheet.height * 4) as usize);
-    assert!(sheet.bgra.chunks_exact(4).all(|px| px[3] == 255), "opaque");
+    assert!(
+        sheet.bgra.as_chunks::<4>().0.iter().all(|px| px[3] == 255),
+        "opaque"
+    );
     // Two cells split the sheet along its long side; each has a page's ink.
     let (w, h) = (sheet.width, sheet.height);
     let halves = if h > w {

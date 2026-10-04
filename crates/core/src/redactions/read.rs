@@ -75,7 +75,9 @@ fn rect(doc: &CosDocument, dict: &Dict) -> [f64; 4] {
 
 fn quads(doc: &CosDocument, dict: &Dict, page: usize) -> Vec<PageQuad> {
     numbers(doc, dict, b"QuadPoints")
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|q| PageQuad {
             page,
             corners: [(q[0], q[1]), (q[2], q[3]), (q[4], q[5]), (q[6], q[7])],

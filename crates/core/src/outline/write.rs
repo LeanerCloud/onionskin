@@ -351,10 +351,7 @@ pub fn set_bookmark_style(
         dict.set(Name::new("F"), Object::Integer(flags));
     }
     match colour {
-        Some(rgb) => dict.set(
-            Name::new("C"),
-            Object::Array(rgb.map(|channel| Object::Real(channel)).into()),
-        ),
+        Some(rgb) => dict.set(Name::new("C"), Object::Array(rgb.map(Object::Real).into())),
         None => {
             dict.remove(b"C");
         }

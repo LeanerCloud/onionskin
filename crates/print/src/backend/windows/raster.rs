@@ -40,7 +40,9 @@ impl SheetImage {
     /// A bitmap of premultiplied RGBA pixels, laid on white paper.
     pub fn from_premultiplied(width: u32, height: u32, rgba: &[u8], points: (f64, f64)) -> Self {
         let bgra = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|px| {
                 let paper = 255 - px[3];
                 // Premultiplied: over white, each channel gains what the

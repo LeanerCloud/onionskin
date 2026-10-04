@@ -62,7 +62,7 @@ fn pdf_with_content(content: &str) -> Vec<u8> {
 
 impl Fixture {
     fn new() -> Self {
-        let mut doc = Document::open_bytes(pdf()).expect("opens");
+        let doc = Document::open_bytes(pdf()).expect("opens");
         Self::from_document(doc)
     }
 

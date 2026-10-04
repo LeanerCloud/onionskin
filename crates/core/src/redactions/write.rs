@@ -123,7 +123,7 @@ fn outline_appearance(dict: &Dict, [r, g, b]: [f64; 3]) -> Stream {
     let mut content = format!("{r} {g} {b} RG 1 w\n");
     let quads = values(b"QuadPoints");
     if quads.len() >= 8 {
-        for q in quads.chunks_exact(8) {
+        for q in quads.as_chunks::<8>().0 {
             // Upper-left, upper-right, lower-left, lower-right: round the
             // edge is 0, 1, 3, 2.
             content.push_str(&format!(

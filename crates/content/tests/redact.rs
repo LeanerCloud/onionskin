@@ -84,11 +84,11 @@ fn actual_text_partial_redaction_removes_one_member_without_replacement_leakage(
     let first = source_quads[0].corners;
     let area = Area::rect(first[2].0, first[2].1, first[1].0, first[1].1);
     assert!(covers_glyph(
-        &[area.clone()],
+        std::slice::from_ref(&area),
         &before.runs[0].glyphs[0].quad
     ));
     for quad in &source_quads[1..] {
-        assert!(!covers_glyph(&[area.clone()], quad));
+        assert!(!covers_glyph(std::slice::from_ref(&area), quad));
     }
     let redaction = redact(content, FONT, &[courier()], &[area]);
     assert_eq!(
