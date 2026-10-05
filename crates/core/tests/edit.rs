@@ -3538,3 +3538,65 @@ fn an_object_orphaned_by_a_later_edit_comes_back_on_undo_and_goes_on_redo() {
     assert!(edit.redo(&base).expect("redoes"));
     assert_eq!(overlay_object(&edit, created), None);
 }
+
+// ---------------------------------------------------------------------------
+// Collapse and redo accounting, probed by mutation
+// ---------------------------------------------------------------------------
+
+/// Editing an object and then writing its base value back is not a change.
+/// Both transactions keep their history entry, but the overlay collapses to
+/// nothing, so a save appends no section. Skipping the collapse on commit
+/// leaves the base value sitting in the overlay as a dirty entry.
+#[test]
+fn writing_the_base_value_back_collapses_the_overlay_but_keeps_both_entries() {
+    let (base, mut edit) = session();
+    let original = edit
+        .transact(&base, "Edit", |tx| {
+            let original = tx.object(1)?.expect("the catalog is in the base");
+            tx.put_object(1, 0, marker(1))?;
+            Ok(original)
+        })
+        .expect("the edit commits");
+    assert_eq!(
+        overlay_object(&edit, 1),
+        Some(ObjectState::new(0, marker(1)))
+    );
+
+    edit.transact(&base, "Revert", |tx| {
+        tx.put_object(1, original.generation, original.object.clone())
+    })
+    .expect("the revert commits");
+
+    assert!(
+        edit.overlay().is_empty(),
+        "an overlay entry equal to the base is dropped on commit"
+    );
+    assert_eq!(section(&base, &edit), None, "a save would append nothing");
+    assert_eq!(edit.history().reach(), 2, "both steps stay undoable");
+}
+
+/// Redo entries are still resident, so undoing and redoing never changes what
+/// the history reports holding. Reporting only the applied prefix would let a
+/// long redo tail sit outside the figure the bound is meant to cover.
+#[test]
+fn undo_and_redo_leave_the_resident_total_unchanged() {
+    let (base, mut edit) = session();
+    for n in 0..3 {
+        edit.transact(&base, "Marker", |tx| tx.put_object(1, 0, marker(n)))
+            .expect("the edit commits");
+    }
+    let held = edit.history().resident_bytes();
+    assert!(held > 0);
+
+    assert!(edit.undo(&base).expect("undoes"));
+    assert!(edit.undo(&base).expect("undoes"));
+    assert_eq!(edit.history().redo_reach(), 2);
+    assert_eq!(
+        edit.history().resident_bytes(),
+        held,
+        "redo entries still count"
+    );
+
+    assert!(edit.redo(&base).expect("redoes"));
+    assert_eq!(edit.history().resident_bytes(), held);
+}
