@@ -400,16 +400,18 @@ except it.
 The rule, an invariant rather than a convention:
 
 > **`before: None` means the object number was not in the overlay immediately
-> before this change, and undoing the change removes it from the overlay.
-> Nothing else is ever `None`.**
+> before this change and was absent from the base document, so it is genuinely
+> new; undoing the change removes it from the overlay. Nothing else is ever
+> `None`.**
 
 One capture rule makes that total:
 
-> **At edit time, `before` for an object that exists in the base document is read
-> out of the base through `cos::Document::get` and stored concretely** as
+> **At edit time, `before` first uses the overlay's current state for that
+> number; if there is no overlay state, an object that exists in the base
+> document is read through `cos::Document::get` and stored concretely** as
 > `Some(ObjectState { generation, object })`. It is never left `None` on the
-> grounds that "the overlay has no node for it yet". `None` is produced only by
-> the reservation counter, for a number nothing has ever written.
+> grounds that "the overlay has no node for it yet". `None` is produced only
+> for a genuinely new object number absent from the base document.
 
 With that rule, `None` needs no rebasing across a save and the meaning is the
 same on both sides of one. Pre-save, dropping a `None` node means the object
@@ -1917,8 +1919,10 @@ pub struct ObjectState { generation: u16, object: cos::Object }
 /// `NotInOverlay`: nothing produces it, and its only reachable use was the
 /// wrong capture the rule below forbids, so cutting it makes that unexpressible.
 pub enum TrailerState { Cleared, Set(cos::Object) }
-/// For an object, `before: None` means, and only ever means, "this number was
-/// not in the overlay immediately before this change". Trailer keys do not use
+/// For an object, `before: None` means, and only ever means, "this is a
+/// genuinely new object number absent from the base document". An object that
+/// exists in the base has `Some(ObjectState)` even when the overlay has not
+/// touched it. Trailer keys do not use
 /// `Option`: a key's absence and a key's clearing are the same instruction to
 /// the section writer, so `Cleared` covers both. See the capture rule.
 pub enum Change {
@@ -1954,7 +1958,7 @@ green suite, and P2's verification as first drafted covered every case except it
 > **`Change::Object`'s `before` is captured at edit time, by this precedence:**
 > the **overlay's current `ObjectState`** for that number if the overlay has one;
 > **else** the base's value through `cos::Document::get` if the base has the
-> number; **else `None`**, which the reservation counter alone produces.
+> number; **else `None`**, which is reserved for a genuinely new object number.
 
 **The overlay clause first, and it is not a refinement.** Written as "read
 through `get`" alone - which is how this rule and T2's both first stated it - the
@@ -2075,8 +2079,8 @@ says the edit history "will own its own undo stack").
 the base document, which are different whenever an object has already been
 edited, and getting it wrong makes exactly the second edit of an object
 un-undoable. Whether `before: None` is ever produced for anything other than a
-freshly reserved number or an absent trailer key, which is the invariant the
-whole undo-across-a-save story rests on. Whether anything writes the overlay's
+genuinely new object number, which is the invariant the whole
+undo-across-a-save story rests on. Whether anything writes the overlay's
 trailer without recording a `Change::TrailerKey`, which is the shape of the
 original defect and would not show up in any object-level test. Whether the overlay is cleared on the `Save As` path as well as
 `Save`, since both reopen. Whether the overlay collapses by value against the original (T3) or
