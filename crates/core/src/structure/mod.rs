@@ -15,12 +15,14 @@ mod content_map;
 mod invariant;
 mod maintain;
 mod read;
+mod reading_order;
 mod role;
 
 pub use content_map::{ContentItem, ContentMap, ElementContent, ItemKind, Unplaced};
 pub use invariant::{Report, Violation};
 pub use maintain::Maintenance;
 pub use read::{Attribute, Element, Kid, ParentEntry, Structure, StructureTree};
+pub use reading_order::{reading_order, Block};
 
 use onionskin_cos::{Document as CosDocument, ObjRef};
 

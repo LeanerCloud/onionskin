@@ -995,3 +995,392 @@ fn the_corpus_tree_names_only_ids_its_pages_open() {
     assert_eq!(dangling, expected(DANGLING));
     assert_eq!(in_stream, expected(IN_STREAM));
 }
+
+// ---------------------------------------------------------------------------
+// Reading order
+// ---------------------------------------------------------------------------
+
+/// A document whose drawing order is not its reading order, with mixed
+/// content, an inherited language, a custom role and a figure.
+///
+/// Reading order: Document, H1 "Heading", P "See ", Link "here", the rest of
+/// that P "now" (drawn first), a `Para` of two lines, and a Figure.
+fn reading_document() -> Vec<u8> {
+    let content = "/P << /MCID 4 >> BDC BT /F1 12 Tf 70 150 Td (now) Tj ET EMC \
+        /H1 << /MCID 0 >> BDC BT /F1 12 Tf 10 180 Td (Heading) Tj ET EMC \
+        /Span << /MCID 1 >> BDC BT /F1 12 Tf 10 150 Td (See ) Tj ET EMC \
+        /Link << /MCID 2 >> BDC BT /F1 12 Tf 40 150 Td (here) Tj ET EMC \
+        /P << /MCID 3 >> BDC BT /F1 12 Tf 10 100 Td (line one) Tj 0 -20 Td (line two) Tj ET EMC \
+        /Figure << /MCID 5 >> BDC 0 0 20 20 re f EMC";
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+            .to_vec(),
+        stream_object(content),
+        b"<< /Type /StructTreeRoot /K [7 0 R] /RoleMap << /Para /P >> >>".to_vec(),
+        b"null".to_vec(),
+        b"<< /S /Document /Pg 3 0 R /Lang (en) /K [8 0 R 9 0 R 11 0 R 12 0 R] >>".to_vec(),
+        b"<< /S /H1 /Pg 3 0 R /K 0 >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /Lang (fr) /Alt (para alt) /K [1 10 0 R 4] >>".to_vec(),
+        b"<< /S /Link /Pg 3 0 R /Alt (a link) /K 2 >>".to_vec(),
+        b"<< /S /Para /Pg 3 0 R /K 3 >>".to_vec(),
+        b"<< /S /Figure /Pg 3 0 R /Alt (A figure) /K 5 >>".to_vec(),
+    ])
+}
+
+type BlockSummary = (u32, bool, usize, &'static str, &'static str, String);
+
+fn summarize(blocks: &[onionskin_core::Block]) -> Vec<BlockSummary> {
+    blocks
+        .iter()
+        .map(|b| {
+            let name = |n: &Option<Name>| match n.as_ref().map(|n| n.as_bytes()) {
+                Some(b"Document") => "Document",
+                Some(b"H1") => "H1",
+                Some(b"P") => "P",
+                Some(b"Link") => "Link",
+                Some(b"Figure") => "Figure",
+                _ => "?",
+            };
+            let lang = match b.lang.as_deref() {
+                Some("en") => "en",
+                Some("fr") => "fr",
+                _ => "-",
+            };
+            (
+                b.element,
+                b.continuation,
+                b.depth,
+                name(&b.standard_type),
+                lang,
+                b.text.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn blocks_come_in_structure_order_with_mixed_content_split_around_its_child() {
+    let doc = open(&reading_document());
+    let structure = read_structure(&doc).expect("reads");
+    let blocks = onionskin_core::reading_order(&doc, structure.tree().expect("tagged"))
+        .expect("the order reads");
+    assert_eq!(
+        summarize(&blocks),
+        [
+            (7, false, 0, "Document", "en", String::new()),
+            (8, false, 1, "H1", "en", "Heading".into()),
+            (9, false, 1, "P", "fr", "See ".into()),
+            (10, false, 2, "Link", "fr", "here".into()),
+            (9, true, 1, "P", "fr", "now".into()),
+            (11, false, 1, "P", "en", "line one line two".into()),
+            (12, false, 1, "Figure", "en", String::new()),
+        ],
+        "drawing order puts \"now\" first; the tree puts it after the link. A custom role \
+         reads as its standard type, a language is inherited, a line break reads as a space"
+    );
+}
+
+#[test]
+fn only_an_elements_first_block_carries_what_describes_the_element() {
+    let doc = open(&reading_document());
+    let structure = read_structure(&doc).expect("reads");
+    let blocks = onionskin_core::reading_order(&doc, structure.tree().expect("tagged"))
+        .expect("the order reads");
+    assert_eq!(blocks[3].alt.as_deref(), Some("a link"));
+    assert_eq!(blocks[2].alt.as_deref(), Some("para alt"));
+    assert_eq!(blocks[6].alt.as_deref(), Some("A figure"));
+    assert_eq!(blocks[6].items.len(), 1, "the figure's content is its path");
+    assert!(blocks[4].continuation && blocks[4].alt.is_none());
+}
+
+#[test]
+fn a_cyclic_tree_is_walked_once() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K [6 0 R] >>".to_vec(),
+        b"<< /Type /StructTreeRoot /K [4 0 R] >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K [4 0 R] >>".to_vec(),
+    ]);
+    let doc = open(&bytes);
+    let structure = read_structure(&doc).expect("reads");
+    let blocks =
+        onionskin_core::reading_order(&doc, structure.tree().expect("tagged")).expect("walks");
+    assert_eq!(blocks.iter().map(|b| b.element).collect::<Vec<_>>(), [4, 6]);
+}
+
+/// The reading order and effective language of the four fixtures, from
+/// pikepdf. `corpus/tagged/reading_order.py` prints this table; it is an
+/// implementation independent of the reader, as `FIXTURES` above is.
+///
+/// `(fixture, element object numbers in depth-first /K order, (object number,
+/// effective /Lang) for each element that has one)`.
+type ReadingExpectation = (&'static str, &'static [u32], &'static [(u32, &'static str)]);
+
+const READING_ORDER: &[ReadingExpectation] = &[
+    ("Isartor test files/doc/Isartor test suite manual.pdf",
+     &[286, 321, 320, 322, 563, 564, 646, 647, 654, 655, 656, 657, 648, 651, 652, 649, 650, 565, 625, 626, 645, 627, 642, 643, 644, 628, 641, 629, 638, 639, 640, 630, 635, 636, 637, 631, 634, 632, 633, 566, 605, 606, 622, 623, 624, 607, 618, 619, 620, 290, 676, 677, 621, 608, 613, 614, 615, 616, 617, 609, 610, 611, 612, 567, 568, 569, 602, 603, 604, 570, 595, 596, 597, 598, 599, 600, 601, 571, 592, 593, 594, 572, 589, 590, 591, 573, 582, 583, 584, 585, 586, 587, 588, 574, 579, 580, 581, 575, 576, 577, 578, 323, 512, 513, 560, 561, 562, 514, 555, 556, 557, 558, 559, 515, 554, 516, 553, 517, 552, 518, 551, 519, 548, 549, 550, 520, 547, 521, 546, 522, 545, 523, 542, 543, 544, 524, 539, 540, 541, 525, 538, 526, 535, 536, 537, 527, 532, 533, 534, 528, 529, 530, 531, 324, 474, 475, 511, 476, 504, 505, 508, 509, 510, 506, 507, 477, 478, 479, 503, 480, 502, 481, 489, 490, 491, 492, 493, 494, 495, 496, 497, 498, 499, 500, 501, 482, 483, 484, 485, 486, 487, 295, 675, 488, 325, 432, 433, 444, 445, 469, 297, 674, 470, 298, 673, 471, 299, 672, 472, 473, 446, 468, 447, 466, 300, 671, 467, 448, 463, 464, 465, 449, 462, 450, 457, 458, 459, 460, 461, 451, 454, 455, 456, 452, 453, 434, 435, 436, 437, 302, 669, 670, 438, 439, 303, 668, 440, 441, 442, 443, 326, 327, 328, 404, 405, 425, 426, 427, 428, 429, 430, 431, 406, 419, 420, 421, 422, 423, 407, 416, 417, 418, 408, 411, 412, 413, 414, 415, 409, 410, 329, 387, 388, 403, 389, 398, 399, 400, 401, 402, 390, 395, 396, 397, 391, 392, 393, 394, 330, 386, 331, 383, 384, 307, 667, 385, 332, 378, 379, 380, 381, 308, 666, 382, 333, 373, 374, 375, 376, 309, 665, 377, 334, 370, 371, 310, 664, 372, 335, 367, 368, 311, 663, 369, 336, 347, 348, 366, 349, 365, 350, 362, 363, 364, 351, 361, 352, 358, 359, 360, 353, 357, 354, 355, 313, 662, 356, 337, 342, 343, 344, 314, 661, 345, 346, 338, 339, 340, 341, 319, 316, 318, 317, 659],
+     &[(286, "en-US"), (290, "en-US"), (295, "en-US"), (297, "en-US"), (298, "en-US"), (299, "en-US"), (300, "en-US"), (302, "en-US"), (303, "en-US"), (307, "en-US"), (308, "en-US"), (309, "en-US"), (310, "en-US"), (311, "en-US"), (313, "en-US"), (314, "en-US"), (316, "en-US"), (317, "en-US"), (318, "en-US"), (319, "en-US"), (320, "en-US"), (321, "en-US"), (322, "en-US"), (323, "en-US"), (324, "en-US"), (325, "en-US"), (326, "en-US"), (327, "en-US"), (328, "en-US"), (329, "en-US"), (330, "en-US"), (331, "en-US"), (332, "en-US"), (333, "en-US"), (334, "en-US"), (335, "en-US"), (336, "en-US"), (337, "en-US"), (338, "en-US"), (339, "en-US"), (340, "en-US"), (341, "en-US"), (342, "en-US"), (343, "en-US"), (344, "en-US"), (345, "en-US"), (346, "en-US"), (347, "en-US"), (348, "en-US"), (349, "en-US"), (350, "en-US"), (351, "en-US"), (352, "en-US"), (353, "en-US"), (354, "en-US"), (355, "en-US"), (356, "en-US"), (357, "en-US"), (358, "en-US"), (359, "en-US"), (360, "en-US"), (361, "en-US"), (362, "en-US"), (363, "en-US"), (364, "en-US"), (365, "en-US"), (366, "en-US"), (367, "en-US"), (368, "en-US"), (369, "en-US"), (370, "en-US"), (371, "en-US"), (372, "en-US"), (373, "en-US"), (374, "en-US"), (375, "en-US"), (376, "en-US"), (377, "en-US"), (378, "en-US"), (379, "en-US"), (380, "en-US"), (381, "en-US"), (382, "en-US"), (383, "en-US"), (384, "en-US"), (385, "en-US"), (386, "en-US"), (387, "en-US"), (388, "en-US"), (389, "en-US"), (390, "en-US"), (391, "en-US"), (392, "en-US"), (393, "en-US"), (394, "en-US"), (395, "en-US"), (396, "en-US"), (397, "en-US"), (398, "en-US"), (399, "en-US"), (400, "en-US"), (401, "en-US"), (402, "en-US"), (403, "en-US"), (404, "en-US"), (405, "en-US"), (406, "en-US"), (407, "en-US"), (408, "en-US"), (409, "en-US"), (410, "en-US"), (411, "en-US"), (412, "en-US"), (413, "en-US"), (414, "en-US"), (415, "en-US"), (416, "en-US"), (417, "en-US"), (418, "en-US"), (419, "en-US"), (420, "en-US"), (421, "en-US"), (422, "en-US"), (423, "en-US"), (425, "en-US"), (426, "en-US"), (427, "en-US"), (428, "en-US"), (429, "en-US"), (430, "en-US"), (431, "en-US"), (432, "en-US"), (433, "en-US"), (434, "en-US"), (435, "en-US"), (436, "en-US"), (437, "en-US"), (438, "en-US"), (439, "en-US"), (440, "en-US"), (441, "en-US"), (442, "en-US"), (443, "en-US"), (444, "en-US"), (445, "en-US"), (446, "en-US"), (447, "en-US"), (448, "en-US"), (449, "en-US"), (450, "en-US"), (451, "en-US"), (452, "en-US"), (453, "en-US"), (454, "en-US"), (455, "en-US"), (456, "en-US"), (457, "en-US"), (458, "en-US"), (459, "en-US"), (460, "en-US"), (461, "en-US"), (462, "en-US"), (463, "en-US"), (464, "en-US"), (465, "en-US"), (466, "en-US"), (467, "en-US"), (468, "en-US"), (469, "en-US"), (470, "en-US"), (471, "en-US"), (472, "en-US"), (473, "en-US"), (474, "en-US"), (475, "en-US"), (476, "en-US"), (477, "en-US"), (478, "en-US"), (479, "en-US"), (480, "en-US"), (481, "en-US"), (482, "en-US"), (483, "en-US"), (484, "en-US"), (485, "en-US"), (486, "en-US"), (487, "en-US"), (488, "en-US"), (502, "en-US"), (503, "en-US"), (504, "en-US"), (505, "en-US"), (506, "en-US"), (507, "en-US"), (508, "en-US"), (509, "en-US"), (510, "en-US"), (511, "en-US"), (512, "en-US"), (513, "en-US"), (514, "en-US"), (515, "en-US"), (516, "en-US"), (517, "en-US"), (518, "en-US"), (519, "en-US"), (520, "en-US"), (521, "en-US"), (522, "en-US"), (523, "en-US"), (524, "en-US"), (525, "en-US"), (526, "en-US"), (527, "en-US"), (528, "en-US"), (529, "en-US"), (530, "en-US"), (531, "en-US"), (532, "en-US"), (533, "en-US"), (534, "en-US"), (535, "en-US"), (536, "en-US"), (537, "en-US"), (538, "en-US"), (539, "en-US"), (540, "en-US"), (541, "en-US"), (542, "en-US"), (543, "en-US"), (544, "en-US"), (545, "en-US"), (547, "en-US"), (548, "en-US"), (549, "en-US"), (550, "en-US"), (552, "en-US"), (553, "en-US"), (555, "en-US"), (556, "en-US"), (557, "en-US"), (558, "en-US"), (559, "en-US"), (560, "en-US"), (561, "en-US"), (562, "en-US"), (563, "en-US"), (564, "en-US"), (565, "en-US"), (566, "en-US"), (567, "en-US"), (568, "en-US"), (569, "en-US"), (570, "en-US"), (571, "en-US"), (572, "en-US"), (573, "en-US"), (574, "en-US"), (575, "en-US"), (576, "en-US"), (577, "en-US"), (578, "en-US"), (579, "en-US"), (580, "en-US"), (581, "en-US"), (582, "en-US"), (583, "en-US"), (584, "en-US"), (585, "en-US"), (586, "en-US"), (587, "en-US"), (588, "en-US"), (589, "en-US"), (590, "en-US"), (591, "en-US"), (592, "en-US"), (593, "en-US"), (594, "en-US"), (595, "en-US"), (596, "en-US"), (597, "en-US"), (598, "en-US"), (599, "en-US"), (600, "en-US"), (601, "en-US"), (602, "en-US"), (603, "en-US"), (604, "en-US"), (605, "en-US"), (606, "en-US"), (607, "en-US"), (608, "en-US"), (609, "en-US"), (610, "en-US"), (611, "en-US"), (612, "en-US"), (613, "en-US"), (614, "en-US"), (615, "en-US"), (616, "en-US"), (617, "en-US"), (618, "en-US"), (619, "en-US"), (620, "en-US"), (621, "en-US"), (622, "en-US"), (623, "en-US"), (624, "en-US"), (625, "en-US"), (626, "en-US"), (627, "en-US"), (628, "en-US"), (629, "en-US"), (630, "en-US"), (631, "en-US"), (632, "en-US"), (633, "en-US"), (634, "en-US"), (635, "en-US"), (636, "en-US"), (637, "en-US"), (638, "en-US"), (639, "en-US"), (640, "en-US"), (641, "en-US"), (642, "en-US"), (643, "en-US"), (644, "en-US"), (645, "en-US"), (646, "en-US"), (647, "en-US"), (648, "en-US"), (649, "en-US"), (650, "en-US"), (651, "en-US"), (652, "en-US"), (654, "en-US"), (655, "en-US"), (656, "en-US"), (657, "en-US"), (659, "en-US"), (661, "en-US"), (662, "en-US"), (663, "en-US"), (664, "en-US"), (665, "en-US"), (666, "en-US"), (667, "en-US"), (668, "en-US"), (669, "en-US"), (670, "en-US"), (671, "en-US"), (672, "en-US"), (673, "en-US"), (674, "en-US"), (675, "en-US"), (676, "en-US"), (677, "en-US")]),
+    ("PDF_UA-1/7.2 Text/7.2-t27-pass-a.pdf",
+     &[18, 32, 37, 57, 46, 65, 52, 43, 38, 58, 47, 66, 51, 44, 39, 59, 74, 75, 71, 50, 40, 41, 68, 48, 67, 49, 45, 42, 33, 34, 35, 36],
+     &[(18, "en-US"), (32, "en-US"), (33, "en-US"), (34, "en-US"), (35, "en-US"), (36, "en-US"), (37, "en-US"), (38, "en-US"), (39, "en-US"), (40, "en-US"), (41, "en-US"), (42, "en-US"), (43, "en-US"), (44, "en-US"), (45, "en-US"), (46, "en-US"), (47, "en-US"), (48, "en-US"), (49, "en-US"), (50, "en-US"), (51, "en-US"), (52, "en-US"), (57, "en-US"), (58, "en-US"), (59, "en-US"), (65, "en-US"), (66, "en-US"), (67, "en-US"), (68, "en-US"), (71, "en-US"), (74, "en-US"), (75, "en-US")]),
+    ("PDF_UA-1/7.2 Text/7.2-t15-pass-a.pdf",
+     &[14, 24, 45, 72, 25, 46, 26, 27, 28, 47, 29, 30, 31, 32, 48, 33, 34, 35, 49, 36, 37, 38, 39],
+     &[(14, "en-US"), (24, "en-US"), (25, "en-US"), (26, "en-US"), (27, "en-US"), (28, "en-US"), (29, "en-US"), (30, "en-US"), (31, "en-US"), (32, "en-US"), (33, "en-US"), (34, "en-US"), (35, "en-US"), (36, "en-US"), (37, "en-US"), (38, "en-US"), (39, "en-US"), (45, "en-US"), (46, "en-US"), (47, "en-US"), (48, "en-US"), (49, "en-US"), (72, "en-US")]),
+    ("PDF_UA-2/8.2 Logical structure/8.2.5 Additional requirements for specific structure types/8.2.5.26 Table (Table, TR, TH, TD, THead, TBody, TFoot)/8.2.5.26-t01-pass-a.pdf",
+     &[11, 19, 40, 69, 20, 41, 21, 22, 23, 42, 24, 25, 26, 27, 43, 28, 29, 30, 44, 31, 32, 33, 34],
+     &[(11, "en-US"), (19, "en-US"), (20, "en-US"), (21, "en-US"), (22, "en-US"), (23, "en-US"), (24, "en-US"), (25, "en-US"), (26, "en-US"), (27, "en-US"), (28, "en-US"), (29, "en-US"), (30, "en-US"), (31, "en-US"), (32, "en-US"), (33, "en-US"), (34, "en-US"), (40, "en-US"), (41, "en-US"), (42, "en-US"), (43, "en-US"), (44, "en-US"), (69, "en-US")]),
+];
+
+#[test]
+fn the_corpus_reading_order_and_language_agree_with_pikepdf() {
+    let Some(root) = verapdf_root() else {
+        eprintln!("SKIPPED: corpus/external/verapdf is absent; fetch it with corpus/fetch.sh");
+        return;
+    };
+    for (fixture, order, languages) in READING_ORDER {
+        let doc = CosDocument::open_path(&root.join(fixture)).expect("opens");
+        let structure = read_structure(&doc).expect("reads");
+        let blocks = onionskin_core::reading_order(&doc, structure.tree().expect("tagged"))
+            .unwrap_or_else(|e| panic!("{fixture}: {e}"));
+        let mut seen = std::collections::BTreeSet::new();
+        let ours: Vec<u32> = blocks
+            .iter()
+            .filter(|b| seen.insert(b.element))
+            .map(|b| b.element)
+            .collect();
+        assert_eq!(
+            &ours, order,
+            "{fixture}: element order disagrees with pikepdf"
+        );
+        let expected: BTreeMap<u32, &str> = languages.iter().copied().collect();
+        for block in blocks.iter().filter(|b| !b.continuation) {
+            assert_eq!(
+                block.lang.as_deref(),
+                expected.get(&block.element).copied(),
+                "{fixture}: language of element {}",
+                block.element
+            );
+        }
+    }
+}
+
+/// An empty `/Lang` says the language is unknown. It is stated, so it does not
+/// fall back to the ancestor's, and what is below it inherits "unknown".
+#[test]
+fn an_empty_language_ends_inheritance_rather_than_inheriting() {
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
+        b"<< /S /Document /Lang (en) /K [6 0 R 8 0 R] >>".to_vec(),
+        b"<< /Type /StructTreeRoot /K [4 0 R] >>".to_vec(),
+        b"<< /S /P /Lang () /K [7 0 R] >>".to_vec(),
+        b"<< /S /Span >>".to_vec(),
+        b"<< /S /P >>".to_vec(),
+    ]);
+    let doc = open(&bytes);
+    let structure = read_structure(&doc).expect("reads");
+    let blocks =
+        onionskin_core::reading_order(&doc, structure.tree().expect("tagged")).expect("walks");
+    let langs: Vec<(u32, Option<&str>)> = blocks
+        .iter()
+        .map(|b| (b.element, b.lang.as_deref()))
+        .collect();
+    assert_eq!(
+        langs,
+        [(4, Some("en")), (6, None), (7, None), (8, Some("en"))]
+    );
+}
+
+/// One page (optionally turned) with `content`, and elements as objects 6
+/// onward under a root, for the reading-order cases that need only a few
+/// runs. `catalog` is spliced into the catalog dictionary.
+fn small_reading_document(catalog: &str, rotate: i64, content: &str, elements: &[&str]) -> Vec<u8> {
+    let kids: String = (0..elements.len())
+        .map(|n| format!("{} 0 R ", 6 + n))
+        .collect();
+    let mut objects = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> {catalog} >>")
+            .into_bytes(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Rotate {rotate} /Contents 4 0 R \
+             /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+        )
+        .into_bytes(),
+        stream_object(content),
+        format!("<< /Type /StructTreeRoot /K [{kids}] >>").into_bytes(),
+    ];
+    objects.extend(elements.iter().map(|e| e.as_bytes().to_vec()));
+    pdf(&objects)
+}
+
+fn blocks_of(bytes: &[u8]) -> Vec<onionskin_core::Block> {
+    let doc = open(bytes);
+    let structure = read_structure(&doc).expect("reads");
+    onionskin_core::reading_order(&doc, structure.tree().expect("tagged")).expect("walks")
+}
+
+#[test]
+fn the_catalog_language_applies_until_an_element_overrides_it() {
+    let bytes = small_reading_document(
+        "/Lang (de-AT)",
+        0,
+        "",
+        &[
+            "<< /S /P >>",
+            "<< /S /P /Lang (fr) >>",
+            "<< /S /P /Lang () >>",
+        ],
+    );
+    let langs: Vec<_> = blocks_of(&bytes).iter().map(|b| b.lang.clone()).collect();
+    assert_eq!(
+        langs,
+        [Some("de-AT".to_string()), Some("fr".to_string()), None]
+    );
+}
+
+#[test]
+fn an_element_with_only_an_objr_kid_lists_the_object_and_is_not_empty() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        "",
+        &["<< /S /Link /K << /Type /OBJR /Obj 40 0 R >> >>"],
+    );
+    let blocks = blocks_of(&bytes);
+    assert_eq!(blocks[0].objects, [ObjRef::new(40, 0)]);
+    assert!(blocks[0].items.is_empty() && blocks[0].unplaced.is_empty());
+}
+
+#[test]
+fn a_sequence_named_by_two_elements_is_read_once_and_the_second_claim_is_reported() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        "/P << /MCID 0 >> BDC BT /F1 12 Tf 10 10 Td (once) Tj ET EMC",
+        &["<< /S /P /Pg 3 0 R /K 0 >>", "<< /S /P /Pg 3 0 R /K 0 >>"],
+    );
+    let blocks = blocks_of(&bytes);
+    assert_eq!(blocks[0].text, "once");
+    assert_eq!(blocks[1].text, "");
+    assert_eq!(
+        blocks[1].unplaced,
+        [onionskin_core::Unplaced::Claimed { page: 0, mcid: 0 }]
+    );
+}
+
+#[test]
+fn content_between_two_children_makes_a_continuation_that_does_not_repeat_the_elements_own_fields()
+{
+    let bytes = small_reading_document(
+        "",
+        0,
+        "/Span << /MCID 0 >> BDC BT /F1 12 Tf 10 10 Td (a) Tj ET EMC \
+         /Span << /MCID 1 >> BDC BT /F1 12 Tf 30 10 Td (b) Tj ET EMC \
+         /Span << /MCID 2 >> BDC BT /F1 12 Tf 50 10 Td (c) Tj ET EMC \
+         /Span << /MCID 3 >> BDC BT /F1 12 Tf 70 10 Td (d) Tj ET EMC \
+         /Span << /MCID 4 >> BDC BT /F1 12 Tf 90 10 Td (e) Tj ET EMC",
+        &[
+            "<< /S /P /Pg 3 0 R /T (title) /ActualText (said) /K [0 7 0 R 1 8 0 R 2] >>",
+            "<< /S /Span /Pg 3 0 R /K 3 >>",
+            "<< /S /Span /Pg 3 0 R /K 4 >>",
+        ],
+    );
+    let summary: Vec<_> = blocks_of(&bytes)
+        .iter()
+        .map(|b| {
+            (
+                b.element,
+                b.continuation,
+                b.title.is_some(),
+                b.actual_text.is_some(),
+                b.page,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (6, false, true, true, Some(0)),
+            (7, false, false, false, Some(0)),
+            (6, true, false, false, Some(0)),
+            (8, false, false, false, Some(0)),
+            (6, true, false, false, Some(0)),
+        ]
+    );
+}
+
+fn joined(rotate: i64, content: &str) -> String {
+    let bytes = small_reading_document("", rotate, content, &["<< /S /P /Pg 3 0 R /K 0 >>"]);
+    blocks_of(&bytes)[0].text.clone()
+}
+
+#[test]
+fn a_space_goes_where_a_line_breaks_or_a_word_gap_opens_and_nowhere_else() {
+    let sequence = |body: &str| format!("/P << /MCID 0 >> BDC BT /F1 12 Tf {body} ET EMC");
+    assert_eq!(
+        joined(
+            0,
+            &sequence("10 100 Td (line one) Tj 0 -20 Td (line two) Tj")
+        ),
+        "line one line two",
+        "a new line"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (ab) Tj 40 0 Td (cd) Tj")),
+        "ab cd",
+        "a word gap on the line"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (ab) Tj 13.3 0 Td (cd) Tj")),
+        "abcd",
+        "one operator's text split in two touches the next"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (x) Tj 0 4 Td (2) Tj")),
+        "x2",
+        "a superscript is not a new line"
+    );
+    assert_eq!(
+        joined(
+            0,
+            &sequence("0 1 -1 0 100 50 Tm (line one) Tj 0 1 -1 0 80 50 Tm (line two) Tj")
+        ),
+        "line one line two",
+        "lines of text turned a quarter run down the page"
+    );
+    assert_eq!(
+        joined(
+            0,
+            &sequence("0 1 -1 0 100 50 Tm (ab) Tj 0 1 -1 0 100 90 Tm (cd) Tj")
+        ),
+        "ab cd",
+        "and a word gap on such a line"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (ab ) Tj 40 0 Td (cd) Tj")),
+        "ab cd",
+        "a space already there is not doubled"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (ab) Tj 40 0 Td ( cd) Tj")),
+        "ab cd"
+    );
+    assert_eq!(
+        joined(
+            0,
+            "/P << /MCID 0 /ActualText (fi) >> BDC BT /F1 12 Tf 10 100 Td (a) Tj 40 0 Td (b) Tj ET EMC"
+        ),
+        "fi",
+        "the later runs of one /ActualText say nothing, so they add no space"
+    );
+}
