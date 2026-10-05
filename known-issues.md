@@ -427,6 +427,68 @@ independently review an atomic correction before changing the collapse paths.
   The audit branch accepted the current main tree additively; no removal, move,
   checkout overwrite, or history rewrite was used.
 
+## 2026-10-05 WP4 (structure foundation) findings
+
+Found while reviewing the structure reader, `page_marked`, `ContentMap` and
+`reading_order`. Each was seen by a reviewer running code, not read off the
+source; none is fixed by WP4.
+
+- **`remove_pages` leaves an `/MCR` pointing at a removed page.** When the
+  removed page is named only by an `/MCR` `/Pg` and no element is doomed it
+  returns `NoChange`, so the `/MCR` keeps naming a page that is gone.
+  `crates/core/src/structure/maintain.rs`. Pre-existing.
+- **The old `marked` stack and the cap.** A `BDC` past `MAX_MARKED` (256) is not
+  pushed but every `EMC` still pops, so deeper nesting misaligns the
+  `/ActualText` association. `crates/content/src/interpret.rs`. Pre-existing.
+  The new tagging stack has no such cap and grows by about 47 bytes per open
+  sequence, only while tagging.
+- **`checker.rs` matches an `/MCR` with a `/Stm` against the page's ids.**
+  `plugins/tools-accessibility/src/checker.rs` `named_content` ignores
+  `Kid::MarkedContent::stream`, so a form's ids can be reported as missing from
+  the page. Pre-existing; the reader now carries the field.
+- **`pdf_text_string` drops unpaired surrogates and a trailing odd byte,** and
+  reads `<FEFF41>` as Latin-1. It now also decodes structure `/Alt`,
+  `/ActualText`, `/T`, `/E` and `/Lang`. `crates/content/src/font/mod.rs`.
+- **Intermittent test failures, not caused by WP4.** `shell::chrome::tabs::tests::
+  auto_scroll::touching_the_document_pauses_the_scroll` fails with
+  `UnmeasuredPage(1)` in about one run in four under load, and passes alone.
+  Two tests in `crates/core/tests/recovery.rs` shared a temp directory name
+  (fixed in `b741413`).
+- **`pages.rs` fails against the full veraPDF corpus.**
+  `the_external_corpus_survives_a_delete_with_its_inheritance_intact` panics
+  with `page: Syntax { offset: 12875, detail: "expected a dictionary key, found
+  '0'" }` when `corpus/external` is present. CI fetches the corpus, so check
+  whether its `corpus` job sees this.
+- **`ContentItem::bounds` ignore `/Rotate` and `/UserUnit`.** They are in the
+  user space `PageQuad` uses, with the media box's lower left as origin, so a
+  consumer that draws them on a turned page applies the rotation itself.
+
+- **VoiceOver on a tagged document is unverified, and the macOS adapter limits
+  it.** accesskit_macos 0.26.3 never reads a node's heading `level` and uses
+  `language` only inside attributed text, so `Element::level` and `language`
+  reach the AccessKit tree and not the platform. It exposes no row or column
+  indices, so `Table`, `Row` and `Cell` probably do not navigate as a table. A
+  heading is mapped to the role string "Heading", not "AXHeading"; whether
+  VoiceOver treats it as one is not known. `structure.rs` names a text-only
+  node by its words and gives the structure roles a role description, which
+  is what a reader can be relied on to announce. Nobody has run VoiceOver on
+  it (also listed under the external blockers).
+- **The first tagged page a screen reader asks for reads the whole document.**
+  `Document::reading_blocks` interprets every page the structure names content
+  on: about 340 ms for 500 pages of trivial content, on the draw thread, in
+  the first frame after a client attaches. `a11y::structure::outline` then
+  walks every block for each page it describes, about 28 ms a page at 200k
+  blocks, and a page that scrolls out of view is dropped and rebuilt.
+  Indexing blocks by page, and building off the draw thread, would fix both.
+- **`CanvasModel::page_words` is not invalidated by an edit this canvas did not
+  make** (an edit from another window of the same session), as `page_structure`
+  now is by keying it to `session_stamp()`. `crates/app/src/shell/canvas.rs`.
+  Pre-existing.
+- **Two figures with an empty `/ActualText` publish an `Image` with no label**
+  (`7.3-t01-pass-c`, `8.2.5.28.2-t01-pass-c`): VoiceOver says "image" and
+  nothing after it. A caption kept under a figure's `/Alt` becomes a child of
+  the `Image`, which VoiceOver may not enter.
+
 ## Environment
 
 - ANY git dependency fetch needs CARGO_NET_GIT_FETCH_WITH_CLI=true: the
