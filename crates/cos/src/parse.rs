@@ -253,6 +253,9 @@ impl<'a> Lexer<'a> {
                     b"false" => Ok(Object::Bool(false)),
                     b"null" => Ok(Object::Null),
                     [] => Err(self.syntax("expected an object")),
+                    // A keyword cut by the end of the window may be the start of
+                    // `true`, `false` or `null`: ask for more bytes.
+                    _ if self.pos == self.buf.len() => Err(self.eof()),
                     other => Err(LexError {
                         offset: at,
                         kind: LexErrorKind::Syntax(format!(

@@ -139,6 +139,23 @@ mod tests {
     }
 
     #[test]
+    fn a_keyword_cut_by_the_window_edge_asks_for_more_bytes() {
+        // `null` ends exactly where each of the first windows does, so the
+        // window sees `n`, `nu`, `nul` or `null` at its edge.
+        for cut in 1..=4 {
+            let head = b"7 0 obj [".to_vec();
+            let mut bytes = head.clone();
+            bytes.resize(super::INITIAL_WINDOW - cut, b' ');
+            bytes.extend_from_slice(b"null] endobj");
+            let parsed = Reader::new(Box::new(BytesSource::new(bytes)))
+                .parse_indirect_at(0, &|_| None)
+                .unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+            let array = parsed.object.as_array().expect("an array");
+            assert_eq!(array.len(), 1, "cut {cut}");
+        }
+    }
+
+    #[test]
     fn truncated_object_window_does_not_reread_prefixes() {
         let mut bytes = b"prefix!7 0 obj [".to_vec();
         bytes.resize(7007, b' ');
