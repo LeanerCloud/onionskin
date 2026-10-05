@@ -258,7 +258,7 @@ fn copy_seed(dir: &Path, name: &str) -> PathBuf {
 /// the reopened file alone collides on the first edit after recovery.
 #[test]
 fn a_replayed_recovery_is_one_undoable_edit_and_the_next_edit_does_not_collide() {
-    let root = temp_dir("replay");
+    let root = temp_dir("replay-undoable");
     let store = RecoveryStore::open(&root.join("recovery")).expect("the store opens");
     let path = copy_seed(&root, "minimal.pdf");
 
