@@ -595,14 +595,43 @@ impl Canvas {
         self.record_error(error, cx);
     }
 
+    /// One structure node of a tagged page and what is under it, keyed by the
+    /// page and the structure element it describes, so a node keeps its
+    /// identity when something earlier on the page appears or goes away.
+    fn structure_element(
+        &self,
+        page: usize,
+        node: &crate::a11y::structure::Outline,
+        origin: ViewPoint,
+        scale: f32,
+    ) -> A11yElement {
+        let key = gpui::ElementId::Name(format!("page-{page}-structure-{}", node.key).into());
+        let mut element = A11yElement::new(key, node.role, node.label.clone());
+        if let Some(level) = node.level {
+            element = element.with_level(level);
+        }
+        if let Some(language) = &node.language {
+            element = element.with_language(language.clone());
+        }
+        element.bounds = node
+            .bounds
+            .and_then(|bounds| self.model.structure_rect(page, bounds))
+            .map(|rect| Rects::view_rect(rect, origin, scale));
+        for child in &node.children {
+            element = element.child(self.structure_element(page, child, origin, scale));
+        }
+        element
+    }
+
     /// What the document tells a screen reader.
     ///
     /// The page node is a `Role::Document` with a role description of its
     /// own, because AccessKit maps that role to `NSAccessibilityGroupRole`
     /// and AppKit would otherwise answer "group": the defect M1's spike
     /// recorded. Its children are one node per visible page and, under each,
-    /// one node per run of text, so a screen reader navigates the page rather
-    /// than being handed it as a single string.
+    /// the page's structure (headings, lists, tables, figures) for a tagged
+    /// document, or one node per run of text otherwise, so a screen reader
+    /// navigates the page rather than being handed it as a single string.
     ///
     /// `with_text` is whether anything is listening. Extracting a page's
     /// words parses its content stream on the thread that draws, so it waits
@@ -662,7 +691,29 @@ impl Canvas {
                         format!("Page {number} is still loading"),
                     ));
                 }
+                // A tagged page is described by its structure: headings, lists,
+                // tables and figures a reader can move between, in reading
+                // order, rather than a flat list of its words.
+                Ok(_) if matches!(outline.structure, Some(Ok(_))) => {
+                    for node in outline.structure.iter().flatten().flatten() {
+                        page =
+                            page.child(self.structure_element(outline.page, node, origin, scale));
+                    }
+                }
                 Ok(runs) => {
+                    // A structure that cannot be read does not take the words
+                    // with it: they are read as runs, and the page says why it
+                    // is not described by its structure.
+                    if let Some(Err(error)) = &outline.structure {
+                        page = page.child(A11yElement::new(
+                            ("page-structure-unreadable", outline.page),
+                            Role::Alert,
+                            format!(
+                                "The structure of page {number} cannot be read, so its text \
+                                 is read without it: {error}"
+                            ),
+                        ));
+                    }
                     for (index, run) in runs.into_iter().enumerate() {
                         let mut node = A11yElement::new(
                             // Keyed by the page's own index, so a run reads

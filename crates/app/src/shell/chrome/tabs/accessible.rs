@@ -2331,6 +2331,102 @@ mod tests {
             .unwrap();
     }
 
+    /// A tagged document is published as its structure: a heading a reader can
+    /// move between by level, the language it states, and the paragraph's
+    /// words under it, each node under the page it is on and keyed by it.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn a_tagged_document_publishes_headings_with_levels_in_place_of_flat_runs(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _) = super::tests::bound_window_from_bytes(
+            vec![("tagged.pdf", crate::shell::fixtures::tagged_pdf())],
+            cx,
+        );
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, _cx| frame.a11y.attach_client())
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let page = tree.find(&("page", 0usize).into()).expect("no page node");
+                assert!(
+                    page.children.iter().all(|child| child.role != Role::Label),
+                    "a tagged page is not a flat list of runs"
+                );
+                let headings: Vec<(Option<usize>, String)> = page
+                    .walk()
+                    .filter(|element| element.role == Role::Heading)
+                    .map(|element| (element.level, element.label.clone()))
+                    .collect();
+                assert_eq!(
+                    headings,
+                    [
+                        (Some(1), "Title".to_string()),
+                        (Some(2), "Details".to_string())
+                    ]
+                );
+                let document = page
+                    .children
+                    .iter()
+                    .find(|child| child.role == Role::Document)
+                    .expect("the structure's Document");
+                assert_eq!(document.language.as_deref(), Some("en"));
+                assert!(
+                    page.walk()
+                        .skip(1)
+                        .all(|element| element.key.to_string().starts_with("page-0-structure-")),
+                    "a structure node is keyed away from its page"
+                );
+                assert!(
+                    page.walk().skip(1).any(|element| element.bounds.is_some()),
+                    "no structure node was placed in the view"
+                );
+            })
+            .unwrap();
+    }
+
+    /// A tagged document whose structure cannot be read is still read: its
+    /// words are published as runs under an alert that says why they are not
+    /// its structure.
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
+    fn an_unreadable_structure_publishes_the_runs_and_says_why(cx: &mut TestAppContext) {
+        let (window, _) = super::tests::bound_window_from_bytes(
+            vec![(
+                "broken.pdf",
+                crate::shell::fixtures::unreadable_structure_pdf(),
+            )],
+            cx,
+        );
+        cx.run_until_parked();
+        window
+            .update(cx, |frame, _window, _cx| frame.a11y.attach_client())
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |frame, window, cx| {
+                let tree = frame.accessible(window, cx);
+                let page = tree.find(&("page", 0usize).into()).expect("no page node");
+                assert!(
+                    page.children
+                        .iter()
+                        .any(|child| child.role == Role::Label && child.label.contains("Title")),
+                    "the page's words are not published"
+                );
+                assert!(
+                    tree.find(&("page-structure-unreadable", 0usize).into())
+                        .is_some(),
+                    "the page does not say why it has no structure"
+                );
+            })
+            .unwrap();
+    }
+
     /// Every tab stop has to have something to run, or Tab lands somewhere
     /// Enter cannot leave.
     #[cfg(feature = "shell-test-support")]

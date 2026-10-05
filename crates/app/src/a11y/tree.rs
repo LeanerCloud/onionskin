@@ -79,6 +79,11 @@ pub(crate) struct Element<A> {
     pub(crate) role: Role,
     pub(crate) label: String,
     pub(crate) value: Option<String>,
+    /// A heading's level, 1 to 6 and beyond.
+    pub(crate) level: Option<usize>,
+    /// The natural language of the element's text, as a BCP 47 tag, so a screen
+    /// reader switches voice for a passage in another language.
+    pub(crate) language: Option<String>,
     /// Why a disabled control is disabled, or anything else worth hearing
     /// after the name. Announced by VoiceOver after the label.
     pub(crate) description: Option<String>,
@@ -100,6 +105,8 @@ impl<A> Element<A> {
             role,
             label: label.into(),
             value: None,
+            level: None,
+            language: None,
             description: None,
             role_description: role_description(role),
             state: State::default(),
@@ -116,6 +123,16 @@ impl<A> Element<A> {
 
     pub(crate) fn with_state(mut self, state: State) -> Self {
         self.state = state;
+        self
+    }
+
+    pub(crate) fn with_level(mut self, level: usize) -> Self {
+        self.level = Some(level);
+        self
+    }
+
+    pub(crate) fn with_language(mut self, language: impl Into<String>) -> Self {
+        self.language = Some(language.into());
         self
     }
 
@@ -228,6 +245,17 @@ pub(crate) fn role_description(role: Role) -> Option<&'static str> {
     match role {
         Role::Document => Some("document"),
         Role::ListItem => Some("item"),
+        // The same group answer for each of these, which a document's structure
+        // publishes by the hundred.
+        Role::Heading => Some("heading"),
+        Role::Paragraph => Some("paragraph"),
+        Role::Section => Some("section"),
+        Role::Article => Some("article"),
+        Role::Blockquote => Some("quote"),
+        Role::Caption => Some("caption"),
+        Role::Note => Some("note"),
+        Role::Math => Some("formula"),
+        Role::Form => Some("form"),
         _ => None,
     }
 }
@@ -324,6 +352,12 @@ fn push<A>(element: &Element<A>, ids: &mut Ids, nodes: &mut Vec<(NodeId, Node)>)
     if let Some(value) = &element.value {
         node.set_value(value.clone());
     }
+    if let Some(level) = element.level {
+        node.set_level(level);
+    }
+    if let Some(language) = &element.language {
+        node.set_language(language.clone());
+    }
     // The key doubles as the element's `accessibilityIdentifier`, which is
     // how the automated probe reads a specific control back out of the tree
     // rather than matching on a label a copy edit can change.
@@ -404,6 +438,46 @@ mod tests {
         let root = ids.id_for(&"window".into());
         assert_eq!(update.tree.as_ref().unwrap().root, root);
         assert_eq!(update.focus, root);
+    }
+
+    /// AppKit answers "group" for each of these roles, and a document's
+    /// structure publishes them by the hundred.
+    #[test]
+    fn the_structure_roles_say_what_they_are_instead_of_group() {
+        for (role, said) in [
+            (Role::Heading, "heading"),
+            (Role::Paragraph, "paragraph"),
+            (Role::Section, "section"),
+            (Role::Article, "article"),
+            (Role::Blockquote, "quote"),
+            (Role::Caption, "caption"),
+            (Role::Note, "note"),
+            (Role::Math, "formula"),
+            (Role::Form, "form"),
+        ] {
+            assert_eq!(role_description(role), Some(said), "{role:?}");
+        }
+    }
+
+    #[test]
+    fn a_heading_carries_its_level_and_a_passage_its_language() {
+        let tree = Element::<()>::new("window", Role::Window, "Onionskin").child(
+            Element::new("h", Role::Heading, "")
+                .with_level(2)
+                .with_language("fr"),
+        );
+        let mut ids = Ids::default();
+        let update = update(&tree, None, &mut ids);
+        let id = ids.id_for(&"h".into());
+        let (_, node) = update.nodes.iter().find(|(node, _)| *node == id).unwrap();
+        assert_eq!(node.level(), Some(2));
+        assert_eq!(node.language(), Some("fr"));
+        let plain = update
+            .nodes
+            .iter()
+            .find(|(node, _)| *node == ids.id_for(&"window".into()))
+            .unwrap();
+        assert_eq!((plain.1.level(), plain.1.language()), (None, None));
     }
 
     #[test]

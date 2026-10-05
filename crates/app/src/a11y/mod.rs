@@ -9,6 +9,7 @@
 pub(crate) mod focus;
 #[cfg(all(feature = "a11y-probe", target_os = "macos"))]
 pub(crate) mod probe;
+pub(crate) mod structure;
 pub(crate) mod tree;
 
 use std::cell::{Cell, RefCell};

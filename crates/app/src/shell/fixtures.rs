@@ -189,3 +189,116 @@ pub(in crate::shell) fn text_pages_pdf() -> Vec<u8> {
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ])
 }
+
+/// One page, tagged: a `Document` holding a level 1 heading "Title", a
+/// paragraph "Some words", a level 2 heading "Details" and a paragraph "More
+/// words", and a figure with the alternate text "A cat", with an English catalog
+/// language. Elements are objects 6 to 11.
+pub(in crate::shell) fn tagged_pdf() -> Vec<u8> {
+    let content = "/H1 << /MCID 0 >> BDC BT /F1 18 Tf 20 170 Td (Title) Tj ET EMC \
+                   /P << /MCID 1 >> BDC BT /F1 12 Tf 20 140 Td (Some words) Tj ET EMC \
+                   /H2 << /MCID 2 >> BDC BT /F1 14 Tf 20 100 Td (Details) Tj ET EMC \
+                   /P << /MCID 3 >> BDC BT /F1 12 Tf 20 70 Td (More words) Tj ET EMC \
+                   /Figure << /MCID 4 >> BDC 20 20 30 30 re f EMC";
+    let stream = format!(
+        "<< /Length {} >>\nstream\n{content}\nendstream",
+        content.len()
+    );
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> /Lang (en) >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>",
+        stream.as_bytes(),
+        b"<< /Type /StructTreeRoot /K [6 0 R] >>",
+        b"<< /S /Document /K [7 0 R 8 0 R 9 0 R 10 0 R 11 0 R] >>",
+        b"<< /S /H1 /Pg 3 0 R /K 0 >>",
+        b"<< /S /P /Pg 3 0 R /K 1 >>",
+        b"<< /S /H2 /Pg 3 0 R /K 2 >>",
+        b"<< /S /P /Pg 3 0 R /K 3 >>",
+        b"<< /S /Figure /Pg 3 0 R /Alt (A cat) /K 4 >>",
+    ])
+}
+
+/// `count` tagged pages, each holding one level 1 heading "Page n" under a
+/// `Document`, so a page deletion changes what the structure says on every
+/// page after it.
+pub(in crate::shell) fn tagged_pages_pdf(count: usize) -> Vec<u8> {
+    let kids: String = (0..count).map(|n| format!("{} 0 R ", 3 + n)).collect();
+    let root = 3 + 2 * count;
+    let document = root + 1;
+    let first_heading = document + 1;
+    let headings: String = (0..count)
+        .map(|n| format!("{} 0 R ", first_heading + n))
+        .collect();
+    let mut objects: Vec<Vec<u8>> = vec![
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot {root} 0 R /MarkInfo << /Marked true >> /Lang (en) >>"
+        )
+        .into_bytes(),
+        format!("<< /Type /Pages /Kids [{kids}] /Count {count} >>").into_bytes(),
+    ];
+    for n in 0..count {
+        objects.push(
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R /Resources \
+                 << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>",
+                3 + count + n
+            )
+            .into_bytes(),
+        );
+    }
+    for n in 0..count {
+        let content = format!(
+            "/H1 << /MCID 0 >> BDC BT /F1 18 Tf 20 170 Td (Page {}) Tj ET EMC",
+            n + 1
+        );
+        objects.push(
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            )
+            .into_bytes(),
+        );
+    }
+    objects.push(format!("<< /Type /StructTreeRoot /K [{document} 0 R] >>").into_bytes());
+    objects.push(format!("<< /S /Document /K [{headings}] >>").into_bytes());
+    for n in 0..count {
+        objects.push(format!("<< /S /H1 /Pg {} 0 R /K 0 >>", 3 + n).into_bytes());
+    }
+    let slices: Vec<&[u8]> = objects.iter().map(Vec::as_slice).collect();
+    pdf(&slices)
+}
+
+/// [`tagged_pdf`] with a `/StructTreeRoot` the structure reader refuses (a
+/// direct dictionary), so the page has text and no readable structure.
+pub(in crate::shell) fn unreadable_structure_pdf() -> Vec<u8> {
+    let mut bytes = tagged_pdf();
+    let root = b"/StructTreeRoot 5 0 R";
+    let at = bytes
+        .windows(root.len())
+        .position(|window| window == root)
+        .expect("the catalog names a root");
+    // Same length, so the cross-reference offsets stay right.
+    bytes[at..at + root.len()].copy_from_slice(b"/StructTreeRoot <<>> ");
+    bytes
+}
+
+/// A tagged document whose one page has text and whose structure marks none of
+/// it, so the structure has no nodes for the page.
+pub(in crate::shell) fn tagged_without_marked_content_pdf() -> Vec<u8> {
+    let content = "BT /F1 12 Tf 20 100 Td (Unmarked words) Tj ET";
+    let stream = format!(
+        "<< /Length {} >>\nstream\n{content}\nendstream",
+        content.len()
+    );
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>",
+        stream.as_bytes(),
+        b"<< /Type /StructTreeRoot /K [6 0 R] >>",
+        b"<< /S /Document /Pg 3 0 R >>",
+    ])
+}

@@ -35,6 +35,8 @@ pub use file_ops::{rank_offers, HistoryFacts, RecoveryOffer};
 #[cfg(feature = "tools-form")]
 pub use forms::{Entry, FieldPrompt};
 
+use crate::a11y::structure::Outline;
+
 use super::input::{
     pointer_input, pointer_input_near, validate_pressure, DragKind, DragUpdate, InputError,
     InputState,
@@ -58,6 +60,11 @@ pub struct PageOutline {
     /// The page's text, or why it could not be read. A page whose text failed
     /// is announced as unreadable rather than as an empty page.
     pub text: Result<Vec<TextOutline>, String>,
+    /// For a tagged document, the page's structure elements as the nodes a
+    /// screen reader navigates, in place of the flat `text`; `None` for an
+    /// untagged one, which has only its runs. Like `text` it is empty until
+    /// the page is measured and someone is listening.
+    pub(crate) structure: Option<Result<Vec<Outline>, String>>,
 }
 
 /// One semantic piece of text on a page.
@@ -501,6 +508,11 @@ pub struct CanvasModel {
     /// Each visible page's words and where they sit on the page, for the
     /// accessibility tree. Page space, so scrolling does not invalidate it.
     page_words: BTreeMap<PageIndex, Vec<(String, Vec<PageQuad>)>>,
+    /// The structure nodes of a tagged page, kept like `page_words` until the
+    /// session's content changes.
+    page_structure: BTreeMap<PageIndex, Vec<Outline>>,
+    page_structure_at: (u64, u64),
+    structure_error: Option<String>,
     /// View > Page Display > Automatically Scroll, while it runs.
     auto_scroll: Option<onionskin_core::AutoScroll>,
     /// Whether form scripts run, and what filling had to say.
@@ -623,6 +635,9 @@ impl CanvasModel {
             comment_reads: CommentReads::default(),
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
+            page_structure: BTreeMap::new(),
+            page_structure_at: laid_out_at,
+            structure_error: None,
             auto_scroll: None,
             #[cfg(feature = "tools-form")]
             forms: forms::FormFilling::default(),
@@ -924,6 +939,8 @@ impl CanvasModel {
         // every page it passed for the life of the process.
         self.page_words
             .retain(|page, _| placements.iter().any(|placement| placement.page == *page));
+        self.page_structure
+            .retain(|page, _| placements.iter().any(|placement| placement.page == *page));
         let mut pages = Vec::with_capacity(placements.len());
         for placement in placements {
             let text = if with_text && placement.measured {
@@ -931,14 +948,70 @@ impl CanvasModel {
             } else {
                 Ok(Vec::new())
             };
+            let structure = if with_text && placement.measured {
+                self.page_structure_nodes(placement.page).transpose()
+            } else {
+                None
+            };
             pages.push(PageOutline {
                 page: placement.page,
                 rect: placement.rect,
                 measured: placement.measured,
                 text,
+                structure,
             });
         }
         Ok(pages)
+    }
+
+    /// The page's structure nodes if the document is tagged, `Ok(None)` if it is
+    /// not. The first call on a tagged document reads every page the structure
+    /// names content on, which the session then keeps until the bytes change.
+    ///
+    /// Kept per page for the session state it was built in, so an edit from
+    /// anywhere, not only this window's, replaces it. A tagged page none of
+    /// whose content is in the structure has no nodes to give and reads as
+    /// runs, as an untagged one does.
+    fn page_structure_nodes(&mut self, page: PageIndex) -> Result<Option<Vec<Outline>>, String> {
+        let stamp = self.session_stamp();
+        if self.page_structure_at != stamp {
+            self.page_structure.clear();
+            self.structure_error = None;
+            self.page_structure_at = stamp;
+        }
+        if let Some(error) = &self.structure_error {
+            return Err(error.clone());
+        }
+        let blocks = match self.document.borrow_mut().reading_blocks() {
+            Ok(Some(blocks)) => blocks,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                let error = error.to_string();
+                self.structure_error = Some(error.clone());
+                return Err(error);
+            }
+        };
+        let nodes = self
+            .page_structure
+            .entry(page)
+            .or_insert_with(|| crate::a11y::structure::outline(&blocks, page));
+        Ok((!nodes.is_empty()).then(|| nodes.clone()))
+    }
+
+    /// Where a box in page space is in the view, for placing a structure node.
+    /// `None` when the layout is not placing that page.
+    pub fn structure_rect(&self, page: PageIndex, bounds: [f64; 4]) -> Option<ViewRect> {
+        let quad = PageQuad {
+            page,
+            corners: [
+                (bounds[0], bounds[3]),
+                (bounds[2], bounds[3]),
+                (bounds[0], bounds[1]),
+                (bounds[2], bounds[1]),
+            ],
+        };
+        let rects = self.viewport.page_quad_rects(page, &[quad]).ok()?;
+        union_rect(&rects)
     }
 
     /// One entry per semantic text piece on a page, with the rectangle it occupies.
@@ -6809,6 +6882,191 @@ mod tests {
         .expect("canvas starts");
         model.update().expect("the first frame runs");
         model
+    }
+
+    fn tagged_model() -> CanvasModel {
+        let mut model = CanvasModel::new(
+            Document::open_bytes(crate::shell::fixtures::tagged_pdf())
+                .expect("the tagged page opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        model.update().expect("the first frame runs");
+        model
+    }
+
+    /// A tagged page is described by its structure, with the heading's level
+    /// and each node placed in the view; an untagged one keeps its flat runs,
+    /// and nothing is parsed for a structure while nobody is listening.
+    #[test]
+    fn a_tagged_page_is_described_by_its_structure_and_an_untagged_one_is_not() {
+        use accesskit::Role;
+
+        let mut model = tagged_model();
+        let described = model.accessible_pages(true).expect("the pages describe");
+        let nodes = described[0]
+            .structure
+            .as_ref()
+            .expect("a tagged page has a structure")
+            .as_ref()
+            .expect("the structure reads");
+        assert_eq!(nodes[0].role, Role::Document);
+        let heading = &nodes[0].children[0];
+        assert_eq!((heading.role, heading.level), (Role::Heading, Some(1)));
+        assert_eq!(heading.label, "Title", "the node is named by its words");
+        assert!(heading.children.is_empty());
+        assert_eq!(nodes[0].children[1].role, Role::Paragraph);
+        let figure = &nodes[0].children[4];
+        assert_eq!((figure.role, figure.label.as_str()), (Role::Image, "A cat"));
+        assert_eq!(nodes[0].language.as_deref(), Some("en"));
+        let bounds = heading.bounds.expect("the title has a box");
+        assert!(
+            model.structure_rect(0, bounds).is_some(),
+            "a measured page places its nodes in the view"
+        );
+
+        let quiet = model.accessible_pages(false).expect("the pages describe");
+        assert!(quiet[0].structure.is_none(), "nobody is listening");
+
+        let mut untagged = seed_model("hello.pdf");
+        let flat = untagged.accessible_pages(true).expect("the pages describe");
+        assert!(flat[0].structure.is_none());
+    }
+
+    /// The structure is kept per page, and an edit that changes what a page
+    /// says has to change what the next frame describes: deleting the first
+    /// page leaves the second where the first was.
+    #[test]
+    fn the_structure_of_a_page_follows_an_edit_to_the_document() {
+        use onionskin_core::pages::delete_pages;
+
+        let mut model = CanvasModel::new(
+            Document::open_bytes(crate::shell::fixtures::tagged_pages_pdf(2)).expect("opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        model.update().expect("the first frame runs");
+        let heading_of = |model: &mut CanvasModel| {
+            let described = model.accessible_pages(true).expect("the pages describe");
+            let nodes = described[0]
+                .structure
+                .clone()
+                .expect("tagged")
+                .expect("reads");
+            nodes[0].children[0].label.clone()
+        };
+        assert_eq!(heading_of(&mut model), "Page 1");
+
+        model
+            .document
+            .borrow_mut()
+            .edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+            .expect("the delete commits");
+        model.update().expect("the frame after the edit runs");
+        assert_eq!(heading_of(&mut model), "Page 2");
+    }
+
+    fn model_of(bytes: Vec<u8>) -> CanvasModel {
+        let mut model = CanvasModel::new(
+            Document::open_bytes(bytes).expect("opens"),
+            PluginRegistry::new(),
+            VIEWPORT,
+        )
+        .expect("canvas starts");
+        model.update().expect("the first frame runs");
+        model
+    }
+
+    /// A change to the document the canvas was not told about, an edit from
+    /// another window, still replaces what the next frame says: the cache is
+    /// kept for a session state, not until this canvas relays out.
+    #[test]
+    fn the_structure_follows_an_edit_the_canvas_did_not_make_itself() {
+        use onionskin_core::pages::delete_pages;
+
+        let mut model = model_of(crate::shell::fixtures::tagged_pages_pdf(2));
+        let first = |model: &mut CanvasModel| {
+            let described = model.accessible_pages(true).expect("the pages describe");
+            described[0]
+                .structure
+                .clone()
+                .expect("tagged")
+                .expect("reads")[0]
+                .children[0]
+                .label
+                .clone()
+        };
+        assert_eq!(first(&mut model), "Page 1");
+        model
+            .document
+            .borrow_mut()
+            .edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+            .expect("the delete commits");
+        // No `update`: nothing has relaid this canvas out.
+        assert_eq!(first(&mut model), "Page 2");
+    }
+
+    /// A failure is kept for the session state it happened in; the next state
+    /// reads the structure again.
+    #[test]
+    fn a_kept_structure_failure_does_not_outlive_the_state_it_was_found_in() {
+        use onionskin_core::pages::delete_pages;
+
+        let mut model = model_of(crate::shell::fixtures::tagged_pages_pdf(2));
+        model.page_structure_nodes(0).expect("reads");
+        model.structure_error = Some("stale".to_owned());
+        assert_eq!(model.page_structure_nodes(0), Err("stale".to_owned()));
+
+        model
+            .document
+            .borrow_mut()
+            .edit_pages("Delete", |tx, structure| delete_pages(tx, structure, &[0]))
+            .expect("the delete commits");
+        assert!(
+            model
+                .page_structure_nodes(0)
+                .expect("reads again")
+                .is_some(),
+            "the failure belonged to the state before the edit"
+        );
+    }
+
+    /// A structure that cannot be read does not take the words with it, and
+    /// the failure is kept so the document is not parsed again every frame.
+    #[test]
+    fn an_unreadable_structure_is_remembered_and_leaves_the_runs_in_place() {
+        let mut model = model_of(crate::shell::fixtures::unreadable_structure_pdf());
+        let described = model.accessible_pages(true).expect("the pages describe");
+        assert!(
+            matches!(described[0].structure, Some(Err(_))),
+            "{:?}",
+            described[0].structure
+        );
+        assert!(
+            !described[0]
+                .text
+                .as_ref()
+                .expect("the text reads")
+                .is_empty(),
+            "the words are still there"
+        );
+        assert!(model.structure_error.is_some(), "the failure is kept");
+    }
+
+    /// A tagged page with no content in its structure reads as runs, as an
+    /// untagged one does, rather than as an empty page.
+    #[test]
+    fn a_tagged_page_the_structure_marks_nothing_of_reads_as_runs() {
+        let mut model = model_of(crate::shell::fixtures::tagged_without_marked_content_pdf());
+        let described = model.accessible_pages(true).expect("the pages describe");
+        assert!(described[0].structure.is_none());
+        assert!(!described[0]
+            .text
+            .as_ref()
+            .expect("the text reads")
+            .is_empty());
     }
 
     /// A measured page is described at the rectangle it is painted at. The

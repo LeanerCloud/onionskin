@@ -73,6 +73,45 @@ pub struct Block {
     pub unplaced: Vec<Unplaced>,
 }
 
+impl Block {
+    /// What this block says on `page` in place of its content, if it carries a
+    /// [`Replacement`] for that page.
+    pub fn replacement_on(&self, page: PageIndex) -> Option<&str> {
+        self.replacement
+            .as_ref()
+            .filter(|replacement| replacement.page == page)
+            .map(|replacement| replacement.text.as_str())
+    }
+
+    /// The text of this block's own runs on `page`, artifacts left out.
+    pub fn text_on(&self, page: PageIndex) -> String {
+        let mut out = String::new();
+        let items = self
+            .items
+            .iter()
+            .filter(|item| item.page == page && !item.artifact);
+        append_runs(&mut out, items, &mut None);
+        out
+    }
+
+    /// The smallest box holding this block's own content on `page`, artifacts
+    /// left out, in the space [`ContentItem::bounds`] uses.
+    pub fn bounds_on(&self, page: PageIndex) -> Option<[f64; 4]> {
+        self.items
+            .iter()
+            .filter(|item| item.page == page && !item.artifact)
+            .map(|item| item.bounds)
+            .reduce(|a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            })
+    }
+}
+
 /// What stands for a subtree, and the page it is said on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Replacement {
