@@ -282,6 +282,200 @@ fn a_cyclic_k_terminates() {
     );
 }
 
+/// One page with five elements that between them exercise every enrichment:
+/// a custom type two hops from `Sect`, a `/Figure` with `/Alt`, UTF-16 and
+/// PDFDocEncoding text strings, a `/Lang`, `/A` as a dictionary and as an array
+/// with a revision number and a non-dictionary entry, and a type no role map
+/// reaches.
+fn enriched() -> Vec<u8> {
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
+        b"<< /Type /Font >>".to_vec(),
+        b"<< /Type /StructTreeRoot /K [6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 15 0 R 16 0 R 18 0 R 21 0 R 22 0 R 23 0 R] \
+          /RoleMap 19 0 R >>"
+            .to_vec(),
+        b"<< /S /Section /P 5 0 R /Pg 3 0 R /Lang (en-GB) /T <FEFF00540069006500740065> >>"
+            .to_vec(),
+        b"<< /S /Figure /P 5 0 R /Pg 3 0 R /Alt 11 0 R /ActualText <FEFF00E90021> \
+          /E (Expanded) /A << /O /Layout /Placement /Block >> >>"
+            .to_vec(),
+        b"<< /S /Table /P 5 0 R /A [ 13 0 R 3 (not a dict) \
+          << /O /Layout /BBox [0 0 1 1] >> ] >>"
+            .to_vec(),
+        b"<< /S /Loop /P 5 0 R >>".to_vec(),
+        b"<< /S /Nothing /P 5 0 R /A 14 0 R >>".to_vec(),
+        b"(A \\(small\\) cat)".to_vec(),
+        b"/Sect".to_vec(),
+        b"<< /O /Table /RowSpan 2 >>".to_vec(),
+        b"<< /O /Table /ColSpan 3 /Length 0 >>\nstream\n\nendstream".to_vec(),
+        b"<< /S /Title /P 5 0 R /A 13 0 R >>".to_vec(),
+        b"<< /S /P /P 5 0 R /Alt 99 0 R /A [99 0 R] /T 98 0 R /Lang (fr) >>".to_vec(),
+        b"<< /Type /Namespace /NS (http://iso.org/pdf2/ssn) >>".to_vec(),
+        b"<< /S /Title /P 5 0 R /NS 17 0 R >>".to_vec(),
+        b"<< /Section /Chapter /Chapter 12 0 R /Loop /Loop2 /Loop2 /Loop /Bad 5 \
+          /Title /P /Ghost 99 0 R >>"
+            .to_vec(),
+        b"[ << /O /Layout /Placement /Inline >> ]".to_vec(),
+        b"<< /S /P /P 5 0 R /A 20 0 R >>".to_vec(),
+        b"<< /S /P /P 5 0 R /A 20 0 R >>".to_vec(),
+        b"<< /S /Title /P 5 0 R /NS << /Type /Namespace /NS (urn:example) >> >>".to_vec(),
+    ])
+}
+
+fn enriched_tree() -> onionskin_core::StructureTree {
+    let doc = open(&enriched());
+    read_structure(&doc)
+        .expect("the tree reads")
+        .tree()
+        .cloned()
+        .expect("tagged")
+}
+
+#[test]
+fn a_custom_type_resolves_through_the_role_map_and_is_still_reported_as_written() {
+    let tree = enriched_tree();
+    let section = &tree.elements[&6];
+    assert_eq!(section.struct_type, Some(Name::new("Section")));
+    assert_eq!(section.standard_type, Some(Name::new("Sect")));
+    assert_eq!(
+        tree.elements[&7].standard_type,
+        Some(Name::new("Figure")),
+        "a standard type resolves to itself"
+    );
+}
+
+/// ISO 32000-2 14.7.4.2: an element with no `/NS` is in the default namespace,
+/// which is the PDF 1.7 one, so `/Title` is a custom type there that a role map
+/// may define (a PDF/UA-1 pass file maps it to `/P`) even in a file that
+/// declares 2.0. The 2.0 types are standard for an element that names the 2.0
+/// namespace.
+#[test]
+fn what_is_a_standard_type_follows_the_elements_namespace_not_the_files_version() {
+    let standard_of = |bytes: &[u8], element: u32| {
+        let doc = open(bytes);
+        let structure = read_structure(&doc).expect("reads");
+        structure.tree().expect("tagged").elements[&element]
+            .standard_type
+            .clone()
+    };
+    let mut two = enriched();
+    two[..8].copy_from_slice(b"%PDF-2.0");
+    for header in [enriched(), two] {
+        assert_eq!(
+            standard_of(&header, 15),
+            Some(Name::new("P")),
+            "no /NS: the 1.7 namespace, whatever the header says"
+        );
+        assert_eq!(
+            standard_of(&header, 18),
+            Some(Name::new("Title")),
+            "/NS naming the 2.0 namespace"
+        );
+        assert_eq!(
+            standard_of(&header, 23),
+            Some(Name::new("P")),
+            "/NS naming some other namespace"
+        );
+    }
+}
+
+/// ISO 32000-1 7.3.10: a reference to an object that is not there is null. An
+/// optional, descriptive entry that points at one must cost that entry, not
+/// the tree, because the tree is read on every structure-aware edit.
+#[test]
+fn a_dangling_reference_in_an_optional_entry_costs_the_entry_not_the_tree() {
+    let tree = enriched_tree();
+    let damaged = &tree.elements[&16];
+    assert_eq!(damaged.alt, None);
+    assert_eq!(damaged.title, None);
+    assert!(damaged.attributes.is_empty());
+    assert_eq!(
+        damaged.lang.as_deref(),
+        Some("fr"),
+        "its other entries are kept"
+    );
+    assert!(!tree.role_map.contains_key(&Name::new("Ghost")));
+}
+
+#[test]
+fn an_indirect_attribute_object_is_read_once_and_shared_and_a_stream_one_is_read() {
+    let tree = enriched_tree();
+    let from_table = &tree.elements[&8].attributes[0].entries;
+    let from_title = &tree.elements[&15].attributes[0].entries;
+    assert!(
+        std::sync::Arc::ptr_eq(from_table, from_title),
+        "one object, however many elements name it"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(
+            &tree.elements[&21].attributes[0].entries,
+            &tree.elements[&22].attributes[0].entries
+        ),
+        "an indirect /A array is read once for every element that names it"
+    );
+    let stream = &tree.elements[&10].attributes;
+    assert_eq!(stream.len(), 1);
+    assert_eq!(
+        stream[0]
+            .entries
+            .get(b"ColSpan")
+            .and_then(Object::as_integer),
+        Some(3)
+    );
+}
+
+#[test]
+fn a_cyclic_or_unmapped_role_has_no_standard_type() {
+    let tree = enriched_tree();
+    assert_eq!(tree.elements[&9].standard_type, None, "Loop <-> Loop2");
+    assert_eq!(tree.elements[&10].standard_type, None, "no mapping");
+    assert!(
+        !tree.role_map.contains_key(&Name::new("Bad")),
+        "a role map value that is not a name is not an entry"
+    );
+}
+
+#[test]
+fn text_entries_decode_utf16_and_pdfdoc_and_language_is_stated_not_inherited() {
+    let tree = enriched_tree();
+    assert_eq!(tree.elements[&6].title.as_deref(), Some("Tiete"));
+    assert_eq!(tree.elements[&6].lang.as_deref(), Some("en-GB"));
+    let figure = &tree.elements[&7];
+    assert_eq!(figure.alt.as_deref(), Some("A (small) cat"));
+    assert_eq!(figure.actual_text.as_deref(), Some("\u{e9}!"));
+    assert_eq!(figure.expansion.as_deref(), Some("Expanded"));
+    assert_eq!(figure.lang, None, "the figure states no language");
+}
+
+#[test]
+fn attributes_are_a_list_whether_the_file_wrote_a_dictionary_or_an_array() {
+    let tree = enriched_tree();
+    let owners = |number: u32| -> Vec<Option<Name>> {
+        tree.elements[&number]
+            .attributes
+            .iter()
+            .map(|a| a.owner.clone())
+            .collect()
+    };
+    assert_eq!(owners(7), [Some(Name::new("Layout"))]);
+    assert_eq!(
+        owners(8),
+        [Some(Name::new("Table")), Some(Name::new("Layout"))],
+        "the revision number and the string are skipped, both owners are kept"
+    );
+    assert!(tree.elements[&6].attributes.is_empty());
+    assert_eq!(
+        tree.elements[&8].attributes[0]
+            .entries
+            .get(b"RowSpan")
+            .and_then(Object::as_integer),
+        Some(2)
+    );
+}
+
 /// `/Nums` is required to be sorted and producers get it wrong. The reader does
 /// not rely on the order, so an unsorted tree reads completely rather than
 /// stopping at the first key that goes backwards.
@@ -556,4 +750,51 @@ fn a_key_a_page_holds_is_taken_even_when_the_tree_lost_it() {
         })
         .expect("attaches");
     assert_eq!(key, Some(2), "page 2 holds key 1");
+}
+
+/// One indirect string shared by many elements is decoded into each of them,
+/// so the reader holds a total rather than trusting a small file.
+#[test]
+fn text_shared_across_elements_is_bounded_in_total() {
+    let megabyte = format!("({})", "a".repeat(1 << 20)).into_bytes();
+    let build = |elements: usize| {
+        let kids: String = (0..elements).map(|n| format!("{} 0 R ", 7 + n)).collect();
+        let mut objects = vec![
+            b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+                .to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
+            b"<< /Type /Font >>".to_vec(),
+            format!("<< /Type /StructTreeRoot /K [{kids}] >>").into_bytes(),
+            megabyte.clone(),
+        ];
+        objects.extend((0..elements).map(|_| b"<< /S /P /P 5 0 R /Alt 6 0 R >>".to_vec()));
+        open(&pdf(&objects))
+    };
+    assert!(read_structure(&build(8)).is_ok(), "8 MiB of text is fine");
+    let error = read_structure(&build(20)).expect_err("20 MiB of text is not");
+    assert!(error.to_string().contains("more text"), "{error}");
+}
+/// Direct text is in the file once, so a file with a lot of it is large rather
+/// than amplified; the budget must not reject it.
+#[test]
+fn a_large_tree_of_direct_text_is_not_mistaken_for_an_amplified_one() {
+    let elements = 400;
+    let kids: String = (0..elements).map(|n| format!("{} 0 R ", 7 + n)).collect();
+    let text = "x".repeat(60_000);
+    let mut objects = vec![
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << >> >>".to_vec(),
+        b"<< /Type /Font >>".to_vec(),
+        format!("<< /Type /StructTreeRoot /K [{kids}] >>").into_bytes(),
+        b"null".to_vec(),
+    ];
+    objects.extend(
+        (0..elements).map(|_| format!("<< /S /P /P 5 0 R /ActualText ({text}) >>").into_bytes()),
+    );
+    let doc = open(&pdf(&objects));
+    let structure = read_structure(&doc).expect("24 MB of direct text in a 24 MB file reads");
+    assert_eq!(structure.tree().expect("tagged").elements.len(), elements);
 }

@@ -14,10 +14,11 @@
 mod invariant;
 mod maintain;
 mod read;
+mod role;
 
 pub use invariant::{Report, Violation};
 pub use maintain::Maintenance;
-pub use read::{Element, Kid, ParentEntry, Structure, StructureTree};
+pub use read::{Attribute, Element, Kid, ParentEntry, Structure, StructureTree};
 
 use onionskin_cos::{Document as CosDocument, ObjRef};
 
