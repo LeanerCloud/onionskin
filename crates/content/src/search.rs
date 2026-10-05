@@ -679,6 +679,7 @@ mod tests {
             font_name: "Test".into(),
             size: 10.0,
             render_mode: 0,
+            marked: None,
         }
     }
 

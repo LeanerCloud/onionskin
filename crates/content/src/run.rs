@@ -15,6 +15,7 @@ use onionskin_cos::{ObjRef, Origin, Span};
 
 use crate::error::Warning;
 use crate::font::FontId;
+use crate::marked::MarkedRef;
 use crate::{PageIndex, PageQuad};
 
 /// One immutable `/ActualText` occurrence. Equality is occurrence identity,
@@ -123,6 +124,9 @@ pub struct TextRun {
     /// `Tr`. Mode 3 and mode 7 draw nothing; they are still extracted, because
     /// invisible text over a scan is exactly what a search has to find.
     pub render_mode: i64,
+    /// The marked-content sequences this was drawn in. `Some` only from
+    /// [`crate::page_marked`].
+    pub marked: Option<MarkedRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

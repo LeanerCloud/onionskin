@@ -48,6 +48,7 @@ mod font;
 mod geometry;
 mod interpret;
 mod lines;
+mod marked;
 mod matrix;
 mod page;
 pub mod placements;
@@ -65,6 +66,7 @@ pub use error::{Error, Result, Warning};
 pub use font::{encode_win_ansi, pdf_text_string, standard_text_width, Code, Font, FontId};
 pub use geometry::{PageIndex, PageQuad};
 pub use lines::{text_lines, LineGlyph, TextLine};
+pub use marked::{MarkedPage, MarkedRef};
 pub use matrix::Matrix;
 pub use page::{page_count, Content, ContentPart, Page};
 pub use run::{ActualText, ByteProvenance, Glyph, Mapping, PageText, SelectedRun, TextRun};
@@ -112,6 +114,14 @@ pub fn page_images(doc: &Document, index: PageIndex) -> Result<Vec<placements::I
 pub fn page_mcids(doc: &Document, index: PageIndex) -> Result<std::collections::BTreeSet<i64>> {
     let page = page::page(doc, index)?;
     interpret::page_mcids(doc, &page)
+}
+
+/// Every run, image and path on page `index`, each with the marked-content
+/// sequences it was drawn in: what a structure element's `/MCID` is matched
+/// against. See [`MarkedRef`].
+pub fn page_marked(doc: &Document, index: PageIndex) -> Result<MarkedPage> {
+    let page = page::page(doc, index)?;
+    interpret::page_marked(doc, &page)
 }
 
 /// Every path page `index` paints, with its points in page space: what

@@ -132,6 +132,7 @@ mod tests {
                 name: "Im0".into(),
                 ctm: onionskin_content::Matrix::IDENTITY,
                 provenance: None,
+                marked: None,
             },
         });
         assert!(selection.text().is_none(), "an image replaces the text");

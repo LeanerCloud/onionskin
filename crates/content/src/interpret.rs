@@ -12,6 +12,7 @@ use onionskin_cos::{Dict, Document, Name, ObjRef, Object, Span};
 
 use crate::error::{Result, Warning};
 use crate::font::{self, Code, Font, FontId};
+use crate::marked::{MarkedPage, MarkedRef};
 use crate::matrix::Matrix;
 use crate::page::{self, Content, ContentPart, Page};
 use crate::redact::text::{self as redact_text, Placed, Show, Spacing};
@@ -238,6 +239,29 @@ pub(crate) fn page_mcids(doc: &Document, page: &Page) -> Result<std::collections
     Ok(interpreter.mcids.take().unwrap_or_default())
 }
 
+/// Every run, image and path on `page`, each with the marked-content
+/// sequences it was drawn in. See [`crate::marked`].
+pub(crate) fn page_marked(doc: &Document, page: &Page) -> Result<MarkedPage> {
+    let mut warnings = Vec::new();
+    let content = page::content(doc, page, &mut warnings)?;
+    let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
+    interpreter.marks = Some(Vec::new());
+    interpreter.images = Some(Vec::new());
+    interpreter.shapes = Some(crate::shapes::Shapes::default());
+    interpreter.run(&content, &page.resources, GState::new(page.base_ctm()), 0);
+    let images = interpreter.images.take().unwrap_or_default();
+    let shapes = interpreter
+        .shapes
+        .take()
+        .map(|shapes| shapes.found)
+        .unwrap_or_default();
+    Ok(MarkedPage {
+        text: interpreter.finish(),
+        images,
+        shapes,
+    })
+}
+
 /// Every character each font on `page` draws, and the code it draws it
 /// with: what text editing writes new text in.
 pub(crate) fn seen_codes(doc: &Document, page: &Page) -> Result<crate::edit_text::Seen> {
@@ -303,6 +327,11 @@ struct Interpreter<'a> {
     /// Present while collecting the marked-content ids the page's own
     /// content opens.
     mcids: Option<std::collections::BTreeSet<i64>>,
+    /// Present while tagging items: what each open sequence makes of the items
+    /// drawn inside it, innermost last, across the forms a `Do` enters so a
+    /// form's content knows what encloses the `Do`. Every `BDC` and `BMC`
+    /// pushes one whatever its operands, so each `EMC` pops the one it closes.
+    marks: Option<Vec<MarkedRef>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -328,6 +357,7 @@ impl<'a> Interpreter<'a> {
             images: None,
             seen: None,
             mcids: None,
+            marks: None,
         }
     }
 
@@ -389,6 +419,9 @@ impl<'a> Interpreter<'a> {
         // matching `Q` pops nothing instead of popping somebody else's state.
         let mut unsaved = 0usize;
         let mut text: Option<TextObject> = None;
+        // A stream's unbalanced `BDC` must not outlive it, and its stray `EMC`
+        // must not close the sequence that enclosed its `Do`.
+        let marks_base = self.marks.as_ref().map(Vec::len);
         // One entry per open marked-content sequence, retaining its
         // `/ActualText` association for each showing operator inside it.
         let mut marked: Vec<Sequence> = Vec::new();
@@ -405,6 +438,9 @@ impl<'a> Interpreter<'a> {
         while let Some(op) = lexer.next_operation() {
             let before = self.removed_so_far();
             let hidden = self.hiding();
+            if self.marks.is_some() {
+                self.track_marks(&op, resources, depth, marks_base.unwrap_or_default());
+            }
             let emit = match op.operator.as_bytes() {
                 b"q" => {
                     if saved.len() < MAX_GSTACK {
@@ -448,9 +484,7 @@ impl<'a> Interpreter<'a> {
                         rewrite.as_mut().expect("redacting"),
                     ),
                 _ => {
-                    if let Some(shapes) = self.shapes.as_mut() {
-                        shapes.follow(&op, &state.ctm);
-                    }
+                    self.follow_shapes(&op, &state);
                     note_fill(&op, content, &mut state);
                     self.state_operator(&op, resources, &mut state, &mut text);
                     Emit::Copy
@@ -467,6 +501,9 @@ impl<'a> Interpreter<'a> {
             }
         }
         self.warnings.append(&mut lexer.warnings);
+        if let (Some(marks), Some(base)) = (self.marks.as_mut(), marks_base) {
+            marks.truncate(base);
+        }
         if let (Some(redact), Some(outer)) = (self.redact.as_mut(), outer_hiding) {
             redact.hiding = outer;
         }
@@ -870,6 +907,7 @@ impl<'a> Interpreter<'a> {
             name: String::from_utf8_lossy(name.as_bytes()).into_owned(),
             ctm: state.ctm,
             provenance: provenance(content, op.span).map(|(found, _)| found),
+            marked: self.current_mark(),
         };
         if let Some(images) = self.images.as_mut() {
             images.push(placement);
@@ -1175,6 +1213,7 @@ impl<'a> Interpreter<'a> {
             font_name: font.base_font.clone(),
             size: state.size,
             render_mode: state.render_mode,
+            marked: self.current_mark(),
         });
         Some(placed)
     }
@@ -1288,8 +1327,12 @@ impl<'a> Interpreter<'a> {
     }
 
     /// A `BDC`'s property list, written in the operator or named in the
-    /// resources' `/Properties`.
+    /// resources' `/Properties`. A `BMC` has none: its last operand is its tag,
+    /// which is not a property name.
     fn properties(&self, op: &Operation, resources: &Dict) -> Option<Dict> {
+        if !op.operator.is(b"BDC") {
+            return None;
+        }
         match op.operands.last()? {
             Object::Dict(d) => Some(d.clone()),
             Object::Name(n) => self
@@ -1313,6 +1356,80 @@ impl<'a> Interpreter<'a> {
             .and_then(|value| value.as_integer());
         if let (Some(mcid), Some(found)) = (mcid, self.mcids.as_mut()) {
             found.insert(mcid);
+        }
+    }
+
+    /// While tagging, follow a `BDC`, `BMC` or `EMC`. An `EMC` leaves alone
+    /// what an enclosing stream opened, so a form's stray one cannot close the
+    /// sequence around its `Do`.
+    fn track_marks(&mut self, op: &Operation, resources: &Dict, depth: usize, base: usize) {
+        let operator = op.operator.as_bytes();
+        if operator == b"EMC" {
+            if let Some(marks) = self.marks.as_mut().filter(|marks| marks.len() > base) {
+                marks.pop();
+            }
+            return;
+        }
+        if operator != b"BDC" && operator != b"BMC" {
+            return;
+        }
+        let tag = match op.operands.first() {
+            Some(Object::Name(tag)) => Some(tag.clone()),
+            _ => None,
+        };
+        let own_mcid = if depth == 0 {
+            self.properties(op, resources)
+                .and_then(|properties| properties.get(b"MCID").cloned())
+                .and_then(|value| self.doc.resolve(&value).ok())
+                .and_then(|value| value.as_integer())
+        } else {
+            None
+        };
+        let Some(marks) = self.marks.as_mut() else {
+            return;
+        };
+        let own_artifact = tag
+            .as_ref()
+            .is_some_and(|tag| tag.as_bytes() == b"Artifact");
+        let enclosing = marks.last();
+        let carried = enclosing.and_then(|outer| outer.mcid.map(|mcid| (mcid, outer.tag.clone())));
+        let (mcid, tag) = match (own_mcid, carried) {
+            (Some(mcid), _) => (Some(mcid), tag),
+            (None, Some((mcid, carrier_tag))) => (Some(mcid), carrier_tag),
+            (None, None) => (None, tag),
+        };
+        let artifact = own_artifact || enclosing.is_some_and(|outer| outer.artifact);
+        let depth = marks.len() + 1;
+        marks.push(MarkedRef {
+            mcid,
+            tag,
+            artifact,
+            depth,
+        });
+    }
+
+    /// What encloses the item being drawn, when tagging and inside any
+    /// sequence.
+    fn current_mark(&self) -> Option<MarkedRef> {
+        self.marks.as_ref()?.last().cloned()
+    }
+
+    /// While collecting line art, follow a path operator and tag any path it
+    /// paints.
+    fn follow_shapes(&mut self, op: &Operation, state: &GState) {
+        let Some(shapes) = self.shapes.as_mut() else {
+            return;
+        };
+        let before = shapes.found.len();
+        shapes.follow(op, &state.ctm);
+        if shapes.found.len() == before {
+            return;
+        }
+        let mark = self.current_mark();
+        if let Some(shapes) = self.shapes.as_mut() {
+            for shape in &mut shapes.found[before..] {
+                shape.marked = mark.clone();
+            }
         }
     }
 

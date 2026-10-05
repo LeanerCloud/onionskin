@@ -4,6 +4,7 @@
 
 use onionskin_cos::ObjRef;
 
+use crate::marked::MarkedRef;
 use crate::matrix::Matrix;
 use crate::run::ByteProvenance;
 
@@ -20,6 +21,9 @@ pub struct ImagePlacement {
     /// The `Do` that drew it: the stream, a page's or a form's, and where
     /// in its decoded bytes. `None` when it could not be located.
     pub provenance: Option<ByteProvenance>,
+    /// The marked-content sequences it was drawn in. `Some` only from
+    /// [`crate::page_marked`].
+    pub marked: Option<MarkedRef>,
 }
 
 impl ImagePlacement {

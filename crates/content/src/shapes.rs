@@ -4,6 +4,7 @@
 //! filled in on and the small boxes that are check boxes, and what the
 //! measuring tools snap to.
 
+use crate::marked::MarkedRef;
 use crate::matrix::Matrix;
 use crate::tokenizer::Operation;
 
@@ -21,6 +22,9 @@ pub struct Shape {
     pub segments: Vec<Segment>,
     pub stroked: bool,
     pub filled: bool,
+    /// The marked-content sequences it was painted in. `Some` only from
+    /// [`crate::page_marked`].
+    pub marked: Option<MarkedRef>,
 }
 
 /// A straight edge, in page space.
@@ -168,6 +172,7 @@ impl Shapes {
                 segments,
                 stroked,
                 filled,
+                marked: None,
             });
         }
     }
