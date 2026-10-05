@@ -509,6 +509,15 @@ source; none is fixed by WP4.
     macOS as `AXTitle`; whether VoiceOver reads static text with a title and no
     value has not been checked.
 
+- **`cargo test -p onionskin-core --test edit` fails 2 of 33 tests on its own** (`closure_errors_restore_first_write_membership_and_cleared_trailers`,
+  `two_producers_in_one_transaction_make_one_change_per_object`) and passes
+  under `cargo test --workspace`. They depend on a feature another workspace
+  member enables, so the crate's own test run is not what CI runs. Not checked
+  on the commit before the WP4 work.
+- **The COS save temp file may be created non-exclusively at a predictable
+  path.** Carried over from an unlanded old entry (`7937655`, the
+  `write_through` path in `crates/cos/src/document.rs`); not re-verified.
+
 ## Environment
 
 - ANY git dependency fetch needs CARGO_NET_GIT_FETCH_WITH_CLI=true: the
