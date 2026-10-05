@@ -1,5 +1,5 @@
 //! The left navigation panes: thumbnails, bookmarks, attachments, layers,
-//! signatures, search results and comments.
+//! content, tags, signatures, search results and comments.
 //!
 //! One column, one pane at a time, chosen from a strip of buttons that stays
 //! visible while the navigation panes are shown. That is Acrobat's shape and
@@ -20,12 +20,15 @@ mod bookmark_edit;
 mod bookmarks;
 mod comments;
 mod layers;
+mod page_content;
 mod results;
 mod security;
 pub(in crate::shell) mod signatures;
+mod tags;
 mod thumbnails;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
@@ -33,7 +36,7 @@ use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Pixels, Point, StatefulInteractiveElement as _, Styled as _,
 };
-use onionskin_core::{Attachment, Layer, ObjRef, OutlineItem, PageIndex, ReadAnnotation};
+use onionskin_core::{Attachment, Block, Layer, ObjRef, OutlineItem, PageIndex, ReadAnnotation};
 
 use super::canvas::CanvasError;
 use super::chrome::accessible::{Activation, Element, Rects, Surface};
@@ -52,6 +55,10 @@ pub(in crate::shell) use self::comments::{
     CommentAction, DraftMode as CommentDraftMode,
 };
 pub(in crate::shell) use self::layers::LayersCommand;
+pub(in crate::shell) use self::page_content::ContentAction;
+#[cfg(test)]
+pub(in crate::shell) use self::page_content::Group as ContentGroup;
+pub(in crate::shell) use self::tags::TagAction;
 pub(in crate::shell) use self::thumbnails::{ThumbnailAction, ThumbnailsCommand, ThumbnailsState};
 
 /// The strip of pane buttons, always there while the navigation panes are.
@@ -71,6 +78,8 @@ pub(in crate::shell) enum NavigationPane {
     Bookmarks,
     Attachments,
     Layers,
+    Content,
+    Tags,
     Signatures,
     SecuritySettings,
     SearchResults,
@@ -79,11 +88,13 @@ pub(in crate::shell) enum NavigationPane {
 
 impl NavigationPane {
     /// Acrobat's order down the navigation strip.
-    pub(in crate::shell) const ALL: [Self; 8] = [
+    pub(in crate::shell) const ALL: [Self; 10] = [
         Self::Thumbnails,
         Self::Bookmarks,
         Self::Attachments,
         Self::Layers,
+        Self::Content,
+        Self::Tags,
         Self::Signatures,
         Self::SecuritySettings,
         Self::SearchResults,
@@ -96,6 +107,8 @@ impl NavigationPane {
             Self::Bookmarks => "Bookmarks",
             Self::Attachments => "Attachments",
             Self::Layers => "Layers",
+            Self::Content => "Content",
+            Self::Tags => "Tags",
             Self::Signatures => "Signatures",
             Self::SecuritySettings => "Security Settings",
             Self::SearchResults => "Search Results",
@@ -109,6 +122,8 @@ impl NavigationPane {
             Self::Bookmarks => "▸",
             Self::Attachments => "⏚",
             Self::Layers => "◧",
+            Self::Content => "▦",
+            Self::Tags => "⌗",
             Self::Signatures => "✎",
             Self::SecuritySettings => "⚿",
             Self::SearchResults => "⌕",
@@ -128,6 +143,8 @@ impl NavigationPane {
             Self::Bookmarks => "pane-bookmarks",
             Self::Attachments => "pane-attachments",
             Self::Layers => "pane-layers",
+            Self::Content => "pane-content",
+            Self::Tags => "pane-tags",
             Self::Signatures => "pane-signatures",
             Self::SecuritySettings => "pane-security-settings",
             Self::SearchResults => "pane-search-results",
@@ -150,6 +167,11 @@ enum PaneContent {
     Bookmarks(Result<Vec<OutlineItem>, String>),
     Attachments(Result<Vec<Attachment>, String>),
     Layers(Result<Vec<Layer>, String>),
+    /// The structure tree as blocks in reading order, or `None` for a
+    /// document that has none.
+    Tags(Result<Option<Arc<Vec<Block>>>, String>),
+    /// What the page the view was on drew.
+    Content(Result<page_content::ContentSnapshot, String>),
     Signatures(Result<Vec<signatures::SignatureRow>, String>),
     Security(security::SecurityRows),
     Comments(Result<Vec<ReadAnnotation>, String>),
@@ -170,6 +192,8 @@ pub(in crate::shell) enum PaneAction {
     Bookmark(BookmarkAction),
     Thumbnail(ThumbnailAction),
     Comment(CommentAction),
+    Tag(TagAction),
+    Content(ContentAction),
     /// The Signatures pane's Validate All.
     ValidateSignatures,
     /// Put away whichever pane-local menu is open.
@@ -194,6 +218,8 @@ pub(in crate::shell) struct NavigationPanesState {
     bookmarks_menu: Option<bookmark_edit::BookmarksMenu>,
     attachments_menu: Option<attachment_menu::AttachmentsMenu>,
     comments: comments::CommentsState,
+    tags: tags::TagsState,
+    content_state: page_content::ContentState,
     /// Why the document may not be edited, read with the pane's content:
     /// every authoring entry is disabled with it.
     edit_refusal: Option<&'static str>,
@@ -244,6 +270,8 @@ impl NavigationPanesState {
         self.bookmarks_menu = None;
         self.attachments_menu = None;
         self.comments.document_changed();
+        self.tags = tags::TagsState::default();
+        self.content_state = page_content::ContentState::default();
         self.feedback = None;
     }
 
@@ -284,6 +312,8 @@ impl NavigationPanesState {
         self.bookmarks_menu = None;
         self.attachments_menu = None;
         self.feedback = None;
+        self.tags = tags::TagsState::default();
+        self.content_state = page_content::ContentState::default();
         self.edit_refusal = canvas
             .as_ref()
             .and_then(|canvas| canvas.model.edit_refusal());
@@ -310,7 +340,15 @@ impl NavigationPanesState {
             return;
         };
         let trust = &self.signature_trust;
-        self.content = Some(canvas.update(cx, |canvas, _cx| read(pane, Some(canvas), trust)));
+        // What was chosen and boxed named content of the document as it was: a
+        // page deleted since would leave the box on whichever page now has
+        // its number.
+        self.tags.selected = None;
+        self.content_state.selected = None;
+        self.content = Some(canvas.update(cx, |canvas, _cx| {
+            canvas.model.set_structure_highlight(Vec::new());
+            read(pane, Some(canvas), trust)
+        }));
     }
 
     /// The layers the pane is showing, or nothing when another pane is open
@@ -411,6 +449,10 @@ fn read(
             NavigationPane::Bookmarks => PaneContent::Bookmarks(Ok(Vec::new())),
             NavigationPane::Attachments => PaneContent::Attachments(Ok(Vec::new())),
             NavigationPane::Layers => PaneContent::Layers(Ok(Vec::new())),
+            NavigationPane::Tags => PaneContent::Tags(Ok(None)),
+            NavigationPane::Content => {
+                PaneContent::Content(Ok(page_content::ContentSnapshot::none()))
+            }
             NavigationPane::Signatures => PaneContent::Signatures(Ok(Vec::new())),
             NavigationPane::SecuritySettings => PaneContent::Security(Vec::new()),
             NavigationPane::Comments => PaneContent::Comments(Ok(Vec::new())),
@@ -423,6 +465,16 @@ fn read(
             PaneContent::Attachments(message(canvas.model.attachments()))
         }
         NavigationPane::Layers => PaneContent::Layers(message(canvas.model.layers())),
+        NavigationPane::Tags => PaneContent::Tags(message(canvas.model.structure_blocks())),
+        NavigationPane::Content => {
+            let page = canvas.model.view_state().current_page;
+            PaneContent::Content(message(
+                canvas
+                    .model
+                    .marked_page(page)
+                    .map(|marked| page_content::snapshot(page, &marked)),
+            ))
+        }
         NavigationPane::Signatures => {
             PaneContent::Signatures(message(canvas.model.signatures(trust)))
         }
@@ -456,6 +508,12 @@ pub(in crate::shell) fn apply(
 ) {
     match action {
         PaneAction::Select(pane) => {
+            // What a pane boxed on the page goes with the pane.
+            if let Some(canvas) = canvas {
+                canvas.update(cx, |canvas, _cx| {
+                    canvas.model.set_structure_highlight(Vec::new())
+                });
+            }
             if state.active == Some(pane) {
                 state.close();
             } else {
@@ -491,6 +549,8 @@ pub(in crate::shell) fn apply(
         PaneAction::Bookmark(action) => bookmark_edit::run(state, canvas, action, cx),
         PaneAction::Thumbnail(action) => thumbnails::run(state, canvas, action, cx),
         PaneAction::Comment(action) => comments::run(state, canvas, action, cx),
+        PaneAction::Tag(action) => tags::run(state, canvas, action, cx),
+        PaneAction::Content(action) => page_content::run(state, canvas, action, cx),
         PaneAction::ValidateSignatures => {
             if let Some(canvas) = canvas {
                 canvas.update(cx, |canvas, _| canvas.model.request_signature_validation());
@@ -635,6 +695,12 @@ fn accessible_body(
         (NavigationPane::Layers, Some(PaneContent::Layers(items))) => {
             layers::accessible(items.as_deref(), state.layers_menu.is_some())
         }
+        (NavigationPane::Tags, Some(PaneContent::Tags(blocks))) => {
+            tags::accessible(blocks.as_ref(), &state.tags)
+        }
+        (NavigationPane::Content, Some(PaneContent::Content(snapshot))) => {
+            page_content::accessible(snapshot.as_ref(), &state.content_state)
+        }
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::accessible(items.as_deref())
         }
@@ -680,6 +746,9 @@ pub(in crate::shell) fn render_navigation_panes(
         .id("navigation-pane-strip")
         .w(px(STRIP_WIDTH))
         .h_full()
+        // Ten buttons need more than a short window has; the rest scroll into
+        // reach instead of being clipped and unclickable.
+        .overflow_y_scroll()
         .flex_none()
         .flex()
         .flex_col()
@@ -699,6 +768,7 @@ pub(in crate::shell) fn render_navigation_panes(
                 .id(pane.element_id())
                 .w(px(36.0))
                 .h(px(32.0))
+                .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -804,6 +874,12 @@ fn render_body(
         }
         (NavigationPane::Layers, Some(PaneContent::Layers(items))) => {
             layers::render(items.as_deref(), theme, cx)
+        }
+        (NavigationPane::Tags, Some(PaneContent::Tags(blocks))) => {
+            tags::render(blocks.as_ref(), &state.tags, theme, cx)
+        }
+        (NavigationPane::Content, Some(PaneContent::Content(snapshot))) => {
+            page_content::render(snapshot.as_ref(), &state.content_state, theme, cx)
         }
         (NavigationPane::Signatures, Some(PaneContent::Signatures(items))) => {
             signatures::render(items.as_deref(), theme, cx)
@@ -978,7 +1054,7 @@ mod tests {
     /// dropping one.
     #[test]
     fn every_named_pane_has_a_button_a_label_and_its_own_element_id() {
-        assert_eq!(NavigationPane::ALL.len(), 8);
+        assert_eq!(NavigationPane::ALL.len(), 10);
 
         let mut ids: Vec<&str> = NavigationPane::ALL
             .iter()
@@ -986,7 +1062,7 @@ mod tests {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 8, "two panes share an element id");
+        assert_eq!(ids.len(), 10, "two panes share an element id");
 
         for pane in NavigationPane::ALL {
             assert!(!pane.label().is_empty());

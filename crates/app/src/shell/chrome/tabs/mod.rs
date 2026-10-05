@@ -203,7 +203,15 @@ impl ShellFrame {
     }
 
     fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
+        let leaving = self.tabs.active().map(|tab| tab.canvas.clone());
         if activate_tab(&mut self.tabs, &mut self.tool_search.search_feedback, index) {
+            // What a pane boxed on the tab being left is the pane's, and the
+            // pane is about to forget it.
+            if let Some(leaving) = leaving {
+                leaving.update(cx, |canvas, _| {
+                    canvas.model.set_structure_highlight(Vec::new())
+                });
+            }
             self.navigation.document_changed();
             self.page_entry.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);
@@ -2057,6 +2065,8 @@ mod tests {
         feature = "codecs-common"
     ))]
     mod stamps;
+    #[cfg(feature = "shell-test-support")]
+    mod structure_panes;
     #[cfg(all(feature = "shell-test-support", feature = "tools-comment"))]
     mod summary;
     #[cfg(all(feature = "shell-test-support", feature = "tools-edit"))]

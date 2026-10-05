@@ -990,7 +990,9 @@ impl Render for Canvas {
                         for highlight in paint.highlights {
                             window.paint_quad(fill(
                                 window_bounds(origin, highlight.rect),
-                                Hsla::from(if highlight.current {
+                                Hsla::from(if highlight.structure {
+                                    theme.structure_highlight
+                                } else if highlight.current {
                                     theme.search_highlight_current
                                 } else {
                                     theme.search_highlight

@@ -405,6 +405,9 @@ pub struct HighlightPaint {
     pub rect: ViewRect,
     /// The hit next/previous last landed on, drawn differently from the rest.
     pub current: bool,
+    /// Not a hit: the content a Tags or Content pane choice points at, in a
+    /// colour of its own so a find in progress is not mistaken for it.
+    pub structure: bool,
 }
 
 #[derive(Default)]
@@ -511,6 +514,12 @@ pub struct CanvasModel {
     /// The structure nodes of a tagged page, kept like `page_words` until the
     /// session's content changes.
     page_structure: BTreeMap<PageIndex, Vec<Outline>>,
+    /// The content the Tags or Content pane is pointing at, in page space,
+    /// drawn over the page like a search hit.
+    structure_highlight: Vec<(PageIndex, [f64; 4])>,
+    /// The session state `page_structure` was built for, and why the structure
+    /// could not be read in it, so a document whose structure is unreadable
+    /// is not parsed again on every frame.
     page_structure_at: (u64, u64),
     structure_error: Option<String>,
     /// View > Page Display > Automatically Scroll, while it runs.
@@ -636,6 +645,7 @@ impl CanvasModel {
             ready_thumbnails: Vec::new(),
             page_words: BTreeMap::new(),
             page_structure: BTreeMap::new(),
+            structure_highlight: Vec::new(),
             page_structure_at: laid_out_at,
             structure_error: None,
             auto_scroll: None,
@@ -1090,6 +1100,30 @@ impl CanvasModel {
     /// a borrow of the document the canvas is drawing from.
     pub fn outline(&mut self) -> Result<Vec<OutlineItem>, CanvasError> {
         Ok(self.document.borrow_mut().outline()?.to_vec())
+    }
+
+    /// The tagged structure as blocks in reading order, or `None` for a
+    /// document with no structure tree: what the Tags pane lists.
+    pub fn structure_blocks(
+        &mut self,
+    ) -> Result<Option<Arc<Vec<onionskin_core::Block>>>, CanvasError> {
+        Ok(self.document.borrow_mut().reading_blocks()?)
+    }
+
+    /// What page `page` draws, each piece with its marked-content sequence:
+    /// what the Content pane lists.
+    pub fn marked_page(
+        &mut self,
+        page: PageIndex,
+    ) -> Result<onionskin_core::MarkedPage, CanvasError> {
+        Ok(self.document.borrow_mut().marked_page(page)?)
+    }
+
+    /// Box the content of a structure element or a content entry on the view,
+    /// replacing what was boxed before. Page-space boxes, as content reports
+    /// them. Empty clears it.
+    pub fn set_structure_highlight(&mut self, boxes: Vec<(PageIndex, [f64; 4])>) {
+        self.structure_highlight = boxes;
     }
 
     pub fn attachments(&mut self) -> Result<Vec<Attachment>, CanvasError> {
@@ -2295,7 +2329,38 @@ impl CanvasModel {
                     .page_quad_rects(page, &quads)?
                     .into_iter()
                     .zip(is_current.iter().copied())
-                    .map(|(rect, current)| HighlightPaint { rect, current }),
+                    .map(|(rect, current)| HighlightPaint {
+                        rect,
+                        current,
+                        structure: false,
+                    }),
+            );
+        }
+        for (page, bounds) in &self.structure_highlight {
+            // `page_quad_rects` walks the whole layout for each call, and a
+            // box for every page of a long document is a box for every frame:
+            // only the pages on screen are asked about.
+            if !visible.iter().any(|placement| placement.page == *page) {
+                continue;
+            }
+            let quad = PageQuad {
+                page: *page,
+                corners: [
+                    (bounds[0], bounds[3]),
+                    (bounds[2], bounds[3]),
+                    (bounds[0], bounds[1]),
+                    (bounds[2], bounds[1]),
+                ],
+            };
+            highlights.extend(
+                self.viewport
+                    .page_quad_rects(*page, &[quad])?
+                    .into_iter()
+                    .map(|rect| HighlightPaint {
+                        rect,
+                        current: false,
+                        structure: true,
+                    }),
             );
         }
         Ok(highlights)
@@ -7006,6 +7071,28 @@ mod tests {
             .expect("the delete commits");
         // No `update`: nothing has relaid this canvas out.
         assert_eq!(first(&mut model), "Page 2");
+    }
+
+    /// A box on a page that is not on screen is not drawn, and it is when the
+    /// view gets there.
+    #[test]
+    fn a_structure_box_is_drawn_only_on_a_page_that_is_on_screen() {
+        let mut model = model_of(crate::shell::fixtures::tagged_pages_pdf(40));
+        model.set_structure_highlight(vec![(30, [10.0, 10.0, 50.0, 50.0])]);
+        let drawn = |model: &mut CanvasModel| {
+            model.update().expect("a frame runs");
+            model.paint_list().expect("paints").highlights.len()
+        };
+        assert_eq!(drawn(&mut model), 0, "page 30 is far below the view");
+        model.go_to_page(30).expect("goes there");
+        // The page is drawn once its size is known, which the worker supplies.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut count = 0;
+        while count == 0 && Instant::now() < deadline {
+            count = drawn(&mut model);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(count, 1);
     }
 
     /// A failure is kept for the session state it happened in; the next state

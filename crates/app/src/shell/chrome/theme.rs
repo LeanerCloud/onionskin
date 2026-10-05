@@ -215,6 +215,9 @@ pub(in crate::shell) struct ThemeTokens {
     pub(in crate::shell) selection: Rgba,
     pub(in crate::shell) search_highlight: Rgba,
     pub(in crate::shell) search_highlight_current: Rgba,
+    /// The content a Tags or Content pane choice points at, which must not read
+    /// as a search hit.
+    pub(in crate::shell) structure_highlight: Rgba,
     pub(in crate::shell) drag_preview: Rgba,
 }
 
@@ -242,6 +245,7 @@ impl ThemeTokens {
                 selection: rgba(0x4f7cff44),
                 search_highlight: rgba(0xffd54f66),
                 search_highlight_current: rgba(0xff8f0099),
+                structure_highlight: rgba(0x1e88e555),
                 drag_preview: rgba(0x777a8066),
             },
             ResolvedTheme::Dark => Self {
@@ -265,6 +269,7 @@ impl ThemeTokens {
                 selection: rgba(0x4f7cff66),
                 search_highlight: rgba(0xffd54f55),
                 search_highlight_current: rgba(0xffa72688),
+                structure_highlight: rgba(0x64b5f655),
                 drag_preview: rgba(0x777a80aa),
             },
         }

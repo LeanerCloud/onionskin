@@ -1256,6 +1256,15 @@ impl Document {
             .map(|blocks| crate::reading_text(&blocks, index)))
     }
 
+    /// Every run, image and path on page `index`, each with the marked-content
+    /// sequence it was drawn in: the page's content as the Content pane lists
+    /// it. Not kept; the pane asks once when it opens.
+    pub fn marked_page(&mut self, index: PageIndex) -> Result<content::MarkedPage> {
+        self.ensure_unfiltered()?;
+        let structure = self.preview.as_mut().expect("just built").structure()?;
+        Ok(content::page_marked(structure, index)?)
+    }
+
     pub fn page_text(&mut self, index: PageIndex) -> Result<&content::PageText> {
         self.ensure_unfiltered()?;
         let structure = self.preview.as_mut().expect("just built").structure()?;

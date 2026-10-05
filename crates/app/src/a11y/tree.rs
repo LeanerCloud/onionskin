@@ -81,6 +81,9 @@ pub(crate) struct Element<A> {
     pub(crate) value: Option<String>,
     /// A heading's level, 1 to 6 and beyond.
     pub(crate) level: Option<usize>,
+    /// Whether an element that opens and folds is open: a tree item with
+    /// children. `None` for everything that does not.
+    pub(crate) expanded: Option<bool>,
     /// The natural language of the element's text, as a BCP 47 tag, so a screen
     /// reader switches voice for a passage in another language.
     pub(crate) language: Option<String>,
@@ -106,6 +109,7 @@ impl<A> Element<A> {
             label: label.into(),
             value: None,
             level: None,
+            expanded: None,
             language: None,
             description: None,
             role_description: role_description(role),
@@ -123,6 +127,12 @@ impl<A> Element<A> {
 
     pub(crate) fn with_state(mut self, state: State) -> Self {
         self.state = state;
+        self
+    }
+
+    /// Mark the element as one that opens and folds, and whether it is open.
+    pub(crate) fn with_expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
         self
     }
 
@@ -379,6 +389,9 @@ fn push<A>(element: &Element<A>, ids: &mut Ids, nodes: &mut Vec<(NodeId, Node)>)
     }
     if element.state.read_only {
         node.set_read_only();
+    }
+    if let Some(expanded) = element.expanded {
+        node.set_expanded(expanded);
     }
     // A screen reader only announces an alert on its own if the node says it
     // is a live region; without this every error the shell raises waits
