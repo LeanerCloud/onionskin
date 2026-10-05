@@ -163,7 +163,7 @@ pub use marks::{
     add_page_marks, mark_settings, marked_pages, page_marks, remove_page_marks, shown, MarkKind,
     PageMark, ShownSpace,
 };
-pub(crate) use ops::{current_page_count, page_ref};
+pub(crate) use ops::{current_page_count, page_ref, page_refs};
 pub use ops::{
     delete_pages, insert_blank_pages, insert_pages_from, move_pages, page_count,
     replace_pages_from, rotate_pages, set_page_labels, LabelRange, LabelStyle,

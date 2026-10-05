@@ -156,6 +156,89 @@ fn the_content_pane_groups_the_pages_drawing_and_boxes_a_piece(cx: &mut TestAppC
 
 #[cfg(feature = "shell-test-support")]
 #[gpui::test]
+fn new_bookmarks_from_structure_makes_the_headings_nested_in_one_undo_step(
+    cx: &mut TestAppContext,
+) {
+    use crate::shell::panes::{BookmarkAction, BookmarksCommand};
+
+    let (window, _) = bound_window_from_bytes(vec![("tagged.pdf", tagged_pdf())], cx);
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            let tree = frame.accessible(window, cx);
+            let button = tree
+                .find(&"bookmark-from-structure".into())
+                .expect("a button, because a right-click is not the keyboard's");
+            assert_eq!(
+                button.activation,
+                Some(crate::shell::chrome::accessible::Activation::Pane(
+                    PaneAction::Bookmark(BookmarkAction::Run(BookmarksCommand::FromStructure))
+                ))
+            );
+            assert!(!button.state.disabled);
+            frame.run_pane_action(
+                PaneAction::Bookmark(BookmarkAction::Run(BookmarksCommand::FromStructure)),
+                cx,
+            );
+            let rows = labels(frame, window, cx, "bookmark-rows");
+            assert_eq!(rows, ["Title", "Details"]);
+            let tree = frame.accessible(window, cx);
+            let feedback = tree
+                .find(&"navigation-pane-feedback".into())
+                .expect("the pane says what it did");
+            assert_eq!(feedback.label, "Added 2 bookmarks from the headings.");
+            let described = tree.find(&"bookmark-rows".into()).expect("the list");
+            assert_eq!(
+                described.children[1].description.as_deref(),
+                Some("Level 2"),
+                "the H2 hangs from the H1"
+            );
+
+            let canvas = frame.tabs.active().expect("a tab").canvas.clone();
+            canvas.update(cx, |canvas, _| {
+                canvas.model.document_mut().undo().expect("undo");
+            });
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            let tree = frame.accessible(window, cx);
+            assert!(
+                tree.find(&"bookmark-rows".into()).is_none(),
+                "one undo takes both away"
+            );
+        })
+        .unwrap();
+}
+
+#[cfg(feature = "shell-test-support")]
+#[gpui::test]
+fn an_untagged_document_says_it_has_no_tags_to_make_bookmarks_from(cx: &mut TestAppContext) {
+    use crate::shell::panes::{BookmarkAction, BookmarksCommand};
+
+    let (window, _) = bound_window(&["hello.pdf"], cx);
+    cx.run_until_parked();
+    window
+        .update(cx, |frame, window, cx| {
+            frame.run_pane_action(PaneAction::Select(NavigationPane::Bookmarks), cx);
+            frame.run_pane_action(
+                PaneAction::Bookmark(BookmarkAction::Run(BookmarksCommand::FromStructure)),
+                cx,
+            );
+            let tree = frame.accessible(window, cx);
+            let feedback = tree
+                .find(&"navigation-pane-feedback".into())
+                .expect("the pane says why");
+            assert_eq!(
+                feedback.label,
+                "This document has no tags to make bookmarks from."
+            );
+            assert!(tree.find(&"bookmark-rows".into()).is_none());
+        })
+        .unwrap();
+}
+
+#[cfg(feature = "shell-test-support")]
+#[gpui::test]
 fn what_was_boxed_and_chosen_does_not_outlive_a_reread_of_the_document(cx: &mut TestAppContext) {
     let (window, _) = bound_window_from_bytes(vec![("tagged.pdf", tagged_pdf())], cx);
     cx.run_until_parked();

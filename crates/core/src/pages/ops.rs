@@ -47,6 +47,13 @@ pub(crate) fn page_ref(tx: &Transaction<'_>, index: usize) -> Result<ObjRef> {
         })
 }
 
+/// Every page object, in order, in the document as the transaction sees it.
+/// For a caller that needs many of them: [`page_ref`] walks the page tree for
+/// each one.
+pub(crate) fn page_refs(tx: &Transaction<'_>) -> Result<Vec<ObjRef>> {
+    Ok(leaves(tx)?.into_iter().map(|leaf| leaf.objref).collect())
+}
+
 pub(super) fn leaves(tx: &Transaction<'_>) -> Result<Vec<super::inherit::Leaf>> {
     let catalog = catalog_ref(tx)?;
     let mut resolve = resolver(tx);

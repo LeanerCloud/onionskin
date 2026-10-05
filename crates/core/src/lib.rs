@@ -84,10 +84,12 @@ pub use onionskin_cos::{ObjRef, Provenance};
 /// able to name what it received.
 pub use onionskin_render::{BaseRaster, PageRender, PageSvg};
 pub use outline::write::{
-    add_bookmark, delete_bookmark, move_bookmark, rename_bookmark, set_bookmark_destination,
-    set_bookmark_style,
+    add_bookmark, add_bookmark_tree, delete_bookmark, move_bookmark, rename_bookmark,
+    set_bookmark_destination, set_bookmark_style,
 };
-pub use outline::OutlineItem;
+pub use outline::{
+    plan_from_structure as plan_bookmarks_from_structure, OutlineItem, PlannedBookmark,
+};
 pub use page::{
     DeviceQuad, GeometryError, Modifiers, PageGeometry, PageIndex, PagePoint, PageQuad, PageRect,
 };

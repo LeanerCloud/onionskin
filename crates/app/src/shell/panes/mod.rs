@@ -678,7 +678,10 @@ fn accessible_body(
         (NavigationPane::Thumbnails, _) => thumbnails::accessible(state, canvas, cx),
         (NavigationPane::SearchResults, _) => results::accessible(canvas, cx),
         (NavigationPane::Bookmarks, Some(PaneContent::Bookmarks(items))) => {
-            let mut described = vec![bookmark_edit::new_button_element(state.edit_refusal)];
+            let mut described = vec![
+                bookmark_edit::new_button_element(state.edit_refusal),
+                bookmark_edit::structure_button_element(state.edit_refusal),
+            ];
             described.extend(bookmarks::accessible(items.as_deref()));
             if state.bookmarks_menu.is_some() {
                 described.push(bookmark_edit::accessible_menu(state));

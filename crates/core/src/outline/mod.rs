@@ -13,7 +13,10 @@ use onionskin_cos::{Dict, Document as CosDocument, Object};
 use crate::{Error, PageIndex, Result};
 
 mod chain;
+mod from_structure;
 pub mod write;
+
+pub use from_structure::{plan as plan_from_structure, PlannedBookmark};
 
 pub(crate) use chain::{Walk, MAX_DEPTH};
 

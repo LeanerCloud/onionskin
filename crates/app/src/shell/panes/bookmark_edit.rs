@@ -10,7 +10,10 @@ use gpui::{
     div, px, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
     Point, Styled as _,
 };
-use onionskin_core::{delete_bookmark, move_bookmark, set_bookmark_destination, OutlineItem};
+use onionskin_core::{
+    add_bookmark_tree, delete_bookmark, move_bookmark, plan_bookmarks_from_structure,
+    set_bookmark_destination, OutlineItem,
+};
 
 use super::super::chrome::accessible::{Activation, Element};
 use super::super::chrome::{MenuAvailability, ShellFrame, ThemeTokens};
@@ -22,6 +25,8 @@ use super::{document_edit as edit, menu_element, menu_row, NavigationPanesState,
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::shell) enum BookmarksCommand {
     New,
+    /// A bookmark for each heading of a tagged document.
+    FromStructure,
     Rename,
     SetDestination,
     Indent,
@@ -32,8 +37,9 @@ pub(in crate::shell) enum BookmarksCommand {
 }
 
 impl BookmarksCommand {
-    pub(in crate::shell) const ALL: [Self; 7] = [
+    pub(in crate::shell) const ALL: [Self; 8] = [
         Self::New,
+        Self::FromStructure,
         Self::Rename,
         Self::SetDestination,
         Self::Indent,
@@ -45,6 +51,7 @@ impl BookmarksCommand {
     pub(in crate::shell) fn label(self) -> &'static str {
         match self {
             Self::New => "New Bookmark",
+            Self::FromStructure => "New Bookmarks From Structure",
             Self::Rename => "Rename Bookmark…",
             Self::SetDestination => "Set Destination To Current Page",
             Self::Indent => "Nest Under Bookmark Above",
@@ -67,7 +74,7 @@ impl BookmarksCommand {
             return Disabled(reason);
         }
         match (self, target) {
-            (Self::New, _) => Enabled,
+            (Self::New | Self::FromStructure, _) => Enabled,
             (_, None) => Disabled("Right-click a bookmark to choose it"),
             (Self::Indent, Some(row)) if row.path.last() == Some(&0) => {
                 Disabled("No bookmark above it to nest under")
@@ -128,6 +135,12 @@ pub(super) fn run(
         BookmarkAction::OpenMenu { row, at } => {
             state.bookmarks_menu = Some(BookmarksMenu { row, at });
         }
+        BookmarkAction::Run(BookmarksCommand::FromStructure) => {
+            state.bookmarks_menu = None;
+            if let Some(canvas) = canvas {
+                from_structure(state, canvas, cx);
+            }
+        }
         BookmarkAction::Run(command) => {
             let target = target(state);
             let items = state.bookmarks().unwrap_or_default().to_vec();
@@ -169,21 +182,83 @@ pub(super) fn run(
                 }
                 // Run by the frame: it opens the dialog, or asks for the
                 // title first, or toggles the pane's own wrapping.
-                BookmarksCommand::New | BookmarksCommand::Rename | BookmarksCommand::Properties => {
-                }
+                // (`FromStructure` is handled above and never reaches here.)
+                BookmarksCommand::New
+                | BookmarksCommand::FromStructure
+                | BookmarksCommand::Rename
+                | BookmarksCommand::Properties => {}
             }
         }
     }
+}
+
+/// A bookmark for each heading, as one undo step after the bookmarks already
+/// there. A document that cannot be read as tagged, or has no heading with
+/// words and content, says so in the pane instead of making an empty edit.
+fn from_structure(
+    state: &mut NavigationPanesState,
+    canvas: &Entity<Canvas>,
+    cx: &mut Context<ShellFrame>,
+) {
+    let blocks = canvas.update(cx, |canvas, _| canvas.model.structure_blocks());
+    let blocks = match blocks {
+        Ok(Some(blocks)) => blocks,
+        Ok(None) => {
+            state.feedback = Some("This document has no tags to make bookmarks from.".to_owned());
+            return;
+        }
+        Err(error) => {
+            state.feedback = Some(error.to_string());
+            return;
+        }
+    };
+    let plan = plan_bookmarks_from_structure(&blocks);
+    if plan.is_empty() {
+        state.feedback = Some("No headings with words were found.".to_owned());
+        return;
+    }
+    if let Some(added) = edit(
+        state,
+        canvas,
+        cx,
+        "New Bookmarks From Structure",
+        |_, tx| add_bookmark_tree(tx, &plan),
+    ) {
+        state.feedback = Some(added_feedback(added));
+    }
+}
+
+fn added_feedback(added: usize) -> String {
+    let noun = if added == 1 { "bookmark" } else { "bookmarks" };
+    format!("Added {added} {noun} from the headings.")
 }
 
 /// The pane's own New Bookmark button, above the list and there when the
 /// list is empty: the discoverable way to make the first bookmark, and the
 /// keyboard's, since a right-click is neither.
 pub(super) fn new_button_element(refusal: Option<&'static str>) -> Element {
-    let availability = BookmarksCommand::New.availability(None, refusal);
-    let button = Element::new("bookmark-new", accesskit::Role::Button, "New Bookmark")
+    command_button_element("bookmark-new", BookmarksCommand::New, refusal)
+}
+
+/// The pane's button for New Bookmarks From Structure, beside New: a
+/// right-click is no more the keyboard's here than it is for New.
+pub(super) fn structure_button_element(refusal: Option<&'static str>) -> Element {
+    command_button_element(
+        "bookmark-from-structure",
+        BookmarksCommand::FromStructure,
+        refusal,
+    )
+}
+
+fn command_button_element(
+    id: &'static str,
+    command: BookmarksCommand,
+    refusal: Option<&'static str>,
+) -> Element {
+    let availability = command.availability(None, refusal);
+    let button = Element::new(id, accesskit::Role::Button, command.label())
         .with_state(crate::a11y::State::enabled(availability.is_enabled()))
-        .with_activation(run_command(BookmarksCommand::New));
+        .with_activation(run_command(command));
     match availability.reason() {
         Some(reason) => button.with_description(reason),
         None => button,
@@ -195,12 +270,38 @@ pub(super) fn render_new_button(
     theme: ThemeTokens,
     cx: &mut Context<ShellFrame>,
 ) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_wrap()
+        .child(render_command_button(
+            "bookmark-new",
+            BookmarksCommand::New,
+            refusal,
+            theme,
+            cx,
+        ))
+        .child(render_command_button(
+            "bookmark-from-structure",
+            BookmarksCommand::FromStructure,
+            refusal,
+            theme,
+            cx,
+        ))
+}
+
+fn render_command_button(
+    id: &'static str,
+    command: BookmarksCommand,
+    refusal: Option<&'static str>,
+    theme: ThemeTokens,
+    cx: &mut Context<ShellFrame>,
+) -> impl IntoElement {
     use gpui::StatefulInteractiveElement as _;
 
-    let availability = BookmarksCommand::New.availability(None, refusal);
+    let availability = command.availability(None, refusal);
     let enabled = availability.is_enabled();
     let button = div()
-        .id("bookmark-new")
+        .id(id)
         .mx_2()
         .my_1()
         .px_2()
@@ -213,13 +314,13 @@ pub(super) fn render_new_button(
         } else {
             theme.disabled_text
         })
-        .child("New Bookmark");
+        .child(command.label());
     if enabled {
         button
             .cursor_pointer()
             .hover(move |button| button.bg(theme.hover))
-            .on_click(cx.listener(|frame, _event, window, cx| {
-                frame.run_activation(run_command(BookmarksCommand::New), window, cx);
+            .on_click(cx.listener(move |frame, _event, window, cx| {
+                frame.run_activation(run_command(command), window, cx);
             }))
     } else {
         button
@@ -279,6 +380,12 @@ pub(super) fn render_menu(
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_feedback_counts_in_the_singular_and_the_plural() {
+        assert_eq!(added_feedback(1), "Added 1 bookmark from the headings.");
+        assert_eq!(added_feedback(2), "Added 2 bookmarks from the headings.");
+    }
+
     fn row(path: &[usize]) -> BookmarkRow {
         BookmarkRow {
             title: "x".into(),
@@ -307,11 +414,15 @@ mod tests {
     }
 
     #[test]
-    fn with_no_row_only_new_is_live_and_a_refusal_disables_everything() {
+    fn with_no_row_only_the_commands_that_make_bookmarks_are_live_and_a_refusal_disables_everything(
+    ) {
         for command in BookmarksCommand::ALL {
             assert_eq!(
                 command.availability(None, None).is_enabled(),
-                command == BookmarksCommand::New,
+                matches!(
+                    command,
+                    BookmarksCommand::New | BookmarksCommand::FromStructure
+                ),
                 "{}",
                 command.label()
             );

@@ -22,6 +22,7 @@ pub use content_map::{ContentItem, ContentMap, ElementContent, ItemKind, Unplace
 pub use invariant::{Report, Violation};
 pub use maintain::Maintenance;
 pub use read::{Attribute, Element, Kid, ParentEntry, Structure, StructureTree};
+pub(crate) use reading_order::spoken_words;
 pub use reading_order::{reading_order, reading_text, Block, Replacement};
 
 use onionskin_cos::{Document as CosDocument, ObjRef};

@@ -27,7 +27,7 @@ use onionskin_cos::{Dict, Name, ObjRef, Object};
 use super::{Walk, MAX_DEPTH};
 use crate::annots::text_string;
 use crate::edit::Transaction;
-use crate::pages::{dict_at, page_ref};
+use crate::pages::{dict_at, page_ref, page_refs};
 use crate::{Error, Result};
 
 /// One item of the tree being edited. Index 0 is the `/Outlines` root.
@@ -230,14 +230,18 @@ impl Tree {
 
 /// An explicit destination to the top of `page`.
 fn destination(tx: &Transaction<'_>, page: usize) -> Result<Object> {
-    let target = page_ref(tx, page)?;
-    Ok(Object::Array(vec![
+    Ok(destination_to(page_ref(tx, page)?))
+}
+
+/// An explicit destination to the top of the page object `target`.
+fn destination_to(target: ObjRef) -> Object {
+    Object::Array(vec![
         Object::Ref(target),
         Object::name("XYZ"),
         Object::Null,
         Object::Null,
         Object::Null,
-    ]))
+    ])
 }
 
 fn set_destination(tx: &Transaction<'_>, dict: &mut Dict, page: Option<usize>) -> Result<()> {
@@ -282,6 +286,61 @@ pub fn add_bookmark(
     tree.nodes[at].children.insert(index, node);
     tree.store(tx)?;
     Ok([parent, &[index]].concat())
+}
+
+/// Add every bookmark of `planned`, with what is nested under it, after the
+/// outline's existing top level, as one change. Returns how many were made.
+///
+/// One load and one store for the lot: `add_bookmark` once per bookmark would
+/// rewrite the outline's chain each time, which for a heading per page is a
+/// quadratic number of objects.
+pub fn add_bookmark_tree(
+    tx: &mut Transaction<'_>,
+    planned: &[super::PlannedBookmark],
+) -> Result<usize> {
+    if planned.is_empty() {
+        return Ok(0);
+    }
+    let pages = page_refs(tx)?;
+    let mut tree = Tree::load(tx)?;
+    let added = tree.append_planned(tx, &pages, 0, planned)?;
+    tree.store(tx)?;
+    Ok(added)
+}
+
+impl Tree {
+    /// `pages` is every page object, read once: a destination looked up with
+    /// `page_ref` walks the page tree again, which for a bookmark per page is
+    /// a walk per bookmark.
+    fn append_planned(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        pages: &[ObjRef],
+        parent: usize,
+        planned: &[super::PlannedBookmark],
+    ) -> Result<usize> {
+        let mut added = 0;
+        for item in planned {
+            let target = *pages.get(item.page).ok_or(Error::NoSuchPage {
+                page: item.page,
+                count: pages.len(),
+            })?;
+            let mut dict = Dict::new();
+            dict.set(Name::new("Title"), text_string(&item.title));
+            dict.set(Name::new("Dest"), destination_to(target));
+            let number = tx.reserve();
+            let node = self.nodes.len();
+            self.nodes.push(Node {
+                objref: ObjRef::new(number, 0),
+                dict,
+                original: None,
+                children: Vec::new(),
+            });
+            self.nodes[parent].children.push(node);
+            added += 1 + self.append_planned(tx, pages, node, &item.children)?;
+        }
+        Ok(added)
+    }
 }
 
 /// Give the bookmark at `path` a new title. Its destination is untouched.

@@ -351,6 +351,40 @@ fn append_runs<'a>(
     }
 }
 
+/// The words of `blocks` run together as one piece of text, no line structure:
+/// each block's replacement where it has one, else its text runs, joined by the
+/// same geometry [`reading_text`] uses, artifacts left out. For a heading's
+/// title, where the pieces of one phrase may sit in separate inline elements.
+pub(crate) fn spoken_words<'a>(blocks: impl Iterator<Item = &'a Block>) -> String {
+    let mut out = String::new();
+    let mut previous: Option<&ContentItem> = None;
+    for block in blocks.filter(|block| !block.excluded) {
+        if let Some(replacement) = &block.replacement {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+            out.push_str(&replacement.text);
+            previous = None;
+            continue;
+        }
+        let mut gap = previous.is_none() && !out.is_empty() && !out.ends_with(' ');
+        let mut local = String::new();
+        append_runs(
+            &mut local,
+            block.items.iter().filter(|item| !item.artifact),
+            &mut previous,
+        );
+        if local.is_empty() {
+            gap = false;
+        }
+        if gap && !local.starts_with(' ') {
+            out.push(' ');
+        }
+        out.push_str(&local);
+    }
+    out
+}
+
 /// Whether text of this structure type runs on from what precedes it instead
 /// of starting a line of its own: the inline types of ISO 32000 14.8.4, and a
 /// list item's label and body, which read as one line. A type no role map
