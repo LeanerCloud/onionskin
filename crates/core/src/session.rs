@@ -454,6 +454,9 @@ pub struct Document {
     pending_geometry: BTreeSet<PageIndex>,
     geometry: PageCache<PageGeometry>,
     text: PageCache<content::PageText>,
+    /// The structure tree as blocks in reading order, read once per state of
+    /// the bytes: `Some(None)` is a document with no structure tree.
+    reading: Option<Option<Arc<Vec<crate::Block>>>>,
     selection: Selection,
     search: SearchState,
     snapshot: Option<SnapshotRequest>,
@@ -570,6 +573,7 @@ impl Document {
             pending_geometry: BTreeSet::new(),
             geometry: PageCache::new(PAGE_CACHE_LIMIT),
             text: PageCache::new(TEXT_CACHE_LIMIT),
+            reading: None,
             selection: Selection::default(),
             search: SearchState::default(),
             snapshot: None,
@@ -1034,6 +1038,7 @@ impl Document {
         self.preview = None;
         self.filtered = None;
         self.text.clear();
+        self.reading = None;
         self.outline = None;
         self.attachments = None;
         self.signatures = None;
@@ -1219,6 +1224,36 @@ impl Document {
         let geometry = PageGeometry::new(&page, rendered);
         self.geometry.insert(index, geometry.clone());
         Ok(Some(PageGeometryResponse::Ready(geometry)))
+    }
+
+    /// The tagged structure as blocks in reading order, or `None` for a
+    /// document with no structure tree. Read on first use and kept until the
+    /// bytes change. The first call interprets every page the tree names
+    /// content on, so a one-page export of a large document pays for the whole
+    /// of it once (about 3.6 s for 2,000 pages of 40 lines, release build);
+    /// every later call is free. A failure is not kept, so a document whose
+    /// structure cannot be read pays for finding that out on each call.
+    pub fn reading_blocks(&mut self) -> Result<Option<Arc<Vec<crate::Block>>>> {
+        self.sync_epoch();
+        if self.reading.is_none() {
+            self.ensure_unfiltered()?;
+            let cos = self.preview.as_mut().expect("just built").structure()?;
+            let structure = crate::read_structure(cos)?;
+            let blocks = match structure.tree() {
+                Some(tree) => Some(Arc::new(crate::reading_order(cos, tree)?)),
+                None => None,
+            };
+            self.reading = Some(blocks);
+        }
+        Ok(self.reading.clone().flatten())
+    }
+
+    /// What page `index` says in the order its structure gives, or `None` for
+    /// a document with no structure tree, which has only drawing order.
+    pub fn reading_text(&mut self, index: PageIndex) -> Result<Option<String>> {
+        Ok(self
+            .reading_blocks()?
+            .map(|blocks| crate::reading_text(&blocks, index)))
     }
 
     pub fn page_text(&mut self, index: PageIndex) -> Result<&content::PageText> {

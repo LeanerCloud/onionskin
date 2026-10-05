@@ -312,3 +312,111 @@ fn a_resolution_that_is_not_a_resolution_is_refused_before_any_page_is_read() {
         );
     }
 }
+
+/// One page that draws "second" before "first". Tagged, the structure puts
+/// "first" first; untagged, there is only the drawing order.
+fn two_paragraphs(tagged: bool) -> Vec<u8> {
+    let content = "/P << /MCID 1 >> BDC BT /F1 12 Tf 10 100 Td (second) Tj ET EMC \
+                   /P << /MCID 0 >> BDC BT /F1 12 Tf 10 150 Td (first) Tj ET EMC";
+    let catalog = if tagged {
+        "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+    } else {
+        "<< /Type /Catalog /Pages 2 0 R >>"
+    };
+    let objects: Vec<Vec<u8>> = vec![
+        catalog.as_bytes().to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+            .to_vec(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes(),
+        b"<< /Type /StructTreeRoot /K [6 0 R 7 0 R] >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K 0 >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K 1 >>".to_vec(),
+    ];
+    let mut out: Vec<u8> = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in &offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+fn exported_text(bytes: Vec<u8>) -> String {
+    let mut doc = Document::open_bytes(bytes).expect("opens");
+    let request = whole(&doc, 72.0);
+    let CollectedExport::Single(out) =
+        collect_export(&TextCodec, &mut doc, &request).expect("text exports")
+    else {
+        panic!("text must be a single output");
+    };
+    String::from_utf8(out).expect("text is UTF-8")
+}
+
+#[test]
+fn a_tagged_document_exports_in_structure_order_and_an_untagged_one_in_drawing_order() {
+    assert_eq!(exported_text(two_paragraphs(true)), "first\nsecond");
+    let drawn = exported_text(two_paragraphs(false));
+    assert!(
+        drawn.find("second") < drawn.find("first"),
+        "an untagged page is the drawing order: {drawn:?}"
+    );
+}
+
+/// The same page with a `/StructTreeRoot` that is a direct dictionary, which the
+/// reader refuses. It has no structure order to export, so it exports in drawing
+/// order as it did before there was one, not as an error.
+#[test]
+fn a_document_whose_structure_cannot_be_read_still_exports_in_drawing_order() {
+    let mut bytes = two_paragraphs(true);
+    let root = b"/StructTreeRoot 5 0 R";
+    let at = bytes
+        .windows(root.len())
+        .position(|w| w == root)
+        .expect("the catalog names a root");
+    // Same length, so the cross-reference offsets stay right: a direct empty
+    // dictionary where the reference was.
+    bytes[at..at + root.len()].copy_from_slice(b"/StructTreeRoot <<>> ");
+    let drawn = exported_text(bytes);
+    assert!(
+        drawn.find("second") < drawn.find("first"),
+        "drawing order: {drawn:?}"
+    );
+}
+
+/// A document's text written to a file is the document read out, so the
+/// encrypted-source rule still comes first for a tagged one.
+#[test]
+fn a_protected_document_is_refused_before_any_structure_is_read() {
+    let mut doc = Document::open_path(&onionskin_corpus_testing::encrypted_fixture(
+        "r6-aes-256-print-only.pdf",
+    ))
+    .expect("the fixture opens");
+    let request = whole(&doc, 72.0);
+    let error = collect_export(&TextCodec, &mut doc, &request).err();
+    assert!(
+        matches!(error, Some(ExportError::Page { .. })),
+        "a print-only document is not read out: {error:?}"
+    );
+}

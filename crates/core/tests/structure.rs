@@ -1384,3 +1384,463 @@ fn a_space_goes_where_a_line_breaks_or_a_word_gap_opens_and_nowhere_else() {
         "the later runs of one /ActualText say nothing, so they add no space"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Reading text
+// ---------------------------------------------------------------------------
+
+fn reading_text_of(bytes: &[u8], page: usize) -> String {
+    onionskin_core::reading_text(&blocks_of(bytes), page)
+}
+
+#[test]
+fn a_page_reads_a_line_per_block_element_and_runs_inline_ones_into_their_line() {
+    assert_eq!(
+        reading_text_of(&reading_document(), 0),
+        "Heading\nSee here now\nline one line two\nA figure",
+        "the link and the rest of its paragraph continue the paragraph's line, \
+         the figure says its alternate text, and the Document says nothing"
+    );
+    assert_eq!(
+        reading_text_of(&reading_document(), 1),
+        "",
+        "a page nothing is on reads as empty"
+    );
+}
+
+#[test]
+fn an_elements_actual_text_replaces_what_it_marks() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        "/P << /MCID 0 >> BDC BT /F1 12 Tf 10 100 Td (f) Tj (i) Tj ET EMC",
+        &["<< /S /P /Pg 3 0 R /ActualText (fi) /K 0 >>"],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "fi");
+}
+
+#[test]
+fn text_drawn_in_an_artifact_is_not_part_of_the_reading() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        "/Artifact BMC /P << /MCID 0 >> BDC BT /F1 12 Tf 10 100 Td (page 3) Tj ET EMC EMC \
+         /P << /MCID 1 >> BDC BT /F1 12 Tf 10 50 Td (body) Tj ET EMC",
+        &["<< /S /P /Pg 3 0 R /K [0 1] >>"],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "body");
+}
+
+#[test]
+fn list_items_read_one_line_each_with_the_label_and_body_together() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        "/Lbl << /MCID 0 >> BDC BT /F1 12 Tf 10 100 Td (1.) Tj ET EMC \
+         /LBody << /MCID 1 >> BDC BT /F1 12 Tf 30 100 Td (first) Tj ET EMC \
+         /Lbl << /MCID 2 >> BDC BT /F1 12 Tf 10 80 Td (2.) Tj ET EMC \
+         /LBody << /MCID 3 >> BDC BT /F1 12 Tf 30 80 Td (second) Tj ET EMC",
+        &[
+            "<< /S /L /K [7 0 R 10 0 R] >>",
+            "<< /S /LI /K [8 0 R 9 0 R] >>",
+            "<< /S /Lbl /Pg 3 0 R /K 0 >>",
+            "<< /S /LBody /Pg 3 0 R /K 1 >>",
+            "<< /S /LI /K [11 0 R 12 0 R] >>",
+            "<< /S /Lbl /Pg 3 0 R /K 2 >>",
+            "<< /S /LBody /Pg 3 0 R /K 3 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "1. first\n2. second");
+}
+
+#[test]
+fn a_span_runs_on_but_a_block_child_breaks_the_line_and_so_does_what_follows_it() {
+    let content = "/P << /MCID 0 >> BDC BT /F1 12 Tf 10 150 Td (a) Tj ET EMC \
+         /Span << /MCID 1 >> BDC BT /F1 12 Tf 20 150 Td (b) Tj ET EMC \
+         /P << /MCID 2 >> BDC BT /F1 12 Tf 30 150 Td (c) Tj ET EMC \
+         /Div << /MCID 3 >> BDC BT /F1 12 Tf 10 100 Td (d) Tj ET EMC \
+         /P << /MCID 4 >> BDC BT /F1 12 Tf 10 50 Td (e) Tj ET EMC";
+    let bytes = small_reading_document(
+        "",
+        0,
+        content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 2 8 0 R 4] >>",
+            "<< /S /Span /Pg 3 0 R /K 1 >>",
+            "<< /S /Div /Pg 3 0 R /K 3 >>",
+        ],
+    );
+    assert_eq!(
+        reading_text_of(&bytes, 0),
+        "a b c\nd\ne",
+        "the span continues the line, the Div takes its own, and the content after the \
+         Div starts another"
+    );
+}
+
+/// Every tagged corpus file reads as text on every page without error, and most
+/// of them say something: a reading that came out empty everywhere would pass
+/// a test that only looked for panics.
+#[test]
+fn every_tagged_corpus_page_reads_as_text() {
+    let Some(root) = verapdf_root() else {
+        eprintln!("SKIPPED: corpus/external/verapdf is absent; fetch it with corpus/fetch.sh");
+        return;
+    };
+    let (mut files, mut speaking) = (0usize, 0usize);
+    for path in onionskin_corpus_testing::pdfs_in(&root) {
+        let Ok(doc) = CosDocument::open_path(&path) else {
+            continue;
+        };
+        let Ok(structure) = read_structure(&doc) else {
+            continue;
+        };
+        let Some(tree) = structure.tree() else {
+            continue;
+        };
+        files += 1;
+        let blocks = onionskin_core::reading_order(&doc, tree)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let pages = doc.page_count().expect("page count") as usize;
+        let said: usize = (0..pages)
+            .map(|page| onionskin_core::reading_text(&blocks, page).len())
+            .sum();
+        speaking += usize::from(said > 0);
+    }
+    assert!(files > 500, "only {files} tagged files");
+    assert!(
+        speaking * 10 > files * 8,
+        "only {speaking} of {files} tagged files read as any text"
+    );
+}
+
+fn text_run(mcid: u32, x: u32, y: u32, words: &str) -> String {
+    format!("/Span << /MCID {mcid} >> BDC BT /F1 12 Tf {x} {y} Td ({words}) Tj ET EMC ")
+}
+
+#[test]
+fn an_actual_text_replaces_the_whole_subtree_once_and_not_just_the_first_block() {
+    let content = format!(
+        "{}{}{}",
+        text_run(0, 10, 100, "own"),
+        text_run(1, 40, 100, "kid"),
+        text_run(2, 70, 100, "later")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /ActualText (WHOLE) /K [0 7 0 R 2] >>",
+            "<< /S /Span /Pg 3 0 R /K 1 >>",
+        ],
+    );
+    assert_eq!(
+        reading_text_of(&bytes, 0),
+        "WHOLE",
+        "the paragraph's own text, its Span and what follows the Span are all replaced"
+    );
+}
+
+#[test]
+fn an_element_with_only_children_is_replaced_and_so_is_content_on_other_pages() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        &text_run(0, 10, 100, "a"),
+        &[
+            "<< /S /P /ActualText (WHOLE) /K [7 0 R] >>",
+            "<< /S /Span /Pg 3 0 R /K 0 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "WHOLE");
+    assert_eq!(
+        reading_text_of(&bytes, 1),
+        "",
+        "said once, on the first page it marks"
+    );
+}
+
+#[test]
+fn a_figures_alt_stands_for_content_in_a_child_and_a_paragraph_with_text_keeps_its_words() {
+    let content = format!(
+        "{}{}",
+        text_run(0, 10, 100, "label"),
+        text_run(1, 10, 50, "click")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /Figure /Alt (A chart) /K [7 0 R] >>",
+            "<< /S /Span /Pg 3 0 R /K 0 >>",
+            "<< /S /P /Alt (tooltip) /Pg 3 0 R /K 1 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "A chart\nclick");
+}
+
+#[test]
+fn a_space_stands_before_and_after_a_replacement_in_a_line() {
+    let content = format!(
+        "{}{}{}",
+        text_run(0, 10, 100, "a"),
+        text_run(1, 30, 100, "x"),
+        text_run(2, 50, 100, "c")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 2] >>",
+            "<< /S /Span /Pg 3 0 R /ActualText (X) /K 1 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "a X c");
+}
+
+#[test]
+fn what_follows_a_block_child_starts_a_new_line_even_when_the_last_block_was_inline() {
+    let content = format!(
+        "{}{}{}{}",
+        text_run(0, 10, 150, "a"),
+        text_run(1, 10, 100, "b"),
+        text_run(2, 30, 100, "c"),
+        text_run(3, 10, 50, "d")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 3] >>",
+            "<< /S /Div /Pg 3 0 R /K [1 8 0 R] >>",
+            "<< /S /Span /Pg 3 0 R /K 2 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "a\nb c\nd");
+}
+
+#[test]
+fn a_formula_a_bibliography_entry_and_a_form_run_on_in_their_line_and_an_artifact_element_is_dropped(
+) {
+    let content = format!(
+        "{}{}{}{}",
+        text_run(0, 10, 100, "x is"),
+        text_run(1, 40, 100, "a+b"),
+        text_run(2, 70, 100, "[1]"),
+        text_run(3, 10, 20, "page 3")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 8 0 R] >>",
+            "<< /S /Formula /Pg 3 0 R /K 1 >>",
+            "<< /S /BibEntry /Pg 3 0 R /K 2 >>",
+            "<< /S /Artifact /Pg 3 0 R /K 3 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "x is a+b [1]");
+}
+
+#[test]
+fn a_word_space_the_width_of_helveticas_is_a_gap_and_touching_runs_are_not() {
+    let sequence = |body: &str| format!("/P << /MCID 0 >> BDC BT /F1 12 Tf {body} ET EMC");
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (Click) Tj 29.2 0 Td (here) Tj")),
+        "Click here",
+        "Click is 26pt wide; a space is 3.3pt"
+    );
+}
+
+#[test]
+fn quotes_notes_references_and_ruby_run_on_while_an_unmapped_type_takes_a_line() {
+    let content = format!(
+        "{}{}{}{}{}",
+        text_run(0, 10, 100, "a"),
+        text_run(1, 20, 100, "q"),
+        text_run(2, 30, 100, "n"),
+        text_run(3, 40, 100, "r"),
+        text_run(4, 10, 50, "custom")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 8 0 R 9 0 R] >>",
+            "<< /S /Quote /Pg 3 0 R /K 1 >>",
+            "<< /S /Note /Pg 3 0 R /K 2 >>",
+            "<< /S /Ruby /Pg 3 0 R /K 3 >>",
+            "<< /S /Weird /Pg 3 0 R /K 4 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "a q n r\ncustom");
+}
+
+#[test]
+fn an_inline_element_touching_the_run_before_it_adds_no_space() {
+    let content = "/Span << /MCID 0 >> BDC BT /F1 12 Tf 10 100 Td (ab) Tj ET EMC \
+                   /Span << /MCID 1 >> BDC BT /F1 12 Tf 23.34 100 Td (cd) Tj ET EMC";
+    let bytes = small_reading_document(
+        "",
+        0,
+        content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R] >>",
+            "<< /S /Span /Pg 3 0 R /K 1 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "abcd");
+}
+
+#[test]
+fn an_empty_actual_text_or_alt_replaces_nothing() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        &format!(
+            "{}{}",
+            text_run(0, 10, 100, "kept"),
+            text_run(1, 10, 50, "also")
+        ),
+        &[
+            "<< /S /Document /ActualText () /Alt () /K [7 0 R 8 0 R] >>",
+            "<< /S /P /Pg 3 0 R /K 0 >>",
+            "<< /S /P /Pg 3 0 R /K 1 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "kept\nalso");
+}
+
+#[test]
+fn a_caption_inside_a_figure_is_read_after_the_figures_alt() {
+    let content = format!(
+        "/Figure << /MCID 0 >> BDC 0 0 20 20 re f EMC {}",
+        text_run(1, 10, 50, "Figure 1: a cat")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /Figure /Pg 3 0 R /Alt (A cat) /K [0 7 0 R] >>",
+            "<< /S /Caption /Pg 3 0 R /K 1 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "A cat\nFigure 1: a cat");
+}
+
+#[test]
+fn an_excluded_child_does_not_leave_the_break_before_it_to_decide_the_next_line() {
+    let content = format!(
+        "{}{}{}{}{}",
+        text_run(0, 10, 150, "a"),
+        text_run(1, 10, 100, "b"),
+        text_run(2, 10, 50, "c"),
+        text_run(3, 10, 20, "page 3"),
+        text_run(4, 30, 50, "d")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 2 8 0 R 4] >>",
+            "<< /S /Div /Pg 3 0 R /K 1 >>",
+            "<< /S /Artifact /Pg 3 0 R /K 3 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "a\nb\nc d");
+}
+
+#[test]
+fn a_form_and_a_label_run_on_in_a_paragraph() {
+    let content = format!(
+        "{}{}{}",
+        text_run(0, 10, 100, "a"),
+        text_run(1, 30, 100, "b"),
+        text_run(2, 50, 100, "c")
+    );
+    let bytes = small_reading_document(
+        "",
+        0,
+        &content,
+        &[
+            "<< /S /P /Pg 3 0 R /K [0 7 0 R 8 0 R] >>",
+            "<< /S /Form /Pg 3 0 R /K 1 >>",
+            "<< /S /Lbl /Pg 3 0 R /K 2 >>",
+        ],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "a b c");
+}
+
+#[test]
+fn an_alt_is_said_for_an_element_whose_only_text_is_an_artifact() {
+    let content =
+        "/Artifact BMC /P << /MCID 0 >> BDC BT /F1 12 Tf 10 10 Td (footer) Tj ET EMC EMC \
+                   /P << /MCID 1 >> BDC 0 0 5 5 re f EMC";
+    let bytes = small_reading_document(
+        "",
+        0,
+        content,
+        &["<< /S /P /Pg 3 0 R /Alt (the alt) /K [0 1] >>"],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "the alt");
+}
+
+#[test]
+fn a_gap_of_a_fifth_of_the_text_size_is_a_word_space() {
+    let sequence = |body: &str| format!("/P << /MCID 0 >> BDC BT /F1 12 Tf {body} ET EMC");
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (Click) Tj 28.71 0 Td (here) Tj")),
+        "Click here",
+        "2.7pt after a 26pt word at 12pt"
+    );
+    assert_eq!(
+        joined(0, &sequence("10 100 Td (Click) Tj 27.9 0 Td (here) Tj")),
+        "Clickhere",
+        "1.9pt is tracking, not a space"
+    );
+}
+
+#[test]
+fn a_figure_with_an_empty_alt_keeps_its_own_text() {
+    let bytes = small_reading_document(
+        "",
+        0,
+        &text_run(0, 10, 100, "label"),
+        &["<< /S /Figure /Pg 3 0 R /Alt () /K 0 >>"],
+    );
+    assert_eq!(reading_text_of(&bytes, 0), "label");
+}
+
+/// The replacement is said on the page of the first real content below the
+/// element. An artifact run on an earlier page does not move it there.
+#[test]
+fn a_replacement_is_said_on_the_page_of_the_first_content_that_is_not_an_artifact() {
+    let page_content = |data: &str| stream_object(data);
+    let bytes = pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+            .to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>".to_vec(),
+        page_content(
+            "/Artifact BMC /P << /MCID 0 >> BDC BT /F1 12 Tf 10 10 Td (header) Tj ET EMC EMC",
+        ),
+        page_content("/P << /MCID 1 >> BDC BT /F1 12 Tf 10 100 Td (real) Tj ET EMC"),
+        b"<< /Type /StructTreeRoot /K [8 0 R] >>".to_vec(),
+        b"<< /S /P /ActualText (REPL) /K [<< /Type /MCR /Pg 3 0 R /MCID 0 >> \
+          << /Type /MCR /Pg 4 0 R /MCID 1 >>] >>"
+            .to_vec(),
+    ]);
+    assert_eq!(reading_text_of(&bytes, 0), "");
+    assert_eq!(reading_text_of(&bytes, 1), "REPL");
+}

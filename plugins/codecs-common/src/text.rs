@@ -4,14 +4,15 @@ use onionskin_plugin_api::{
     CodecPlugin, Document, ExportError, ExportOutputKind, ExportRequest, PageIndex,
 };
 
-/// The document's text, in the order the content streams draw it.
+/// The document's text. A tagged document comes out in the order its structure
+/// gives, with a line for each block-level element, its `/ActualText` for the
+/// content it replaces and its `/Alt` for a figure. Any other document comes
+/// out in the order the content streams draw it, `content`'s extraction
+/// verbatim, so a two-column page is read column by column exactly as the file
+/// draws it: there is no layout analysis here.
 ///
-/// Each page is `content`'s extraction verbatim, with a blank-line prefix on
-/// every non-first request chunk so the worker can append pages into one file.
-/// It does **not** reorder anything into reading order, so a two-column page
-/// comes out column by column exactly as the file draws it. Accessible-text
-/// ordering is an M6 row on the parity scoreboard, and claiming it here would
-/// be claiming layout analysis this milestone does not do.
+/// Every non-first request chunk is prefixed with a blank line so the worker can
+/// append pages into one file.
 pub struct TextCodec;
 
 /// Between pages. A blank line, so a reader can see where a page ended
@@ -51,14 +52,23 @@ impl CodecPlugin for TextCodec {
                 source: onionskin_core::Error::Protected(refusal),
             });
         }
-        let text = doc
-            .page_text(page)
-            .map_err(|source| ExportError::Page { page, source })?;
+        // A document whose structure cannot be read has no structure order to
+        // export, and exports as it did before there was one: in drawing order.
+        let tagged = doc.reading_text(page).unwrap_or(None);
+        let text = match tagged {
+            Some(text) => text,
+            None => {
+                doc.page_text(page)
+                    .map_err(|source| ExportError::Page { page, source })?
+                    .flatten()
+                    .text
+            }
+        };
         let mut out = String::new();
         if !first_in_request {
             out.push_str(PAGE_SEPARATOR);
         }
-        out.push_str(&text.flatten().text);
+        out.push_str(&text);
         Ok(out.into_bytes())
     }
 }
