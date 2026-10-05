@@ -11,11 +11,13 @@
 //! point of it. A package that moves pages or elements asserts on
 //! [`check`] rather than inventing its own idea of a valid tree.
 
+mod content_map;
 mod invariant;
 mod maintain;
 mod read;
 mod role;
 
+pub use content_map::{ContentItem, ContentMap, ElementContent, ItemKind, Unplaced};
 pub use invariant::{Report, Violation};
 pub use maintain::Maintenance;
 pub use read::{Attribute, Element, Kid, ParentEntry, Structure, StructureTree};

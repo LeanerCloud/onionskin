@@ -90,7 +90,7 @@ fn named_content<'a>(
         for kid in &element.kids {
             let (page, mcid): (Option<ObjRef>, i64) = match kid {
                 Kid::Mcid(mcid) => (element.page, *mcid),
-                Kid::MarkedContent { page, mcid } => (page.or(element.page), *mcid),
+                Kid::MarkedContent { page, mcid, .. } => (page.or(element.page), *mcid),
                 Kid::Element(_) | Kid::Object { .. } => continue,
             };
             if let Some(page) = page {

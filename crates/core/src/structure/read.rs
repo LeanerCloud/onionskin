@@ -142,8 +142,17 @@ pub enum Kid {
     Mcid(i64),
     /// A child `/StructElem`, by object number.
     Element(u32),
-    /// An `/MCR` marked-content reference, which names its own page.
-    MarkedContent { page: Option<ObjRef>, mcid: i64 },
+    /// An `/MCR` marked-content reference, which names its own page. With a
+    /// `/Stm` the `mcid` numbers marked content in that form or appearance
+    /// stream, not on the page.
+    MarkedContent {
+        page: Option<ObjRef>,
+        mcid: i64,
+        stream: Option<ObjRef>,
+        /// `/StmOwn`, the object a `stream` that is an appearance stream
+        /// belongs to.
+        stream_owner: Option<ObjRef>,
+    },
     /// An `/OBJR` object reference: an annotation or XObject that belongs to
     /// this element.
     Object {
@@ -351,6 +360,8 @@ impl Reader<'_> {
             Some(name) if name.as_bytes() == b"MCR" => Ok(Some(Kid::MarkedContent {
                 page: self.reference(dict.get(b"Pg")),
                 mcid: dict.get(b"MCID").and_then(Object::as_integer).unwrap_or(0),
+                stream: self.reference(dict.get(b"Stm")),
+                stream_owner: self.reference(dict.get(b"StmOwn")),
             })),
             Some(name) if name.as_bytes() == b"OBJR" => {
                 let Some(object) = self.reference(dict.get(b"Obj")) else {

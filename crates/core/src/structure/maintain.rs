@@ -218,11 +218,22 @@ fn kid_object(kid: &Kid, tree: &StructureTree) -> Object {
                 .map_or(0, |element| element.objref.generation);
             Object::Ref(ObjRef::new(*number, generation))
         }
-        Kid::MarkedContent { page, mcid } => {
+        Kid::MarkedContent {
+            page,
+            mcid,
+            stream,
+            stream_owner,
+        } => {
             let mut dict = Dict::new();
             dict.set(Name::new("Type"), Object::name("MCR"));
             if let Some(page) = page {
                 dict.set(Name::new("Pg"), Object::Ref(*page));
+            }
+            if let Some(stream) = stream {
+                dict.set(Name::new("Stm"), Object::Ref(*stream));
+            }
+            if let Some(owner) = stream_owner {
+                dict.set(Name::new("StmOwn"), Object::Ref(*owner));
             }
             dict.set(Name::new("MCID"), Object::Integer(*mcid));
             Object::Dict(dict)

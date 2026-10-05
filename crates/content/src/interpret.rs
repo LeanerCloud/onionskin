@@ -246,6 +246,7 @@ pub(crate) fn page_marked(doc: &Document, page: &Page) -> Result<MarkedPage> {
     let content = page::content(doc, page, &mut warnings)?;
     let mut interpreter = Interpreter::new(doc, page.index, warnings, None);
     interpreter.marks = Some(Vec::new());
+    interpreter.mcids = Some(std::collections::BTreeSet::new());
     interpreter.images = Some(Vec::new());
     interpreter.shapes = Some(crate::shapes::Shapes::default());
     interpreter.run(&content, &page.resources, GState::new(page.base_ctm()), 0);
@@ -255,7 +256,9 @@ pub(crate) fn page_marked(doc: &Document, page: &Page) -> Result<MarkedPage> {
         .take()
         .map(|shapes| shapes.found)
         .unwrap_or_default();
+    let mcids = interpreter.mcids.take().unwrap_or_default();
     Ok(MarkedPage {
+        mcids,
         text: interpreter.finish(),
         images,
         shapes,

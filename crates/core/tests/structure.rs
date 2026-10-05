@@ -775,6 +775,7 @@ fn text_shared_across_elements_is_bounded_in_total() {
     let error = read_structure(&build(20)).expect_err("20 MiB of text is not");
     assert!(error.to_string().contains("more text"), "{error}");
 }
+
 /// Direct text is in the file once, so a file with a lot of it is large rather
 /// than amplified; the budget must not reject it.
 #[test]
@@ -797,4 +798,200 @@ fn a_large_tree_of_direct_text_is_not_mistaken_for_an_amplified_one() {
     let doc = open(&pdf(&objects));
     let structure = read_structure(&doc).expect("24 MB of direct text in a 24 MB file reads");
     assert_eq!(structure.tree().expect("tagged").elements.len(), elements);
+}
+
+// ---------------------------------------------------------------------------
+// From an element to the content it marks
+// ---------------------------------------------------------------------------
+
+/// One page whose content opens ids 0 to 3 (text, a rectangle, an empty
+/// sequence, text inside an `/Artifact`), and eight elements that between them
+/// name every outcome `content_of` has: found, found empty, dangling, no page,
+/// into a form's stream, on a page that is not one, and found but artifact.
+fn content_map_document() -> Vec<u8> {
+    let content = "/P << /MCID 0 >> BDC BT /F1 12 Tf 10 10 Td (hello) Tj ET EMC \
+        /Figure << /MCID 1 >> BDC 0 0 20 20 re f EMC \
+        /Span << /MCID 2 >> BDC EMC \
+        /Artifact BMC /P << /MCID 3 >> BDC BT /F1 12 Tf 10 100 Td (art) Tj ET EMC EMC";
+    pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>"
+            .to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources \
+          << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+            .to_vec(),
+        stream_object(content),
+        b"<< /Type /StructTreeRoot /K [7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R] >>"
+            .to_vec(),
+        stream_object(""),
+        b"<< /S /P /Pg 3 0 R /K 0 >>".to_vec(),
+        b"<< /S /Figure /Pg 3 0 R /K 1 >>".to_vec(),
+        b"<< /S /Span /K << /Type /MCR /Pg 3 0 R /MCID 2 >> >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K 99 >>".to_vec(),
+        b"<< /S /P /K 0 >>".to_vec(),
+        b"<< /S /P /K << /Type /MCR /Pg 3 0 R /MCID 0 /Stm 6 0 R >> >>".to_vec(),
+        b"<< /S /P /K << /Type /MCR /Pg 60 0 R /MCID 0 >> >>".to_vec(),
+        b"<< /S /P /Pg 3 0 R /K 3 >>".to_vec(),
+    ])
+}
+
+fn stream_object(data: &str) -> Vec<u8> {
+    let mut out = format!("<< /Length {} >>\nstream\n", data.len()).into_bytes();
+    out.extend_from_slice(data.as_bytes());
+    out.extend_from_slice(b"\nendstream");
+    out
+}
+
+fn content_of(number: u32) -> onionskin_core::ElementContent {
+    let doc = open(&content_map_document());
+    let structure = read_structure(&doc).expect("the tree reads");
+    let tree = structure.tree().expect("tagged");
+    onionskin_core::ContentMap::new(&doc)
+        .expect("the pages index")
+        .content_of(&tree.elements[&number])
+        .expect("the content reads")
+}
+
+#[test]
+fn an_element_finds_the_text_its_marked_content_id_names() {
+    let found = content_of(7);
+    assert!(found.unplaced.is_empty(), "{:?}", found.unplaced);
+    let [item] = &found.items[..] else {
+        panic!("one run: {:?}", found.items);
+    };
+    assert_eq!(item.kind, onionskin_core::ItemKind::Text);
+    assert_eq!(item.text.as_deref(), Some("hello"));
+    assert!(!item.artifact);
+    assert!(
+        item.bounds[0] == 10.0
+            && item.bounds[1] < 10.0
+            && item.bounds[3] > 10.0
+            && item.bounds[2] > item.bounds[0],
+        "the glyph box starts at the text origin and spans the baseline: {:?}",
+        item.bounds
+    );
+}
+
+#[test]
+fn a_path_is_found_by_its_id_and_an_mcr_reaches_it_like_a_bare_id() {
+    let found = content_of(8);
+    let [item] = &found.items[..] else {
+        panic!("one path: {:?}", found.items);
+    };
+    assert_eq!(item.kind, onionskin_core::ItemKind::Path);
+    assert_eq!(item.bounds, [0.0, 0.0, 20.0, 20.0]);
+    assert_eq!(item.text, None);
+}
+
+#[test]
+fn a_sequence_that_draws_nothing_is_an_empty_element_not_a_missing_one() {
+    let found = content_of(9);
+    assert!(found.items.is_empty());
+    assert!(found.unplaced.is_empty(), "{:?}", found.unplaced);
+}
+
+#[test]
+fn every_reference_that_cannot_be_followed_is_reported() {
+    use onionskin_core::Unplaced;
+    assert_eq!(
+        content_of(10).unplaced,
+        [Unplaced::Dangling { page: 0, mcid: 99 }]
+    );
+    assert_eq!(content_of(11).unplaced, [Unplaced::NoPage { mcid: 0 }]);
+    assert_eq!(
+        content_of(12).unplaced,
+        [Unplaced::InStream {
+            mcid: 0,
+            stream: ObjRef::new(6, 0)
+        }],
+        "an id into a form's stream numbers that stream's content, not the page's"
+    );
+    assert_eq!(
+        content_of(13).unplaced,
+        [Unplaced::NotAPage {
+            page: ObjRef::new(60, 0),
+            mcid: 0
+        }]
+    );
+    assert!(content_of(12).items.is_empty() && content_of(10).items.is_empty());
+}
+
+#[test]
+fn text_inside_an_artifact_is_found_and_says_so() {
+    let found = content_of(14);
+    let [item] = &found.items[..] else {
+        panic!("{:?}", found.items);
+    };
+    assert_eq!(item.text.as_deref(), Some("art"));
+    assert!(item.artifact);
+}
+
+/// The plan's corpus claim: over the tagged files, every id the tree names is
+/// found in content. It holds except in the files below, each checked by hand
+/// against `qpdf --qdf`: the tree names an id the page never opens (the
+/// `Dangling` ones: the content has no marked content, or none with that id),
+/// or names one through an `/MCR` `/Stm` into a form (the `InStream` ones).
+/// Pinning the files makes a change in either direction a failure: a new
+/// dangling file is a reader or interpreter regression, and one that
+/// disappears means a fixture changed under the claim.
+const DANGLING: &[&str] = &[
+    "PDF_A-1a/6.3 Fonts/6.3.8 Unicode character maps/veraPDF test suite 6-3-8-t01-fail-c.pdf",
+    "PDF_A-2u/6.2 Graphics/6.2.11 Fonts/6.2.11.7 Unicode character maps/6.2.11.7.2 Level A and Level U conformance/veraPDF test suite 6-2-11-7-2-t01-fail-d.pdf",
+    "PDF_A-4/6.3 Annotations/6.3.2 Annotation dictionaries/veraPDF test suite 6-3-2-t01-fail-u.pdf",
+    "PDF_A-4/6.3 Annotations/6.3.3 Annotation appearances/veraPDF test suite 6-3-3-t01-pass-d.pdf",
+    "PDF_UA-1/7.1 General/7.1-t01-pass-b.pdf",
+    "PDF_UA-1/7.15 XFA/7.15-t01-fail-a.pdf",
+    "PDF_UA-2/8.8 Intra-document destinations/8.8-t02-fail-a.pdf",
+];
+const IN_STREAM: &[&str] = &[
+    "PDF_UA-1/7.20 XObjects/7.20-t02-fail-a.pdf",
+    "PDF_UA-1/7.20 XObjects/7.20-t02-pass-a.pdf",
+];
+
+#[test]
+fn the_corpus_tree_names_only_ids_its_pages_open() {
+    use onionskin_core::Unplaced;
+    use std::collections::BTreeSet;
+
+    let Some(root) = verapdf_root() else {
+        eprintln!("SKIPPED: corpus/external/verapdf is absent; fetch it with corpus/fetch.sh");
+        return;
+    };
+    let mut tagged = 0usize;
+    let mut dangling = BTreeSet::new();
+    let mut in_stream = BTreeSet::new();
+    for path in onionskin_corpus_testing::pdfs_in(&root) {
+        let name = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let Ok(doc) = CosDocument::open_path(&path) else {
+            continue;
+        };
+        let Ok(structure) = read_structure(&doc) else {
+            continue;
+        };
+        let Some(tree) = structure.tree() else {
+            continue;
+        };
+        tagged += 1;
+        let mut map = onionskin_core::ContentMap::new(&doc).expect("the pages index");
+        for element in tree.elements.values() {
+            let content = map
+                .content_of(element)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            for unplaced in content.unplaced {
+                match unplaced {
+                    Unplaced::Dangling { .. } => dangling.insert(name.clone()),
+                    Unplaced::InStream { .. } => in_stream.insert(name.clone()),
+                    other => panic!("{name}: {other:?}"),
+                };
+            }
+        }
+    }
+    assert!(tagged > 500, "only {tagged} tagged files read");
+    let expected = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    assert_eq!(dangling, expected(DANGLING));
+    assert_eq!(in_stream, expected(IN_STREAM));
 }

@@ -106,6 +106,7 @@ pub use session::{
 pub use signatures::SignatureField;
 pub use structure::{
     attach_annotation, check, read_structure, remove_page, remove_pages, reorder_pages, Attribute,
-    Element, Kid, Maintenance, ParentEntry, Report, Structure, StructureTree, Violation,
+    ContentItem, ContentMap, Element, ElementContent, ItemKind, Kid, Maintenance, ParentEntry,
+    Report, Structure, StructureTree, Unplaced, Violation,
 };
 pub use viewport::{FitMode, Viewport, ViewportError, ZoomPolicy, MAX_ZOOM, MIN_ZOOM};

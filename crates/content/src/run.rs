@@ -28,7 +28,7 @@ impl ActualText {
         Self(Arc::from(text))
     }
 
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }

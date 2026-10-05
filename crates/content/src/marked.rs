@@ -5,6 +5,8 @@
 //! `marked` as `None` and keep no sequence stack, so tagging costs nothing for
 //! a caller that does not ask.
 
+use std::collections::BTreeSet;
+
 use onionskin_cos::Name;
 
 use crate::placements::ImagePlacement;
@@ -39,6 +41,9 @@ pub struct MarkedRef {
 /// One page's runs, images and paths, each with its [`MarkedRef`].
 #[derive(Clone, Debug, Default)]
 pub struct MarkedPage {
+    /// Every `/MCID` the page's own content opens, including a sequence that
+    /// draws nothing, which has no item to carry it.
+    pub mcids: BTreeSet<i64>,
     pub text: PageText,
     pub images: Vec<ImagePlacement>,
     pub shapes: Vec<Shape>,
