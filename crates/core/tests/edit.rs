@@ -2040,6 +2040,432 @@ fn properties_refusal_rolls_back_an_earlier_catalog_write() {
 }
 
 #[test]
+fn intermediate_page_tree_info_alias_is_refused_without_mutation() {
+    let original = with_info_selector(
+        common::pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Pages /Parent 2 0 R /Kids [4 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
+            b"<< /Title (old) /Subject (before) >>".to_vec(),
+        ]),
+        "3 0 R",
+    );
+    let original_cos = open(&original);
+    assert_eq!(original_cos.page_count().expect("one page"), 1);
+    assert_info_fixture(
+        &original_cos,
+        "3 0 R",
+        &Object::Ref(ObjRef::new(3, 0)),
+        Some(ObjRef::new(3, 0)),
+        Some(0),
+        Some(ObjRef::new(3, 0)),
+    );
+    let original_objects: Vec<_> = (1..=5)
+        .map(|number| original_cos.get(number).expect("fixture object").object)
+        .collect();
+
+    for properties_route in [false, true] {
+        let route = if properties_route {
+            "properties"
+        } else {
+            "generic"
+        };
+        let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+        let before_preview = document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("primed preview")
+            .to_vec();
+        let before_overlay = document.edit().overlay().clone();
+        let before_epoch = document.edit().epoch();
+        let before_history = document.edit().history().clone();
+        let before_trailer = document.edit().trailer_edits();
+        let before_dirty = document.is_dirty();
+        let before_bytes = document.bytes().as_ref().clone();
+        let before_section = {
+            let (edit, base) = document.edit_mut();
+            section(base, edit)
+        };
+        let properties = onionskin_core::metadata::PropertiesEdit {
+            description: onionskin_core::metadata::Description {
+                title: Some("accepted".to_owned()),
+                subject: Some("grouped".to_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome: Result<(), Error> = if properties_route {
+            document.edit_document("Document Properties", |tx| {
+                onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+            })
+        } else {
+            let (edit, base) = document.edit_mut();
+            edit.apply(
+                base,
+                DocumentEdit::SetInfoField {
+                    key: Name::new("Title"),
+                    value: Some(string("accepted")),
+                },
+            )
+        };
+        assert!(
+            matches!(outcome, Err(Error::StructuralInfoTarget { number: 3 })),
+            "{route} must refuse the intermediate page-tree alias"
+        );
+        assert_eq!(document.edit().overlay(), &before_overlay, "{route}");
+        assert_eq!(document.edit().epoch(), before_epoch, "{route}");
+        assert_eq!(document.edit().trailer_edits(), before_trailer, "{route}");
+        assert_eq!(document.bytes().as_ref(), &before_bytes, "{route}");
+        assert_eq!(document.is_dirty(), before_dirty, "{route}");
+        assert_history_unchanged(
+            &before_history,
+            document.edit().history(),
+            "intermediate-alias",
+            route,
+        );
+        let fresh_section = {
+            let (edit, base) = document.edit_mut();
+            section(base, edit)
+        };
+        assert_eq!(fresh_section, before_section, "{route}");
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("preview after refusal")
+                .as_ref(),
+            before_preview.as_slice(),
+            "{route} preview"
+        );
+        let reopened = open(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("fresh preview")
+                .as_ref(),
+        );
+        assert_eq!(
+            reopened.trailer().get(b"Info"),
+            original_cos.trailer().get(b"Info"),
+            "{route} Info trailer"
+        );
+        for (number, expected) in original_objects.iter().enumerate() {
+            assert_eq!(
+                &reopened
+                    .get((number + 1) as u32)
+                    .expect("reopened object")
+                    .object,
+                expected,
+                "{route} object {}",
+                number + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn cyclic_page_tree_info_write_is_refused_without_mutation() {
+    let original = with_info_selector(
+        common::pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 2 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
+            b"<< /Title (old) /Subject (before) >>".to_vec(),
+        ]),
+        "5 0 R",
+    );
+    let original_cos = open(&original);
+    assert_eq!(original_cos.page_count().expect("one page"), 1);
+    assert_info_fixture(
+        &original_cos,
+        "5 0 R",
+        &Object::Ref(ObjRef::new(5, 0)),
+        Some(ObjRef::new(5, 0)),
+        Some(0),
+        Some(ObjRef::new(5, 0)),
+    );
+    let original_objects: Vec<_> = (1..=5)
+        .map(|number| original_cos.get(number).expect("fixture object").object)
+        .collect();
+
+    for properties_route in [false, true] {
+        let route = if properties_route {
+            "properties"
+        } else {
+            "generic"
+        };
+        let mut document = Document::open_bytes(original.clone()).expect("cycle fixture opens");
+        let before_preview = document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("primed preview")
+            .to_vec();
+        let before_overlay = document.edit().overlay().clone();
+        let before_epoch = document.edit().epoch();
+        let before_history = document.edit().history().clone();
+        let before_trailer = document.edit().trailer_edits();
+        let before_dirty = document.is_dirty();
+        let before_bytes = document.bytes().as_ref().clone();
+        let before_section = {
+            let (edit, base) = document.edit_mut();
+            section(base, edit)
+        };
+        let properties = onionskin_core::metadata::PropertiesEdit {
+            description: onionskin_core::metadata::Description {
+                title: Some("accepted".to_owned()),
+                subject: Some("grouped".to_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome: Result<(), Error> = if properties_route {
+            document.edit_document("Document Properties", |tx| {
+                onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+            })
+        } else {
+            let (edit, base) = document.edit_mut();
+            edit.apply(
+                base,
+                DocumentEdit::SetInfoField {
+                    key: Name::new("Title"),
+                    value: Some(string("accepted")),
+                },
+            )
+        };
+        assert!(
+            matches!(outcome, Err(Error::CyclicPageTree { number: 2 })),
+            "{route} must report the page-tree cycle"
+        );
+        assert_eq!(document.edit().overlay(), &before_overlay, "{route}");
+        assert_eq!(document.edit().epoch(), before_epoch, "{route}");
+        assert_eq!(document.edit().trailer_edits(), before_trailer, "{route}");
+        assert_eq!(document.bytes().as_ref(), &before_bytes, "{route}");
+        assert_eq!(document.is_dirty(), before_dirty, "{route}");
+        assert_history_unchanged(
+            &before_history,
+            document.edit().history(),
+            "cyclic-tree",
+            route,
+        );
+        let fresh_section = {
+            let (edit, base) = document.edit_mut();
+            section(base, edit)
+        };
+        assert_eq!(fresh_section, before_section, "{route}");
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("preview after refusal")
+                .as_ref(),
+            before_preview.as_slice(),
+            "{route} preview"
+        );
+        let reopened = open(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("fresh preview")
+                .as_ref(),
+        );
+        assert_eq!(
+            reopened.trailer().get(b"Info"),
+            original_cos.trailer().get(b"Info"),
+            "{route} Info trailer"
+        );
+        for (number, expected) in original_objects.iter().enumerate() {
+            assert_eq!(
+                &reopened
+                    .get((number + 1) as u32)
+                    .expect("reopened object")
+                    .object,
+                expected,
+                "{route} object {}",
+                number + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_page_tree_info_accepts_edit_undo_redo_and_save() {
+    let original = with_info_selector(
+        common::pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Pages /Parent 2 0 R /Kids [4 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
+            b"<< /Title (old) /Subject (before) >>".to_vec(),
+        ]),
+        "5 0 R",
+    );
+    let original_cos = open(&original);
+    assert_eq!(original_cos.page_count().expect("one page"), 1);
+    assert_info_fixture(
+        &original_cos,
+        "5 0 R",
+        &Object::Ref(ObjRef::new(5, 0)),
+        Some(ObjRef::new(5, 0)),
+        Some(0),
+        Some(ObjRef::new(5, 0)),
+    );
+    let original_pages: Vec<_> = (2..=4)
+        .map(|number| original_cos.get(number).expect("page-tree object").object)
+        .collect();
+
+    for properties_route in [false, true] {
+        let route = if properties_route {
+            "properties"
+        } else {
+            "generic"
+        };
+        let mut document = Document::open_bytes(original.clone()).expect("fixture opens");
+        let properties = onionskin_core::metadata::PropertiesEdit {
+            description: onionskin_core::metadata::Description {
+                title: Some("accepted".to_owned()),
+                subject: Some("grouped".to_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        if properties_route {
+            document
+                .edit_document("Document Properties", |tx| {
+                    onionskin_core::metadata::write_properties(tx, &properties, 1_789_999_500)
+                })
+                .unwrap_or_else(|error| panic!("{route} edit: {error:?}"));
+        } else {
+            let (edit, base) = document.edit_mut();
+            edit.apply(
+                base,
+                DocumentEdit::SetInfoField {
+                    key: Name::new("Title"),
+                    value: Some(string("accepted")),
+                },
+            )
+            .unwrap_or_else(|error| panic!("{route} edit: {error:?}"));
+        }
+        let edited_preview = document
+            .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+            .expect("edited preview")
+            .to_vec();
+        let edited = open(&edited_preview);
+        assert_eq!(
+            edited.trailer().get(b"Info").and_then(Object::as_reference),
+            Some(ObjRef::new(5, 0)),
+            "{route} Info reference"
+        );
+        assert_eq!(
+            edited
+                .get(5)
+                .expect("edited Info")
+                .object
+                .as_dict()
+                .and_then(|dict| dict.get(b"Title")),
+            Some(&string("accepted")),
+            "{route} Info title"
+        );
+        for (number, expected) in (2..=4).zip(&original_pages) {
+            assert_eq!(
+                &edited.get(number).expect("edited page-tree object").object,
+                expected,
+                "{route} page-tree object {number}"
+            );
+        }
+        assert_eq!(
+            edited
+                .get(1)
+                .expect("edited catalog")
+                .object
+                .as_dict()
+                .and_then(|dict| dict.get(b"Pages")),
+            original_cos
+                .get(1)
+                .expect("original catalog")
+                .object
+                .as_dict()
+                .and_then(|dict| dict.get(b"Pages")),
+            "{route} catalog Pages"
+        );
+        if properties_route {
+            assert_eq!(
+                document
+                    .xmp()
+                    .expect("edited XMP")
+                    .expect("properties XMP")
+                    .title
+                    .as_deref(),
+                Some("accepted"),
+                "{route} edited XMP title"
+            );
+        }
+        assert!(document.undo().expect("undo succeeds"), "{route} undo");
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("original preview")
+                .as_ref(),
+            original.as_slice(),
+            "{route} undo restores original"
+        );
+        assert!(document.redo().expect("redo succeeds"), "{route} redo");
+        assert_eq!(
+            document
+                .preview_bytes(AnnotationFilter::DocumentAndMarkups)
+                .expect("redo preview")
+                .as_ref(),
+            edited_preview.as_slice(),
+            "{route} redo restores edit"
+        );
+
+        let dir = tempfile::tempdir().expect("save directory");
+        let path = dir.path().join("nested-info.pdf");
+        let mut file = DocumentFile::from_document(document);
+        file.save_as(&path)
+            .unwrap_or_else(|error| panic!("{route} save: {error:?}"));
+        let saved_bytes = std::fs::read(&path).expect("saved bytes");
+        let saved_cos = open(&saved_bytes);
+        assert_eq!(
+            saved_cos
+                .trailer()
+                .get(b"Info")
+                .and_then(Object::as_reference),
+            Some(ObjRef::new(5, 0)),
+            "{route} saved Info reference"
+        );
+        assert_eq!(
+            saved_cos
+                .get(5)
+                .expect("saved Info")
+                .object
+                .as_dict()
+                .and_then(|dict| dict.get(b"Title")),
+            Some(&string("accepted")),
+            "{route} saved Info title"
+        );
+        for (number, expected) in (2..=4).zip(&original_pages) {
+            assert_eq!(
+                &saved_cos
+                    .get(number)
+                    .expect("saved page-tree object")
+                    .object,
+                expected,
+                "{route} saved page-tree object {number}"
+            );
+        }
+        let mut saved_document = Document::open_bytes(saved_bytes).expect("saved document opens");
+        if properties_route {
+            assert_eq!(
+                saved_document
+                    .xmp()
+                    .expect("saved XMP")
+                    .expect("saved properties XMP")
+                    .title
+                    .as_deref(),
+                Some("accepted"),
+                "{route} saved XMP title"
+            );
+        }
+    }
+}
+
+#[test]
 fn custom_info_keys_do_not_make_a_dictionary_structural() {
     let target =
         b"<< /Title (old) /Pages (custom) /Kids (custom) /Parent (custom) /Type (custom) >>"
@@ -2875,12 +3301,18 @@ fn info_selector_generation_survives_edit_undo_redo_and_save() {
 // ---------------------------------------------------------------------------
 
 fn info_target_document(info: &str, target: Vec<u8>) -> Vec<u8> {
-    let mut bytes = common::pdf(&[
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
-        target,
-    ]);
+    with_info_selector(
+        common::pdf(&[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>".to_vec(),
+            target,
+        ]),
+        info,
+    )
+}
+
+fn with_info_selector(mut bytes: Vec<u8>, info: &str) -> Vec<u8> {
     let marker = b">>\nstartxref";
     assert_eq!(
         bytes
