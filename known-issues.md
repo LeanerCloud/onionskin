@@ -488,6 +488,26 @@ source; none is fixed by WP4.
   (`7.3-t01-pass-c`, `8.2.5.28.2-t01-pass-c`): VoiceOver says "image" and
   nothing after it. A caption kept under a figure's `/Alt` becomes a child of
   the `Image`, which VoiceOver may not enter.
+- **New Bookmarks From Structure and the Tags pane have limits found in review.**
+  - `reading_blocks` took 52 s on a 5,000-page document, on the UI thread, and the
+    command waits for it. The cause is the same as the first-tagged-page cost
+    above, plus `ContentMap::new` and cos `Document::page(i)` rescanning the
+    kids of a flat page tree on every call.
+  - Running the command twice makes every bookmark twice. Whether Acrobat
+    skips ones already there is unverified.
+  - A bare `H` is always level 1; ISO 32000-1's nesting-derived level is not
+    read.
+  - Choosing an element or a piece goes to the top of its page, so zoomed in a
+    box near the bottom stays off screen, and a piece already visible still
+    moves the view.
+  - Tags rows past 1000 and Content rows past 500 a group are counted, not
+    listed.
+  - `reread` forgets the chosen element after any edit, structure or not.
+  - A heading whose only content is a Table is published with an empty name and
+    the Table as its child.
+  - `push` in `a11y/tree.rs` puts Label text in the label only, which reaches
+    macOS as `AXTitle`; whether VoiceOver reads static text with a title and no
+    value has not been checked.
 
 ## Environment
 
