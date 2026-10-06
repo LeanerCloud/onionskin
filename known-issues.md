@@ -517,6 +517,26 @@ source; none is fixed by WP4.
 - **The COS save temp file may be created non-exclusively at a predictable
   path.** Carried over from an unlanded old entry (`7937655`, the
   `write_through` path in `crates/cos/src/document.rs`); not re-verified.
+- **Global search results sit eight Tab presses from the search field.** They
+  are their own focus group, groups sort by where their first stop reads, and
+  the search panel is appended last in `accessible()`. The results are drawn
+  directly beneath the field, so reading order and visual order disagree.
+  Carried over from an old branch (`f1fe658`); not re-checked on `main`.
+- **Test-suite defects from the M2 close-out**, carried over from `f1fe658`.
+  The first two names and the `probe.rs` line still exist on `main`; whether
+  each defect still reproduces has not been checked.
+  - `a_blocked_export_leaves_tab_actions_responsive_and_cancel_stops_the_next_page`
+    is gated on `shell-test-support` alone (`crates/app/src/shell/chrome/tabs/mod.rs`)
+    but exports PNG, so under `--no-default-features --features
+    shell,shell-test-support` there is no codec and no prompt. Its siblings
+    carry the two-feature guard; the fix is one line.
+  - `enter_in_the_find_field_finds_rather_than_pressing_the_focused_control`
+    was load-dependent (about 17 percent, measured under deliberate machine
+    saturation, so indicative only). It races a worker thread and should be
+    made deterministic, not retried.
+  - `cargo clippy --features a11y-probe -D warnings` fails on a
+    `push_str("}")` in `crates/app/src/a11y/probe.rs`; CI does not lint that
+    configuration.
 
 ## Environment
 
