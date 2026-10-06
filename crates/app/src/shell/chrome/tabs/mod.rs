@@ -212,6 +212,7 @@ impl ShellFrame {
                     canvas.model.set_structure_highlight(Vec::new())
                 });
             }
+            self.context_menus.canvas_context_menu = None;
             self.navigation.document_changed();
             self.page_entry.page_entry_error = None;
             self.observed_view_state = self.active_view_state(cx);

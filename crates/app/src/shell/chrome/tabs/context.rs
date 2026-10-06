@@ -633,6 +633,26 @@ mod tests {
 
     #[cfg(feature = "shell-test-support")]
     #[gpui::test]
+    fn switching_tabs_dismisses_the_canvas_menu(cx: &mut TestAppContext) {
+        let (window, _) = bound_window(&["hello.pdf", "two-page.pdf"], cx);
+        let right_click = gpui::MouseDownEvent {
+            button: MouseButton::Right,
+            position: gpui::point(px(300.0), px(300.0)),
+            ..Default::default()
+        };
+
+        window
+            .update(cx, |frame, _window, cx| {
+                frame.open_canvas_context_menu(&right_click, cx);
+                assert!(frame.context_menus.canvas_context_menu.is_some());
+                frame.activate(1, cx);
+                assert!(frame.context_menus.canvas_context_menu.is_none());
+            })
+            .unwrap();
+    }
+
+    #[cfg(feature = "shell-test-support")]
+    #[gpui::test]
     fn a_second_right_click_outside_the_document_dismisses_the_canvas_menu(
         cx: &mut TestAppContext,
     ) {
